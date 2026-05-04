@@ -33,6 +33,7 @@ Run options (only with --text):
   --bold            Bold
   --italic          Italic
 
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
   -h, --help        Show this help
 
@@ -58,6 +59,7 @@ export async function run(args: string[]): Promise<number> {
 				color: { type: "string" },
 				bold: { type: "boolean" },
 				italic: { type: "boolean" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -157,6 +159,8 @@ export async function run(args: string[]): Promise<number> {
 	}
 	const insertIndex = after !== undefined ? targetIndex + 1 : targetIndex;
 
+	const outputPath = parsed.values.output as string | undefined;
+
 	if (parsed.values["dry-run"]) {
 		await respond({
 			ok: true,
@@ -165,17 +169,18 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			locator: targetLocator,
 			placement: after !== undefined ? "after" : "before",
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
 	blockRef.parent.splice(insertIndex, 0, paragraphNode);
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "insert",
-		path,
+		path: outputPath ?? path,
 		locator: targetLocator,
 		placement: after !== undefined ? "after" : "before",
 	});

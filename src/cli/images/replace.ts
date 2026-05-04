@@ -13,6 +13,7 @@ Required:
   --with PATH       New image file (any image MIME type)
 
 Optional:
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
 
@@ -47,6 +48,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				at: { type: "string" },
 				with: { type: "string" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -96,6 +98,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const originalPartName = reference.partName;
 	const newPartName = renameExtension(originalPartName, newExtension);
+	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
 		await respond({
@@ -106,6 +109,7 @@ export async function run(args: string[]): Promise<number> {
 			imageId: targetId,
 			from: { partName: originalPartName, mimeType: reference.contentType },
 			to: { partName: newPartName, mimeType: newMimeType },
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -127,12 +131,12 @@ export async function run(args: string[]): Promise<number> {
 		reference.contentType = newMimeType;
 	}
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "images.replace",
-		path,
+		path: outputPath ?? path,
 		imageId: targetId,
 		partName: newPartName,
 		mimeType: newMimeType,

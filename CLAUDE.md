@@ -20,10 +20,9 @@ src/
     edit/                     # docx edit FILE
     delete/                   # docx delete FILE
     comments/                 # docx comments <verb>
-      index.ts                # sub-dispatcher for add/reply/resolve/delete/restore/list
+      index.ts                # sub-dispatcher for add/reply/resolve/delete/list
       helpers.tsx             # paraId, ensureCommentsPart, run-splitting marker injection
-      add | reply | resolve | delete | restore | list
-      trash.ts                # <dir>/.docx-cli/trash.json journal for restore
+      add | reply | resolve | delete | list
     images/                   # docx images <verb>
       list | extract | replace
     track-changes/            # docx track-changes FILE on|off
@@ -84,15 +83,16 @@ These are not suggestions. Follow them.
 - **JSX.Element = XmlNode** (single, not nullable union). `Fragment` returns a sentinel `#fragment` XmlNode that gets unwrapped both in `flatten()` (composition) and `XmlNode.serialize()` (top-level). Components that want to "render nothing" return `null`; `jsx()` converts that to an empty fragment so callers always see `XmlNode`.
 - **Stable positional ids** (`p0`, `t0`, `c0`, `img0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image ids are positional (document order).
 - **paraId is required for resolve/reply**. Comments authored by external tools may lack `w14:paraId` on their bodies. The `resolve` and `reply` verbs auto-inject one via `ensureCommentParaId()` (also adds `xmlns:w14` to the `<w:comments>` root if missing). Do this rather than failing — agents shouldn't have to recreate comments.
+- **No undo, no journal**. Mutating commands overwrite `FILE` in place. Pass `-o/--output PATH` to write to a parallel file instead, or `--dry-run` to preview. There is no snapshot ring, restore command, or trash directory — git is the version history. When both `--dry-run` and `--output` are passed, `--dry-run` wins (nothing is written to either path); the dry-run payload echoes `output` so the agent knows where a real run would have written.
 
 ## Commands
 
-`docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run`. JSON output by default; structured `{ok: false, code, error, hint}` on failure.
+`docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default; structured `{ok: false, code, error, hint}` on failure.
 
 | Surface    | Verbs                                                                                            |
 | ---------- | ------------------------------------------------------------------------------------------------ |
 | top-level  | `create` `read` `insert` `edit` `delete` `find` `replace` `track-changes` `schema` `locators`    |
-| `comments` | `add` `reply` `resolve` `delete` `restore` `list`                                                |
+| `comments` | `add` `reply` `resolve` `delete` `list`                                                          |
 | `images`   | `list` `extract` `replace`                                                                       |
 
 Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image), `4` permission, `5` already-applied. Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).

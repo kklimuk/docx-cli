@@ -1,3 +1,4 @@
+import { lstat, rename, unlink } from "node:fs/promises";
 import JSZip from "jszip";
 
 export {
@@ -5,6 +6,34 @@ export {
 	type PartRegistration,
 	registerPart,
 } from "./parts";
+
+export async function writeAtomic(
+	target: string,
+	buf: Uint8Array,
+): Promise<void> {
+	// If the target is a symlink (e.g. a .docx pointed at a cloud-sync folder),
+	// rename() would replace the link with a regular file and break the link.
+	// Write through the symlink instead, accepting non-atomicity for that case.
+	let isSymlink = false;
+	try {
+		isSymlink = (await lstat(target)).isSymbolicLink();
+	} catch {
+		// Target doesn't exist; not a symlink.
+	}
+	if (isSymlink) {
+		await Bun.write(target, buf);
+		return;
+	}
+
+	const tmp = `${target}.docx-cli-tmp-${process.pid}-${Date.now()}`;
+	try {
+		await Bun.write(tmp, buf);
+		await rename(tmp, target);
+	} catch (err) {
+		await unlink(tmp).catch(() => {});
+		throw err;
+	}
+}
 
 export class PkgError extends Error {
 	constructor(
@@ -85,7 +114,7 @@ export class Pkg {
 			compression: "DEFLATE",
 			compressionOptions: { level: 6 },
 		});
-		await Bun.write(target, buf);
+		await writeAtomic(target, buf);
 	}
 
 	async toBytes(): Promise<Uint8Array> {

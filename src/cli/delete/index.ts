@@ -17,6 +17,7 @@ Usage:
 Locator (required):
   --at LOCATOR      Block to remove (e.g., p3, t0)
 
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
   -h, --help        Show this help
 
@@ -33,6 +34,7 @@ export async function run(args: string[]): Promise<number> {
 			allowPositionals: true,
 			options: {
 				at: { type: "string" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -68,6 +70,8 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
+	const outputPath = parsed.values.output as string | undefined;
+
 	if (parsed.values["dry-run"]) {
 		await respond({
 			ok: true,
@@ -75,13 +79,19 @@ export async function run(args: string[]): Promise<number> {
 			dryRun: true,
 			path,
 			locator: at,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
 	blockRef.parent.splice(targetIndex, 1);
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
-	await respond({ ok: true, operation: "delete", path, locator: at });
+	await respond({
+		ok: true,
+		operation: "delete",
+		path: outputPath ?? path,
+		locator: at,
+	});
 	return EXIT.OK;
 }

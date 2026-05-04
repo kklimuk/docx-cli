@@ -24,6 +24,7 @@ Required:
 
 Optional:
   --author NAME     Author name (default: $DOCX_AUTHOR)
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be added; do not write the file
   -h, --help        Show this help
 
@@ -41,6 +42,7 @@ export async function run(args: string[]): Promise<number> {
 				to: { type: "string" },
 				text: { type: "string" },
 				author: { type: "string" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -92,6 +94,7 @@ export async function run(args: string[]): Promise<number> {
 	const date = new Date().toISOString();
 	const numericId = nextCommentId(view);
 	const replyParaId = generateParaId();
+	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
 		await respond({
@@ -101,6 +104,7 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			commentId: `c${numericId}`,
 			parentId: `c${parentNumericId}`,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -128,12 +132,12 @@ export async function run(args: string[]): Promise<number> {
 		}),
 	);
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "comments.reply",
-		path,
+		path: outputPath ?? path,
 		commentId: `c${numericId}`,
 		parentId: `c${parentNumericId}`,
 	});

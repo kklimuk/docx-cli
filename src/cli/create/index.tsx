@@ -1,3 +1,4 @@
+import { writeAtomic } from "@core/package";
 import JSZip from "jszip";
 import { parseArgs } from "util";
 import { EXIT, fail, respond, writeStdout } from "../respond";
@@ -80,7 +81,7 @@ export async function run(args: string[]): Promise<number> {
 		compression: "DEFLATE",
 		compressionOptions: { level: 6 },
 	});
-	await Bun.write(path, buf);
+	await writeAtomic(path, buf);
 
 	await respond({
 		ok: true,

@@ -18,6 +18,7 @@ Required:
 
 Optional:
   --unset           Mark unresolved instead of resolved
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
 
@@ -35,6 +36,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				id: { type: "string" },
 				unset: { type: "boolean" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -74,6 +76,8 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
+	const outputPath = parsed.values.output as string | undefined;
+
 	if (parsed.values["dry-run"]) {
 		await respond({
 			ok: true,
@@ -82,6 +86,7 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			commentId: `c${numericId}`,
 			resolved,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -99,12 +104,12 @@ export async function run(args: string[]): Promise<number> {
 	if (resolved) entry.setAttribute("w15:done", "1");
 	else delete entry.attributes["w15:done"];
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "comments.resolve",
-		path,
+		path: outputPath ?? path,
 		commentId: `c${numericId}`,
 		resolved,
 	});

@@ -1,4 +1,4 @@
-import { type DocView, saveDocView } from "@core";
+import { saveDocView } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
@@ -7,7 +7,6 @@ import {
 	findCommentParaId,
 	removeCommentMarkers,
 } from "./helpers";
-import { pushTrashEntry } from "./trash";
 
 const HELP = `docx comments delete — remove a comment
 
@@ -18,11 +17,9 @@ Required:
   --id ID           Comment id (e.g., c0)
 
 Optional:
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
   -h, --help        Show this help
-
-The deleted comment is journaled to <dir>/.docx-cli/trash.json so it can
-be brought back via "docx comments restore".
 
 Examples:
   docx comments delete doc.docx --id c2
@@ -36,6 +33,7 @@ export async function run(args: string[]): Promise<number> {
 			allowPositionals: true,
 			options: {
 				id: { type: "string" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -67,10 +65,7 @@ export async function run(args: string[]): Promise<number> {
 		return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
 	}
 
-	const anchor = view.doc.comments.find((c) => c.id === commentId)?.anchor;
-	if (!anchor) {
-		return fail("COMMENT_NOT_FOUND", `Anchor not found for ${commentId}`);
-	}
+	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
 		await respond({
@@ -79,22 +74,12 @@ export async function run(args: string[]): Promise<number> {
 			dryRun: true,
 			path,
 			commentId,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
-	const commentXml = XmlNode.serialize([commentReference.node]);
 	const paraId = findCommentParaId(view, commentId);
-	const extXml = paraId ? extractExtEntryXml(view, paraId) : null;
-
-	await pushTrashEntry(path, {
-		file: path.split("/").pop() ?? path,
-		deletedAt: new Date().toISOString(),
-		commentId,
-		anchor,
-		commentXml,
-		extXml,
-	});
 
 	const commentIndex = commentReference.parent.indexOf(commentReference.node);
 	if (commentIndex !== -1) commentReference.parent.splice(commentIndex, 1);
@@ -114,28 +99,13 @@ export async function run(args: string[]): Promise<number> {
 
 	removeCommentMarkers(view.documentTree, numericId);
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "comments.delete",
-		path,
+		path: outputPath ?? path,
 		commentId,
 	});
 	return EXIT.OK;
-}
-
-function extractExtEntryXml(view: DocView, paraId: string): string | null {
-	if (!view.commentsExtTree) return null;
-	const root = XmlNode.findRoot(view.commentsExtTree, "w15:commentsEx");
-	if (!root) return null;
-	for (const child of root.children) {
-		if (
-			child.tag === "w15:commentEx" &&
-			child.getAttribute("w15:paraId") === paraId
-		) {
-			return XmlNode.serialize([child]);
-		}
-	}
-	return null;
 }

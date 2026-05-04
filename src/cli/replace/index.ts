@@ -17,6 +17,7 @@ Options:
   --ignore-case     case-insensitive match
   --all             replace every match (default: just the first)
   --limit N         replace at most N matches (in document order)
+  -o, --output PATH write to PATH instead of overwriting FILE
   --dry-run         report what would change without writing the file
   -h, --help        show this help
 
@@ -52,6 +53,7 @@ export async function run(args: string[]): Promise<number> {
 				"ignore-case": { type: "boolean" },
 				all: { type: "boolean" },
 				limit: { type: "string" },
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -122,6 +124,8 @@ export async function run(args: string[]): Promise<number> {
 		text: match.text,
 	}));
 
+	const outputPath = parsed.values.output as string | undefined;
+
 	if (parsed.values["dry-run"]) {
 		await respond({
 			ok: true,
@@ -135,6 +139,7 @@ export async function run(args: string[]): Promise<number> {
 			totalMatches: allMatches.length,
 			replaced: selected.length,
 			matches: matchesPayload,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -188,12 +193,12 @@ export async function run(args: string[]): Promise<number> {
 		throw error;
 	}
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "replace",
-		path,
+		path: outputPath ?? path,
 		pattern,
 		replacement,
 		regex: useRegex,

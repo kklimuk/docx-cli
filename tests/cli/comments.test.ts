@@ -133,7 +133,7 @@ describe("docx comments", () => {
 		expect(all[0]?.resolved).toBe(true);
 	});
 
-	test("delete + restore round-trips", async () => {
+	test("delete removes the comment from the listing", async () => {
 		await runCli(
 			"comments",
 			"add",
@@ -153,19 +153,6 @@ describe("docx comments", () => {
 			"--include-resolved",
 		);
 		expect((afterDelete.parsed as unknown[]).length).toBe(0);
-
-		await runCli("comments", "restore", docPath, "--id", "c0");
-		const afterRestore = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
-		const restored = afterRestore.parsed as Array<{
-			id: string;
-			text: string;
-		}>;
-		expect(restored[0]).toMatchObject({ id: "c0", text: "hi" });
 	});
 
 	test("add anchors a comment across two paragraphs", async () => {
@@ -225,54 +212,6 @@ describe("docx comments", () => {
 				endBlockId: "p2",
 				endOffset: 6,
 			},
-		});
-	});
-
-	test("delete + restore round-trips a cross-block comment", async () => {
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--text",
-			"Second paragraph here.",
-		);
-		await runCli(
-			"comments",
-			"add",
-			docPath,
-			"--range",
-			"p0:16-p1:6",
-			"--text",
-			"two paragraphs",
-			"--author",
-			"A",
-		);
-		await runCli("comments", "delete", docPath, "--id", "c0");
-		const afterDelete = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
-		expect((afterDelete.parsed as unknown[]).length).toBe(0);
-
-		await runCli("comments", "restore", docPath, "--id", "c0");
-		const afterRestore = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
-		const restored = afterRestore.parsed as Array<{
-			id: string;
-			text: string;
-			anchor: { startBlockId: string; endBlockId: string };
-		}>;
-		expect(restored[0]).toMatchObject({
-			id: "c0",
-			text: "two paragraphs",
-			anchor: { startBlockId: "p0", endBlockId: "p1" },
 		});
 	});
 

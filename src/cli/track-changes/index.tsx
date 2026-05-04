@@ -14,6 +14,7 @@ Sets <w:trackChanges/> in word/settings.xml. When on, Word records new
 edits as tracked changes. Existing <w:ins>/<w:del> markers are unaffected.
 
 Options:
+  -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
 
@@ -36,6 +37,7 @@ export async function run(args: string[]): Promise<number> {
 			args,
 			allowPositionals: true,
 			options: {
+				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -77,6 +79,7 @@ export async function run(args: string[]): Promise<number> {
 	const hasTrackChanges = settingsRoot.children.some(
 		(child) => child.tag === "w:trackChanges",
 	);
+	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
 		await respond({
@@ -86,6 +89,7 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			mode,
 			previouslyOn: hasTrackChanges,
+			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -107,12 +111,12 @@ export async function run(args: string[]): Promise<number> {
 		});
 	}
 
-	await saveDocView(view);
+	await saveDocView(view, outputPath);
 
 	await respond({
 		ok: true,
 		operation: "track-changes",
-		path,
+		path: outputPath ?? path,
 		mode,
 		previouslyOn: hasTrackChanges,
 	});

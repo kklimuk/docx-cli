@@ -142,6 +142,60 @@ describe("docx insert / edit / delete", () => {
 		expect(after.byteLength).toBe(before.byteLength);
 	});
 
+	test("--output writes to a parallel file and leaves FILE untouched", async () => {
+		const beforeBytes = await Bun.file(docPath).arrayBuffer();
+		const outPath = `${docPath}.copy.docx`;
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Out-of-band",
+			"-o",
+			outPath,
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { path: string }).path).toBe(outPath);
+
+		const afterBytes = await Bun.file(docPath).arrayBuffer();
+		expect(afterBytes.byteLength).toBe(beforeBytes.byteLength);
+		expect(await Bun.file(outPath).exists()).toBe(true);
+
+		const read = await runCli("read", outPath);
+		const doc = read.parsed as {
+			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
+		};
+		const paragraphs = doc.blocks.filter((block) => block.type === "paragraph");
+		expect(paragraphs[1]?.runs?.[0]?.text).toBe("Out-of-band");
+	});
+
+	test("--dry-run with --output writes nothing and echoes the intended output", async () => {
+		const sourceBytes = await Bun.file(docPath).arrayBuffer();
+		const outPath = `${docPath}.copy.docx`;
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Should not appear",
+			"-o",
+			outPath,
+			"--dry-run",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: true,
+			dryRun: true,
+			path: docPath,
+			output: outPath,
+		});
+		const afterBytes = await Bun.file(docPath).arrayBuffer();
+		expect(afterBytes.byteLength).toBe(sourceBytes.byteLength);
+		expect(await Bun.file(outPath).exists()).toBe(false);
+	});
+
 	test("invalid locator returns block-not-found", async () => {
 		const result = await runCli("edit", docPath, "--at", "p99", "--text", "x");
 		expect(result.exitCode).toBe(3);

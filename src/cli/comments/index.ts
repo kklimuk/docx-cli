@@ -8,7 +8,6 @@ const SUBCOMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	list: () => import("./list"),
 	reply: () => import("./reply"),
 	resolve: () => import("./resolve"),
-	restore: () => import("./restore"),
 };
 
 const HELP = `docx comments — manage Word comments
@@ -22,7 +21,6 @@ Verbs:
   list     Print existing comments as JSON
   resolve  Mark a comment resolved
   delete   Remove a comment
-  restore  Restore a recently deleted comment
 
 Run "docx comments <verb> --help" for verb-specific help.
 `;

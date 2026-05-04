@@ -16,7 +16,7 @@ Commands:
   delete    FILE  Remove a block or run range
   find      FILE QUERY  Find text spans, return locators
   replace   FILE PATTERN REPL  Substitute text spans (sed for docx)
-  comments  …     Add, reply, resolve, delete, restore, list comments
+  comments  …     Add, reply, resolve, delete, list comments
   images    …     Extract, replace, list images
   track-changes FILE on|off  Toggle tracked-changes mode
   info      …     Reference material (schema, locators)

@@ -51,7 +51,6 @@ docx comments add     FILE --range p3:5-20 --text "..." [--author NAME]
 docx comments reply   FILE --to c0 --text "..."
 docx comments resolve FILE --id c0 [--unset]
 docx comments delete  FILE --id c0
-docx comments restore FILE --id c0
 docx comments list    FILE [--include-resolved] [--thread c0]
 
 docx images list    FILE
@@ -63,7 +62,7 @@ docx info schema [--ts]
 docx info locators [--json]
 ```
 
-Every command has `--help`. All mutating commands accept `--dry-run`. JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
+Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
 
 ### Locators
 
@@ -109,7 +108,7 @@ src/
     insert/              # insert FILE  (uses ./emit Paragraph component)
     edit/                # edit FILE
     delete/              # delete FILE
-    comments/            # add | reply | resolve | delete | restore | list
+    comments/            # add | reply | resolve | delete | list
     images/              # list | extract | replace
     track-changes/       # FILE on|off
     info/                # schema | locators (reference output)
@@ -135,8 +134,6 @@ tests/
 **ParaId auto-injection.** Comments authored by tools like mammoth or older Word versions lack `w14:paraId`, which `commentsExtended.xml` requires for resolve/reply. We detect this on resolve/reply and inject a fresh paraId, also adding the `xmlns:w14` namespace declaration to the `<w:comments>` root if missing.
 
 **Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
-
-**Trash for restore.** `comments delete` journals the removed comment XML + anchor info to `<dir>/.docx-cli/trash.json` so `comments restore --id cN` can re-anchor it at its original location.
 
 ## CI
 
