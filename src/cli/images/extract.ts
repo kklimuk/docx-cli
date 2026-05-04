@@ -1,13 +1,7 @@
 import { join } from "node:path";
-import {
-	type Block,
-	enrichImageHashes,
-	type ImageRun,
-	openDocView,
-	PkgError,
-} from "@core";
+import { type Block, enrichImageHashes, type ImageRun } from "@core";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
 const HELP = `docx images extract — dump image bytes to a directory
 
@@ -75,20 +69,8 @@ export async function run(args: string[]): Promise<number> {
 
 	const targetId = parsed.values.id as string | undefined;
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
 	await enrichImageHashes(view);
 

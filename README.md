@@ -44,6 +44,9 @@ docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx edit   FILE --at p3 --text "..." | --runs '[...]'
 docx delete FILE --at p3
 
+docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N]
+docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--dry-run]
+
 docx comments add     FILE --range p3:5-20 --text "..." [--author NAME]
 docx comments reply   FILE --to c0 --text "..."
 docx comments resolve FILE --id c0 [--unset]
@@ -56,8 +59,8 @@ docx images extract FILE --to ./media [--id imgN]
 docx images replace FILE --at imgN --with ./new.png
 
 docx track-changes FILE on|off
-docx schema [--ts]
-docx locators [--json]
+docx info schema [--ts]
+docx info locators [--json]
 ```
 
 Every command has `--help`. All mutating commands accept `--dry-run`. JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
@@ -72,7 +75,7 @@ tN              table N; tN:rRcC for cell at row R, col C
 cN, imgN        comment / image ids
 ```
 
-Run `docx locators` for the full reference.
+Run `docx info locators` for the full reference.
 
 ## Development
 
@@ -109,8 +112,7 @@ src/
     comments/            # add | reply | resolve | delete | restore | list
     images/              # list | extract | replace
     track-changes/       # FILE on|off
-    schema/              # AST JSON Schema + TS source
-    locators-cmd/        # grammar reference
+    info/                # schema | locators (reference output)
   core/
     package/             # JSZip open/close, named-part read/write
     parser/              # XmlNode class + parse/serialize + JSX factory
@@ -118,13 +120,13 @@ src/
     ast/                 # types + DocView + XML→AST reader
     locators/            # parse "p3:5-20" + resolve to refs
 tests/
-  core/, cli/, integration/    # 51 tests, 9 files
-  fixtures/                    # 11 .docx fixtures across producers
+  core/, cli/, integration/
+  fixtures/
 ```
 
 ## How It Works
 
-**In-place XML mutation.** The AST returned by `read` is a *view* over the parsed XML tree, not a separate model. When you `edit` or `comments add`, we mutate the underlying XML nodes directly and serialize back. Anything we don't model in the AST (custom styles, theme colors, schema extensions) survives because we never re-emit untouched regions.
+**In-place XML mutation.** The AST returned by `read` is a _view_ over the parsed XML tree, not a separate model. When you `edit` or `comments add`, we mutate the underlying XML nodes directly and serialize back. Anything we don't model in the AST (custom styles, theme colors, schema extensions) survives because we never re-emit untouched regions.
 
 **JSX for emitters.** Constructing OOXML fragments imperatively (`<w:rPr>` → `<w:b/>` → `<w:color w:val="800080"/>`) gets verbose. We write emitters in JSX with a custom factory: `<w.rPr><w.b/><w.color w-val="800080"/></w.rPr>` becomes the right `XmlNode` tree. Component names are PascalCase (`<Paragraph>`, `<RunProperties>`); they return `XmlNode | null` so empty wrappers get omitted automatically.
 
@@ -140,11 +142,11 @@ tests/
 
 GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on push to `main` and on PRs:
 
-| Job | What |
-|---|---|
-| `check` | `biome check . && knip-bun && tsc --noEmit` |
-| `unit-tests` | `bun run test:unit` (core + cli, fast) |
-| `integration-tests` | Installs LibreOffice, runs `bun run test:integration` |
-| `build-binary` | Smoke-builds via `bun build --compile` and runs `--version` |
+| Job                 | What                                                        |
+| ------------------- | ----------------------------------------------------------- |
+| `check`             | `biome check . && knip-bun && tsc --noEmit`                 |
+| `unit-tests`        | `bun run test:unit` (core + cli, fast)                      |
+| `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
+| `build-binary`      | Smoke-builds via `bun build --compile` and runs `--version` |
 
 `.github/workflows/release.yml` triggers on `v*` tags, matrix-builds the five binaries, and uploads them to a GitHub Release via [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).

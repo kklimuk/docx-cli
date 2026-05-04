@@ -1,8 +1,9 @@
-import { openDocView, PkgError } from "@core";
+import { saveDocView } from "@core";
 import { w } from "@core/jsx";
+import { registerPart } from "@core/package";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
 const HELP = `docx track-changes — toggle the document's tracked-changes mode
 
@@ -62,29 +63,15 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
-	const settingsXml = view.pkg.hasPart(SETTINGS_PART)
-		? await view.pkg.readText(SETTINGS_PART)
-		: null;
-	const settingsTree = settingsXml ? XmlNode.parse(settingsXml) : [];
-	let settingsRoot = XmlNode.findRoot(settingsTree, "w:settings");
+	const wasMissing = view.settingsTree === undefined;
+	if (!view.settingsTree) view.settingsTree = [];
+	let settingsRoot = XmlNode.findRoot(view.settingsTree, "w:settings");
 	if (!settingsRoot) {
 		settingsRoot = (<w.settings {...{ "xmlns:w": NS_W }} />) as XmlNode;
-		settingsTree.push(settingsRoot);
+		view.settingsTree.push(settingsRoot);
 	}
 
 	const hasTrackChanges = settingsRoot.children.some(
@@ -111,24 +98,16 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	view.pkg.writeText(
-		SETTINGS_PART,
-		XmlNode.serializeWithDeclaration(settingsTree),
-	);
-
-	if (!settingsXml) {
-		registerSettingsPart(view);
+	if (wasMissing) {
+		registerPart(view.relationshipsTree, view.contentTypesTree, {
+			partName: SETTINGS_PART,
+			contentType: SETTINGS_CONTENT_TYPE,
+			relationshipType: SETTINGS_REL_TYPE,
+			target: "settings.xml",
+		});
 	}
 
-	view.pkg.writeText(
-		"word/_rels/document.xml.rels",
-		XmlNode.serializeWithDeclaration(view.relationshipsTree),
-	);
-	view.pkg.writeText(
-		"[Content_Types].xml",
-		XmlNode.serializeWithDeclaration(view.contentTypesTree),
-	);
-	await view.pkg.save();
+	await saveDocView(view);
 
 	await respond({
 		ok: true,
@@ -138,60 +117,4 @@ export async function run(args: string[]): Promise<number> {
 		previouslyOn: hasTrackChanges,
 	});
 	return EXIT.OK;
-}
-
-function registerSettingsPart(
-	view: Awaited<ReturnType<typeof openDocView>>,
-): void {
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (relationships) {
-		const alreadyLinked = relationships.children.some(
-			(child) =>
-				child.tag === "Relationship" &&
-				child.getAttribute("Type") === SETTINGS_REL_TYPE,
-		);
-		if (!alreadyLinked) {
-			relationships.children.push(
-				new XmlNode("Relationship", {
-					Id: nextRelationshipId(relationships),
-					Type: SETTINGS_REL_TYPE,
-					Target: "settings.xml",
-				}),
-			);
-		}
-	}
-
-	const types = XmlNode.findRoot(view.contentTypesTree, "Types");
-	if (types) {
-		const exists = types.children.some(
-			(child) =>
-				child.tag === "Override" &&
-				child.getAttribute("PartName") === `/${SETTINGS_PART}`,
-		);
-		if (!exists) {
-			types.children.push(
-				new XmlNode("Override", {
-					PartName: `/${SETTINGS_PART}`,
-					ContentType: SETTINGS_CONTENT_TYPE,
-				}),
-			);
-		}
-	}
-}
-
-function nextRelationshipId(relationships: XmlNode): string {
-	let highest = 0;
-	for (const child of relationships.children) {
-		if (child.tag !== "Relationship") continue;
-		const id = child.getAttribute("Id");
-		if (!id) continue;
-		const match = id.match(/^rId(\d+)$/);
-		if (!match) continue;
-		const numeric = Number(match[1]);
-		if (Number.isFinite(numeric) && numeric > highest) highest = numeric;
-	}
-	return `rId${highest + 1}`;
 }

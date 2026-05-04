@@ -68,7 +68,6 @@ export type ImageRun = {
 	widthEmu?: number;
 	heightEmu?: number;
 	alt?: string;
-	extractedPath?: string;
 };
 
 export type BreakRun = {

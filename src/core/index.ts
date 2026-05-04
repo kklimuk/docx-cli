@@ -26,9 +26,11 @@ export type {
 	TrackedChange,
 } from "./ast/types";
 export {
+	type BlockTarget,
 	type Locator,
 	LocatorParseError,
 	LocatorResolveError,
+	locatorToBlockTarget,
 	parseLocator,
 	resolveBlock,
 	resolveComment,

@@ -1,14 +1,14 @@
-import {
-	LocatorResolveError,
-	openDocView,
-	PkgError,
-	type Run,
-	resolveBlock,
-	saveDocView,
-} from "@core";
+import { type Run, saveDocView } from "@core";
 import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	resolveBlockOrFail,
+	respond,
+	writeStdout,
+} from "../respond";
 import { Paragraph, type ParagraphOptions } from "./emit";
 
 const HELP = `docx insert — insert a paragraph at a locator
@@ -114,31 +114,12 @@ export async function run(args: string[]): Promise<number> {
 		paragraphOptions.alignment = alignmentValue;
 	}
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
 	const targetLocator = (after ?? before) as string;
-	let blockRef: ReturnType<typeof resolveBlock>;
-	try {
-		blockRef = resolveBlock(view, targetLocator);
-	} catch (resolveError) {
-		if (resolveError instanceof LocatorResolveError) {
-			return fail("BLOCK_NOT_FOUND", resolveError.message);
-		}
-		throw resolveError;
-	}
+	const blockRef = await resolveBlockOrFail(view, targetLocator);
+	if (typeof blockRef === "number") return blockRef;
 
 	let paragraphNode: XmlNode;
 	if (text !== undefined) {

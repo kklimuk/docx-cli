@@ -7,9 +7,21 @@ export type ParagraphOptions = {
 	alignment?: "left" | "center" | "right" | "justify";
 };
 
+type EmittableTextFormatting = Pick<
+	TextRun,
+	| "color"
+	| "highlight"
+	| "bold"
+	| "italic"
+	| "underline"
+	| "strike"
+	| "font"
+	| "sizeHalfPoints"
+>;
+
 export type ParagraphProps = ParagraphOptions &
 	(
-		| ({ text: string; runs?: never } & Partial<Omit<TextRun, "type" | "text">>)
+		| ({ text: string; runs?: never } & Partial<EmittableTextFormatting>)
 		| { runs: Run[]; text?: never }
 	);
 

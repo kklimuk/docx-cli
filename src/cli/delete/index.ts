@@ -1,12 +1,13 @@
-import {
-	LocatorResolveError,
-	openDocView,
-	PkgError,
-	resolveBlock,
-	saveDocView,
-} from "@core";
+import { saveDocView } from "@core";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	resolveBlockOrFail,
+	respond,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx delete — remove a block at a locator
 
@@ -53,30 +54,11 @@ export async function run(args: string[]): Promise<number> {
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at LOCATOR", HELP);
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
-	let blockRef: ReturnType<typeof resolveBlock>;
-	try {
-		blockRef = resolveBlock(view, at);
-	} catch (resolveError) {
-		if (resolveError instanceof LocatorResolveError) {
-			return fail("BLOCK_NOT_FOUND", resolveError.message);
-		}
-		throw resolveError;
-	}
+	const blockRef = await resolveBlockOrFail(view, at);
+	if (typeof blockRef === "number") return blockRef;
 
 	const targetIndex = blockRef.parent.indexOf(blockRef.node);
 	if (targetIndex === -1) {

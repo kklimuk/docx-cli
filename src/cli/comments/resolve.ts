@@ -1,7 +1,7 @@
-import { openDocView, PkgError, saveDocView } from "@core";
+import { saveDocView } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import {
 	ensureCommentParaId,
 	ensureCommentsExtPart,
@@ -58,20 +58,8 @@ export async function run(args: string[]): Promise<number> {
 	const numericId = idInput.startsWith("c") ? idInput.slice(1) : idInput;
 	const resolved = !parsed.values.unset;
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
 	const commentReference = findCommentByNumericId(view, numericId);
 	if (!commentReference) {

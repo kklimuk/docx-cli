@@ -1,5 +1,11 @@
 import JSZip from "jszip";
 
+export {
+	nextRelationshipId,
+	type PartRegistration,
+	registerPart,
+} from "./parts";
+
 export class PkgError extends Error {
 	constructor(
 		public code: string,

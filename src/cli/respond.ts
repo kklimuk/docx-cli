@@ -1,10 +1,17 @@
+import {
+	type BlockReference,
+	type DocView,
+	LocatorResolveError,
+	openDocView,
+	PkgError,
+	resolveBlock,
+} from "@core";
+
 export const EXIT = {
 	OK: 0,
 	GENERAL_ERROR: 1,
 	USAGE_ERROR: 2,
 	NOT_FOUND: 3,
-	PERMISSION_DENIED: 4,
-	ALREADY_APPLIED: 5,
 } as const;
 
 export type ErrorCode =
@@ -16,8 +23,8 @@ export type ErrorCode =
 	| "BLOCK_NOT_FOUND"
 	| "COMMENT_NOT_FOUND"
 	| "IMAGE_NOT_FOUND"
-	| "PERMISSION_DENIED"
-	| "ALREADY_APPLIED"
+	| "MATCH_NOT_FOUND"
+	| "TRACKED_CHANGE_CONFLICT"
 	| "UNHANDLED";
 
 export async function respond(payload: unknown): Promise<void> {
@@ -54,13 +61,39 @@ function exitCodeFor(code: ErrorCode): number {
 		case "BLOCK_NOT_FOUND":
 		case "COMMENT_NOT_FOUND":
 		case "IMAGE_NOT_FOUND":
+		case "MATCH_NOT_FOUND":
 			return EXIT.NOT_FOUND;
-		case "PERMISSION_DENIED":
-			return EXIT.PERMISSION_DENIED;
-		case "ALREADY_APPLIED":
-			return EXIT.ALREADY_APPLIED;
 		case "NOT_A_ZIP":
+		case "TRACKED_CHANGE_CONFLICT":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
+	}
+}
+
+export async function openOrFail(path: string): Promise<DocView | number> {
+	try {
+		return await openDocView(path);
+	} catch (err) {
+		if (err instanceof PkgError) {
+			if (err.code === "FILE_NOT_FOUND") {
+				return await fail("FILE_NOT_FOUND", err.message);
+			}
+			if (err.code === "NOT_A_ZIP") return await fail("NOT_A_ZIP", err.message);
+		}
+		throw err;
+	}
+}
+
+export async function resolveBlockOrFail(
+	view: DocView,
+	locator: string,
+): Promise<BlockReference | number> {
+	try {
+		return resolveBlock(view, locator);
+	} catch (err) {
+		if (err instanceof LocatorResolveError) {
+			return await fail("BLOCK_NOT_FOUND", err.message);
+		}
+		throw err;
 	}
 }

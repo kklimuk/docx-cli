@@ -19,6 +19,7 @@ export type DocView = {
 	relationshipsTree: XmlNode[];
 	contentTypesTree: XmlNode[];
 	corePropertiesTree?: XmlNode[];
+	settingsTree?: XmlNode[];
 	doc: Doc;
 	blockReferences: Map<string, BlockReference>;
 	commentReferences: Map<string, CommentReference>;
@@ -48,6 +49,9 @@ export async function openDocView(path: string): Promise<DocView> {
 	const corePropertiesTree = pkg.hasPart("docProps/core.xml")
 		? XmlNode.parse(await pkg.readText("docProps/core.xml"))
 		: undefined;
+	const settingsTree = pkg.hasPart("word/settings.xml")
+		? XmlNode.parse(await pkg.readText("word/settings.xml"))
+		: undefined;
 
 	const view: DocView = {
 		pkg,
@@ -57,6 +61,7 @@ export async function openDocView(path: string): Promise<DocView> {
 		relationshipsTree,
 		contentTypesTree,
 		corePropertiesTree,
+		settingsTree,
 		doc: undefined as unknown as Doc,
 		blockReferences: new Map(),
 		commentReferences: new Map(),
@@ -88,6 +93,12 @@ export async function saveDocView(view: DocView, path?: string): Promise<void> {
 		view.pkg.writeText(
 			"word/commentsExtended.xml",
 			XmlNode.serialize(view.commentsExtTree),
+		);
+	}
+	if (view.settingsTree) {
+		view.pkg.writeText(
+			"word/settings.xml",
+			XmlNode.serialize(view.settingsTree),
 		);
 	}
 	await view.pkg.save(path);

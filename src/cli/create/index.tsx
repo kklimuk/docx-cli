@@ -63,9 +63,7 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const author =
-		(parsed.values.author as string | undefined) ??
-		process.env.DOCX_AUTHOR ??
-		"";
+		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
 	const title = (parsed.values.title as string | undefined) ?? "";
 	const text = parsed.values.text as string | undefined;
 	const now = new Date().toISOString();

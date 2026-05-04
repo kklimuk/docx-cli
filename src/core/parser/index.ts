@@ -1,3 +1,4 @@
+export { deepCloneNode, runTextLength, sliceRun } from "./run-ops";
 export {
 	type NullableXmlNode,
 	type XmlAttributes,
