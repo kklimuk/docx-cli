@@ -26,7 +26,7 @@ export class LocatorParseError extends Error {
 	}
 }
 
-const BLOCK_RE = /^(p|t|s|cellp)(\d+)$/;
+const BLOCK_RE = /^(p|t|s)(\d+)$/;
 const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
 const RANGE_RE = /^p(\d+):(\d+)-p(\d+):(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;

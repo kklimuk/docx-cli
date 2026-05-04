@@ -142,6 +142,33 @@ function readParagraph(
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
 			for (const inner of child.children) {
+				if (inner.tag === "w:commentRangeStart") {
+					const commentId = inner.getAttribute("w:id");
+					if (commentId) {
+						const key = `c${commentId}`;
+						activeComments.add(key);
+						state.openComments.set(key, { blockId: id, offset });
+					}
+					continue;
+				}
+				if (inner.tag === "w:commentRangeEnd") {
+					const commentId = inner.getAttribute("w:id");
+					if (commentId) {
+						const key = `c${commentId}`;
+						activeComments.delete(key);
+						const opened = state.openComments.get(key);
+						if (opened) {
+							state.commentAnchors.set(key, {
+								startBlockId: opened.blockId,
+								startOffset: opened.offset,
+								endBlockId: id,
+								endOffset: offset,
+							});
+							state.openComments.delete(key);
+						}
+					}
+					continue;
+				}
 				if (inner.tag !== "w:r") continue;
 				const run = readRun(view, inner, activeComments, change, state);
 				if (!run) continue;
@@ -317,14 +344,27 @@ function readTable(
 	state: WalkState,
 ): Table {
 	const rows: TableRow[] = [];
+	let rowIndex = 0;
 	for (const child of node.children) {
 		if (child.tag !== "w:tr") continue;
 		const cells: TableCell[] = [];
+		let columnIndex = 0;
 		for (const cellNode of child.children) {
 			if (cellNode.tag !== "w:tc") continue;
-			cells.push({ blocks: readCellBlocks(view, cellNode, state) });
+			cells.push({
+				blocks: readCellBlocks(
+					view,
+					cellNode,
+					id,
+					rowIndex,
+					columnIndex,
+					state,
+				),
+			});
+			columnIndex++;
 		}
 		rows.push({ cells });
+		rowIndex++;
 	}
 	return { id, type: "table", rows };
 }
@@ -332,14 +372,18 @@ function readTable(
 function readCellBlocks(
 	view: DocView,
 	cell: XmlNode,
+	tableId: string,
+	rowIndex: number,
+	columnIndex: number,
 	state: WalkState,
 ): Block[] {
 	const blocks: Block[] = [];
 	let paragraphIndex = 0;
 	for (const child of cell.children) {
 		if (child.tag === "w:p") {
-			const id = `cellp${paragraphIndex++}`;
+			const id = `${tableId}:r${rowIndex}c${columnIndex}:p${paragraphIndex++}`;
 			blocks.push(readParagraph(view, child, id, state));
+			view.blockReferences.set(id, { node: child, parent: cell.children });
 		}
 	}
 	return blocks;

@@ -213,7 +213,7 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (parsed.values.ts) {
-		await Bun.write(Bun.stdout, TS_SOURCE);
+		await writeStdout(TS_SOURCE);
 		return EXIT.OK;
 	}
 

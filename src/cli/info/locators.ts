@@ -14,21 +14,22 @@ Options:
 const REFERENCE = `LOCATOR GRAMMAR
 
 Block locators:
-  pN          Paragraph N (e.g., p3)
-  tN          Table N
-  sN          Section break N
-  cellpN      Paragraph inside a table cell
+  pN              Paragraph N (e.g., p3)
+  tN              Table N
+  sN              Section break N
+  tT:rRcC:pK      Paragraph K of cell (R,C) in table T
 
 Span locators (within a single paragraph):
-  pN:S-E      Characters S..E of paragraph N (inclusive start, exclusive end)
+  pN:S-E          Characters S..E of paragraph N (inclusive start, exclusive end)
+  tT:rRcC:pK:S-E  Characters S..E of a cell paragraph
 
 Range locators (across blocks):
-  pN:S-pM:E   From char S of paragraph N to char E of paragraph M
+  pN:S-pM:E       From char S of paragraph N to char E of paragraph M
 
 Entity locators:
-  cN          Comment id (e.g., c0)
-  imgN        Image id (e.g., img2)
-  tN:rRcC     Cell at row R, column C of table tN
+  cN              Comment id (e.g., c0)
+  imgN            Image id (e.g., img2)
+  tN:rRcC         Cell at row R, column C of table tN
 
 Examples:
   p3              -> the entire paragraph p3
@@ -38,6 +39,7 @@ Examples:
   img0            -> image img0
   t0:r1c2         -> cell at row 1, col 2 of table t0
   t0:r1c2:p0      -> first paragraph of that cell
+  t0:r1c2:p0:5-10 -> chars 5..10 of that paragraph
 
 Notes:
   Block ids are positional and shift after structural edits — re-read
@@ -50,13 +52,14 @@ const JSON_REFERENCE = {
 		paragraph: { syntax: "pN", example: "p3" },
 		table: { syntax: "tN", example: "t0" },
 		sectionBreak: { syntax: "sN", example: "s0" },
-		cellParagraph: { syntax: "cellpN", example: "cellp0" },
+		cellParagraph: { syntax: "tT:rRcC:pK", example: "t0:r1c2:p0" },
 	},
 	spanLocator: {
 		syntax: "pN:S-E",
 		example: "p3:5-20",
 		semantics:
 			"Characters S..E within paragraph N (start inclusive, end exclusive)",
+		cellSyntax: "tT:rRcC:pK:S-E",
 	},
 	rangeLocator: {
 		syntax: "pN:S-pM:E",
@@ -99,10 +102,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (parsed.values.json) {
-		await Bun.write(Bun.stdout, `${JSON.stringify(JSON_REFERENCE, null, 2)}\n`);
+		await writeStdout(`${JSON.stringify(JSON_REFERENCE, null, 2)}\n`);
 		return EXIT.OK;
 	}
 
-	await Bun.write(Bun.stdout, REFERENCE);
+	await writeStdout(REFERENCE);
 	return EXIT.OK;
 }

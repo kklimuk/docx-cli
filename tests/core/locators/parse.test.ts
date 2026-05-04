@@ -6,10 +6,6 @@ describe("parseLocator", () => {
 		expect(parseLocator("p3")).toEqual({ kind: "block", blockId: "p3" });
 		expect(parseLocator("t0")).toEqual({ kind: "block", blockId: "t0" });
 		expect(parseLocator("s1")).toEqual({ kind: "block", blockId: "s1" });
-		expect(parseLocator("cellp2")).toEqual({
-			kind: "block",
-			blockId: "cellp2",
-		});
 	});
 
 	test("parses comment and image ids", () => {
@@ -47,6 +43,13 @@ describe("parseLocator", () => {
 			row: 1,
 			col: 2,
 			inner: { kind: "block", blockId: "p0" },
+		});
+		expect(parseLocator("t0:r1c2:p0:5-10")).toEqual({
+			kind: "cell",
+			tableId: "t0",
+			row: 1,
+			col: 2,
+			inner: { kind: "blockSpan", blockId: "p0", start: 5, end: 10 },
 		});
 	});
 

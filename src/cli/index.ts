@@ -8,11 +8,12 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	create: () => import("./create"),
 	delete: () => import("./delete"),
 	edit: () => import("./edit"),
+	find: () => import("./find"),
 	images: () => import("./images"),
+	info: () => import("./info"),
 	insert: () => import("./insert"),
-	locators: () => import("./locators-cmd"),
 	read: () => import("./read"),
-	schema: () => import("./schema"),
+	replace: () => import("./replace"),
 	"track-changes": () => import("./track-changes"),
 };
 
@@ -21,7 +22,7 @@ export async function main(argv: string[]): Promise<number> {
 	const cmd = args[0];
 
 	if (!cmd) {
-		process.stderr.write(
+		Bun.stderr.write(
 			'Usage: docx <command> [options]\nRun "docx --help" for available commands.\n',
 		);
 		return 2;
