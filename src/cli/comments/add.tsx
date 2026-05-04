@@ -1,17 +1,22 @@
 import {
 	type Locator,
 	LocatorParseError,
-	LocatorResolveError,
-	openDocView,
-	PkgError,
+	locatorToBlockTarget,
 	parseLocator,
-	resolveBlock,
 	saveDocView,
 } from "@core";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	resolveBlockOrFail,
+	respond,
+	writeStdout,
+} from "../respond";
 import {
 	addCommentMarkersToParagraph,
+	addCommentRangeMarkers,
 	authorInitials,
 	CommentBody,
 	type CommentSpan,
@@ -27,8 +32,12 @@ Usage:
   docx comments add FILE [options]
 
 Required:
-  --range LOCATOR   Where to anchor (e.g., p3 for the whole paragraph,
-                    p3:5-20 to comment on chars 5..20 of p3)
+  --range LOCATOR   Where to anchor. Supports:
+                      pN              whole paragraph
+                      pN:S-E          chars S..E of pN
+                      pN:S-pM:E       chars S of pN through char E of pM (cross-paragraph)
+                      tT:rRcC:pK      whole cell paragraph
+                      tT:rRcC:pK:S-E  chars S..E of cell paragraph
   --text TEXT       Comment body
 
 Optional:
@@ -39,6 +48,7 @@ Optional:
 Examples:
   docx comments add doc.docx --range p3 --text "Reconsider this paragraph"
   docx comments add doc.docx --range p3:5-20 --text "Sharper wording?" --author "Jane"
+  docx comments add doc.docx --range p3:5-p5:10 --text "Whole section?" --author "Reviewer"
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -84,49 +94,27 @@ export async function run(args: string[]): Promise<number> {
 		throw error;
 	}
 
-	const blockId =
-		locator.kind === "block"
-			? locator.blockId
-			: locator.kind === "blockSpan"
-				? locator.blockId
-				: null;
-	if (!blockId?.startsWith("p")) {
+	if (locator.kind === "range") {
+		return runCrossBlock(parsed, path, rangeInput, locator, text);
+	}
+
+	const target = locatorToBlockTarget(locator);
+	if (!target) {
 		return fail(
 			"INVALID_LOCATOR",
-			"comments add supports paragraph locators only (pN or pN:start-end)",
-			"Cross-block ranges and table-cell anchors are not yet supported.",
+			"comments add supports paragraph locators only (pN, pN:start-end, pN:S-pM:E, or tT:rRcC:pK[:start-end])",
+			"Comments and images are not valid anchors.",
 		);
 	}
+	const blockId = target.blockId;
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
-	let paragraphRef: ReturnType<typeof resolveBlock>;
-	try {
-		paragraphRef = resolveBlock(view, blockId);
-	} catch (error) {
-		if (error instanceof LocatorResolveError) {
-			return fail("BLOCK_NOT_FOUND", error.message);
-		}
-		throw error;
-	}
+	const paragraphRef = await resolveBlockOrFail(view, blockId);
+	if (typeof paragraphRef === "number") return paragraphRef;
 
-	const span: CommentSpan | undefined =
-		locator.kind === "blockSpan"
-			? { start: locator.start, end: locator.end }
-			: undefined;
+	const span: CommentSpan | undefined = target.span;
 
 	const author =
 		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
@@ -148,6 +136,80 @@ export async function run(args: string[]): Promise<number> {
 
 	try {
 		addCommentMarkersToParagraph(paragraphRef.node, numericId, span);
+	} catch (error) {
+		if (error instanceof SpanOutOfRangeError) {
+			return fail("INVALID_LOCATOR", error.message);
+		}
+		throw error;
+	}
+
+	const commentsRoot = ensureCommentsPart(view);
+	commentsRoot.children.push(
+		<CommentBody
+			options={{
+				id: numericId,
+				author,
+				date,
+				initials: authorInitials(author),
+				paraId,
+				text,
+			}}
+		/>,
+	);
+
+	await saveDocView(view);
+
+	await respond({
+		ok: true,
+		operation: "comments.add",
+		path,
+		commentId: `c${numericId}`,
+		locator: rangeInput,
+	});
+	return EXIT.OK;
+}
+
+async function runCrossBlock(
+	parsed: ReturnType<typeof parseArgs>,
+	path: string,
+	rangeInput: string,
+	locator: Extract<Locator, { kind: "range" }>,
+	text: string,
+): Promise<number> {
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
+
+	const startRef = await resolveBlockOrFail(view, locator.start.blockId);
+	if (typeof startRef === "number") return startRef;
+	const endRef = await resolveBlockOrFail(view, locator.end.blockId);
+	if (typeof endRef === "number") return endRef;
+
+	const author =
+		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
+	const date = new Date().toISOString();
+	const numericId = nextCommentId(view);
+	const paraId = generateParaId();
+
+	if (parsed.values["dry-run"]) {
+		await respond({
+			ok: true,
+			operation: "comments.add",
+			dryRun: true,
+			path,
+			commentId: `c${numericId}`,
+			locator: rangeInput,
+		});
+		return EXIT.OK;
+	}
+
+	try {
+		addCommentRangeMarkers(
+			startRef.node,
+			locator.start.offset,
+			endRef.node,
+			locator.end.offset,
+			numericId,
+		);
 	} catch (error) {
 		if (error instanceof SpanOutOfRangeError) {
 			return fail("INVALID_LOCATOR", error.message);

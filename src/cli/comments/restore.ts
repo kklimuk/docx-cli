@@ -1,10 +1,9 @@
-import { openDocView, PkgError, saveDocView } from "@core";
+import { saveDocView } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import {
-	addCommentMarkersToParagraph,
-	type CommentSpan,
+	addCommentRangeMarkers,
 	ensureCommentsExtPart,
 	ensureCommentsPart,
 	SpanOutOfRangeError,
@@ -81,45 +80,32 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	if (entry.anchor.startBlockId !== entry.anchor.endBlockId) {
-		return fail(
-			"USAGE",
-			"Cross-block comment restore is not yet supported",
-			"v1 supports restoring single-paragraph comment anchors only.",
-		);
-	}
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
 
-	let view: Awaited<ReturnType<typeof openDocView>>;
-	try {
-		view = await openDocView(path);
-	} catch (openError) {
-		if (openError instanceof PkgError) {
-			if (openError.code === "FILE_NOT_FOUND") {
-				return fail("FILE_NOT_FOUND", openError.message);
-			}
-			if (openError.code === "NOT_A_ZIP") {
-				return fail("NOT_A_ZIP", openError.message);
-			}
-		}
-		throw openError;
-	}
-
-	const blockId = entry.anchor.startBlockId;
-	const block = view.blockReferences.get(blockId);
-	if (!block) {
+	const startBlock = view.blockReferences.get(entry.anchor.startBlockId);
+	if (!startBlock) {
 		return fail(
 			"BLOCK_NOT_FOUND",
-			`Original anchor block ${blockId} no longer exists`,
+			`Original anchor block ${entry.anchor.startBlockId} no longer exists`,
+		);
+	}
+	const endBlock = view.blockReferences.get(entry.anchor.endBlockId);
+	if (!endBlock) {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			`Original anchor block ${entry.anchor.endBlockId} no longer exists`,
 		);
 	}
 
-	const span: CommentSpan = {
-		start: entry.anchor.startOffset,
-		end: entry.anchor.endOffset,
-	};
-
 	try {
-		addCommentMarkersToParagraph(block.node, numericId, span);
+		addCommentRangeMarkers(
+			startBlock.node,
+			entry.anchor.startOffset,
+			endBlock.node,
+			entry.anchor.endOffset,
+			numericId,
+		);
 	} catch (error) {
 		if (error instanceof SpanOutOfRangeError) {
 			return fail(

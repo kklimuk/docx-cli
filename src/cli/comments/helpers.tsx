@@ -1,6 +1,7 @@
 import type { DocView } from "@core";
 import { w, w15 } from "@core/jsx";
-import { XmlNode } from "@core/parser";
+import { registerPart } from "@core/package";
+import { runTextLength, sliceRun, XmlNode } from "@core/parser";
 
 const COMMENTS_REL_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
@@ -54,7 +55,7 @@ export function ensureCommentsPart(view: DocView): XmlNode {
 	}
 	const root = <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
 	view.commentsTree = [root];
-	registerPart(view, {
+	registerPart(view.relationshipsTree, view.contentTypesTree, {
 		partName: "word/comments.xml",
 		contentType: COMMENTS_CONTENT_TYPE,
 		relationshipType: COMMENTS_REL_TYPE,
@@ -79,74 +80,13 @@ export function ensureCommentsExtPart(view: DocView): XmlNode {
 		/>
 	);
 	view.commentsExtTree = [root];
-	registerPart(view, {
+	registerPart(view.relationshipsTree, view.contentTypesTree, {
 		partName: "word/commentsExtended.xml",
 		contentType: COMMENTS_EXT_CONTENT_TYPE,
 		relationshipType: COMMENTS_EXT_REL_TYPE,
 		target: "commentsExtended.xml",
 	});
 	return root;
-}
-
-type PartRegistration = {
-	partName: string;
-	contentType: string;
-	relationshipType: string;
-	target: string;
-};
-
-function registerPart(view: DocView, part: PartRegistration): void {
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (relationships) {
-		const alreadyLinked = relationships.children.some(
-			(child) =>
-				child.tag === "Relationship" &&
-				child.getAttribute("Type") === part.relationshipType,
-		);
-		if (!alreadyLinked) {
-			relationships.children.push(
-				new XmlNode("Relationship", {
-					Id: nextRelationshipId(relationships),
-					Type: part.relationshipType,
-					Target: part.target,
-				}),
-			);
-		}
-	}
-
-	const types = XmlNode.findRoot(view.contentTypesTree, "Types");
-	if (types) {
-		const overrideExists = types.children.some(
-			(child) =>
-				child.tag === "Override" &&
-				child.getAttribute("PartName") === `/${part.partName}`,
-		);
-		if (!overrideExists) {
-			types.children.push(
-				new XmlNode("Override", {
-					PartName: `/${part.partName}`,
-					ContentType: part.contentType,
-				}),
-			);
-		}
-	}
-}
-
-function nextRelationshipId(relationships: XmlNode): string {
-	let highest = 0;
-	for (const child of relationships.children) {
-		if (child.tag !== "Relationship") continue;
-		const id = child.getAttribute("Id");
-		if (!id) continue;
-		const match = id.match(/^rId(\d+)$/);
-		if (!match) continue;
-		const numeric = Number(match[1]);
-		if (Number.isFinite(numeric) && numeric > highest) highest = numeric;
-	}
-	return `rId${highest + 1}`;
 }
 
 export type CommentSpan = { start: number; end: number };
@@ -183,143 +123,198 @@ export function addCommentMarkersToParagraph(
 			`Span ${range.start}-${range.end} out of paragraph length ${total}`,
 		);
 	}
+	placeMarkersInParagraph(paragraph, [
+		{ offset: range.start, node: commentRangeStartMarker(commentId) },
+		{
+			offset: range.end,
+			node: commentRangeEndMarker(commentId),
+			follower: commentReferenceRun(commentId),
+		},
+	]);
+}
 
-	const newChildren: XmlNode[] = [];
-	let offset = 0;
-	let placedStart = false;
-	let placedEnd = false;
+/**
+ * Drop the start marker at `startOffset` of `startParagraph` and the end
+ * marker (plus reference run) at `endOffset` of `endParagraph`. When both
+ * paragraphs are the same node, behaves identically to
+ * `addCommentMarkersToParagraph` with that span. Intermediate paragraphs
+ * between the two are not touched — Word treats any text between matching
+ * `<w:commentRangeStart>` / `<w:commentRangeEnd>` as covered.
+ */
+export function addCommentRangeMarkers(
+	startParagraph: XmlNode,
+	startOffset: number,
+	endParagraph: XmlNode,
+	endOffset: number,
+	commentId: string,
+): void {
+	if (startParagraph === endParagraph) {
+		addCommentMarkersToParagraph(startParagraph, commentId, {
+			start: startOffset,
+			end: endOffset,
+		});
+		return;
+	}
+	placeMarkersInParagraph(startParagraph, [
+		{ offset: startOffset, node: commentRangeStartMarker(commentId) },
+	]);
+	placeMarkersInParagraph(endParagraph, [
+		{
+			offset: endOffset,
+			node: commentRangeEndMarker(commentId),
+			follower: commentReferenceRun(commentId),
+		},
+	]);
+}
 
-	const startMarker = <w.commentRangeStart w-id={commentId} />;
-	const endMarker = <w.commentRangeEnd w-id={commentId} />;
-	const referenceRun = (
+function commentRangeStartMarker(commentId: string): XmlNode {
+	return (<w.commentRangeStart w-id={commentId} />) as XmlNode;
+}
+
+function commentRangeEndMarker(commentId: string): XmlNode {
+	return (<w.commentRangeEnd w-id={commentId} />) as XmlNode;
+}
+
+function commentReferenceRun(commentId: string): XmlNode {
+	return (
 		<w.r>
 			<w.rPr>
 				<w.rStyle w-val="CommentReference" />
 			</w.rPr>
 			<w.commentReference w-id={commentId} />
 		</w.r>
-	);
+	) as XmlNode;
+}
 
-	for (const child of paragraph.children) {
-		if (child.tag !== "w:r") {
-			// Non-run children (pPr, ins, del, etc.): pass through, but check
-			// whether a boundary at offset==current should land before it.
-			if (!placedStart && offset === range.start) {
-				placedStart = true;
-				if (child.tag === "w:pPr") {
-					// Markers must come after pPr — push pPr first, then start.
-					newChildren.push(child);
-					newChildren.push(startMarker);
-					continue;
-				}
-				newChildren.push(startMarker);
-			}
-			if (!placedEnd && offset === range.end && placedStart) {
-				placedEnd = true;
-				newChildren.push(endMarker);
-				newChildren.push(referenceRun);
-			}
-			newChildren.push(child);
-			continue;
+type MarkerSpec = {
+	offset: number;
+	node: XmlNode;
+	follower?: XmlNode;
+};
+
+type PlacementState = {
+	offset: number;
+	placedCount: number;
+};
+
+function placeMarkersInParagraph(
+	paragraph: XmlNode,
+	markers: MarkerSpec[],
+): void {
+	if (markers.length === 0) return;
+	const total = paragraphTextLength(paragraph);
+	for (const marker of markers) {
+		if (marker.offset < 0 || marker.offset > total) {
+			throw new SpanOutOfRangeError(
+				`Marker offset ${marker.offset} out of paragraph length ${total}`,
+			);
 		}
-
-		const length = runTextLength(child);
-		const runStart = offset;
-		const runEnd = offset + length;
-
-		// Collect splits inside this run, in order.
-		const splits: { at: number; node: XmlNode }[] = [];
-		if (!placedStart && runStart <= range.start && range.start <= runEnd) {
-			splits.push({ at: range.start - runStart, node: startMarker });
-			placedStart = true;
-		}
-		if (!placedEnd && runStart <= range.end && range.end <= runEnd) {
-			splits.push({ at: range.end - runStart, node: endMarker });
-			placedEnd = true;
-		}
-		splits.sort((leftSplit, rightSplit) => leftSplit.at - rightSplit.at);
-
-		if (splits.length === 0) {
-			newChildren.push(child);
-		} else {
-			let cursor = 0;
-			for (const split of splits) {
-				if (split.at > cursor) {
-					newChildren.push(sliceRun(child, cursor, split.at));
-				}
-				newChildren.push(split.node);
-				cursor = split.at;
-			}
-			if (cursor < length) {
-				newChildren.push(sliceRun(child, cursor, length));
-			}
-			// If end marker was placed inside this run, reference run goes right after.
-			if (splits.some((split) => split.node === endMarker)) {
-				newChildren.push(referenceRun);
-			}
-		}
-
-		offset = runEnd;
 	}
+	// Insertion order is the tiebreaker for markers at the same offset, so
+	// callers can place start before end at a zero-length span.
+	const pending: (MarkerSpec | null)[] = markers.slice();
+	const state: PlacementState = { offset: 0, placedCount: 0 };
 
-	if (!placedStart && offset === range.start) {
-		newChildren.push(startMarker);
-		placedStart = true;
-	}
-	if (!placedEnd && offset === range.end) {
-		newChildren.push(endMarker);
-		newChildren.push(referenceRun);
-		placedEnd = true;
-	}
+	paragraph.children = walkAndPlace(paragraph.children, pending, true, state);
+	flushAtCurrentOffset(paragraph.children, pending, state);
 
-	if (!placedStart || !placedEnd) {
+	if (state.placedCount !== markers.length) {
 		throw new SpanOutOfRangeError(
-			`Could not place comment markers (start placed: ${placedStart}, end placed: ${placedEnd})`,
+			`Could not place comment markers (placed ${state.placedCount} of ${markers.length})`,
 		);
 	}
-
-	paragraph.children = newChildren;
 }
 
-function runTextLength(run: XmlNode): number {
-	let total = 0;
-	for (const child of run.children) {
-		if (child.tag === "w:t") total += child.collectText().length;
-	}
-	return total;
-}
+function walkAndPlace(
+	children: XmlNode[],
+	pending: (MarkerSpec | null)[],
+	isParagraphLevel: boolean,
+	state: PlacementState,
+): XmlNode[] {
+	const result: XmlNode[] = [];
+	for (const child of children) {
+		if (child.tag === "w:r") {
+			const length = runTextLength(child);
+			const runStart = state.offset;
+			const runEnd = state.offset + length;
 
-function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
-	const sliced = new XmlNode("w:r", { ...run.attributes });
-	let consumed = 0;
-	for (const child of run.children) {
-		if (child.tag === "w:t") {
-			const text = child.collectText();
-			const localStart = Math.max(0, start - consumed);
-			const localEnd = Math.min(text.length, end - consumed);
-			if (localStart < localEnd) {
-				const slicedText = new XmlNode("w:t", { "xml:space": "preserve" });
-				slicedText.children.push(
-					XmlNode.textNode(text.slice(localStart, localEnd)),
-				);
-				sliced.children.push(slicedText);
+			const splits: { at: number; index: number }[] = [];
+			for (let i = 0; i < pending.length; i++) {
+				const marker = pending[i];
+				if (!marker) continue;
+				if (runStart <= marker.offset && marker.offset <= runEnd) {
+					splits.push({ at: marker.offset - runStart, index: i });
+				}
 			}
-			consumed += text.length;
+			splits.sort(
+				(left, right) => left.at - right.at || left.index - right.index,
+			);
+
+			if (splits.length === 0) {
+				result.push(child);
+			} else {
+				let cursor = 0;
+				for (const split of splits) {
+					if (split.at > cursor) {
+						result.push(sliceRun(child, cursor, split.at));
+					}
+					const marker = pending[split.index];
+					if (!marker) continue;
+					result.push(marker.node);
+					if (marker.follower) result.push(marker.follower);
+					pending[split.index] = null;
+					state.placedCount++;
+					cursor = split.at;
+				}
+				if (cursor < length) {
+					result.push(sliceRun(child, cursor, length));
+				}
+			}
+
+			state.offset = runEnd;
 			continue;
 		}
-		// Non-text run children (rPr, etc.) — clone for safety.
-		sliced.children.push(deepCloneNode(child));
+
+		if (isParagraphLevel && (child.tag === "w:ins" || child.tag === "w:del")) {
+			// Boundary at the wrapper's start: place markers BEFORE descending so
+			// they sit outside the tracked-change wrapper when offsets align.
+			flushAtCurrentOffset(result, pending, state);
+
+			const innerChildren = walkAndPlace(child.children, pending, false, state);
+			const wrapper = new XmlNode(child.tag, { ...child.attributes });
+			wrapper.children = innerChildren;
+			result.push(wrapper);
+			continue;
+		}
+
+		if (child.tag === "w:pPr") {
+			// pPr always comes first in a paragraph; markers must sit AFTER it.
+			result.push(child);
+			flushAtCurrentOffset(result, pending, state);
+			continue;
+		}
+
+		// Non-run passthrough — markers BEFORE.
+		flushAtCurrentOffset(result, pending, state);
+		result.push(child);
 	}
-	return sliced;
+	return result;
 }
 
-function deepCloneNode(node: XmlNode): XmlNode {
-	const clone = new XmlNode(node.tag, { ...node.attributes });
-	if (node.text !== undefined) clone.text = node.text;
-	for (const child of node.children) {
-		clone.children.push(deepCloneNode(child));
+function flushAtCurrentOffset(
+	out: XmlNode[],
+	pending: (MarkerSpec | null)[],
+	state: PlacementState,
+): void {
+	for (let i = 0; i < pending.length; i++) {
+		const marker = pending[i];
+		if (!marker) continue;
+		if (marker.offset !== state.offset) continue;
+		out.push(marker.node);
+		if (marker.follower) out.push(marker.follower);
+		pending[i] = null;
+		state.placedCount++;
 	}
-	return clone;
 }
 
 export type CommentBodyOptions = {

@@ -168,6 +168,134 @@ describe("docx comments", () => {
 		expect(restored[0]).toMatchObject({ id: "c0", text: "hi" });
 	});
 
+	test("add anchors a comment across two paragraphs", async () => {
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Second paragraph here.",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--text",
+			"Third paragraph here.",
+		);
+
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--range",
+			"p0:16-p2:6",
+			"--text",
+			"Spans three paragraphs",
+			"--author",
+			"Reviewer",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: true,
+			operation: "comments.add",
+			commentId: "c0",
+			locator: "p0:16-p2:6",
+		});
+
+		const list = await runCli("comments", "list", docPath);
+		const comments = list.parsed as Array<{
+			id: string;
+			text: string;
+			anchor: {
+				startBlockId: string;
+				startOffset: number;
+				endBlockId: string;
+				endOffset: number;
+			};
+		}>;
+		expect(comments[0]).toMatchObject({
+			id: "c0",
+			text: "Spans three paragraphs",
+			anchor: {
+				startBlockId: "p0",
+				startOffset: 16,
+				endBlockId: "p2",
+				endOffset: 6,
+			},
+		});
+	});
+
+	test("delete + restore round-trips a cross-block comment", async () => {
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Second paragraph here.",
+		);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--range",
+			"p0:16-p1:6",
+			"--text",
+			"two paragraphs",
+			"--author",
+			"A",
+		);
+		await runCli("comments", "delete", docPath, "--id", "c0");
+		const afterDelete = await runCli(
+			"comments",
+			"list",
+			docPath,
+			"--include-resolved",
+		);
+		expect((afterDelete.parsed as unknown[]).length).toBe(0);
+
+		await runCli("comments", "restore", docPath, "--id", "c0");
+		const afterRestore = await runCli(
+			"comments",
+			"list",
+			docPath,
+			"--include-resolved",
+		);
+		const restored = afterRestore.parsed as Array<{
+			id: string;
+			text: string;
+			anchor: { startBlockId: string; endBlockId: string };
+		}>;
+		expect(restored[0]).toMatchObject({
+			id: "c0",
+			text: "two paragraphs",
+			anchor: { startBlockId: "p0", endBlockId: "p1" },
+		});
+	});
+
+	test("add rejects cross-block range with out-of-range offset", async () => {
+		await runCli("insert", docPath, "--after", "p0", "--text", "Short.");
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--range",
+			"p0:0-p1:999",
+			"--text",
+			"too far",
+			"--author",
+			"A",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: false,
+			code: "INVALID_LOCATOR",
+		});
+	});
+
 	test("resolve auto-injects paraId on legacy comments", async () => {
 		// comments-simple.docx is a mammoth-authored fixture without paraIds
 		const workspace = tempWorkspace("legacy");
