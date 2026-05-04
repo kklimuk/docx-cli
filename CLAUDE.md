@@ -19,6 +19,13 @@ src/
       emit.tsx                # <Paragraph> + <RunElement> JSX components (shared by edit too)
     edit/                     # docx edit FILE
     delete/                   # docx delete FILE
+    find/                     # docx find FILE QUERY
+    replace/                  # docx replace FILE PATTERN REPLACEMENT
+      replace-span.tsx        # in-place run-splitting for span replacements
+    wc/                       # docx wc FILE [LOCATOR]
+      count.ts                # word-count helpers over the typed AST
+    outline/                  # docx outline FILE
+      build.ts                # heading-tree builder
     comments/                 # docx comments <verb>
       index.ts                # sub-dispatcher for add/reply/resolve/delete/list
       helpers.tsx             # paraId, ensureCommentsPart, run-splitting marker injection
@@ -92,7 +99,14 @@ These are not architectural suggestions, but requirements. If you disagree, make
 
 `docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default; structured `{ok: false, code, error, hint}` on failure.
 
-Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image), `4` permission, `5` already-applied. Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
+| Surface       | Verbs                                                                                |
+| ------------- | ------------------------------------------------------------------------------------ |
+| top-level     | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline` `track-changes` |
+| `comments`    | `add` `reply` `resolve` `delete` `list`                                              |
+| `images`      | `list` `extract` `replace`                                                           |
+| `info`        | `schema` `locators`                                                                  |
+
+Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image). Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
 
 ## Locators
 

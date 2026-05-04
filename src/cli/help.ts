@@ -16,6 +16,8 @@ Commands:
   delete    FILE  Remove a block or run range
   find      FILE QUERY  Find text spans, return locators
   replace   FILE PATTERN REPL  Substitute text spans (sed for docx)
+  wc        FILE [LOCATOR]  Count words in the doc or a slice
+  outline   FILE  List headings as a hierarchical tree
   comments  …     Add, reply, resolve, delete, list comments
   images    …     Extract, replace, list images
   track-changes FILE on|off  Toggle tracked-changes mode

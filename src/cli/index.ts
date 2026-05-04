@@ -12,9 +12,11 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	images: () => import("./images"),
 	info: () => import("./info"),
 	insert: () => import("./insert"),
+	outline: () => import("./outline"),
 	read: () => import("./read"),
 	replace: () => import("./replace"),
 	"track-changes": () => import("./track-changes"),
+	wc: () => import("./wc"),
 };
 
 export async function main(argv: string[]): Promise<number> {

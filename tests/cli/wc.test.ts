@@ -1,0 +1,143 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { runCli, tempWorkspace } from "./harness";
+
+describe("docx wc", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("wc");
+		docPath = join(workspace, "out.docx");
+		await runCli(
+			"create",
+			docPath,
+			"--text",
+			"The quick brown fox jumps over the lazy dog.",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Sphinx of black quartz, judge my vow.",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--text",
+			"Pack my box with five dozen liquor jugs.",
+		);
+	});
+
+	test("no locator counts the whole document", async () => {
+		const result = await runCli("wc", docPath);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: true,
+			operation: "wc",
+			scope: "document",
+			words: 9 + 7 + 8,
+		});
+	});
+
+	test("paragraph locator counts that paragraph", async () => {
+		const result = await runCli("wc", docPath, "p1");
+		expect(result.parsed).toMatchObject({
+			locator: "p1",
+			scope: "paragraph",
+			words: 7,
+		});
+	});
+
+	test("span locator counts a paragraph slice", async () => {
+		// "The quick brown fox" → chars 0..19, four words
+		const result = await runCli("wc", docPath, "p0:0-19");
+		expect(result.parsed).toMatchObject({
+			locator: "p0:0-19",
+			scope: "paragraphSpan",
+			words: 4,
+		});
+	});
+
+	test("cross-paragraph range counts from offset to offset", async () => {
+		// p0 starts at "The quick brown fox jumps over the lazy dog."
+		// p2 ends at "Pack my box with five dozen liquor jugs."
+		// Range "p0:16-p2:11" covers "fox jumps over the lazy dog." +
+		// "Sphinx of black quartz, judge my vow." + "Pack my box"
+		const result = await runCli("wc", docPath, "p0:16-p2:11");
+		expect(result.parsed).toMatchObject({
+			locator: "p0:16-p2:11",
+			scope: "range",
+			words: 6 + 7 + 3,
+		});
+	});
+
+	test("table locator sums every cell paragraph", async () => {
+		const result = await runCli(
+			"wc",
+			"tests/fixtures/tables-and-lists.docx",
+			"t0",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			locator: "t0",
+			scope: "table",
+			words: 32,
+		});
+	});
+
+	test("cell and cell-paragraph locators count just the cell", async () => {
+		const cellResult = await runCli(
+			"wc",
+			"tests/fixtures/tables-and-lists.docx",
+			"t0:r1c0",
+		);
+		expect(cellResult.parsed).toMatchObject({
+			locator: "t0:r1c0",
+			scope: "cell",
+			words: 7,
+		});
+
+		const cellParagraphResult = await runCli(
+			"wc",
+			"tests/fixtures/tables-and-lists.docx",
+			"t0:r1c0:p0",
+		);
+		expect(cellParagraphResult.parsed).toMatchObject({
+			locator: "t0:r1c0:p0",
+			scope: "paragraph",
+			words: 7,
+		});
+	});
+
+	test("comment and image locators are rejected as USAGE errors", async () => {
+		const commentResult = await runCli("wc", docPath, "c0");
+		expect(commentResult.exitCode).toBe(2);
+		expect(commentResult.parsed).toMatchObject({ ok: false, code: "USAGE" });
+
+		const imageResult = await runCli("wc", docPath, "img0");
+		expect(imageResult.exitCode).toBe(2);
+		expect(imageResult.parsed).toMatchObject({ ok: false, code: "USAGE" });
+	});
+
+	test("missing block returns BLOCK_NOT_FOUND with exit 3", async () => {
+		const result = await runCli("wc", docPath, "p99");
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({
+			ok: false,
+			code: "BLOCK_NOT_FOUND",
+		});
+	});
+
+	test("invalid locator returns INVALID_LOCATOR", async () => {
+		const result = await runCli("wc", docPath, "p3:bogus");
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({
+			ok: false,
+			code: "INVALID_LOCATOR",
+		});
+	});
+});
