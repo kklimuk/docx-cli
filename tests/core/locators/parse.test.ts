@@ -13,6 +13,17 @@ describe("parseLocator", () => {
 		expect(parseLocator("img0")).toEqual({ kind: "image", imageId: "img0" });
 	});
 
+	test("parses hyperlink ids", () => {
+		expect(parseLocator("link0")).toEqual({
+			kind: "hyperlink",
+			hyperlinkId: "link0",
+		});
+		expect(parseLocator("link42")).toEqual({
+			kind: "hyperlink",
+			hyperlinkId: "link42",
+		});
+	});
+
 	test("parses span within a paragraph", () => {
 		expect(parseLocator("p3:5-20")).toEqual({
 			kind: "blockSpan",

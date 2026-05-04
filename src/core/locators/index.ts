@@ -5,5 +5,6 @@ export {
 	locatorToBlockTarget,
 	resolveBlock,
 	resolveComment,
+	resolveHyperlink,
 	resolveImage,
 } from "./resolve";

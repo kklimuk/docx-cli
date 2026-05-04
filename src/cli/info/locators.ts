@@ -29,6 +29,7 @@ Range locators (across blocks):
 Entity locators:
   cN              Comment id (e.g., c0)
   imgN            Image id (e.g., img2)
+  linkN           Hyperlink id (e.g., link0)
   tN:rRcC         Cell at row R, column C of table tN
 
 Examples:
@@ -37,6 +38,7 @@ Examples:
   p3:5-p5:10      -> from char 5 of p3 to char 10 of p5
   c1              -> comment c1
   img0            -> image img0
+  link0           -> hyperlink link0
   t0:r1c2         -> cell at row 1, col 2 of table t0
   t0:r1c2:p0      -> first paragraph of that cell
   t0:r1c2:p0:5-10 -> chars 5..10 of that paragraph
@@ -69,6 +71,7 @@ const JSON_REFERENCE = {
 	entityLocators: {
 		comment: { syntax: "cN", example: "c1" },
 		image: { syntax: "imgN", example: "img0" },
+		hyperlink: { syntax: "linkN", example: "link0" },
 		cell: { syntax: "tN:rRcC", example: "t0:r1c2" },
 		nestedCell: { syntax: "tN:rRcC:pK", example: "t0:r1c2:p0" },
 	},

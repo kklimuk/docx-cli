@@ -32,7 +32,7 @@ bunx bun-docx read doc.docx
 ```sh
 docx create FILE [--title T] [--author A] [--text "..."]
 docx read FILE
-docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic]
+docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx edit   FILE --at p3 --text "..." | --runs '[...]'
 docx delete FILE --at p3
@@ -50,6 +50,11 @@ docx images list    FILE
 docx images extract FILE --to ./media [--id imgN]
 docx images replace FILE --at imgN --with ./new.png
 
+docx hyperlinks list    FILE
+docx hyperlinks add     FILE --at pN:S-E --url URL
+docx hyperlinks replace FILE --at linkN --with URL
+docx hyperlinks delete  FILE --at linkN
+
 docx track-changes FILE on|off
 docx info schema [--ts]
 docx info locators [--json]
@@ -66,7 +71,7 @@ pN              paragraph N (e.g., p3)
 pN:S-E          characters S..E within paragraph N
 pN:S-pM:E       cross-paragraph range
 tN              table N; tN:rRcC for cell at row R, col C
-cN, imgN        comment / image ids
+cN, imgN, linkN comment / image / hyperlink ids
 ```
 
 Run `docx info locators` for the full reference.
@@ -105,6 +110,7 @@ src/
     delete/              # delete FILE
     comments/            # add | reply | resolve | delete | list
     images/              # list | extract | replace
+    hyperlinks/          # add | list | replace | delete
     track-changes/       # FILE on|off
     info/                # schema | locators (reference output)
   core/
@@ -136,6 +142,8 @@ tests/
 **ParaId auto-injection.** Comments authored by tools like mammoth or older Word versions lack `w14:paraId`, which `commentsExtended.xml` requires for resolve/reply. We detect this on resolve/reply and inject a fresh paraId, also adding the `xmlns:w14` namespace declaration to the `<w:comments>` root if missing.
 
 **Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
+
+**Hyperlink CRUD.** `hyperlinks list` enumerates `<w:hyperlink>` elements with positional `linkN` ids; `hyperlinks add --at p3:5-20 --url URL` wraps an existing span (splitting runs at offsets); `hyperlinks replace --at link0 --with URL` updates the rels `Target`, allocating a new rId if the existing one is shared so siblings stay pointed at the original URL; `hyperlinks delete --at link0` unwraps the link (text survives) and prunes the rels entry when no longer referenced.
 
 ## CI
 

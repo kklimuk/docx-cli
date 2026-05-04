@@ -58,6 +58,14 @@ export type TextRun = {
 	sizeHalfPoints?: number;
 	comments?: string[];
 	trackedChange?: TrackedChange;
+	hyperlink?: Hyperlink;
+};
+
+export type Hyperlink = {
+	id: string;
+	url?: string;
+	anchor?: string;
+	tooltip?: string;
 };
 
 export type ImageRun = {

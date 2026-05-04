@@ -97,6 +97,7 @@ const W_TAGS = [
 	"comment",
 	"settings",
 	"trackChanges",
+	"hyperlink",
 ] as const;
 
 const R_TAGS = ["embed", "link", "id"] as const;

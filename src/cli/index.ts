@@ -9,6 +9,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	delete: () => import("./delete"),
 	edit: () => import("./edit"),
 	find: () => import("./find"),
+	hyperlinks: () => import("./hyperlinks"),
 	images: () => import("./images"),
 	info: () => import("./info"),
 	insert: () => import("./insert"),

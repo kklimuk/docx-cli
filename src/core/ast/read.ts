@@ -6,6 +6,7 @@ import type {
 	CommentAnchor,
 	Doc,
 	DocProperties,
+	Hyperlink,
 	ImageRun,
 	Paragraph,
 	Run,
@@ -18,15 +19,18 @@ import type {
 
 const RELATIONSHIP_NAMESPACE_IMAGE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const RELATIONSHIP_NAMESPACE_HYPERLINK =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 
 type WalkState = {
 	imageIndex: number;
+	hyperlinkIndex: number;
 	commentAnchors: Map<string, CommentAnchor>;
 	openComments: Map<string, { blockId: string; offset: number }>;
 };
 
 export function buildDoc(view: DocView, path: string): Doc {
-	readImageRelationships(view);
+	readRelationships(view);
 	const properties = readDocProperties(view);
 
 	const documentRoot = XmlNode.findRoot(view.documentTree, "w:document");
@@ -40,6 +44,7 @@ export function buildDoc(view: DocView, path: string): Doc {
 
 	const state: WalkState = {
 		imageIndex: 0,
+		hyperlinkIndex: 0,
 		commentAnchors: new Map(),
 		openComments: new Map(),
 	};
@@ -90,18 +95,46 @@ function readParagraph(
 		applyParagraphProperties(paragraph, paragraphProperties);
 	}
 
-	const activeComments = new Set<string>();
-	let offset = 0;
+	const context: WalkContext = {
+		view,
+		blockId: id,
+		paragraph,
+		activeComments: new Set<string>(),
+		state,
+		offsetRef: { value: 0 },
+	};
+	walkRunContainer(context, node, undefined, undefined);
 
-	for (const child of node.children) {
+	return paragraph;
+}
+
+type WalkContext = {
+	view: DocView;
+	blockId: string;
+	paragraph: Paragraph;
+	activeComments: Set<string>;
+	state: WalkState;
+	offsetRef: { value: number };
+};
+
+function walkRunContainer(
+	context: WalkContext,
+	container: XmlNode,
+	trackedChange: TrackedChange | undefined,
+	hyperlink: Hyperlink | undefined,
+): void {
+	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
 
 		if (child.tag === "w:commentRangeStart") {
 			const commentId = child.getAttribute("w:id");
 			if (commentId) {
 				const key = `c${commentId}`;
-				activeComments.add(key);
-				state.openComments.set(key, { blockId: id, offset });
+				context.activeComments.add(key);
+				context.state.openComments.set(key, {
+					blockId: context.blockId,
+					offset: context.offsetRef.value,
+				});
 			}
 			continue;
 		}
@@ -110,26 +143,33 @@ function readParagraph(
 			const commentId = child.getAttribute("w:id");
 			if (commentId) {
 				const key = `c${commentId}`;
-				activeComments.delete(key);
-				const opened = state.openComments.get(key);
+				context.activeComments.delete(key);
+				const opened = context.state.openComments.get(key);
 				if (opened) {
-					state.commentAnchors.set(key, {
+					context.state.commentAnchors.set(key, {
 						startBlockId: opened.blockId,
 						startOffset: opened.offset,
-						endBlockId: id,
-						endOffset: offset,
+						endBlockId: context.blockId,
+						endOffset: context.offsetRef.value,
 					});
-					state.openComments.delete(key);
+					context.state.openComments.delete(key);
 				}
 			}
 			continue;
 		}
 
 		if (child.tag === "w:r") {
-			const run = readRun(view, child, activeComments, undefined, state);
+			const run = readRun(
+				context.view,
+				child,
+				context.activeComments,
+				trackedChange,
+				hyperlink,
+				context.state,
+			);
 			if (run) {
-				if (run.type === "text") offset += run.text.length;
-				paragraph.runs.push(run);
+				if (run.type === "text") context.offsetRef.value += run.text.length;
+				context.paragraph.runs.push(run);
 			}
 			continue;
 		}
@@ -141,44 +181,49 @@ function readParagraph(
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
-			for (const inner of child.children) {
-				if (inner.tag === "w:commentRangeStart") {
-					const commentId = inner.getAttribute("w:id");
-					if (commentId) {
-						const key = `c${commentId}`;
-						activeComments.add(key);
-						state.openComments.set(key, { blockId: id, offset });
-					}
-					continue;
-				}
-				if (inner.tag === "w:commentRangeEnd") {
-					const commentId = inner.getAttribute("w:id");
-					if (commentId) {
-						const key = `c${commentId}`;
-						activeComments.delete(key);
-						const opened = state.openComments.get(key);
-						if (opened) {
-							state.commentAnchors.set(key, {
-								startBlockId: opened.blockId,
-								startOffset: opened.offset,
-								endBlockId: id,
-								endOffset: offset,
-							});
-							state.openComments.delete(key);
-						}
-					}
-					continue;
-				}
-				if (inner.tag !== "w:r") continue;
-				const run = readRun(view, inner, activeComments, change, state);
-				if (!run) continue;
-				if (run.type === "text") offset += run.text.length;
-				paragraph.runs.push(run);
-			}
+			walkRunContainer(context, child, change, hyperlink);
+			continue;
+		}
+
+		if (child.tag === "w:hyperlink") {
+			const link = readHyperlinkProperties(
+				context.view,
+				child,
+				container.children,
+				context.state,
+			);
+			walkRunContainer(context, child, trackedChange, link);
 		}
 	}
+}
 
-	return paragraph;
+function readHyperlinkProperties(
+	view: DocView,
+	node: XmlNode,
+	parent: XmlNode[],
+	state: WalkState,
+): Hyperlink | undefined {
+	const id = `link${state.hyperlinkIndex++}`;
+	const link: Hyperlink = { id };
+	const relationshipId = node.getAttribute("r:id");
+	if (relationshipId) {
+		const relationship = view.hyperlinksByRelationshipId.get(relationshipId);
+		if (relationship?.url) link.url = relationship.url;
+	}
+	const anchor = node.getAttribute("w:anchor");
+	if (anchor) link.anchor = anchor;
+	const tooltip = node.getAttribute("w:tooltip");
+	if (tooltip) link.tooltip = tooltip;
+	if (!link.url && !link.anchor && !link.tooltip) {
+		state.hyperlinkIndex--;
+		return undefined;
+	}
+	view.hyperlinkById.set(id, {
+		node,
+		parent,
+		...(relationshipId ? { relationshipId } : {}),
+	});
+	return link;
 }
 
 function applyParagraphProperties(
@@ -221,6 +266,7 @@ function readRun(
 	node: XmlNode,
 	activeComments: Set<string>,
 	trackedChange: TrackedChange | undefined,
+	hyperlink: Hyperlink | undefined,
 	state: WalkState,
 ): Run | null {
 	const runProperties = node.findChild("w:rPr");
@@ -254,6 +300,7 @@ function readRun(
 	if (runProperties) applyRunProperties(run, runProperties);
 	if (activeComments.size > 0) run.comments = [...activeComments];
 	if (trackedChange) run.trackedChange = trackedChange;
+	if (hyperlink) run.hyperlink = hyperlink;
 	return run;
 }
 
@@ -391,7 +438,7 @@ function readCellBlocks(
 	return blocks;
 }
 
-function readImageRelationships(view: DocView): void {
+function readRelationships(view: DocView): void {
 	const relationships = XmlNode.findRoot(
 		view.relationshipsTree,
 		"Relationships",
@@ -399,15 +446,24 @@ function readImageRelationships(view: DocView): void {
 	if (!relationships) return;
 	for (const child of relationships.children) {
 		if (child.tag !== "Relationship") continue;
-		if (child.getAttribute("Type") !== RELATIONSHIP_NAMESPACE_IMAGE) continue;
+		const type = child.getAttribute("Type");
 		const relationshipId = child.getAttribute("Id");
 		const target = child.getAttribute("Target");
 		if (!relationshipId || !target) continue;
-		const partName = target.startsWith("/")
-			? target.slice(1)
-			: `word/${target}`;
-		const contentType = lookupContentType(view, partName);
-		view.imagesByRelationshipId.set(relationshipId, { partName, contentType });
+		if (type === RELATIONSHIP_NAMESPACE_IMAGE) {
+			const partName = target.startsWith("/")
+				? target.slice(1)
+				: `word/${target}`;
+			const contentType = lookupContentType(view, partName);
+			view.imagesByRelationshipId.set(relationshipId, {
+				partName,
+				contentType,
+			});
+			continue;
+		}
+		if (type === RELATIONSHIP_NAMESPACE_HYPERLINK) {
+			view.hyperlinksByRelationshipId.set(relationshipId, { url: target });
+		}
 	}
 }
 

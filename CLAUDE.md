@@ -32,6 +32,10 @@ src/
       add | reply | resolve | delete | list
     images/                   # docx images <verb>
       list | extract | replace
+    hyperlinks/               # docx hyperlinks <verb>
+      index.ts                # sub-dispatcher for add/list/replace/delete
+      wrap.tsx                # in-place run-splitting for hyperlinks add
+      add | list | replace | delete
     track-changes/            # docx track-changes FILE on|off
     info/                     # docx info <topic>
       index.ts                # sub-dispatcher for schema/locators
@@ -50,9 +54,10 @@ src/
       types.ts                # Doc / Block / Run / Comment types (read live by `docx info schema --ts`)
       doc-view.ts             # DocView, openDocView, saveDocView, enrichImageHashes
       read.ts                 # XML → typed AST walker; populates back-refs
+    relationships.ts          # mintRelationshipId, addHyperlinkRelationship — _rels helpers
     locators/
       parse.ts                # parseLocator("p3:5-20") → Locator union
-      resolve.ts              # resolveBlock / resolveComment / resolveImage
+      resolve.ts              # resolveBlock / resolveComment / resolveImage / resolveHyperlink
 tests/
   core/                       # XmlNode + locator parser unit tests
   cli/
@@ -90,7 +95,8 @@ These are not architectural suggestions, but requirements. If you disagree, make
 - **In-place XML mutation, not AST round-trip emission**. The typed AST returned by `read` is a _view_ over the parsed XML tree. Mutations (insert/edit/delete/comments add) operate on the underlying `XmlNode` references via `BlockReference.parent.splice(...)`. Anything we don't model survives because we never re-emit untouched regions. Only emit fresh XML for nodes we're inserting (via JSX) — never round-trip whole subtrees through the AST.
 - **fast-xml-builder owns escaping**. On the JSX path, never manually escape — the builder handles entities correctly (uses `&apos;` for `'`, which fast-xml-parser decodes back). The static templates in `cli/create/template.tsx` carry no user-supplied content, so they don't need escaping at all.
 - **JSX.Element = XmlNode** (single, not nullable union). `Fragment` returns a sentinel `#fragment` XmlNode that gets unwrapped both in `flatten()` (composition) and `XmlNode.serialize()` (top-level). Components that want to "render nothing" return `null`; `jsx()` converts that to an empty fragment so callers always see `XmlNode`.
-- **Stable positional ids** (`p0`, `t0`, `c0`, `img0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image ids are positional (document order).
+- **Stable positional ids** (`p0`, `t0`, `c0`, `img0`, `link0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image and hyperlink ids are positional (document order).
+- **Hyperlinks own a relationship, not their text.** `hyperlinks replace` updates the `Target` of the underlying `<Relationship>` — but if multiple `<w:hyperlink>` elements share the same `r:id`, it allocates a new rId so the others stay pointing at the original URL. `hyperlinks delete` unwraps the `<w:hyperlink>` (text survives as plain runs) and prunes the rId from the rels file when no other element references it.
 - **paraId is required for resolve/reply**. Comments authored by external tools may lack `w14:paraId` on their bodies. The `resolve` and `reply` verbs auto-inject one via `ensureCommentParaId()` (also adds `xmlns:w14` to the `<w:comments>` root if missing). Do this rather than failing — agents shouldn't have to recreate comments.
 - **Track-changes is doc-level, not per-command**. When `<w:trackChanges/>` is set in `settings.xml`, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` markers — there is no per-command override flag. To make a one-off untracked edit, run `docx track-changes FILE off`, edit, then `track-changes on`. Author/date come from `DOCX_AUTHOR` env var (or `"docx-cli"` default); `DOCX_CLI_NOW` injects a fixed date for tests. `delete tN` rejects with `TRACKED_CHANGE_CONFLICT` when tracking is on (tracked table-row deletion isn't supported).
 - **No undo, no journal**. Mutating commands overwrite `FILE` in place. Pass `-o/--output PATH` to write to a parallel file instead, or `--dry-run` to preview. There is no snapshot ring, restore command, or trash directory — git is the version history. When both `--dry-run` and `--output` are passed, `--dry-run` wins (nothing is written to either path); the dry-run payload echoes `output` so the agent knows where a real run would have written.
@@ -104,9 +110,12 @@ These are not architectural suggestions, but requirements. If you disagree, make
 | top-level     | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline` `track-changes` |
 | `comments`    | `add` `reply` `resolve` `delete` `list`                                              |
 | `images`      | `list` `extract` `replace`                                                           |
+| `hyperlinks`  | `add` `list` `replace` `delete`                                                      |
 | `info`        | `schema` `locators`                                                                  |
 
-Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image). Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
+`insert --url URL --text "label"` wraps the inserted run in a `<w:hyperlink>`. To wrap an existing span, use `hyperlinks add --at pN:S-E --url URL`.
+
+Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image/hyperlink). Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
 
 ## Locators
 
@@ -115,10 +124,10 @@ pN              paragraph N
 pN:S-E          chars S..E within paragraph N
 pN:S-pM:E       cross-paragraph range
 tN              table N; tN:rRcC for cell at row R, col C; chainable :pK
-cN, imgN        comment / image ids
+cN, imgN, linkN comment / image / hyperlink ids
 ```
 
-Span comments split runs at offsets, preserving `<w:rPr>` on both halves (logic in `cli/comments/helpers.tsx → addCommentMarkersToParagraph`).
+Span comments split runs at offsets, preserving `<w:rPr>` on both halves (logic in `cli/comments/helpers.tsx → addCommentMarkersToParagraph`). `hyperlinks add` does similar run-splitting in `cli/hyperlinks/wrap.tsx → wrapSpanInHyperlink`.
 
 ## Testing
 

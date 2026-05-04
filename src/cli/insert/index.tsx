@@ -1,4 +1,5 @@
 import {
+	addHyperlinkRelationship,
 	createRevisionAllocator,
 	type DocView,
 	Ins,
@@ -10,7 +11,8 @@ import {
 	saveDocView,
 	type TrackedMeta,
 } from "@core";
-import type { XmlNode } from "@core/parser";
+import { w } from "@core/jsx";
+import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -43,6 +45,7 @@ Run options (only with --text):
   --color HEX       Run color, hex (e.g., 800080 for purple)
   --bold            Bold
   --italic          Italic
+  --url URL         Wrap the inserted text in a hyperlink to URL
 
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
@@ -52,6 +55,7 @@ Examples:
   docx insert doc.docx --after p3 --text "Section header" --style Heading2
   docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
   docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
+  docx insert doc.docx --after p3 --text "click here" --url https://example.com
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -70,6 +74,7 @@ export async function run(args: string[]): Promise<number> {
 				color: { type: "string" },
 				bold: { type: "boolean" },
 				italic: { type: "boolean" },
+				url: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -100,11 +105,15 @@ export async function run(args: string[]): Promise<number> {
 
 	const text = parsed.values.text as string | undefined;
 	const runsJson = parsed.values.runs as string | undefined;
+	const url = parsed.values.url as string | undefined;
 	if (!text && !runsJson) {
 		return fail("USAGE", "Missing content: pass --text or --runs", HELP);
 	}
 	if (text && runsJson) {
 		return fail("USAGE", "Pass either --text or --runs, not both", HELP);
+	}
+	if (url && !text) {
+		return fail("USAGE", "--url requires --text", HELP);
 	}
 
 	const paragraphOptions: ParagraphOptions = {};
@@ -146,6 +155,7 @@ export async function run(args: string[]): Promise<number> {
 				{...(parsed.values.italic ? { italic: true as const } : {})}
 			/>
 		);
+		if (url) wrapFirstRunInHyperlink(view, paragraphNode, url);
 	} else {
 		let runsValue: Run[];
 		try {
@@ -200,6 +210,37 @@ export async function run(args: string[]): Promise<number> {
 		placement: after !== undefined ? "after" : "before",
 	});
 	return EXIT.OK;
+}
+
+function wrapFirstRunInHyperlink(
+	view: DocView,
+	paragraph: XmlNode,
+	url: string,
+): void {
+	const relationships = XmlNode.findRoot(
+		view.relationshipsTree,
+		"Relationships",
+	);
+	if (!relationships) {
+		throw new Error("Missing <Relationships> root in document rels");
+	}
+	const relationshipId = addHyperlinkRelationship(relationships, url);
+	view.hyperlinksByRelationshipId.set(relationshipId, { url });
+
+	const newChildren: XmlNode[] = [];
+	let wrapped = false;
+	for (const child of paragraph.children) {
+		if (!wrapped && child.tag === "w:r") {
+			const wrapper = (
+				<w.hyperlink {...{ "r:id": relationshipId }}>{child}</w.hyperlink>
+			);
+			newChildren.push(wrapper);
+			wrapped = true;
+			continue;
+		}
+		newChildren.push(child);
+	}
+	paragraph.children = newChildren;
 }
 
 function applyTrackedInsertion(paragraph: XmlNode, view: DocView): void {

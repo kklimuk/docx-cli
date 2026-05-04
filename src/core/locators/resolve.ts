@@ -2,6 +2,7 @@ import type {
 	BlockReference,
 	CommentReference,
 	DocView,
+	HyperlinkReference,
 	ImageReference,
 } from "../ast";
 import type { Locator } from "./parse";
@@ -77,6 +78,20 @@ export function resolveImage(view: DocView, imageId: string): ImageReference {
 		throw new LocatorResolveError(
 			{ kind: "image", imageId },
 			`Image not found: ${imageId}`,
+		);
+	}
+	return reference;
+}
+
+export function resolveHyperlink(
+	view: DocView,
+	hyperlinkId: string,
+): HyperlinkReference {
+	const reference = view.hyperlinkById.get(hyperlinkId);
+	if (!reference) {
+		throw new LocatorResolveError(
+			{ kind: "hyperlink", hyperlinkId },
+			`Hyperlink not found: ${hyperlinkId}`,
 		);
 	}
 	return reference;

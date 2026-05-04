@@ -3,6 +3,7 @@ export {
 	type CommentReference,
 	type DocView,
 	enrichImageHashes,
+	type HyperlinkReference,
 	type ImageReference,
 	openDocView,
 	saveDocView,
@@ -14,6 +15,7 @@ export type {
 	CommentAnchor,
 	Doc,
 	DocProperties,
+	Hyperlink,
 	ImageRun,
 	Paragraph,
 	Run,
@@ -34,10 +36,16 @@ export {
 	parseLocator,
 	resolveBlock,
 	resolveComment,
+	resolveHyperlink,
 	resolveImage,
 } from "./locators";
 export { PkgError } from "./package";
 export { XmlNode } from "./parser";
+export {
+	addHyperlinkRelationship,
+	HYPERLINK_RELATIONSHIP_TYPE,
+	mintRelationshipId,
+} from "./relationships";
 export {
 	convertTextToDelText,
 	createRevisionAllocator,

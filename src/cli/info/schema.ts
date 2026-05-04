@@ -99,6 +99,17 @@ const JSON_SCHEMA = {
 						revisionId: { type: "string" },
 					},
 				},
+				hyperlink: { $ref: "#/$defs/Hyperlink" },
+			},
+		},
+		Hyperlink: {
+			type: "object",
+			required: ["id"],
+			properties: {
+				id: { type: "string" },
+				url: { type: "string" },
+				anchor: { type: "string" },
+				tooltip: { type: "string" },
 			},
 		},
 		ImageRun: {

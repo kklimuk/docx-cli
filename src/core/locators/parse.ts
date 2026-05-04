@@ -8,6 +8,7 @@ export type Locator =
 	  }
 	| { kind: "comment"; commentId: string }
 	| { kind: "image"; imageId: string }
+	| { kind: "hyperlink"; hyperlinkId: string }
 	| {
 			kind: "cell";
 			tableId: string;
@@ -31,6 +32,7 @@ const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
 const RANGE_RE = /^p(\d+):(\d+)-p(\d+):(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
+const LINK_RE = /^link(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
 
 export function parseLocator(input: string): Locator {
@@ -44,6 +46,11 @@ export function parseLocator(input: string): Locator {
 
 	const imageMatch = trimmed.match(IMAGE_RE);
 	if (imageMatch) return { kind: "image", imageId: `img${imageMatch[1]}` };
+
+	const linkMatch = trimmed.match(LINK_RE);
+	if (linkMatch) {
+		return { kind: "hyperlink", hyperlinkId: `link${linkMatch[1]}` };
+	}
 
 	const cellMatch = trimmed.match(CELL_RE);
 	if (cellMatch) {
