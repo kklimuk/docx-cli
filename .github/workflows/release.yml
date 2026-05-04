@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: bun-linux-x64,    name: docx-linux-x64 }
+          - { os: ubuntu-latest,  target: bun-linux-arm64,  name: docx-linux-arm64 }
+          - { os: macos-latest,   target: bun-darwin-x64,   name: docx-darwin-x64 }
+          - { os: macos-latest,   target: bun-darwin-arm64, name: docx-darwin-arm64 }
+          - { os: windows-latest, target: bun-windows-x64,  name: docx-windows-x64.exe }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - name: Compile
+        run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.name }} src/index.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -la ./artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ./artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

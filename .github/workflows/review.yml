@@ -1,0 +1,99 @@
+name: Review
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: review-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude Review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          claude_args: |
+            --allowedTools "Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/*),Bash(gh pr diff *),Bash(gh pr view *)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are a PR reviewer. Perform both a code review and a security review,
+            then submit a SINGLE GitHub review with inline comments attached.
+
+            ## Previous Review Context
+
+            Before reviewing, read all existing review comments and their replies on
+            this PR using `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`.
+
+            If a previous review comment was replied to by the PR author dismissing
+            or acknowledging the issue (e.g., "won't fix", "expected", "known limitation",
+            "will address later", "intentional"), do NOT re-flag that same issue.
+            Treat author responses as the final word.
+
+            Also read .github/REVIEW_EXCEPTIONS.md for project-wide known limitations
+            that should never be flagged.
+
+            ## Step 1: Code Review
+
+            Follow the /code-review skill in .claude/skills/code-review/SKILL.md.
+            Read CLAUDE.md first for full project context — architecture, conventions,
+            stack specifics, subsystems, and testing setup.
+
+            ## Step 2: Security Review
+
+            Follow the /security-review skill in .claude/skills/security-review/SKILL.md.
+
+            ## Step 3: Submit Review
+
+            Submit everything as a SINGLE GitHub review using the pulls review API.
+            Do NOT use `gh pr review` or `mcp__github_inline_comment`.
+
+            IMPORTANT: `gh api -f` cannot handle nested JSON arrays. You MUST use
+            `jq` to build the JSON payload and pipe it via `--input -`. Here is the
+            exact command pattern — follow it precisely:
+
+            ```bash
+            COMMIT_SHA="$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} --jq '.head.sha')"
+
+            jq -n \
+              --arg sha "$COMMIT_SHA" \
+              --arg body "YOUR REVIEW BODY HERE" \
+              --arg event "APPROVE" \
+              --argjson comments '[
+                {"path": "src/example.ts", "line": 42, "body": "Comment on this line."},
+                {"path": "src/other.ts", "line": 10, "body": "Another comment."}
+              ]' \
+              '{commit_id: $sha, body: $body, event: $event, comments: $comments}' \
+            | gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --method POST --input -
+            ```
+
+            Each entry in the comments array must have:
+            - `path` — file path relative to repo root
+            - `line` — line number in the diff (use the NEW file line number)
+            - `body` — the comment text (supports markdown)
+
+            For multi-line comments, also include `start_line`.
+
+            The review body should have three sections:
+            - **Code Review** — summary of code quality findings
+            - **Security Review** — summary of security findings (or "No issues found")
+            - **Verdict** — your overall assessment
+
+            Set event to REQUEST_CHANGES if there are any 🔴 must-fix issues or
+            security vulnerabilities of High/Critical severity. Otherwise APPROVE.
+
+            IMPORTANT: Build the full JSON payload first, then submit it in ONE call.
+            Do not post comments separately. Do not use -f for the comments field.

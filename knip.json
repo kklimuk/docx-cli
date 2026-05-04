@@ -1,0 +1,23 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"entry": [
+		"src/index.ts",
+		"src/core/jsx/jsx-runtime.ts",
+		"src/core/jsx/jsx-dev-runtime.ts",
+		"scripts/*.{ts,tsx}",
+		"tests/**/*.test.{ts,tsx}"
+	],
+	"project": [
+		"src/**/*.{ts,tsx}",
+		"scripts/**/*.{ts,tsx}",
+		"tests/**/*.{ts,tsx}"
+	],
+	"ignoreDependencies": ["@biomejs/biome", "husky", "@core/jsx"],
+	"ignoreBinaries": ["biome", "knip-bun", "husky"],
+	"ignoreExportsUsedInFile": true,
+	"rules": {
+		"exports": "off",
+		"types": "off",
+		"duplicates": "off"
+	}
+}

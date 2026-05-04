@@ -1,0 +1,60 @@
+{
+	"name": "@kklimuk/docx-cli",
+	"version": "0.1.0",
+	"description": "CLI for AI agents (Claude, Codex) to read, edit, and comment on .docx files with full format fidelity.",
+	"keywords": [
+		"docx",
+		"openxml",
+		"ooxml",
+		"word",
+		"cli",
+		"ai",
+		"claude",
+		"codex",
+		"agentic"
+	],
+	"license": "MIT",
+	"author": "Kirill Klimuk",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kklimuk/docx-cli.git"
+	},
+	"homepage": "https://github.com/kklimuk/docx-cli#readme",
+	"bugs": "https://github.com/kklimuk/docx-cli/issues",
+	"type": "module",
+	"packageManager": "bun@1.3.13",
+	"bin": {
+		"docx": "./dist/index.js"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"engines": {
+		"bun": ">=1.3.0"
+	},
+	"scripts": {
+		"dev": "bun src/index.ts",
+		"build": "bun build src/index.ts --outfile dist/index.js --target bun",
+		"build:binary": "bun build --compile --outfile=dist/docx src/index.ts",
+		"check": "biome check . && knip-bun && bunx tsc --noEmit",
+		"test": "bun test",
+		"test:unit": "bun test tests/core tests/cli",
+		"test:integration": "bun test tests/integration",
+		"prepack": "bun run build",
+		"prepare": "husky"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"@types/bun": "^1.3.13",
+		"husky": "^9.1.7",
+		"knip": "^6.3.0",
+		"typescript": "^6.0.2"
+	},
+	"dependencies": {
+		"fast-xml-builder": "^1.1.6",
+		"fast-xml-parser": "^5.7.2",
+		"jszip": "^3.10.1"
+	}
+}

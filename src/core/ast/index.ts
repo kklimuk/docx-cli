@@ -1,0 +1,27 @@
+export {
+	type BlockReference,
+	type CommentReference,
+	type DocView,
+	enrichImageHashes,
+	type ImageReference,
+	openDocView,
+	saveDocView,
+} from "./doc-view";
+export type {
+	Block,
+	BreakRun,
+	Comment,
+	CommentAnchor,
+	Doc,
+	DocProperties,
+	ImageRun,
+	Paragraph,
+	Run,
+	SectionBreak,
+	Table,
+	TableCell,
+	TableRow,
+	TabRun,
+	TextRun,
+	TrackedChange,
+} from "./types";
