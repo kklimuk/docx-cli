@@ -573,3 +573,126 @@ describe("docx insert --url", () => {
 		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
 	});
 });
+
+describe("docx replace — across hyperlink boundaries", () => {
+	// Sets up a paragraph with text "before LINKED after" where "LINKED"
+	// (chars 7-13) is a hyperlink. The paragraph id is p1.
+	async function setupSample(label: string): Promise<{ docPath: string }> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/minimal.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"before LINKED after",
+		);
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:7-13",
+			"--url",
+			"https://example.com/link",
+		);
+		return { docPath };
+	}
+
+	function readP1Runs(doc: Doc): Array<{
+		text: string;
+		hyperlink?: LinkInfo;
+	}> {
+		const block = doc.blocks.find((entry) => entry.id === "p1");
+		return (block?.runs ?? [])
+			.filter((run) => run.type === "text")
+			.map((run) => ({
+				text: run.text ?? "",
+				...(run.hyperlink ? { hyperlink: run.hyperlink } : {}),
+			}));
+	}
+
+	test("offsets after a hyperlink are correct (replace word that follows the link)", async () => {
+		const { docPath } = await setupSample("repl-offset");
+		const result = await runCli("replace", docPath, "after", "AFTER");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const runs = readP1Runs(read.parsed as Doc);
+		const all = runs.map((entry) => entry.text).join("");
+		expect(all).toBe("before LINKED AFTER");
+	});
+
+	test("span fully inside link: replacement inherits the URL", async () => {
+		const { docPath } = await setupSample("repl-inside");
+		const result = await runCli("replace", docPath, "INK", "OOK");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const runs = readP1Runs(read.parsed as Doc);
+		const all = runs.map((entry) => entry.text).join("");
+		expect(all).toBe("before LOOKED after");
+		const linkedRun = runs.find((entry) => entry.text === "OOK");
+		expect(linkedRun?.hyperlink?.url).toBe("https://example.com/link");
+	});
+
+	test("span starts outside, ends inside: replacement is plain; tail of link survives", async () => {
+		// Replace "before LIN" -> "X". Span starts at 0 (outside), ends at 10
+		// (inside the link, before "KED"). The "KED" tail of the link should
+		// remain linked; the replacement "X" is plain text outside the link.
+		const { docPath } = await setupSample("repl-cross-start");
+		const result = await runCli("replace", docPath, "before LIN", "X");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const runs = readP1Runs(read.parsed as Doc);
+		const all = runs.map((entry) => entry.text).join("");
+		expect(all).toBe("XKED after");
+		const xRun = runs.find((entry) => entry.text === "X");
+		expect(xRun?.hyperlink).toBeUndefined();
+		const tailRun = runs.find((entry) => entry.text === "KED");
+		expect(tailRun?.hyperlink?.url).toBe("https://example.com/link");
+	});
+
+	test("span starts inside, ends outside: replacement keeps the URL; head of link survives", async () => {
+		// Replace "KED after" -> "Y". Span starts at 10 (inside link),
+		// ends at 19 (paragraph end). Head of link "LIN" survives. The
+		// replacement "Y" stays inside the (pre-half) hyperlink.
+		const { docPath } = await setupSample("repl-cross-end");
+		const result = await runCli("replace", docPath, "KED after", "Y");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const runs = readP1Runs(read.parsed as Doc);
+		const all = runs.map((entry) => entry.text).join("");
+		expect(all).toBe("before LINY");
+		const headRun = runs.find((entry) => entry.text === "LIN");
+		expect(headRun?.hyperlink?.url).toBe("https://example.com/link");
+		const yRun = runs.find((entry) => entry.text === "Y");
+		expect(yRun?.hyperlink?.url).toBe("https://example.com/link");
+	});
+
+	test("span fully contains link: link is removed; replacement is plain", async () => {
+		// Replace "before LINKED after" -> "Z". The hyperlink disappears.
+		const { docPath } = await setupSample("repl-contains");
+		const result = await runCli("replace", docPath, "before LINKED after", "Z");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const runs = readP1Runs(read.parsed as Doc);
+		expect(runs.map((entry) => entry.text).join("")).toBe("Z");
+		expect(runs[0]?.hyperlink).toBeUndefined();
+
+		// Hyperlinks list should now be empty.
+		const list = await runCli("hyperlinks", "list", docPath);
+		expect(list.parsed).toEqual([]);
+	});
+
+	test("disjoint replace before the link leaves the link intact", async () => {
+		const { docPath } = await setupSample("repl-disjoint-before");
+		const result = await runCli("replace", docPath, "before", "BEFORE");
+		expect(result.exitCode).toBe(0);
+		const list = await runCli("hyperlinks", "list", docPath);
+		const links = list.parsed as ListEntry[];
+		expect(links).toHaveLength(1);
+		expect(links[0]?.text).toBe("LINKED");
+		expect(links[0]?.url).toBe("https://example.com/link");
+	});
+});

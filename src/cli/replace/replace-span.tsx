@@ -104,7 +104,11 @@ function collectRunSlots(paragraph: XmlNode): RunSlot[] {
 			offset += length;
 			continue;
 		}
-		if (child.tag === "w:ins" || child.tag === "w:del") {
+		if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:hyperlink"
+		) {
 			for (const inner of child.children) {
 				if (inner.tag !== "w:r") continue;
 				const length = runTextLength(inner);
@@ -178,7 +182,12 @@ function rebuildContainer(
 			}
 			continue;
 		}
-		if (isParagraph && (child.tag === "w:ins" || child.tag === "w:del")) {
+		if (
+			isParagraph &&
+			(child.tag === "w:ins" ||
+				child.tag === "w:del" ||
+				child.tag === "w:hyperlink")
+		) {
 			let innerLength = 0;
 			for (const inner of child.children) {
 				if (inner.tag === "w:r") innerLength += runTextLength(inner);
@@ -275,6 +284,38 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
+		if (child.tag === "w:hyperlink") {
+			const innerLength = sumInnerRunLengths(child);
+			const wrapperStart = offset;
+			const wrapperEnd = offset + innerLength;
+			offset = wrapperEnd;
+
+			if (wrapperEnd <= span.start) {
+				newChildren.push(child);
+				continue;
+			}
+			if (wrapperStart >= span.end) {
+				placeReplacement();
+				newChildren.push(child);
+				continue;
+			}
+
+			splitHyperlinkAcrossSpan(
+				child,
+				wrapperStart,
+				span,
+				runProperties,
+				replacement,
+				tracked,
+				newChildren,
+				placeReplacement,
+				() => {
+					placed = true;
+				},
+			);
+			continue;
+		}
+
 		newChildren.push(child);
 	}
 
@@ -343,6 +384,88 @@ function splitWrapperAcrossSpan(
 
 	if (postInner.length > 0) {
 		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		postWrapper.children = postInner;
+		out.push(postWrapper);
+	}
+}
+
+function splitHyperlinkAcrossSpan(
+	wrapper: XmlNode,
+	wrapperStart: number,
+	span: Span,
+	runProperties: XmlNode | null,
+	replacement: string,
+	tracked: TrackedReplaceOptions | null,
+	out: XmlNode[],
+	placeReplacement: () => void,
+	markReplacementPlaced: () => void,
+): void {
+	const wrapperEnd =
+		wrapperStart +
+		wrapper.children.reduce(
+			(total, inner) =>
+				inner.tag === "w:r" ? total + runTextLength(inner) : total,
+			0,
+		);
+	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
+
+	const preInner: XmlNode[] = [];
+	const postInner: XmlNode[] = [];
+	let innerOffset = wrapperStart;
+
+	for (const inner of wrapper.children) {
+		if (inner.tag !== "w:r") {
+			preInner.push(inner);
+			continue;
+		}
+		const length = runTextLength(inner);
+		const runStart = innerOffset;
+		const runEnd = innerOffset + length;
+		innerOffset = runEnd;
+
+		if (runEnd <= span.start) {
+			preInner.push(inner);
+			continue;
+		}
+		if (runStart >= span.end) {
+			postInner.push(inner);
+			continue;
+		}
+
+		const sliceStartInRun = Math.max(0, span.start - runStart);
+		const sliceEndInRun = Math.min(length, span.end - runStart);
+		if (sliceStartInRun > 0) preInner.push(sliceRun(inner, 0, sliceStartInRun));
+		// cut portion is dropped (replaced by the replacement run)
+		if (sliceEndInRun < length) {
+			postInner.push(sliceRun(inner, sliceEndInRun, length));
+		}
+	}
+
+	if (startsInside) {
+		// Replacement inherits the link: append it inside the pre-half.
+		const innerReplacement = (
+			<ReplacementRun runProperties={runProperties} text={replacement} />
+		);
+		preInner.push(
+			tracked ? (
+				<Ins meta={mintMeta(tracked)}>{innerReplacement}</Ins>
+			) : (
+				innerReplacement
+			),
+		);
+		markReplacementPlaced();
+	}
+
+	if (preInner.length > 0) {
+		const preWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
+		preWrapper.children = preInner;
+		out.push(preWrapper);
+	}
+
+	if (!startsInside) placeReplacement();
+
+	if (postInner.length > 0) {
+		const postWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
 		postWrapper.children = postInner;
 		out.push(postWrapper);
 	}
