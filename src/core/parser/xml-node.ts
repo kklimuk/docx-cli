@@ -43,10 +43,8 @@ export class XmlNode {
 
 	static serialize(tree: XmlNode[]): string {
 		const builder = new XMLBuilder(BUILD_OPTIONS);
-		const flat: XmlNode[] = [];
-		flattenFragments(tree, flat);
 		const pojo: Record<string, unknown>[] = [];
-		for (const node of flat) {
+		for (const node of tree) {
 			pojo.push(node.toObject());
 		}
 		return builder.build(pojo) as string;
@@ -145,6 +143,15 @@ export class XmlNode {
 		return out;
 	}
 
+	clone(): XmlNode {
+		const cloned = new XmlNode(this.tag, { ...this.attributes });
+		if (this.text !== undefined) cloned.text = this.text;
+		for (const child of this.children) {
+			cloned.children.push(child.clone());
+		}
+		return cloned;
+	}
+
 	toObject(): Record<string, unknown> {
 		if (this.isText) {
 			return { "#text": this.text ?? "" };
@@ -190,15 +197,3 @@ const BUILD_OPTIONS = {
 	suppressEmptyNode: true,
 	format: false,
 };
-
-const FRAGMENT_TAG = "#fragment";
-
-function flattenFragments(tree: XmlNode[], out: XmlNode[]): void {
-	for (const node of tree) {
-		if (node.tag === FRAGMENT_TAG) {
-			flattenFragments(node.children, out);
-			continue;
-		}
-		out.push(node);
-	}
-}

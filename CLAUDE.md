@@ -70,7 +70,7 @@ These are not suggestions. Follow them.
 - **File naming**: kebab-case, named after the primary export (`xml-node.ts` → `XmlNode`, `paragraph.ts` → `Paragraph`).
 - **Feature structure**: each command is a kebab-case folder under `src/cli/`. `index.ts(x)` is the public surface (`export async function run(args: string[]): Promise<number>`). Sub-files for shared helpers, no cross-feature imports unless centrally exposed via `@core/*`.
 - **Path aliases**: `@core` → `src/core/index.ts`, `@core/*` → `src/core/*/index.{ts,tsx}` or `src/core/*.{ts,tsx}` (configured in tsconfig). Use these in `src/cli/*` to avoid `../../core` chains. `src/core` itself uses relative imports between siblings.
-- **JSX is for emitters only**. `.tsx` files only in `src/cli/*` (and `src/core/jsx`). Never in the AST reader. Components are PascalCase (`<Paragraph>`, `<RunProperties>`); they accept props and may return `XmlNode | null` (null skipped by flatten). Tag namespaces are imported as lowercase (`w.p`, `cp.coreProperties`); attribute names with colons go through hyphen shortcut (`w-val="800080"` → `w:val="800080"`) or JSX spread (`{...{"w:val": "x"}}`).
+- **JSX is for emitters only**. Any file that constructs fresh XML can be `.tsx` — wherever it lives in the tree. Readers, locators, and pure analysis stay `.ts`; never JSX in the AST reader. Components are PascalCase (`<Paragraph>`, `<RunProperties>`); they accept props and may return `XmlNode | null` (null skipped by flatten). Tag namespaces are imported as lowercase (`w.p`, `cp.coreProperties`); attribute names with colons go through hyphen shortcut (`w-val="800080"` → `w:val="800080"`) or JSX spread (`{...{"w:val": "x"}}`).
 - **Variable names**: no single/two-letter names. Use descriptive (`paragraph` not `p`, `commentId` not `cid`). Exception: standard regex-match destructuring (`const [, prefix, idx] = match`) since the convention is unambiguous.
 - **Spacing**: tabs, double quotes (Biome enforced).
 - **Top-down file ordering**: exports first, dependencies below — like a newspaper. Use `function` declarations (hoisted) for internal helpers so this works at runtime. Arrow functions only for inline callbacks and short utilities.
@@ -78,22 +78,19 @@ These are not suggestions. Follow them.
 
 ## Architectural Invariants
 
+These are not architectural suggestions, but requirements. If you disagree, make the case about needing a different pattern for a feature.
+
 - **In-place XML mutation, not AST round-trip emission**. The typed AST returned by `read` is a _view_ over the parsed XML tree. Mutations (insert/edit/delete/comments add) operate on the underlying `XmlNode` references via `BlockReference.parent.splice(...)`. Anything we don't model survives because we never re-emit untouched regions. Only emit fresh XML for nodes we're inserting (via JSX) — never round-trip whole subtrees through the AST.
 - **fast-xml-builder owns escaping**. On the JSX path, never manually escape — the builder handles entities correctly (uses `&apos;` for `'`, which fast-xml-parser decodes back). The static templates in `cli/create/template.tsx` carry no user-supplied content, so they don't need escaping at all.
 - **JSX.Element = XmlNode** (single, not nullable union). `Fragment` returns a sentinel `#fragment` XmlNode that gets unwrapped both in `flatten()` (composition) and `XmlNode.serialize()` (top-level). Components that want to "render nothing" return `null`; `jsx()` converts that to an empty fragment so callers always see `XmlNode`.
 - **Stable positional ids** (`p0`, `t0`, `c0`, `img0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image ids are positional (document order).
 - **paraId is required for resolve/reply**. Comments authored by external tools may lack `w14:paraId` on their bodies. The `resolve` and `reply` verbs auto-inject one via `ensureCommentParaId()` (also adds `xmlns:w14` to the `<w:comments>` root if missing). Do this rather than failing — agents shouldn't have to recreate comments.
+- **Track-changes is doc-level, not per-command**. When `<w:trackChanges/>` is set in `settings.xml`, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` markers — there is no per-command override flag. To make a one-off untracked edit, run `docx track-changes FILE off`, edit, then `track-changes on`. Author/date come from `DOCX_AUTHOR` env var (or `"docx-cli"` default); `DOCX_CLI_NOW` injects a fixed date for tests. `delete tN` rejects with `TRACKED_CHANGE_CONFLICT` when tracking is on (tracked table-row deletion isn't supported).
 - **No undo, no journal**. Mutating commands overwrite `FILE` in place. Pass `-o/--output PATH` to write to a parallel file instead, or `--dry-run` to preview. There is no snapshot ring, restore command, or trash directory — git is the version history. When both `--dry-run` and `--output` are passed, `--dry-run` wins (nothing is written to either path); the dry-run payload echoes `output` so the agent knows where a real run would have written.
 
 ## Commands
 
 `docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default; structured `{ok: false, code, error, hint}` on failure.
-
-| Surface    | Verbs                                                                                            |
-| ---------- | ------------------------------------------------------------------------------------------------ |
-| top-level  | `create` `read` `insert` `edit` `delete` `find` `replace` `track-changes` `schema` `locators`    |
-| `comments` | `add` `reply` `resolve` `delete` `list`                                                          |
-| `images`   | `list` `extract` `replace`                                                                       |
 
 Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image), `4` permission, `5` already-applied. Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
 
@@ -148,7 +145,7 @@ Tag pushes (`v*`) trigger:
 
 ## When Editing
 
-- New CLI command? Add a folder under `src/cli/`, register in the COMMANDS map in `src/cli/index.ts`, add tests under `tests/cli/`, document in README. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
+- New CLI command? Add a folder under `src/cli/`, register in the COMMANDS map in `src/cli/index.ts`, add tests under `tests/cli/`, document in README and CLAUDE.md. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
 - New OOXML tag? Add to the appropriate namespace's tag list in `src/core/jsx/index.ts`. The mapped-type pattern (`namespace("w", W_TAGS)`) survives `noUncheckedIndexedAccess` because the keys are a literal-string union.
 - New AST field? Add to `src/core/ast/types.ts`, populate in `src/core/ast/read.ts`, then update `src/cli/info/schema.ts` JSON schema. The `--ts` output reads `types.ts` live via Bun's text import attribute, so it stays in sync automatically.
 - New fixture? Drop in `tests/fixtures/`, add to the FIXTURES list in `tests/integration/libreoffice-roundtrip.test.ts` if it should round-trip. The `scripts/inspect-fixtures.ts` summarizes what each one exercises.

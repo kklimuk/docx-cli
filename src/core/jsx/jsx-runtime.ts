@@ -1,8 +1,5 @@
 import { type NullableXmlNode, XmlNode } from "../parser";
-import { Fragment, type JsxChild } from "./index";
-
-// biome-ignore lint/suspicious/noExplicitAny: components accept arbitrary prop shapes
-type Component = (props: any, ...children: JsxChild[]) => NullableXmlNode;
+import { Fragment } from "./index";
 
 declare global {
 	namespace JSX {
@@ -16,25 +13,15 @@ declare global {
 	}
 }
 
-type RuntimeProps = { children?: unknown } & Record<string, unknown>;
-
-export function jsx(
-	type: Component,
-	props: RuntimeProps,
+export function jsx<P>(
+	type: (props: P) => NullableXmlNode,
+	props: P,
 	_key?: unknown,
 ): XmlNode {
-	const { children, ...rest } = props ?? {};
-	const childArgs = normalizeChildren(children);
-	const result = type(rest, ...childArgs);
+	const result = type(props);
 	return result ?? new XmlNode("#fragment");
 }
 
 export const jsxs = jsx;
 export const jsxDEV = jsx;
 export { Fragment };
-
-function normalizeChildren(children: unknown): JsxChild[] {
-	if (children === undefined) return [];
-	if (Array.isArray(children)) return children as JsxChild[];
-	return [children as JsxChild];
-}

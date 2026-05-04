@@ -1,10 +1,11 @@
-import type { Block, Doc } from "../ast/types";
+import type { Block, Doc, Paragraph, TrackedChange } from "../ast/types";
 
 export type TextMatch = {
 	blockId: string;
 	start: number;
 	end: number;
 	text: string;
+	trackedChanges?: TrackedChange[];
 };
 
 export type FindOptions = {
@@ -86,12 +87,15 @@ function collectMatches(
 				.map((run) => (run.type === "text" ? run.text : ""))
 				.join("");
 			for (const span of matcher(paragraphText)) {
-				out.push({
+				const match: TextMatch = {
 					blockId: block.id,
 					start: span.start,
 					end: span.end,
 					text: span.text,
-				});
+				};
+				const overlaps = trackedChangesOverlapping(block, span.start, span.end);
+				if (overlaps.length > 0) match.trackedChanges = overlaps;
+				out.push(match);
 			}
 			continue;
 		}
@@ -103,4 +107,29 @@ function collectMatches(
 			}
 		}
 	}
+}
+
+function trackedChangesOverlapping(
+	paragraph: Paragraph,
+	start: number,
+	end: number,
+): TrackedChange[] {
+	const seen = new Set<string>();
+	const out: TrackedChange[] = [];
+	let offset = 0;
+	for (const run of paragraph.runs) {
+		const length = run.type === "text" ? run.text.length : 0;
+		const runStart = offset;
+		const runEnd = offset + length;
+		offset = runEnd;
+		if (run.type !== "text") continue;
+		if (runEnd <= start || runStart >= end) continue;
+		const change = run.trackedChange;
+		if (!change) continue;
+		const key = `${change.kind}:${change.revisionId}:${change.author}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(change);
+	}
+	return out;
 }

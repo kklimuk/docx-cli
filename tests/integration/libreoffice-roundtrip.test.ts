@@ -92,6 +92,74 @@ describe("LibreOffice round-trip", () => {
 			expect((await converted.arrayBuffer()).byteLength).toBeGreaterThan(0);
 		}, 30_000);
 	}
+
+	test("tracked-on edits round-trip through LibreOffice with markers preserved", async () => {
+		const docPath = join(workspace, "tracked-roundtrip.docx");
+		await runCli("create", docPath, "--text", "Original body text here.");
+		await runCli("track-changes", docPath, "on");
+
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Inserted with tracking",
+		);
+		await runCli("replace", docPath, "Original", "Modified");
+
+		const beforeRead = await runCli("read", docPath);
+		const beforeRuns = (
+			beforeRead.parsed as {
+				blocks: Array<{
+					runs?: Array<{ trackedChange?: { kind: string } }>;
+				}>;
+			}
+		).blocks.flatMap((b) => b.runs ?? []);
+		const insBefore = beforeRuns.filter(
+			(r) => r.trackedChange?.kind === "ins",
+		).length;
+		const delBefore = beforeRuns.filter(
+			(r) => r.trackedChange?.kind === "del",
+		).length;
+		expect(insBefore).toBeGreaterThan(0);
+		expect(delBefore).toBeGreaterThan(0);
+
+		const outDir = join(workspace, "lo-tracked");
+		mkdirSync(outDir, { recursive: true });
+		const proc = Bun.spawn(
+			[
+				SOFFICE,
+				"--headless",
+				"--convert-to",
+				"docx",
+				docPath,
+				"--outdir",
+				outDir,
+			],
+			{ stdout: "pipe", stderr: "pipe" },
+		);
+		const exitCode = await proc.exited;
+		expect(exitCode).toBe(0);
+
+		const converted = join(outDir, "tracked-roundtrip.docx");
+		const afterRead = await runCli("read", converted);
+		const afterRuns = (
+			afterRead.parsed as {
+				blocks: Array<{
+					runs?: Array<{ trackedChange?: { kind: string } }>;
+				}>;
+			}
+		).blocks.flatMap((b) => b.runs ?? []);
+		const insAfter = afterRuns.filter(
+			(r) => r.trackedChange?.kind === "ins",
+		).length;
+		const delAfter = afterRuns.filter(
+			(r) => r.trackedChange?.kind === "del",
+		).length;
+		expect(insAfter).toBeGreaterThan(0);
+		expect(delAfter).toBeGreaterThan(0);
+	}, 30_000);
 });
 
 async function detectSoffice(): Promise<string | null> {

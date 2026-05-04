@@ -24,7 +24,13 @@ Commands:
 Run "docx <command> --help" for command-specific help.
 
 Environment:
-  DOCX_AUTHOR  Default --author for "comments add" / "comments reply"
+  DOCX_AUTHOR    Default author for comments and tracked-change attribution
+  DOCX_CLI_NOW   Override the timestamp used for tracked changes (test only)
+
+Tracked changes:
+  When <w:trackChanges/> is set in the doc (toggle via "docx track-changes
+  FILE on"), insert/edit/delete/replace automatically emit <w:ins>/<w:del>
+  markers attributed to $DOCX_AUTHOR.
 `;
 
 export async function printTopHelp(): Promise<void> {

@@ -54,6 +54,35 @@ describe("docx find — tracked changes", () => {
 	});
 });
 
+describe("docx find — tracked-change overlap", () => {
+	test("match inside a tracked insertion reports trackedChanges in the result", async () => {
+		const docPath = await freshCopy("find-overlap-ins");
+		const result = await runCli("find", docPath, "exciting");
+		expect(result.exitCode).toBe(0);
+
+		const payload = result.parsed as {
+			matches: Array<{
+				locator: string;
+				trackedChanges?: Array<{ kind: string; author: string }>;
+			}>;
+		};
+		expect(payload.matches[0]?.trackedChanges).toBeDefined();
+		expect(payload.matches[0]?.trackedChanges?.[0]?.kind).toBe("ins");
+		expect(payload.matches[0]?.trackedChanges?.[0]?.author).toBe("eng-dept");
+	});
+
+	test("match in plain text has no trackedChanges field", async () => {
+		const docPath = await freshCopy("find-overlap-plain");
+		const result = await runCli("find", docPath, "insertions");
+		expect(result.exitCode).toBe(0);
+
+		const payload = result.parsed as {
+			matches: Array<{ trackedChanges?: unknown }>;
+		};
+		expect(payload.matches[0]?.trackedChanges).toBeUndefined();
+	});
+});
+
 describe("docx replace — tracked changes", () => {
 	test("replacement inside an <w:ins> stays inside the wrapper", async () => {
 		const docPath = await freshCopy("replace-in-ins");
@@ -76,14 +105,13 @@ describe("docx replace — tracked changes", () => {
 		expect(insRun?.trackedChange?.kind).toBe("ins");
 	});
 
-	test("rejects span that crosses a tracked-change boundary", async () => {
+	test("span crossing a tracked-change boundary replaces and splits the wrapper", async () => {
 		const docPath = await freshCopy("replace-cross-tc");
 		const result = await runCli("replace", docPath, "with two", "with three");
-		expect(result.exitCode).toBe(1);
-		expect(result.parsed).toMatchObject({
-			ok: false,
-			code: "TRACKED_CHANGE_CONFLICT",
-		});
+		expect(result.exitCode).toBe(0);
+
+		const flat = await flatText(docPath);
+		expect(flat).toBe("This is a text with three exciting insertions.");
 	});
 
 	test("plain-text replacement before a tracked change still works", async () => {
@@ -102,6 +130,134 @@ describe("docx replace — tracked changes", () => {
 
 		const flat = await flatText(docPath);
 		expect(flat).toBe("This is a text with two exciting edits.");
+	});
+
+	test("with track-changes flag on, plain-text replace emits del + ins", async () => {
+		const docPath = await freshCopy("replace-tracked-plain");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli("replace", docPath, "text", "string");
+		expect(result.exitCode).toBe(0);
+
+		const read = await runCli("read", docPath);
+		const runs = (
+			read.parsed as {
+				blocks: Array<{
+					runs?: Array<{
+						type: string;
+						text: string;
+						trackedChange?: { kind: string };
+					}>;
+				}>;
+			}
+		).blocks[0]?.runs;
+
+		const insertedRun = runs?.find((run) => run.text === "string");
+		expect(insertedRun?.trackedChange?.kind).toBe("ins");
+
+		const deletedRun = runs?.find(
+			(run) => run.text === "text" && run.trackedChange?.kind === "del",
+		);
+		expect(deletedRun).toBeDefined();
+	});
+});
+
+describe("docx delete — tracked changes", () => {
+	test("with track-changes flag on, paragraph delete wraps runs in <w:del>", async () => {
+		const docPath = await freshCopy("delete-tracked");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli("delete", docPath, "--at", "p0");
+		expect(result.exitCode).toBe(0);
+
+		const read = await runCli("read", docPath);
+		const blocks = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					runs?: Array<{
+						type: string;
+						text: string;
+						trackedChange?: { kind: string };
+					}>;
+				}>;
+			}
+		).blocks;
+
+		const paragraph = blocks.find((b) => b.type === "paragraph");
+		expect(paragraph).toBeDefined();
+		const deletedRun = paragraph?.runs?.find(
+			(r) => r.trackedChange?.kind === "del",
+		);
+		expect(deletedRun).toBeDefined();
+	});
+});
+
+describe("docx edit — tracked changes", () => {
+	test("with track-changes flag on, edit preserves old runs as <w:del> + new as <w:ins>", async () => {
+		const docPath = await freshCopy("edit-tracked");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Replaced",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const read = await runCli("read", docPath);
+		const runs = (
+			read.parsed as {
+				blocks: Array<{
+					runs?: Array<{
+						type: string;
+						text: string;
+						trackedChange?: { kind: string };
+					}>;
+				}>;
+			}
+		).blocks[0]?.runs;
+
+		const insertedRun = runs?.find((r) => r.text === "Replaced");
+		expect(insertedRun?.trackedChange?.kind).toBe("ins");
+		const deletedRun = runs?.find(
+			(r) => r.trackedChange?.kind === "del" && r.text.includes("This is a"),
+		);
+		expect(deletedRun).toBeDefined();
+	});
+});
+
+describe("docx insert — tracked changes", () => {
+	test("with track-changes flag on, insert wraps new runs in <w:ins>", async () => {
+		const docPath = await freshCopy("insert-tracked");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Inserted",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const read = await runCli("read", docPath);
+		const blocks = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					runs?: Array<{
+						type: string;
+						text: string;
+						trackedChange?: { kind: string };
+					}>;
+				}>;
+			}
+		).blocks;
+
+		const newParagraph = blocks.filter((b) => b.type === "paragraph")[1];
+		const insertedRun = newParagraph?.runs?.find((r) => r.text === "Inserted");
+		expect(insertedRun?.trackedChange?.kind).toBe("ins");
 	});
 });
 

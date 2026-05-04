@@ -38,3 +38,13 @@ export {
 } from "./locators";
 export { PkgError } from "./package";
 export { XmlNode } from "./parser";
+export {
+	convertTextToDelText,
+	createRevisionAllocator,
+	isTrackChangesEnabled,
+	type RevisionAllocator,
+	resolveAuthor,
+	resolveDate,
+	type TrackedMeta,
+} from "./track-changes";
+export { Del, Ins, markParagraphMarkAs } from "./track-changes/emit";

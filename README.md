@@ -2,13 +2,6 @@
 
 A Bun-built CLI for AI agents (Claude, Codex) to read, edit, and comment on `.docx` files with full format fidelity. Outputs JSON-AST for precise locator-based editing; preserves anything it doesn't model by mutating XML in place.
 
-## Stack
-
-- **Runtime**: Bun (`node:util` parseArgs, JSX with custom factory, native zlib)
-- **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
-- **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
-- **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile
-
 ## Install
 
 **Standalone binary** (no Bun required):
@@ -63,6 +56,8 @@ docx info locators [--json]
 ```
 
 Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
+
+When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers attributed to `$DOCX_AUTHOR` (default `docx-cli`). To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions.
 
 ### Locators
 
@@ -122,6 +117,13 @@ tests/
   core/, cli/, integration/
   fixtures/
 ```
+
+## Stack
+
+- **Runtime**: Bun (`node:util` parseArgs, JSX with custom factory, native zlib)
+- **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
+- **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
+- **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile
 
 ## How It Works
 

@@ -1,19 +1,13 @@
+import { Del, Ins, type RevisionAllocator, type TrackedMeta } from "@core";
 import { w } from "@core/jsx";
-import {
-	deepCloneNode,
-	runTextLength,
-	sliceRun,
-	type XmlNode,
-} from "@core/parser";
+import { runTextLength, sliceRun, XmlNode } from "@core/parser";
 
 export type Span = { start: number; end: number };
 
-export class TrackedChangeBoundaryError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "TrackedChangeBoundaryError";
-	}
-}
+export type TrackedReplaceOptions = {
+	meta: Omit<TrackedMeta, "revisionId">;
+	allocator: RevisionAllocator;
+};
 
 /**
  * Replace text in a paragraph's runs at the given span with `replacement`.
@@ -21,17 +15,21 @@ export class TrackedChangeBoundaryError extends Error {
  * inherits the rPr of the first run that overlaps the span.
  *
  * The span uses paragraph-relative offsets matching the AST's accounting,
- * which includes runs nested inside <w:ins>/<w:del>. When the span lies
- * fully inside a tracked-change wrapper, the replacement run is inserted
- * inside that wrapper (preserving the original change attribution). A span
- * that crosses a tracked-change boundary is rejected with
- * TrackedChangeBoundaryError — the agent should accept/reject the tracked
- * change first.
+ * which includes runs nested inside <w:ins>/<w:del>. Spans may cross
+ * tracked-change wrapper boundaries; overlapping wrappers are split into
+ * pre/post halves so attribution survives unaffected portions.
+ *
+ * When `tracked` is provided, the cut content is wrapped in <w:del> (with
+ * <w:t> nodes converted to <w:delText>), and the replacement is wrapped in
+ * <w:ins> at the paragraph top level. When the replacement falls inside an
+ * existing wrapper (same-parent case), it stays unwrapped and inherits the
+ * surrounding wrapper's attribution.
  */
 export function replaceSpanInParagraph(
 	paragraph: XmlNode,
 	span: Span,
 	replacement: string,
+	tracked?: TrackedReplaceOptions,
 ): void {
 	if (span.start > span.end) {
 		throw new Error(
@@ -48,30 +46,39 @@ export function replaceSpanInParagraph(
 
 	const firstSlot = overlapping[0];
 	if (!firstSlot) {
-		paragraph.children.push(replacementRun(null, replacement));
+		paragraph.children.push(
+			<ReplacementRun runProperties={null} text={replacement} />,
+		);
 		return;
 	}
 
+	const inheritedProperties = firstSlot.run.findChild("w:rPr")?.clone() ?? null;
 	const firstParent = firstSlot.parent;
-	if (overlapping.some((slot) => slot.parent !== firstParent)) {
-		throw new TrackedChangeBoundaryError(
-			"Span crosses a tracked-change (<w:ins>/<w:del>) boundary; accept or reject the tracked change first.",
+	const allSameParent = overlapping.every(
+		(slot) => slot.parent === firstParent,
+	);
+
+	if (allSameParent) {
+		const containerStart =
+			firstParent === paragraph ? 0 : firstSlot.offsetBefore;
+		rebuildContainer(
+			firstParent,
+			containerStart,
+			span,
+			replacement,
+			inheritedProperties,
+			firstParent === paragraph,
+			tracked ?? null,
 		);
+		return;
 	}
 
-	const firstRunProperties = firstSlot.run.findChild("w:rPr");
-	const inheritedProperties = firstRunProperties
-		? deepCloneNode(firstRunProperties)
-		: null;
-
-	const containerStart = firstParent === paragraph ? 0 : firstSlot.offsetBefore;
-	rebuildContainer(
-		firstParent,
-		containerStart,
+	rebuildAcrossBoundaries(
+		paragraph,
 		span,
 		replacement,
 		inheritedProperties,
-		firstParent === paragraph,
+		tracked ?? null,
 	);
 }
 
@@ -121,10 +128,22 @@ function rebuildContainer(
 	replacement: string,
 	runProperties: XmlNode | null,
 	isParagraph: boolean,
+	tracked: TrackedReplaceOptions | null,
 ): void {
 	const newChildren: XmlNode[] = [];
 	let offset = baseOffset;
-	let placedReplacement = false;
+	let placed = false;
+
+	const placeReplacement = (): void => {
+		if (placed) return;
+		placed = true;
+		const run = (
+			<ReplacementRun runProperties={runProperties} text={replacement} />
+		);
+		newChildren.push(
+			tracked && isParagraph ? <Ins meta={mintMeta(tracked)}>{run}</Ins> : run,
+		);
+	};
 
 	for (const child of container.children) {
 		if (child.tag === "w:r") {
@@ -138,10 +157,7 @@ function rebuildContainer(
 				continue;
 			}
 			if (runStart >= span.end) {
-				if (!placedReplacement) {
-					newChildren.push(replacementRun(runProperties, replacement));
-					placedReplacement = true;
-				}
+				placeReplacement();
 				newChildren.push(child);
 				continue;
 			}
@@ -151,10 +167,12 @@ function rebuildContainer(
 			if (sliceStartInRun > 0) {
 				newChildren.push(sliceRun(child, 0, sliceStartInRun));
 			}
-			if (!placedReplacement) {
-				newChildren.push(replacementRun(runProperties, replacement));
-				placedReplacement = true;
+			if (tracked) {
+				const cutRun = sliceRun(child, sliceStartInRun, sliceEndInRun);
+				convertRunTextToDelText(cutRun);
+				newChildren.push(<Del meta={mintMeta(tracked)}>{cutRun}</Del>);
 			}
+			placeReplacement();
 			if (sliceEndInRun < length) {
 				newChildren.push(sliceRun(child, sliceEndInRun, length));
 			}
@@ -172,24 +190,189 @@ function rebuildContainer(
 		newChildren.push(child);
 	}
 
-	if (!placedReplacement) {
-		newChildren.push(replacementRun(runProperties, replacement));
-	}
-
+	if (!placed) placeReplacement();
 	container.children = newChildren;
 }
 
-function replacementRun(runProperties: XmlNode | null, text: string): XmlNode {
-	if (text.length === 0) {
-		// Preserve an empty run so downstream save logic doesn't trip on a
-		// paragraph with zero runs; Word treats empty <w:r/> as harmless.
-		return (
-			<w.r>
-				{runProperties}
-				<w.t {...{ "xml:space": "preserve" }}>{""}</w.t>
-			</w.r>
+function rebuildAcrossBoundaries(
+	paragraph: XmlNode,
+	span: Span,
+	replacement: string,
+	runProperties: XmlNode | null,
+	tracked: TrackedReplaceOptions | null,
+): void {
+	const newChildren: XmlNode[] = [];
+	let offset = 0;
+	let placed = false;
+
+	const placeReplacement = (): void => {
+		if (placed) return;
+		placed = true;
+		const run = (
+			<ReplacementRun runProperties={runProperties} text={replacement} />
 		);
+		newChildren.push(tracked ? <Ins meta={mintMeta(tracked)}>{run}</Ins> : run);
+	};
+
+	for (const child of paragraph.children) {
+		if (child.tag === "w:r") {
+			const length = runTextLength(child);
+			const runStart = offset;
+			const runEnd = offset + length;
+			offset = runEnd;
+
+			if (runEnd <= span.start) {
+				newChildren.push(child);
+				continue;
+			}
+			if (runStart >= span.end) {
+				placeReplacement();
+				newChildren.push(child);
+				continue;
+			}
+
+			const sliceStartInRun = Math.max(0, span.start - runStart);
+			const sliceEndInRun = Math.min(length, span.end - runStart);
+			if (sliceStartInRun > 0) {
+				newChildren.push(sliceRun(child, 0, sliceStartInRun));
+			}
+			if (tracked) {
+				const cutRun = sliceRun(child, sliceStartInRun, sliceEndInRun);
+				convertRunTextToDelText(cutRun);
+				newChildren.push(<Del meta={mintMeta(tracked)}>{cutRun}</Del>);
+			}
+			placeReplacement();
+			if (sliceEndInRun < length) {
+				newChildren.push(sliceRun(child, sliceEndInRun, length));
+			}
+			continue;
+		}
+
+		if (child.tag === "w:ins" || child.tag === "w:del") {
+			const innerLength = sumInnerRunLengths(child);
+			const wrapperStart = offset;
+			const wrapperEnd = offset + innerLength;
+			offset = wrapperEnd;
+
+			if (wrapperEnd <= span.start) {
+				newChildren.push(child);
+				continue;
+			}
+			if (wrapperStart >= span.end) {
+				placeReplacement();
+				newChildren.push(child);
+				continue;
+			}
+
+			splitWrapperAcrossSpan(
+				child,
+				wrapperStart,
+				span,
+				tracked,
+				newChildren,
+				placeReplacement,
+			);
+			continue;
+		}
+
+		newChildren.push(child);
 	}
+
+	if (!placed) placeReplacement();
+	paragraph.children = newChildren;
+}
+
+function splitWrapperAcrossSpan(
+	wrapper: XmlNode,
+	wrapperStart: number,
+	span: Span,
+	tracked: TrackedReplaceOptions | null,
+	out: XmlNode[],
+	placeReplacement: () => void,
+): void {
+	const isDel = wrapper.tag === "w:del";
+	const preInner: XmlNode[] = [];
+	const cutInner: XmlNode[] = [];
+	const postInner: XmlNode[] = [];
+	let innerOffset = wrapperStart;
+
+	for (const inner of wrapper.children) {
+		if (inner.tag !== "w:r") {
+			preInner.push(inner);
+			continue;
+		}
+		const length = runTextLength(inner);
+		const runStart = innerOffset;
+		const runEnd = innerOffset + length;
+		innerOffset = runEnd;
+
+		if (runEnd <= span.start) {
+			preInner.push(inner);
+			continue;
+		}
+		if (runStart >= span.end) {
+			postInner.push(inner);
+			continue;
+		}
+
+		const sliceStartInRun = Math.max(0, span.start - runStart);
+		const sliceEndInRun = Math.min(length, span.end - runStart);
+		if (sliceStartInRun > 0) preInner.push(sliceRun(inner, 0, sliceStartInRun));
+		cutInner.push(sliceRun(inner, sliceStartInRun, sliceEndInRun));
+		if (sliceEndInRun < length)
+			postInner.push(sliceRun(inner, sliceEndInRun, length));
+	}
+
+	const preChildren = preInner.slice();
+	if (isDel) {
+		// Already deleted; the cut portion stays inside the original <w:del>.
+		preChildren.push(...cutInner);
+	} else if (tracked && cutInner.length > 0) {
+		// <w:ins> overlap with tracking on: nest <w:del> inside, preserving original
+		// author's insertion attribution.
+		for (const cutRun of cutInner) convertRunTextToDelText(cutRun);
+		preChildren.push(<Del meta={mintMeta(tracked)}>{cutInner}</Del>);
+	}
+	if (preChildren.length > 0) {
+		const preWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		preWrapper.children = preChildren;
+		out.push(preWrapper);
+	}
+
+	placeReplacement();
+
+	if (postInner.length > 0) {
+		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		postWrapper.children = postInner;
+		out.push(postWrapper);
+	}
+}
+
+function sumInnerRunLengths(wrapper: XmlNode): number {
+	let total = 0;
+	for (const inner of wrapper.children) {
+		if (inner.tag === "w:r") total += runTextLength(inner);
+	}
+	return total;
+}
+
+function mintMeta(tracked: TrackedReplaceOptions): TrackedMeta {
+	return { ...tracked.meta, revisionId: tracked.allocator.next() };
+}
+
+function convertRunTextToDelText(run: XmlNode): void {
+	for (const child of run.children) {
+		if (child.tag === "w:t") child.tag = "w:delText";
+	}
+}
+
+function ReplacementRun({
+	runProperties,
+	text,
+}: {
+	runProperties: XmlNode | null;
+	text: string;
+}): XmlNode {
 	return (
 		<w.r>
 			{runProperties}

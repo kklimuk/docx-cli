@@ -1,4 +1,15 @@
-import { type Run, saveDocView } from "@core";
+import {
+	createRevisionAllocator,
+	type DocView,
+	Ins,
+	isTrackChangesEnabled,
+	markParagraphMarkAs,
+	type Run,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+	type TrackedMeta,
+} from "@core";
 import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
@@ -159,6 +170,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 	const insertIndex = after !== undefined ? targetIndex + 1 : targetIndex;
 
+	if (isTrackChangesEnabled(view)) {
+		applyTrackedInsertion(paragraphNode, view);
+	}
+
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
@@ -185,4 +200,37 @@ export async function run(args: string[]): Promise<number> {
 		placement: after !== undefined ? "after" : "before",
 	});
 	return EXIT.OK;
+}
+
+function applyTrackedInsertion(paragraph: XmlNode, view: DocView): void {
+	const allocator = createRevisionAllocator(view);
+	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const mintMeta = (): TrackedMeta => ({
+		...baseMeta,
+		revisionId: allocator.next(),
+	});
+
+	// Wrap each contiguous run of <w:r> children in a single <w:ins>, preserving
+	// other children (e.g. <w:pPr>) at their existing positions.
+	const newChildren: XmlNode[] = [];
+	let runBuffer: XmlNode[] = [];
+	const flush = (): void => {
+		if (runBuffer.length === 0) return;
+		newChildren.push(<Ins meta={mintMeta()}>{runBuffer}</Ins>);
+		runBuffer = [];
+	};
+	for (const child of paragraph.children) {
+		if (child.tag === "w:r") {
+			runBuffer.push(child);
+			continue;
+		}
+		flush();
+		newChildren.push(child);
+	}
+	flush();
+	paragraph.children = newChildren;
+
+	// Mark the paragraph mark itself as inserted so accepting changes attributes
+	// the new paragraph break.
+	markParagraphMarkAs(paragraph, "ins", mintMeta());
 }

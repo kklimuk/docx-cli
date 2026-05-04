@@ -1,4 +1,16 @@
-import { saveDocView } from "@core";
+import {
+	convertTextToDelText,
+	createRevisionAllocator,
+	Del,
+	type DocView,
+	isTrackChangesEnabled,
+	markParagraphMarkAs,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+	type TrackedMeta,
+} from "@core";
+import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -84,7 +96,18 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	blockRef.parent.splice(targetIndex, 1);
+	if (isTrackChangesEnabled(view)) {
+		if (blockRef.node.tag !== "w:p") {
+			return fail(
+				"TRACKED_CHANGE_CONFLICT",
+				"Tracked deletion of non-paragraph blocks (e.g., tables) is not supported",
+				"Use `docx track-changes off` first, or delete table contents row-by-row.",
+			);
+		}
+		applyTrackedDeletion(view, blockRef.node);
+	} else {
+		blockRef.parent.splice(targetIndex, 1);
+	}
 	await saveDocView(view, outputPath);
 
 	await respond({
@@ -94,4 +117,37 @@ export async function run(args: string[]): Promise<number> {
 		locator: at,
 	});
 	return EXIT.OK;
+}
+
+function applyTrackedDeletion(view: DocView, paragraph: XmlNode): void {
+	const allocator = createRevisionAllocator(view);
+	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const mintMeta = (): TrackedMeta => ({
+		...baseMeta,
+		revisionId: allocator.next(),
+	});
+
+	// Wrap each contiguous run of <w:r> children in <w:del> with <w:t> -> <w:delText>.
+	const newChildren: XmlNode[] = [];
+	let runBuffer: XmlNode[] = [];
+	const flush = (): void => {
+		if (runBuffer.length === 0) return;
+		const converted = runBuffer.map((run) => convertTextToDelText(run));
+		newChildren.push(<Del meta={mintMeta()}>{converted}</Del>);
+		runBuffer = [];
+	};
+	for (const child of paragraph.children) {
+		if (child.tag === "w:r") {
+			runBuffer.push(child);
+			continue;
+		}
+		flush();
+		newChildren.push(child);
+	}
+	flush();
+	paragraph.children = newChildren;
+
+	// Mark the paragraph mark itself as deleted so accepting changes also removes
+	// the paragraph break, leaving no orphan empty paragraph.
+	markParagraphMarkAs(paragraph, "del", mintMeta());
 }

@@ -10,23 +10,31 @@ export type JsxChild =
 	| false
 	| null
 	| undefined;
-export type TagFn = (props: JsxProps, ...children: JsxChild[]) => XmlNode;
+export type TagFn = (props: JsxProps) => XmlNode;
 export type FragmentFn = TagFn;
 
 const FRAGMENT_TAG = "#fragment";
 
-export const Fragment: FragmentFn = (_props, ...children) => {
+export const Fragment: FragmentFn = (props) => {
 	const wrapper = new XmlNode(FRAGMENT_TAG);
-	flatten(children, wrapper.children);
+	flatten(normalizeChildren(props?.children), wrapper.children);
 	return wrapper;
 };
 
+// Classic runtime entrypoint — bundles variadic children into props.children
+// so components can read them the standard way.
 export function h(
 	type: TagFn,
 	props: JsxProps,
 	...children: JsxChild[]
 ): XmlNode {
-	return type(props, ...children);
+	return type({ ...(props ?? {}), children });
+}
+
+export function normalizeChildren(children: unknown): JsxChild[] {
+	if (children === undefined || children === null) return [];
+	if (Array.isArray(children)) return children as JsxChild[];
+	return [children as JsxChild];
 }
 
 export type Namespace<TagName extends string> = { [Tag in TagName]: TagFn };
@@ -81,6 +89,7 @@ const W_TAGS = [
 	"tcPr",
 	"ins",
 	"del",
+	"delText",
 	"commentRangeStart",
 	"commentRangeEnd",
 	"commentReference",
@@ -139,17 +148,21 @@ export const w14 = namespace("w14", W14_TAGS);
 export const w15 = namespace("w15", W15_TAGS);
 
 function makeTag(qualifiedName: string): TagFn {
-	return (props, ...children) => {
+	return (props) => {
 		const attributes: XmlAttributes = {};
+		let childrenProp: unknown;
 		if (props) {
 			for (const [key, value] of Object.entries(props)) {
-				if (key === "children") continue;
+				if (key === "children") {
+					childrenProp = value;
+					continue;
+				}
 				if (value === false || value == null) continue;
 				attributes[mapAttributeName(key)] = String(value);
 			}
 		}
 		const childNodes: XmlNode[] = [];
-		flatten(children, childNodes);
+		flatten(normalizeChildren(childrenProp), childNodes);
 		return new XmlNode(qualifiedName, attributes, childNodes);
 	};
 }

@@ -26,16 +26,7 @@ export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
 			consumed += text.length;
 			continue;
 		}
-		sliced.children.push(deepCloneNode(child));
+		sliced.children.push(child.clone());
 	}
 	return sliced;
-}
-
-export function deepCloneNode(node: XmlNode): XmlNode {
-	const clone = new XmlNode(node.tag, { ...node.attributes });
-	if (node.text !== undefined) clone.text = node.text;
-	for (const child of node.children) {
-		clone.children.push(deepCloneNode(child));
-	}
-	return clone;
 }

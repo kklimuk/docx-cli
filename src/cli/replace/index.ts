@@ -1,10 +1,17 @@
-import { resolveBlock, saveDocView } from "@core";
+import {
+	createRevisionAllocator,
+	isTrackChangesEnabled,
+	resolveAuthor,
+	resolveBlock,
+	resolveDate,
+	saveDocView,
+} from "@core";
 import { findTextSpans, type TextMatch } from "@core/find";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import {
 	replaceSpanInParagraph,
-	TrackedChangeBoundaryError,
+	type TrackedReplaceOptions,
 } from "./replace-span";
 
 const HELP = `docx replace — substitute text spans (sed for docx)
@@ -169,28 +176,25 @@ export async function run(args: string[]): Promise<number> {
 		return rightMatch.start - leftMatch.start;
 	});
 
+	const tracked: TrackedReplaceOptions | undefined = isTrackChangesEnabled(view)
+		? {
+				meta: { author: resolveAuthor(), date: resolveDate() },
+				allocator: createRevisionAllocator(view),
+			}
+		: undefined;
+
 	const regexFlags = ignoreCase ? "i" : "";
-	try {
-		for (const match of reversed) {
-			const concreteReplacement = useRegex
-				? match.text.replace(new RegExp(pattern, regexFlags), replacement)
-				: replacement;
-			const blockRef = resolveBlock(view, match.blockId);
-			replaceSpanInParagraph(
-				blockRef.node,
-				{ start: match.start, end: match.end },
-				concreteReplacement,
-			);
-		}
-	} catch (error) {
-		if (error instanceof TrackedChangeBoundaryError) {
-			return fail(
-				"TRACKED_CHANGE_CONFLICT",
-				error.message,
-				"Use `docx track-changes off` (or accept/reject the change in Word) before replacing.",
-			);
-		}
-		throw error;
+	for (const match of reversed) {
+		const concreteReplacement = useRegex
+			? match.text.replace(new RegExp(pattern, regexFlags), replacement)
+			: replacement;
+		const blockRef = resolveBlock(view, match.blockId);
+		replaceSpanInParagraph(
+			blockRef.node,
+			{ start: match.start, end: match.end },
+			concreteReplacement,
+			tracked,
+		);
 	}
 
 	await saveDocView(view, outputPath);

@@ -10,8 +10,10 @@ const HELP = `docx track-changes — toggle the document's tracked-changes mode
 Usage:
   docx track-changes FILE on|off [options]
 
-Sets <w:trackChanges/> in word/settings.xml. When on, Word records new
-edits as tracked changes. Existing <w:ins>/<w:del> markers are unaffected.
+Sets <w:trackChanges/> in word/settings.xml. When on, this CLI's
+insert/edit/delete/replace commands also emit <w:ins>/<w:del> markers
+(attributed to $DOCX_AUTHOR) so changes remain reviewable. Existing
+<w:ins>/<w:del> markers are unaffected by the toggle itself.
 
 Options:
   -o, --output PATH Write to PATH instead of overwriting FILE

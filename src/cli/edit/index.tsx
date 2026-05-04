@@ -1,4 +1,16 @@
-import { type Run, saveDocView } from "@core";
+import {
+	convertTextToDelText,
+	createRevisionAllocator,
+	Del,
+	type DocView,
+	Ins,
+	isTrackChangesEnabled,
+	type Run,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+	type TrackedMeta,
+} from "@core";
 import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import { Paragraph, type ParagraphOptions } from "../insert/emit";
@@ -162,7 +174,11 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	blockRef.parent.splice(targetIndex, 1, paragraphNode);
+	if (isTrackChangesEnabled(view)) {
+		applyTrackedEdit(view, blockRef.node, paragraphNode);
+	} else {
+		blockRef.parent.splice(targetIndex, 1, paragraphNode);
+	}
 	await saveDocView(view, outputPath);
 
 	await respond({
@@ -172,4 +188,49 @@ export async function run(args: string[]): Promise<number> {
 		locator: at,
 	});
 	return EXIT.OK;
+}
+
+function applyTrackedEdit(
+	view: DocView,
+	existingParagraph: XmlNode,
+	newParagraph: XmlNode,
+): void {
+	const allocator = createRevisionAllocator(view);
+	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const mintMeta = (): TrackedMeta => ({
+		...baseMeta,
+		revisionId: allocator.next(),
+	});
+
+	const oldRuns: XmlNode[] = [];
+	const oldNonRuns: XmlNode[] = [];
+	for (const child of existingParagraph.children) {
+		if (child.tag === "w:r") oldRuns.push(child);
+		else oldNonRuns.push(child);
+	}
+
+	let newPPr: XmlNode | null = null;
+	const newRuns: XmlNode[] = [];
+	for (const child of newParagraph.children) {
+		if (child.tag === "w:pPr") newPPr = child;
+		else if (child.tag === "w:r") newRuns.push(child);
+	}
+
+	const rebuilt: XmlNode[] = [];
+	if (newPPr) {
+		rebuilt.push(newPPr);
+		for (const child of oldNonRuns) {
+			if (child.tag !== "w:pPr") rebuilt.push(child);
+		}
+	} else {
+		rebuilt.push(...oldNonRuns);
+	}
+	if (oldRuns.length > 0) {
+		const deletedRuns = oldRuns.map((run) => convertTextToDelText(run));
+		rebuilt.push(<Del meta={mintMeta()}>{deletedRuns}</Del>);
+	}
+	if (newRuns.length > 0) {
+		rebuilt.push(<Ins meta={mintMeta()}>{newRuns}</Ins>);
+	}
+	existingParagraph.children = rebuilt;
 }

@@ -244,7 +244,9 @@ function readRun(
 
 	let combinedText = "";
 	for (const child of node.children) {
-		if (child.tag === "w:t") combinedText += child.collectText();
+		if (child.tag === "w:t" || child.tag === "w:delText") {
+			combinedText += child.collectText();
+		}
 	}
 	if (combinedText.length === 0) return null;
 
