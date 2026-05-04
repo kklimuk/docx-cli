@@ -1,5 +1,5 @@
 {
-	"name": "@kklimuk/docx-cli",
+	"name": "bun-docx",
 	"version": "0.1.0",
 	"description": "CLI for AI agents (Claude, Codex) to read, edit, and comment on .docx files with full format fidelity.",
 	"keywords": [
@@ -27,7 +27,7 @@
 		"docx": "./dist/index.js"
 	},
 	"files": [
-		"dist",
+		"dist/index.js",
 		"README.md",
 		"LICENSE"
 	],

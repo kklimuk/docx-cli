@@ -29,9 +29,9 @@ Pre-built binaries are published for linux/x64, linux/arm64, darwin/x64, darwin/
 **npm** (requires Bun >= 1.3):
 
 ```sh
-bun add -g @kklimuk/docx-cli
+bun add -g bun-docx
 # or
-bunx @kklimuk/docx-cli read doc.docx
+bunx bun-docx read doc.docx
 ```
 
 ## Commands
