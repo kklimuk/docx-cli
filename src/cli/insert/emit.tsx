@@ -41,7 +41,13 @@ export function Paragraph(props: ParagraphProps): XmlNode {
 	);
 }
 
-export function RunElement({ run }: { run: Run }): XmlNode {
+/** Emits a run as fresh OOXML. The fresh-emission path supports text/break/tab
+ * — the run types an agent can plausibly hand-author via `--runs '[...]'`.
+ * Round-tripped runs that we surface but can't re-emit (image, equation,
+ * footnoteRef, chart) are silently dropped: their underlying XML lives in the
+ * source document and is never re-serialized through this path, so a
+ * `read | jq | edit` workflow degrades gracefully instead of crashing. */
+export function RunElement({ run }: { run: Run }): NullableXmlNode {
 	if (run.type === "text") return <TextRunElement run={run} />;
 	if (run.type === "break") {
 		return (
@@ -57,9 +63,7 @@ export function RunElement({ run }: { run: Run }): XmlNode {
 			</w.r>
 		);
 	}
-	throw new Error(
-		`Cannot emit run of type "${run.type}" — image emission lives in the images command.`,
-	);
+	return null;
 }
 
 function TextRunElement({ run }: { run: TextRun }): XmlNode {

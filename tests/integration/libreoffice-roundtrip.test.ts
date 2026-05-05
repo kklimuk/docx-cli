@@ -13,6 +13,8 @@ const FIXTURES = [
 	"large-mixed.docx",
 	"resume-styling.docx",
 	"tracked-changes.docx",
+	"multi-column.docx",
+	"notes.docx",
 ] as const;
 
 let workspace: string;

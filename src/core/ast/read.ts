@@ -2,10 +2,12 @@ import { XmlNode } from "../parser";
 import type { DocView } from "./doc-view";
 import type {
 	Block,
+	ChartRun,
 	Comment,
 	CommentAnchor,
 	Doc,
 	DocProperties,
+	Footnote,
 	Hyperlink,
 	ImageRun,
 	Paragraph,
@@ -51,8 +53,28 @@ export function buildDoc(view: DocView, path: string): Doc {
 
 	const blocks = readBlocks(view, body, state);
 	const comments = readComments(view, state.commentAnchors);
+	const footnotes = readNotes(
+		view.footnotesTree,
+		"w:footnotes",
+		"w:footnote",
+		"fn",
+	);
+	const endnotes = readNotes(
+		view.endnotesTree,
+		"w:endnotes",
+		"w:endnote",
+		"en",
+	);
 
-	return { schemaVersion: 1, path, properties, blocks, comments };
+	return {
+		schemaVersion: 1,
+		path,
+		properties,
+		blocks,
+		comments,
+		footnotes,
+		endnotes,
+	};
 }
 
 function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
@@ -174,6 +196,30 @@ function walkRunContainer(
 			continue;
 		}
 
+		if (child.tag === "m:oMath") {
+			const text = collectMathText(child);
+			if (text.length > 0) {
+				context.paragraph.runs.push({
+					type: "equation",
+					text,
+					display: false,
+				});
+			}
+			continue;
+		}
+
+		if (child.tag === "m:oMathPara") {
+			const text = collectMathText(child);
+			if (text.length > 0) {
+				context.paragraph.runs.push({
+					type: "equation",
+					text,
+					display: true,
+				});
+			}
+			continue;
+		}
+
 		if (child.tag === "w:ins" || child.tag === "w:del") {
 			const change: TrackedChange = {
 				kind: child.tag === "w:ins" ? "ins" : "del",
@@ -273,8 +319,8 @@ function readRun(
 
 	for (const child of node.children) {
 		if (child.tag === "w:drawing") {
-			const image = readImageFromDrawing(view, child, state);
-			if (image) return image;
+			const drawing = readDrawing(view, child, state);
+			if (drawing) return drawing;
 		}
 		if (child.tag === "w:br") {
 			const kind = (child.getAttribute("w:type") ?? "line") as
@@ -285,6 +331,14 @@ function readRun(
 		}
 		if (child.tag === "w:tab") {
 			return { type: "tab" };
+		}
+		if (child.tag === "w:footnoteReference") {
+			const id = child.getAttribute("w:id");
+			if (id) return { type: "footnoteRef", kind: "footnote", id: `fn${id}` };
+		}
+		if (child.tag === "w:endnoteReference") {
+			const id = child.getAttribute("w:id");
+			if (id) return { type: "footnoteRef", kind: "endnote", id: `en${id}` };
 		}
 	}
 
@@ -302,6 +356,38 @@ function readRun(
 	if (trackedChange) run.trackedChange = trackedChange;
 	if (hyperlink) run.hyperlink = hyperlink;
 	return run;
+}
+
+/** A <w:drawing> may wrap a picture (rendered as ImageRun) or a chart/shape/
+ * SmartArt/etc. (rendered as ChartRun placeholder). */
+function readDrawing(
+	view: DocView,
+	drawing: XmlNode,
+	state: WalkState,
+): ImageRun | ChartRun | null {
+	const image = readImageFromDrawing(view, drawing, state);
+	if (image) return image;
+	if (drawing.findDescendant("c:chart"))
+		return { type: "chart", kind: "chart" };
+	if (drawing.findDescendant("dgm:relIds"))
+		return { type: "chart", kind: "smartart" };
+	if (drawing.findDescendant("wps:wsp"))
+		return { type: "chart", kind: "shape" };
+	return { type: "chart", kind: "drawing" };
+}
+
+/** Concatenate all <m:t> descendants in document order. The structural OOMath
+ * (subs, sups, fractions) collapses to flat characters — degraded but readable. */
+function collectMathText(node: XmlNode): string {
+	let out = "";
+	for (const child of node.children) {
+		if (child.tag === "m:t") {
+			out += child.collectText();
+			continue;
+		}
+		out += collectMathText(child);
+	}
+	return out;
 }
 
 function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
@@ -585,6 +671,29 @@ function readCommentsExtended(
 		else if (resolvedAttribute === "0") entry.resolved = false;
 		if (parentParagraphId) entry.parentParaId = parentParagraphId;
 		out.set(paragraphId, entry);
+	}
+	return out;
+}
+
+/** Read footnotes.xml or endnotes.xml. Skips Word's reserved separator/
+ * continuationSeparator entries (w:type set, never referenced from the body). */
+function readNotes(
+	tree: XmlNode[] | undefined,
+	rootTag: string,
+	itemTag: string,
+	idPrefix: "fn" | "en",
+): Footnote[] {
+	if (!tree) return [];
+	const root = XmlNode.findRoot(tree, rootTag);
+	if (!root) return [];
+	const out: Footnote[] = [];
+	for (const child of root.children) {
+		if (child.tag !== itemTag) continue;
+		if (child.getAttribute("w:type")) continue;
+		const numericId = child.getAttribute("w:id");
+		if (numericId == null) continue;
+		const text = child.collectText().replace(/\s+/g, " ").trim();
+		out.push({ id: `${idPrefix}${numericId}`, text });
 	}
 	return out;
 }

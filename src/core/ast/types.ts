@@ -4,6 +4,8 @@ export type Doc = {
 	properties: DocProperties;
 	blocks: Block[];
 	comments: Comment[];
+	footnotes: Footnote[];
+	endnotes: Footnote[];
 };
 
 export type DocProperties = {
@@ -43,7 +45,14 @@ export type SectionBreak = {
 	type: "sectionBreak";
 };
 
-export type Run = TextRun | ImageRun | BreakRun | TabRun;
+export type Run =
+	| TextRun
+	| ImageRun
+	| BreakRun
+	| TabRun
+	| EquationRun
+	| FootnoteRefRun
+	| ChartRun;
 
 export type TextRun = {
 	type: "text";
@@ -85,6 +94,37 @@ export type BreakRun = {
 
 export type TabRun = {
 	type: "tab";
+};
+
+/** A math equation surfaced as concatenated <m:t> plaintext. The structural
+ * OOMath markup (subscripts, fractions, etc.) is collapsed to literal characters,
+ * so the rendering is degraded. `display` distinguishes inline equations
+ * (<m:oMath>) from block-level display equations (<m:oMathPara>). */
+export type EquationRun = {
+	type: "equation";
+	text: string;
+	display: boolean;
+};
+
+/** Reference to a footnote or endnote whose body lives in Doc.footnotes or
+ * Doc.endnotes. The id matches the footnote/endnote id (`fn1`, `en1`). */
+export type FootnoteRefRun = {
+	type: "footnoteRef";
+	kind: "footnote" | "endnote";
+	id: string;
+};
+
+/** Placeholder for a non-picture drawing (chart, shape, SmartArt, etc.). The
+ * full content is preserved in the underlying XML; the run is a marker so
+ * callers can know "something visual lives here." */
+export type ChartRun = {
+	type: "chart";
+	kind: "chart" | "shape" | "smartart" | "drawing";
+};
+
+export type Footnote = {
+	id: string;
+	text: string;
 };
 
 export type TrackedChange = {

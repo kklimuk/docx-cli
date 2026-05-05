@@ -56,6 +56,40 @@ describe("docx insert / edit / delete", () => {
 		expect(paragraphs[0]?.runs?.[0]?.text).toBe("Prepended");
 	});
 
+	test("insert --runs silently drops unsupported run types (round-trip safety)", async () => {
+		// Simulates `docx read | jq | docx insert --runs '[...]'` where the
+		// source paragraph contained an equation/footnoteRef/chart that we
+		// surface in the AST but can't re-emit as fresh OOXML. Should not crash.
+		const runsJson = JSON.stringify([
+			{ type: "text", text: "Before " },
+			{ type: "equation", text: "x_i", display: false },
+			{ type: "text", text: " middle " },
+			{ type: "footnoteRef", kind: "footnote", id: "fn1" },
+			{ type: "chart", kind: "chart" },
+			{ type: "text", text: " after" },
+		]);
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			runsJson,
+		);
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		const doc = read.parsed as {
+			blocks: Array<{ type: string; runs?: Array<{ text?: string }> }>;
+		};
+		const lastParagraph = doc.blocks
+			.filter((block) => block.type === "paragraph")
+			.pop();
+		const texts = (lastParagraph?.runs ?? [])
+			.map((run) => run.text)
+			.filter((text): text is string => text !== undefined);
+		expect(texts.join("")).toBe("Before  middle  after");
+	});
+
 	test("insert --runs supports mixed-format paragraph", async () => {
 		const runsJson = JSON.stringify([
 			{ type: "text", text: "Mix: " },

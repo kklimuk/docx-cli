@@ -8,13 +8,22 @@ export {
 	openDocView,
 	saveDocView,
 } from "./doc-view";
+export {
+	findBlockById,
+	flattenParagraphs,
+	paragraphText,
+} from "./text";
 export type {
 	Block,
 	BreakRun,
+	ChartRun,
 	Comment,
 	CommentAnchor,
 	Doc,
 	DocProperties,
+	EquationRun,
+	Footnote,
+	FootnoteRefRun,
 	Hyperlink,
 	ImageRun,
 	Paragraph,

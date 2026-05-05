@@ -1,4 +1,4 @@
-import type { Block, Doc, Paragraph } from "@core";
+import { type Block, type Doc, type Paragraph, paragraphText } from "@core";
 
 export type OutlineEntry = {
 	id: string;
@@ -70,12 +70,4 @@ function* headingParagraphs(
 		if (headingLevel(block.style, stylePrefix) === null) continue;
 		yield block;
 	}
-}
-
-function paragraphText(paragraph: Paragraph): string {
-	let out = "";
-	for (const run of paragraph.runs) {
-		if (run.type === "text") out += run.text;
-	}
-	return out;
 }

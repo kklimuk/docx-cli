@@ -23,7 +23,15 @@ const JSON_SCHEMA = {
 	$id: "https://github.com/kklimuk/docx-cli/schema",
 	title: "docx-cli AST",
 	type: "object",
-	required: ["schemaVersion", "path", "properties", "blocks", "comments"],
+	required: [
+		"schemaVersion",
+		"path",
+		"properties",
+		"blocks",
+		"comments",
+		"footnotes",
+		"endnotes",
+	],
 	properties: {
 		schemaVersion: { const: 1 },
 		path: { type: "string" },
@@ -38,6 +46,8 @@ const JSON_SCHEMA = {
 		},
 		blocks: { type: "array", items: { $ref: "#/$defs/Block" } },
 		comments: { type: "array", items: { $ref: "#/$defs/Comment" } },
+		footnotes: { type: "array", items: { $ref: "#/$defs/Footnote" } },
+		endnotes: { type: "array", items: { $ref: "#/$defs/Footnote" } },
 	},
 	$defs: {
 		Block: {
@@ -72,6 +82,9 @@ const JSON_SCHEMA = {
 				{ $ref: "#/$defs/ImageRun" },
 				{ $ref: "#/$defs/BreakRun" },
 				{ $ref: "#/$defs/TabRun" },
+				{ $ref: "#/$defs/EquationRun" },
+				{ $ref: "#/$defs/FootnoteRefRun" },
+				{ $ref: "#/$defs/ChartRun" },
 			],
 		},
 		TextRun: {
@@ -137,6 +150,40 @@ const JSON_SCHEMA = {
 			type: "object",
 			required: ["type"],
 			properties: { type: { const: "tab" } },
+		},
+		EquationRun: {
+			type: "object",
+			required: ["type", "text", "display"],
+			properties: {
+				type: { const: "equation" },
+				text: { type: "string" },
+				display: { type: "boolean" },
+			},
+		},
+		FootnoteRefRun: {
+			type: "object",
+			required: ["type", "kind", "id"],
+			properties: {
+				type: { const: "footnoteRef" },
+				kind: { enum: ["footnote", "endnote"] },
+				id: { type: "string" },
+			},
+		},
+		ChartRun: {
+			type: "object",
+			required: ["type", "kind"],
+			properties: {
+				type: { const: "chart" },
+				kind: { enum: ["chart", "shape", "smartart", "drawing"] },
+			},
+		},
+		Footnote: {
+			type: "object",
+			required: ["id", "text"],
+			properties: {
+				id: { type: "string" },
+				text: { type: "string" },
+			},
 		},
 		Table: {
 			type: "object",

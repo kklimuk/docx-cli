@@ -14,7 +14,8 @@ src/
     help.ts                   # top-level --help
     respond.ts                # respond() / fail() — JSON ack + error helpers
     create/                   # docx create FILE
-    read/                     # docx read FILE
+    read/                     # docx read FILE [--markdown ...]
+      markdown.ts             # GFM renderer used by `read --markdown`
     insert/                   # docx insert FILE
       emit.tsx                # <Paragraph> + <RunElement> JSX components (shared by edit too)
     edit/                     # docx edit FILE
@@ -51,9 +52,10 @@ src/
       jsx-runtime.ts          # auto-runtime — converts component-null to empty fragments
       jsx-dev-runtime.ts      # alias for dev-mode auto-runtime
     ast/
-      types.ts                # Doc / Block / Run / Comment types (read live by `docx info schema --ts`)
-      doc-view.ts             # DocView, openDocView, saveDocView, enrichImageHashes
-      read.ts                 # XML → typed AST walker; populates back-refs
+      types.ts                # Doc / Block / Run / Comment / Footnote types (read live by `docx info schema --ts`)
+      doc-view.ts             # DocView, openDocView, saveDocView, enrichImageHashes — also loads footnotes.xml/endnotes.xml
+      read.ts                 # XML → typed AST walker; detects oMath/oMathPara, footnote/endnote refs, charts/SmartArt/shapes
+      text.ts                 # paragraphText / flattenParagraphs / findBlockById — shared text helpers
     relationships.ts          # mintRelationshipId, addHyperlinkRelationship — _rels helpers
     locators/
       parse.ts                # parseLocator("p3:5-20") → Locator union
@@ -65,7 +67,7 @@ tests/
     *.test.ts                 # one file per command surface
   integration/
     libreoffice-roundtrip.test.ts  # auto-skips if `soffice` not on PATH
-  fixtures/                   # 11 .docx files: minimal + comments-* + tracked-changes + …
+  fixtures/                   # .docx files exercising different OOXML features (comments, tracked changes, footnotes, equations, tables, ...). `notes.docx` is from the Pandoc test corpus.
 scripts/
   move.ts                     # move file + auto-update imports
   fxp-smoke.ts                # JSX → XML smoke test
@@ -114,6 +116,8 @@ These are not architectural suggestions, but requirements. If you disagree, make
 | `info`        | `schema` `locators`                                                                  |
 
 `insert --url URL --text "label"` wraps the inserted run in a `<w:hyperlink>`. To wrap an existing span, use `hyperlinks add --at pN:S-E --url URL`.
+
+`docx read FILE --markdown` renders the body as GFM (instead of JSON). Each paragraph trails its locator as an HTML comment (`<!-- p3 -->`) — invisible in rendered view, parseable from raw text. Headings → `#`, lists → `-`, tables → pipe tables (with per-cell-paragraph locators, multi-paragraph cells joined by `<br>`), images → `![alt](imgN)`, run color / highlight → `<span style="color:#hex">…</span>` / `<span style="background-color:NAME">…</span>`. `--from`/`--to` slice top-level blocks (paragraph/table/cell/span/range locators all collapse to enclosing top-level block). `--changes` renders `<ins>`/`<del>`; default view is the accepted view (drops `del` runs, inlines `ins` runs as plain). `--comments` appends GFM footnote refs (`[^cN]`) at the end of each commented span and emits `[^cN]: "span" — author (date): body` definitions at end of output (replies marked `↳ cP`). Footnotes / endnotes (the document's own) render unconditionally as `[^fnN]` / `[^enN]` with definitions at the end. Equations (OOMath / `<m:oMath>` / `<m:oMathPara>`) surface as `` `equation: text` `` (concatenated `<m:t>` plaintext — degraded but readable; structure like sub/sup collapses to literal characters). Charts / SmartArt / shapes / other non-picture drawings render as `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders. All locator/render logic in `cli/read/markdown.ts`; footnote/endnote/equation/chart detection in `core/ast/read.ts`.
 
 Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image/hyperlink). Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
 

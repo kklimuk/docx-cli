@@ -21,6 +21,8 @@ export type DocView = {
 	documentTree: XmlNode[];
 	commentsTree?: XmlNode[];
 	commentsExtTree?: XmlNode[];
+	footnotesTree?: XmlNode[];
+	endnotesTree?: XmlNode[];
 	relationshipsTree: XmlNode[];
 	contentTypesTree: XmlNode[];
 	corePropertiesTree?: XmlNode[];
@@ -59,12 +61,20 @@ export async function openDocView(path: string): Promise<DocView> {
 	const settingsTree = pkg.hasPart("word/settings.xml")
 		? XmlNode.parse(await pkg.readText("word/settings.xml"))
 		: undefined;
+	const footnotesTree = pkg.hasPart("word/footnotes.xml")
+		? XmlNode.parse(await pkg.readText("word/footnotes.xml"))
+		: undefined;
+	const endnotesTree = pkg.hasPart("word/endnotes.xml")
+		? XmlNode.parse(await pkg.readText("word/endnotes.xml"))
+		: undefined;
 
 	const view: DocView = {
 		pkg,
 		documentTree,
 		commentsTree,
 		commentsExtTree,
+		footnotesTree,
+		endnotesTree,
 		relationshipsTree,
 		contentTypesTree,
 		corePropertiesTree,

@@ -1,7 +1,10 @@
 import {
 	type Block,
+	findBlockById,
+	flattenParagraphs,
 	type Locator,
 	LocatorParseError,
+	paragraphText,
 	parseLocator,
 } from "@core";
 import { parseArgs } from "util";
@@ -11,9 +14,6 @@ import {
 	countWordsInBlocks,
 	countWordsInParagraphSpan,
 	countWordsInRange,
-	findBlockById,
-	flattenParagraphs,
-	paragraphText,
 } from "./count";
 
 const HELP = `docx wc — count words in a document or a locator-addressed slice

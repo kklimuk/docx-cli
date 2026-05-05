@@ -31,7 +31,7 @@ bunx bun-docx read doc.docx
 
 ```sh
 docx create FILE [--title T] [--author A] [--text "..."]
-docx read FILE
+docx read FILE [--markdown [--from pN] [--to pN] [--changes] [--comments]]
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx edit   FILE --at p3 --text "..." | --runs '[...]'
@@ -63,6 +63,37 @@ docx info locators [--json]
 Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
 
 When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers attributed to `$DOCX_AUTHOR` (default `docx-cli`). To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions.
+
+### Markdown rendering
+
+`docx read FILE --markdown` renders the document body as GitHub-flavored Markdown instead of JSON. Useful when you (or an LLM) want to skim a doc quickly without parsing the AST. Each rendered paragraph is followed by an HTML comment with its locator (`<!-- p3 -->`) so the markdown is invisible-pinned: humans see clean prose in a renderer, agents parse the locators from raw text.
+
+- Headings → `#`/`##`/`###` based on `style="HeadingN"`
+- Lists → `- ` indented per `level`
+- Bold/italic/strike → `**…**` / `*…*` / `~~…~~`; underline → `<u>…</u>`
+- Run color → `<span style="color:#hex">…</span>`; highlight → `<span style="background-color:NAME">…</span>`
+- Hyperlinks → `[text](url)`
+- Images → `![alt](imgN)`
+- Tables → GitHub pipe tables; multi-paragraph cells joined with `<br>`; per-cell-paragraph locators inline
+- Section breaks → `---`
+- Equations (`<m:oMath>`/`<m:oMathPara>`) → `` `equation: text` `` (concatenated `<m:t>` plaintext; structure like sub/sup/fractions collapses to literal characters — degraded but readable)
+- Footnotes / endnotes → inline `[^fnN]` / `[^enN]` refs with GFM footnote definitions at end of output
+- Charts / SmartArt / shapes / other non-picture drawings → `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders
+
+`--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block. Comment/image/hyperlink locators are rejected.
+
+`--changes` renders tracked insertions and deletions as `<ins>`/`<del>` instead of producing the accepted view (which silently drops deletions and inlines insertions).
+
+`--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output:
+
+```
+… some commented text[^c0] …
+
+[^c0]: "commented span" — Author Name (2024-01-15T...): comment body
+[^c1]: "another span" — Author Name (2024-01-15T...) ↳ c0: reply body
+```
+
+Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally — `[^fn1]` / `[^en1]` inline + `[^fn1]: body` definitions at the end of the output, alongside any `--comments` footnotes. They use `fn`/`en` prefixes so the namespaces don't collide.
 
 ### Locators
 
@@ -104,7 +135,7 @@ src/
     help.ts              # top-level --help
     respond.ts           # JSON ack / structured error helpers
     create/              # create FILE
-    read/                # read FILE
+    read/                # read FILE [--markdown ...]  (markdown.ts renderer)
     insert/              # insert FILE  (uses ./emit Paragraph component)
     edit/                # edit FILE
     delete/              # delete FILE
@@ -117,7 +148,7 @@ src/
     package/             # JSZip open/close, named-part read/write
     parser/              # XmlNode class + parse/serialize + JSX factory
     jsx/                 # h, Fragment, namespaces (w, r, a, wp, pic, ...)
-    ast/                 # types + DocView + XML→AST reader
+    ast/                 # types + DocView + XML→AST reader (text.ts: shared paragraph helpers)
     locators/            # parse "p3:5-20" + resolve to refs
 tests/
   core/, cli/, integration/
