@@ -24,6 +24,7 @@ Options:
   --ignore-case     case-insensitive match
   --all             replace every match (default: just the first)
   --limit N         replace at most N matches (in document order)
+  --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH write to PATH instead of overwriting FILE
   --dry-run         report what would change without writing the file
   -h, --help        show this help
@@ -60,6 +61,7 @@ export async function run(args: string[]): Promise<number> {
 				"ignore-case": { type: "boolean" },
 				all: { type: "boolean" },
 				limit: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -176,9 +178,10 @@ export async function run(args: string[]): Promise<number> {
 		return rightMatch.start - leftMatch.start;
 	});
 
+	const authorFlag = parsed.values.author as string | undefined;
 	const tracked: TrackedReplaceOptions | undefined = isTrackChangesEnabled(view)
 		? {
-				meta: { author: resolveAuthor(), date: resolveDate() },
+				meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
 				allocator: createRevisionAllocator(view),
 			}
 		: undefined;

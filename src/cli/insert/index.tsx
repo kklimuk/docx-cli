@@ -47,6 +47,7 @@ Run options (only with --text):
   --italic          Italic
   --url URL         Wrap the inserted text in a hyperlink to URL
 
+  --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
   -h, --help        Show this help
@@ -75,6 +76,7 @@ export async function run(args: string[]): Promise<number> {
 				bold: { type: "boolean" },
 				italic: { type: "boolean" },
 				url: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -181,7 +183,11 @@ export async function run(args: string[]): Promise<number> {
 	const insertIndex = after !== undefined ? targetIndex + 1 : targetIndex;
 
 	if (isTrackChangesEnabled(view)) {
-		applyTrackedInsertion(paragraphNode, view);
+		applyTrackedInsertion(
+			paragraphNode,
+			view,
+			parsed.values.author as string | undefined,
+		);
 	}
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -243,9 +249,13 @@ function wrapFirstRunInHyperlink(
 	paragraph.children = newChildren;
 }
 
-function applyTrackedInsertion(paragraph: XmlNode, view: DocView): void {
+function applyTrackedInsertion(
+	paragraph: XmlNode,
+	view: DocView,
+	authorFlag: string | undefined,
+): void {
 	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
 	const mintMeta = (): TrackedMeta => ({
 		...baseMeta,
 		revisionId: allocator.next(),

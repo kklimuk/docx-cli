@@ -1,6 +1,17 @@
-import { addHyperlinkRelationship, saveDocView } from "@core";
+import {
+	addHyperlinkRelationship,
+	isTrackChangesEnabled,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+} from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
+import {
+	emitAuditComment,
+	findContainingParagraph,
+	findElementOffsetsInParagraph,
+} from "../comments/helpers";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
 const HELP = `docx hyperlinks replace — change a hyperlink's URL
@@ -13,6 +24,8 @@ Required:
   --with URL        New target URL
 
 Optional:
+  --author NAME     Author for the audit comment when track-changes is on
+                    (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
@@ -20,6 +33,10 @@ Optional:
 Replaces only the targeted hyperlink. If multiple hyperlinks shared the same
 underlying relationship, a new relationship is allocated so the others are
 unaffected.
+
+When track-changes is on, an audit comment is anchored to the affected
+hyperlink span since OOXML has no native tracked-change form for hyperlink
+target edits.
 
 Examples:
   docx hyperlinks replace doc.docx --at link0 --with https://example.com
@@ -34,6 +51,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				at: { type: "string" },
 				with: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -109,6 +127,27 @@ export async function run(args: string[]): Promise<number> {
 	} else if (existingId) {
 		updateRelationshipTarget(relationships, existingId, newUrl);
 		view.hyperlinksByRelationshipId.set(existingId, { url: newUrl });
+	}
+
+	if (isTrackChangesEnabled(view)) {
+		const paragraph = findContainingParagraph(
+			view.documentTree,
+			reference.node,
+		);
+		const offsets = paragraph
+			? findElementOffsetsInParagraph(paragraph, reference.node)
+			: null;
+		if (paragraph && offsets) {
+			emitAuditComment(
+				view,
+				{ kind: "span", paragraph, span: offsets },
+				{
+					body: `[docx-cli] hyperlink target changed: ${oldUrl ?? "(none)"} → ${newUrl}`,
+					author: resolveAuthor(parsed.values.author as string | undefined),
+					date: resolveDate(),
+				},
+			);
+		}
 	}
 
 	await saveDocView(view, outputPath);

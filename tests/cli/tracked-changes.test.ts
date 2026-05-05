@@ -261,6 +261,103 @@ describe("docx insert — tracked changes", () => {
 	});
 });
 
+describe("--author flag — tracked-change attribution", () => {
+	type RunWithChange = {
+		type: string;
+		text: string;
+		trackedChange?: { kind: string; author: string };
+	};
+
+	async function readRuns(docPath: string): Promise<RunWithChange[]> {
+		const read = await runCli("read", docPath);
+		const blocks = (
+			read.parsed as { blocks: Array<{ runs?: RunWithChange[] }> }
+		).blocks;
+		return blocks.flatMap((block) => block.runs ?? []);
+	}
+
+	test("insert --author overrides $DOCX_AUTHOR on tracked insertion", async () => {
+		const docPath = await freshCopy("insert-author");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Inserted",
+			"--author",
+			"Reviewer-One",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readRuns(docPath);
+		const inserted = runs.find((run) => run.text === "Inserted");
+		expect(inserted?.trackedChange?.kind).toBe("ins");
+		expect(inserted?.trackedChange?.author).toBe("Reviewer-One");
+	});
+
+	test("edit --author attributes both <w:del> and <w:ins>", async () => {
+		const docPath = await freshCopy("edit-author");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Replaced",
+			"--author",
+			"Reviewer-Two",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readRuns(docPath);
+		const inserted = runs.find((run) => run.text === "Replaced");
+		const deleted = runs.find((run) => run.trackedChange?.kind === "del");
+		expect(inserted?.trackedChange?.author).toBe("Reviewer-Two");
+		expect(deleted?.trackedChange?.author).toBe("Reviewer-Two");
+	});
+
+	test("delete --author attributes the tracked deletion", async () => {
+		const docPath = await freshCopy("delete-author");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"delete",
+			docPath,
+			"--at",
+			"p0",
+			"--author",
+			"Reviewer-Three",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readRuns(docPath);
+		const deleted = runs.find((run) => run.trackedChange?.kind === "del");
+		expect(deleted?.trackedChange?.author).toBe("Reviewer-Three");
+	});
+
+	test("replace --author attributes the inserted replacement", async () => {
+		const docPath = await freshCopy("replace-author");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"replace",
+			docPath,
+			"text",
+			"string",
+			"--author",
+			"Reviewer-Four",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readRuns(docPath);
+		const inserted = runs.find(
+			(run) => run.text === "string" && run.trackedChange?.kind === "ins",
+		);
+		expect(inserted?.trackedChange?.author).toBe("Reviewer-Four");
+	});
+});
+
 describe("docx comments add — tracked changes", () => {
 	test("anchors a comment fully inside a <w:ins> wrapper", async () => {
 		const docPath = await freshCopy("comments-in-ins");
@@ -306,5 +403,236 @@ describe("docx comments add — tracked changes", () => {
 		}>;
 		expect(comments[0]?.anchor.startOffset).toBe(15);
 		expect(comments[0]?.anchor.endOffset).toBe(35);
+	});
+});
+
+describe("audit-comments — hyperlinks/images under track-changes", () => {
+	type CommentRow = {
+		id: string;
+		author: string;
+		text: string;
+		anchor: {
+			startBlockId: string;
+			endBlockId: string;
+			startOffset: number;
+			endOffset: number;
+		};
+	};
+
+	async function listComments(docPath: string): Promise<CommentRow[]> {
+		const result = await runCli("comments", "list", docPath);
+		return result.parsed as CommentRow[];
+	}
+
+	async function listAuditComments(docPath: string): Promise<CommentRow[]> {
+		const all = await listComments(docPath);
+		return all.filter((comment) => comment.text.startsWith("[docx-cli]"));
+	}
+
+	test("hyperlinks add emits an audit comment anchored to the wrapped span", async () => {
+		const workspace = tempWorkspace("hl-add-audit");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/minimal.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"the quick brown fox jumps",
+		);
+		await runCli("track-changes", docPath, "on");
+
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:10-15",
+			"--url",
+			"https://example.com/brown",
+			"--author",
+			"Auditor",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const comments = await listAuditComments(docPath);
+		expect(comments).toHaveLength(1);
+		expect(comments[0]?.author).toBe("Auditor");
+		expect(comments[0]?.text).toBe(
+			"[docx-cli] hyperlink added → https://example.com/brown",
+		);
+		expect(comments[0]?.anchor.startBlockId).toBe("p1");
+		expect(comments[0]?.anchor.endBlockId).toBe("p1");
+		expect(comments[0]?.anchor.startOffset).toBe(10);
+		expect(comments[0]?.anchor.endOffset).toBe(15);
+	});
+
+	test("hyperlinks add stays silent when track-changes is off", async () => {
+		const workspace = tempWorkspace("hl-add-silent");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/minimal.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"the quick brown fox jumps",
+		);
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:10-15",
+			"--url",
+			"https://example.com/brown",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await listAuditComments(docPath)).toHaveLength(0);
+	});
+
+	test("hyperlinks replace emits an audit comment with old → new URLs", async () => {
+		const workspace = tempWorkspace("hl-replace-audit");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/minimal.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"see this site for details",
+		);
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:4-8",
+			"--url",
+			"https://old.example.com",
+		);
+		await runCli("track-changes", docPath, "on");
+
+		const result = await runCli(
+			"hyperlinks",
+			"replace",
+			docPath,
+			"--at",
+			"link0",
+			"--with",
+			"https://new.example.com",
+			"--author",
+			"Reviewer",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const comments = await listAuditComments(docPath);
+		expect(comments).toHaveLength(1);
+		expect(comments[0]?.author).toBe("Reviewer");
+		expect(comments[0]?.text).toBe(
+			"[docx-cli] hyperlink target changed: https://old.example.com → https://new.example.com",
+		);
+		expect(comments[0]?.anchor.startBlockId).toBe("p1");
+		expect(comments[0]?.anchor.endBlockId).toBe("p1");
+		expect(comments[0]?.anchor.startOffset).toBe(4);
+		expect(comments[0]?.anchor.endOffset).toBe(8);
+	});
+
+	test("hyperlinks delete emits an audit comment over the surviving text", async () => {
+		const workspace = tempWorkspace("hl-delete-audit");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/minimal.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"see this site for details",
+		);
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:4-8",
+			"--url",
+			"https://gone.example.com",
+		);
+		await runCli("track-changes", docPath, "on");
+
+		const result = await runCli(
+			"hyperlinks",
+			"delete",
+			docPath,
+			"--at",
+			"link0",
+			"--author",
+			"Cleaner",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const comments = await listAuditComments(docPath);
+		expect(comments).toHaveLength(1);
+		expect(comments[0]?.author).toBe("Cleaner");
+		expect(comments[0]?.text).toBe(
+			"[docx-cli] hyperlink removed (was: https://gone.example.com)",
+		);
+		expect(comments[0]?.anchor.startBlockId).toBe("p1");
+		expect(comments[0]?.anchor.endBlockId).toBe("p1");
+		expect(comments[0]?.anchor.startOffset).toBe(4);
+		expect(comments[0]?.anchor.endOffset).toBe(8);
+	});
+
+	test("images replace emits an audit comment per drawing using the rId", async () => {
+		const workspace = tempWorkspace("img-replace-audit");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/large-mixed.docx"));
+
+		const before = await runCli("images", "list", docPath);
+		const beforeList = before.parsed as Array<{ id: string; hash: string }>;
+		const target = beforeList.find((image) => image.id === "img0");
+		const replacementSrc = beforeList.find(
+			(image) => image.id !== "img0" && image.hash !== target?.hash,
+		);
+		expect(replacementSrc).toBeDefined();
+		const extractDir = join(workspace, "extracted");
+		require("node:fs").mkdirSync(extractDir, { recursive: true });
+		await runCli(
+			"images",
+			"extract",
+			docPath,
+			"--to",
+			extractDir,
+			"--id",
+			replacementSrc?.id ?? "img1",
+		);
+		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpg`);
+
+		await runCli("track-changes", docPath, "on");
+
+		const result = await runCli(
+			"images",
+			"replace",
+			docPath,
+			"--at",
+			"img0",
+			"--with",
+			replacementPath,
+			"--author",
+			"ImageBot",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const auditComments = await listAuditComments(docPath);
+		expect(auditComments.length).toBeGreaterThanOrEqual(1);
+		const replacementComment = auditComments.find((comment) =>
+			comment.text.startsWith("[docx-cli] image replaced:"),
+		);
+		expect(replacementComment).toBeDefined();
+		expect(replacementComment?.author).toBe("ImageBot");
 	});
 });

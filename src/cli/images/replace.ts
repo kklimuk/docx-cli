@@ -1,6 +1,12 @@
-import { saveDocView } from "@core";
+import {
+	isTrackChangesEnabled,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+} from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
+import { emitAuditComment, findContainingParagraph } from "../comments/helpers";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
 const HELP = `docx images replace — swap an image's bytes
@@ -13,6 +19,8 @@ Required:
   --with PATH       New image file (any image MIME type)
 
 Optional:
+  --author NAME     Author for the audit comment when track-changes is on
+                    (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
@@ -20,6 +28,10 @@ Optional:
 If the replacement uses a different format from the original, the part is
 renamed (extension changes), the relationship Target is rewritten, and
 [Content_Types].xml gets a Default entry for the new extension if needed.
+
+When track-changes is on, an audit comment is anchored to each drawing that
+referenced the swapped image since OOXML has no native tracked-change form
+for image replacement.
 
 Examples:
   docx images replace doc.docx --at img2 --with ./new-photo.png
@@ -48,6 +60,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				at: { type: "string" },
 				with: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -115,6 +128,7 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const bytes = new Uint8Array(await sourceFile.arrayBuffer());
+	const originalMimeType = reference.contentType;
 
 	if (newPartName === originalPartName) {
 		view.pkg.writeBytes(originalPartName, bytes);
@@ -131,6 +145,25 @@ export async function run(args: string[]): Promise<number> {
 		reference.contentType = newMimeType;
 	}
 
+	if (isTrackChangesEnabled(view)) {
+		const author = resolveAuthor(parsed.values.author as string | undefined);
+		const date = resolveDate();
+		const body = `[docx-cli] image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
+		const drawingRuns = findDrawingRunsForRelationship(
+			view.documentTree,
+			reference.relationshipId,
+		);
+		for (const drawingRun of drawingRuns) {
+			const paragraph = findContainingParagraph(view.documentTree, drawingRun);
+			if (!paragraph) continue;
+			emitAuditComment(
+				view,
+				{ kind: "run", paragraph, run: drawingRun },
+				{ body, author, date },
+			);
+		}
+	}
+
 	await saveDocView(view, outputPath);
 
 	await respond({
@@ -143,6 +176,33 @@ export async function run(args: string[]): Promise<number> {
 		bytes: bytes.length,
 	});
 	return EXIT.OK;
+}
+
+function findDrawingRunsForRelationship(
+	documentTree: XmlNode[],
+	relationshipId: string,
+): XmlNode[] {
+	const matches: XmlNode[] = [];
+	function walk(node: XmlNode): void {
+		if (node.tag === "w:r" && runReferencesImage(node, relationshipId)) {
+			matches.push(node);
+			return;
+		}
+		for (const child of node.children) walk(child);
+	}
+	for (const root of documentTree) walk(root);
+	return matches;
+}
+
+function runReferencesImage(run: XmlNode, relationshipId: string): boolean {
+	for (const child of run.children) {
+		if (child.tag !== "w:drawing") continue;
+		const blip = child.findDescendant("a:blip");
+		if (!blip) continue;
+		const embed = blip.getAttribute("r:embed") ?? blip.getAttribute("r:link");
+		if (embed === relationshipId) return true;
+	}
+	return false;
 }
 
 function renameExtension(partName: string, newExtension: string): string {

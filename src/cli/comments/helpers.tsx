@@ -99,13 +99,19 @@ export class SpanOutOfRangeError extends Error {
 }
 
 export function paragraphTextLength(paragraph: XmlNode): number {
+	return sumTextLength(paragraph.children);
+}
+
+function sumTextLength(children: XmlNode[]): number {
 	let total = 0;
-	for (const child of paragraph.children) {
+	for (const child of children) {
 		if (child.tag === "w:r") total += runTextLength(child);
-		else if (child.tag === "w:ins" || child.tag === "w:del") {
-			for (const inner of child.children) {
-				if (inner.tag === "w:r") total += runTextLength(inner);
-			}
+		else if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:hyperlink"
+		) {
+			total += sumTextLength(child.children);
 		}
 	}
 	return total;
@@ -167,6 +173,156 @@ export function addCommentRangeMarkers(
 	]);
 }
 
+/**
+ * Wrap `target` in `commentRangeStart` / `commentRangeEnd` siblings (plus the
+ * commentReference run). Used when the target run has zero text length (e.g.
+ * a run containing only a `<w:drawing>`), where offset-based placement would
+ * collapse to an empty span.
+ */
+export function addCommentMarkersAroundRun(
+	paragraph: XmlNode,
+	target: XmlNode,
+	commentId: string,
+): boolean {
+	function walk(parent: XmlNode): boolean {
+		const children = parent.children;
+		for (let index = 0; index < children.length; index++) {
+			const child = children[index];
+			if (child === target) {
+				children.splice(
+					index,
+					1,
+					commentRangeStartMarker(commentId),
+					target,
+					commentRangeEndMarker(commentId),
+					commentReferenceRun(commentId),
+				);
+				return true;
+			}
+			if (
+				child &&
+				(child.tag === "w:ins" ||
+					child.tag === "w:del" ||
+					child.tag === "w:hyperlink")
+			) {
+				if (walk(child)) return true;
+			}
+		}
+		return false;
+	}
+	return walk(paragraph);
+}
+
+/**
+ * Returns the text-offset range that `target` occupies inside `paragraph`,
+ * or null if `target` is not a descendant of the paragraph. Recurses through
+ * `<w:ins>` / `<w:del>` / `<w:hyperlink>` wrappers.
+ */
+export function findElementOffsetsInParagraph(
+	paragraph: XmlNode,
+	target: XmlNode,
+): { start: number; end: number } | null {
+	let cursor = 0;
+	let result: { start: number; end: number } | null = null;
+	function walk(children: XmlNode[]): boolean {
+		for (const child of children) {
+			if (child === target) {
+				const start = cursor;
+				cursor += sumTextLength([child]);
+				result = { start, end: cursor };
+				return true;
+			}
+			if (child.tag === "w:r") {
+				cursor += runTextLength(child);
+				continue;
+			}
+			if (
+				child.tag === "w:ins" ||
+				child.tag === "w:del" ||
+				child.tag === "w:hyperlink"
+			) {
+				if (walk(child.children)) return true;
+			}
+		}
+		return false;
+	}
+	walk(paragraph.children);
+	return result;
+}
+
+/**
+ * Walk `documentTree` to find the enclosing `<w:p>` of `target`, or null if
+ * not found. Used when we have a node reference (hyperlink, drawing run) and
+ * need its containing paragraph for comment-marker placement.
+ */
+export function findContainingParagraph(
+	documentTree: XmlNode[],
+	target: XmlNode,
+): XmlNode | null {
+	function walk(node: XmlNode): XmlNode | null {
+		if (node.tag === "w:p" && containsNode(node, target)) return node;
+		for (const child of node.children) {
+			const found = walk(child);
+			if (found) return found;
+		}
+		return null;
+	}
+	for (const root of documentTree) {
+		const found = walk(root);
+		if (found) return found;
+	}
+	return null;
+}
+
+function containsNode(haystack: XmlNode, needle: XmlNode): boolean {
+	if (haystack === needle) return true;
+	for (const child of haystack.children) {
+		if (containsNode(child, needle)) return true;
+	}
+	return false;
+}
+
+export type AuditCommentAnchor =
+	| { kind: "span"; paragraph: XmlNode; span: CommentSpan }
+	| { kind: "run"; paragraph: XmlNode; run: XmlNode };
+
+/**
+ * Emit a comment for operations that OOXML can't track natively (hyperlinks
+ * and image replacement). Anchored either to a text span (default) or around
+ * a specific run (used for image runs where text length is zero). Returns
+ * the numeric comment id.
+ */
+export function emitAuditComment(
+	view: DocView,
+	anchor: AuditCommentAnchor,
+	options: { body: string; author: string; date: string },
+): string {
+	const numericId = nextCommentId(view);
+	const paraId = generateParaId();
+
+	if (anchor.kind === "span") {
+		addCommentMarkersToParagraph(anchor.paragraph, numericId, anchor.span);
+	} else {
+		addCommentMarkersAroundRun(anchor.paragraph, anchor.run, numericId);
+	}
+
+	const commentsRoot = ensureCommentsPart(view);
+	commentsRoot.children.push(
+		<CommentBody
+			options={{
+				id: numericId,
+				author: options.author,
+				date: options.date,
+				initials: authorInitials(options.author),
+				paraId,
+				text: options.body,
+			}}
+		/>,
+	);
+
+	return numericId;
+}
+
 function commentRangeStartMarker(commentId: string): XmlNode {
 	return (<w.commentRangeStart w-id={commentId} />) as XmlNode;
 }
@@ -215,7 +371,7 @@ function placeMarkersInParagraph(
 	const pending: (MarkerSpec | null)[] = markers.slice();
 	const state: PlacementState = { offset: 0, placedCount: 0 };
 
-	paragraph.children = walkAndPlace(paragraph.children, pending, true, state);
+	paragraph.children = walkAndPlace(paragraph.children, pending, state);
 	flushAtCurrentOffset(paragraph.children, pending, state);
 
 	if (state.placedCount !== markers.length) {
@@ -228,7 +384,6 @@ function placeMarkersInParagraph(
 function walkAndPlace(
 	children: XmlNode[],
 	pending: (MarkerSpec | null)[],
-	isParagraphLevel: boolean,
 	state: PlacementState,
 ): XmlNode[] {
 	const result: XmlNode[] = [];
@@ -275,12 +430,16 @@ function walkAndPlace(
 			continue;
 		}
 
-		if (isParagraphLevel && (child.tag === "w:ins" || child.tag === "w:del")) {
+		if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:hyperlink"
+		) {
 			// Boundary at the wrapper's start: place markers BEFORE descending so
-			// they sit outside the tracked-change wrapper when offsets align.
+			// they sit outside the wrapper when offsets align.
 			flushAtCurrentOffset(result, pending, state);
 
-			const innerChildren = walkAndPlace(child.children, pending, false, state);
+			const innerChildren = walkAndPlace(child.children, pending, state);
 			const wrapper = new XmlNode(child.tag, { ...child.attributes });
 			wrapper.children = innerChildren;
 			result.push(wrapper);

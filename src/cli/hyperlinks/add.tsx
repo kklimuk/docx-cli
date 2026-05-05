@@ -1,13 +1,17 @@
 import {
 	addHyperlinkRelationship,
+	isTrackChangesEnabled,
 	type Locator,
 	LocatorParseError,
 	locatorToBlockTarget,
 	parseLocator,
+	resolveAuthor,
+	resolveDate,
 	saveDocView,
 } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
+import { emitAuditComment } from "../comments/helpers";
 import {
 	EXIT,
 	fail,
@@ -30,12 +34,17 @@ Required:
   --url URL         Target URL
 
 Optional:
+  --author NAME     Author for the audit comment when track-changes is on
+                    (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
 
 The span must lie inside a single paragraph and must not overlap an existing
 hyperlink or a tracked-change wrapper.
+
+When track-changes is on, an audit comment is anchored to the wrapped span
+since OOXML has no native tracked-change form for hyperlink edits.
 
 Examples:
   docx hyperlinks add doc.docx --at p3:5-20 --url https://example.com
@@ -50,6 +59,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				at: { type: "string" },
 				url: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -132,6 +142,18 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	view.hyperlinksByRelationshipId.set(relationshipId, { url });
+
+	if (isTrackChangesEnabled(view)) {
+		emitAuditComment(
+			view,
+			{ kind: "span", paragraph: paragraphRef.node, span: target.span },
+			{
+				body: `[docx-cli] hyperlink added → ${url}`,
+				author: resolveAuthor(parsed.values.author as string | undefined),
+				date: resolveDate(),
+			},
+		);
+	}
 
 	await saveDocView(view, outputPath);
 

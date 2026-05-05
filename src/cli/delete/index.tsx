@@ -29,6 +29,7 @@ Usage:
 Locator (required):
   --at LOCATOR      Block to remove (e.g., p3, t0)
 
+  --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
   -h, --help        Show this help
@@ -46,6 +47,7 @@ export async function run(args: string[]): Promise<number> {
 			allowPositionals: true,
 			options: {
 				at: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -104,7 +106,11 @@ export async function run(args: string[]): Promise<number> {
 				"Use `docx track-changes off` first, or delete table contents row-by-row.",
 			);
 		}
-		applyTrackedDeletion(view, blockRef.node);
+		applyTrackedDeletion(
+			view,
+			blockRef.node,
+			parsed.values.author as string | undefined,
+		);
 	} else {
 		blockRef.parent.splice(targetIndex, 1);
 	}
@@ -119,9 +125,13 @@ export async function run(args: string[]): Promise<number> {
 	return EXIT.OK;
 }
 
-function applyTrackedDeletion(view: DocView, paragraph: XmlNode): void {
+function applyTrackedDeletion(
+	view: DocView,
+	paragraph: XmlNode,
+	authorFlag: string | undefined,
+): void {
 	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
 	const mintMeta = (): TrackedMeta => ({
 		...baseMeta,
 		revisionId: allocator.next(),

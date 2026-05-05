@@ -1,6 +1,16 @@
-import { saveDocView } from "@core";
+import {
+	isTrackChangesEnabled,
+	resolveAuthor,
+	resolveDate,
+	saveDocView,
+} from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
+import {
+	emitAuditComment,
+	findContainingParagraph,
+	findElementOffsetsInParagraph,
+} from "../comments/helpers";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
 const HELP = `docx hyperlinks delete — unwrap a hyperlink (keep the text)
@@ -12,6 +22,8 @@ Required:
   --at LINK_ID      Existing hyperlink to remove (e.g., link0)
 
 Optional:
+  --author NAME     Author for the audit comment when track-changes is on
+                    (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
@@ -19,6 +31,9 @@ Optional:
 The display text stays in place; only the <w:hyperlink> wrapper is removed.
 If the underlying relationship is no longer referenced, it is pruned from the
 rels file too.
+
+When track-changes is on, an audit comment is anchored to the surviving text
+since OOXML has no native tracked-change form for hyperlink removal.
 
 Examples:
   docx hyperlinks delete doc.docx --at link0
@@ -32,6 +47,7 @@ export async function run(args: string[]): Promise<number> {
 			allowPositionals: true,
 			options: {
 				at: { type: "string" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -88,6 +104,16 @@ export async function run(args: string[]): Promise<number> {
 			`Hyperlink reference is stale (parent does not contain it): ${targetId}`,
 		);
 	}
+
+	const trackingOn = isTrackChangesEnabled(view);
+	const paragraph = trackingOn
+		? findContainingParagraph(view.documentTree, reference.node)
+		: null;
+	const offsets =
+		trackingOn && paragraph
+			? findElementOffsetsInParagraph(paragraph, reference.node)
+			: null;
+
 	reference.parent.splice(index, 1, ...reference.node.children);
 	view.hyperlinkById.delete(targetId);
 
@@ -100,6 +126,18 @@ export async function run(args: string[]): Promise<number> {
 			pruneRelationship(view.relationshipsTree, reference.relationshipId);
 			view.hyperlinksByRelationshipId.delete(reference.relationshipId);
 		}
+	}
+
+	if (trackingOn && paragraph && offsets) {
+		emitAuditComment(
+			view,
+			{ kind: "span", paragraph, span: offsets },
+			{
+				body: `[docx-cli] hyperlink removed (was: ${oldUrl ?? "(none)"})`,
+				author: resolveAuthor(parsed.values.author as string | undefined),
+				date: resolveDate(),
+			},
+		);
 	}
 
 	await saveDocView(view, outputPath);

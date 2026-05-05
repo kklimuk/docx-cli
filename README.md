@@ -40,6 +40,9 @@ docx delete FILE --at p3
 docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N]
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--dry-run]
 
+docx wc      FILE [LOCATOR]
+docx outline FILE
+
 docx comments add     FILE --range p3:5-20 --text "..." [--author NAME]
 docx comments reply   FILE --to c0 --text "..."
 docx comments resolve FILE --id c0 [--unset]
@@ -62,7 +65,9 @@ docx info locators [--json]
 
 Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
 
-When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers attributed to `$DOCX_AUTHOR` (default `docx-cli`). To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions.
+When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers. Author resolution: per-call `--author NAME` overrides `$DOCX_AUTHOR`, which falls back to `docx-cli`. To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions.
+
+OOXML has no native tracked-change form for hyperlink edits or image swaps, so when track-changes is on, `hyperlinks add/replace/delete` and `images replace` auto-emit a `[docx-cli] …` comment anchored to the affected span/run instead. The comment carries the same `--author` attribution as the other tracked operations. Word itself silently bypasses tracking for these — we trade silence for an explicit audit trail.
 
 ### Markdown rendering
 
@@ -139,6 +144,10 @@ src/
     insert/              # insert FILE  (uses ./emit Paragraph component)
     edit/                # edit FILE
     delete/              # delete FILE
+    find/                # find FILE QUERY
+    replace/             # replace FILE PATTERN REPLACEMENT
+    wc/                  # wc FILE [LOCATOR]
+    outline/             # outline FILE
     comments/            # add | reply | resolve | delete | list
     images/              # list | extract | replace
     hyperlinks/          # add | list | replace | delete

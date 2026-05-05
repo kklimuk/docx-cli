@@ -30,7 +30,6 @@ export function createRevisionAllocator(view: DocView): RevisionAllocator {
 export function resolveAuthor(authorFlag?: string): string {
 	if (authorFlag) return authorFlag;
 	if (Bun.env.DOCX_AUTHOR) return Bun.env.DOCX_AUTHOR;
-	if (Bun.env.DOCX_CLI_AUTHOR) return Bun.env.DOCX_CLI_AUTHOR;
 	return "docx-cli";
 }
 

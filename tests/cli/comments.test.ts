@@ -235,6 +235,47 @@ describe("docx comments", () => {
 		});
 	});
 
+	test("add anchors a span that includes hyperlinked text", async () => {
+		// Wrap "brown" (offsets 10..15) in a hyperlink, then anchor a comment
+		// over "quick brown fox" (4..19). Pre-fix, paragraphTextLength would
+		// have ignored hyperlinked runs and reported the paragraph as 39 chars
+		// instead of 44, throwing SpanOutOfRangeError or mis-anchoring the end
+		// marker. Post-fix, hyperlinked text counts toward offsets so the span
+		// reads back exactly as anchored.
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:10-15",
+			"--url",
+			"https://example.com/brown",
+		);
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--range",
+			"p0:4-19",
+			"--text",
+			"Spans the hyperlink",
+			"--author",
+			"Reviewer",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const list = await runCli("comments", "list", docPath);
+		const comments = list.parsed as Array<{
+			text: string;
+			anchor: { startOffset: number; endOffset: number };
+		}>;
+		const spanning = comments.find(
+			(comment) => comment.text === "Spans the hyperlink",
+		);
+		expect(spanning?.anchor.startOffset).toBe(4);
+		expect(spanning?.anchor.endOffset).toBe(19);
+	});
+
 	test("resolve auto-injects paraId on legacy comments", async () => {
 		// comments-simple.docx is a mammoth-authored fixture without paraIds
 		const workspace = tempWorkspace("legacy");

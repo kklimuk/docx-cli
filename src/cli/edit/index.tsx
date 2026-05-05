@@ -44,6 +44,7 @@ Run options (only with --text):
   --bold            Bold
   --italic          Italic
 
+  --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -h, --help        Show this help
@@ -68,6 +69,7 @@ export async function run(args: string[]): Promise<number> {
 				color: { type: "string" },
 				bold: { type: "boolean" },
 				italic: { type: "boolean" },
+				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
 				help: { type: "boolean", short: "h" },
@@ -175,7 +177,12 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (isTrackChangesEnabled(view)) {
-		applyTrackedEdit(view, blockRef.node, paragraphNode);
+		applyTrackedEdit(
+			view,
+			blockRef.node,
+			paragraphNode,
+			parsed.values.author as string | undefined,
+		);
 	} else {
 		blockRef.parent.splice(targetIndex, 1, paragraphNode);
 	}
@@ -194,9 +201,10 @@ function applyTrackedEdit(
 	view: DocView,
 	existingParagraph: XmlNode,
 	newParagraph: XmlNode,
+	authorFlag: string | undefined,
 ): void {
 	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(), date: resolveDate() };
+	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
 	const mintMeta = (): TrackedMeta => ({
 		...baseMeta,
 		revisionId: allocator.next(),
