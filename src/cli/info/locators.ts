@@ -1,14 +1,18 @@
 import { parseArgs } from "util";
 import { EXIT, fail, writeStdout } from "../respond";
 
-const HELP = `docx locators — print the locator grammar reference
+const HELP = `docx info locators — print the locator grammar reference
 
 Usage:
-  docx locators [options]
+  docx info locators [options]
 
 Options:
   --json       Print as JSON
   -h, --help   Show this help
+
+Examples:
+  docx info locators
+  docx info locators --json | jq '.entityLocators'
 `;
 
 const REFERENCE = `LOCATOR GRAMMAR

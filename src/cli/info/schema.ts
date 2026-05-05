@@ -3,10 +3,10 @@ import TS_SOURCE from "@core/ast/types" with { type: "text" };
 import { parseArgs } from "util";
 import { EXIT, fail, respond, writeStdout } from "../respond";
 
-const HELP = `docx schema — print the AST type definitions
+const HELP = `docx info schema — print the AST type definitions
 
 Usage:
-  docx schema [options]
+  docx info schema [options]
 
 Options:
   --json       Print as a JSON Schema document (default)
@@ -14,8 +14,8 @@ Options:
   -h, --help   Show this help
 
 Examples:
-  docx schema | jq '.definitions.Run'
-  docx schema --ts > ast.d.ts
+  docx info schema | jq '.$defs.Run'
+  docx info schema --ts > ast.d.ts
 `;
 
 const JSON_SCHEMA = {
