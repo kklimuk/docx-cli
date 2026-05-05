@@ -4,12 +4,16 @@ import {
 	flattenParagraphs,
 	type Locator,
 	LocatorParseError,
+	type Paragraph,
 	paragraphText,
+	paragraphTextAccepted,
+	paragraphTextBaseline,
 	parseLocator,
 } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import {
+	type CountView,
 	countWords,
 	countWordsInBlocks,
 	countWordsInParagraphSpan,
@@ -31,13 +35,17 @@ Locators (optional; default: whole document):
   tN:rRcC:pK:S-E  span within a cell paragraph
 
 Options:
+  --accepted        Count the accepted view: skip <w:del> runs, keep <w:ins>
+                    runs as plain text. Mirrors "docx read --markdown --accepted".
+  --baseline        Count the baseline view: skip <w:ins> runs, keep <w:del>
+                    runs as plain text — i.e., the doc as it was before any
+                    tracked changes were made.
   -h, --help        show this help
 
 Counting is whitespace-segmented (\\S+) over the joined paragraph text. Hidden
-content like images/breaks/tabs contributes no words. Tracked-change deletions
-are counted alongside insertions because their characters are still part of the
-on-disk text; accept or reject changes first if you need a delta on the
-"accepted" view.
+content like images/breaks/tabs contributes no words. By default, tracked
+deletions and insertions both count (they're on-disk text); pass --accepted
+or --baseline (mutually exclusive) to count a tracked-change-aware slice.
 
 Examples:
   docx wc doc.docx
@@ -54,6 +62,8 @@ export async function run(args: string[]): Promise<number> {
 			args,
 			allowPositionals: true,
 			options: {
+				accepted: { type: "boolean" },
+				baseline: { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -72,8 +82,24 @@ export async function run(args: string[]): Promise<number> {
 	const locatorInput = parsed.positionals[1];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const wantAccepted = Boolean(parsed.values.accepted);
+	const wantBaseline = Boolean(parsed.values.baseline);
+	if (wantAccepted && wantBaseline) {
+		return fail(
+			"USAGE",
+			"--accepted and --baseline are mutually exclusive",
+			HELP,
+		);
+	}
+	const view: CountView = wantAccepted
+		? "accepted"
+		: wantBaseline
+			? "baseline"
+			: "current";
+	const pickText = paragraphTextFor(view);
+
+	const docView = await openOrFail(path);
+	if (typeof docView === "number") return docView;
 
 	if (!locatorInput) {
 		await respond({
@@ -81,7 +107,8 @@ export async function run(args: string[]): Promise<number> {
 			operation: "wc",
 			path,
 			scope: "document",
-			words: countWordsInBlocks(view.doc.blocks),
+			view,
+			words: countWordsInBlocks(docView.doc.blocks, { view }),
 		});
 		return EXIT.OK;
 	}
@@ -96,7 +123,12 @@ export async function run(args: string[]): Promise<number> {
 		throw error;
 	}
 
-	if (locator.kind === "comment" || locator.kind === "image") {
+	if (
+		locator.kind === "comment" ||
+		locator.kind === "image" ||
+		locator.kind === "hyperlink" ||
+		locator.kind === "trackedChange"
+	) {
 		return fail(
 			"USAGE",
 			`Locator ${locatorInput} addresses a ${locator.kind}, not text`,
@@ -104,7 +136,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const blocks = view.doc.blocks;
+	const blocks = docView.doc.blocks;
 
 	if (locator.kind === "block") {
 		const block = findBlockById(blocks, locator.blockId);
@@ -113,9 +145,9 @@ export async function run(args: string[]): Promise<number> {
 		}
 		const words =
 			block.type === "paragraph"
-				? countWords(paragraphText(block))
+				? countWords(pickText(block))
 				: block.type === "table"
-					? countWordsInBlocks([block])
+					? countWordsInBlocks([block], { view })
 					: 0;
 		await respond({
 			ok: true,
@@ -123,6 +155,7 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			locator: locatorInput,
 			scope: block.type,
+			view,
 			words,
 		});
 		return EXIT.OK;
@@ -139,7 +172,10 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			locator: locatorInput,
 			scope: "paragraphSpan",
-			words: countWordsInParagraphSpan(block, locator.start, locator.end),
+			view,
+			words: countWordsInParagraphSpan(block, locator.start, locator.end, {
+				view,
+			}),
 		});
 		return EXIT.OK;
 	}
@@ -166,12 +202,14 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			locator: locatorInput,
 			scope: "range",
+			view,
 			words: countWordsInRange(
 				paragraphs,
 				locator.start.blockId,
 				locator.start.offset,
 				locator.end.blockId,
 				locator.end.offset,
+				{ view },
 			),
 		});
 		return EXIT.OK;
@@ -190,7 +228,8 @@ export async function run(args: string[]): Promise<number> {
 				path,
 				locator: locatorInput,
 				scope: "cell",
-				words: countWordsInBlocks(cellBlocks),
+				view,
+				words: countWordsInBlocks(cellBlocks, { view }),
 			});
 			return EXIT.OK;
 		}
@@ -220,14 +259,16 @@ export async function run(args: string[]): Promise<number> {
 						block,
 						locator.inner.start,
 						locator.inner.end,
+						{ view },
 					)
-				: countWords(paragraphText(block));
+				: countWords(pickText(block));
 		await respond({
 			ok: true,
 			operation: "wc",
 			path,
 			locator: locatorInput,
 			scope: locator.inner.kind === "blockSpan" ? "paragraphSpan" : "paragraph",
+			view,
 			words,
 		});
 		return EXIT.OK;
@@ -247,4 +288,10 @@ function findCellBlocks(
 	const cell = row.cells[locator.col];
 	if (!cell) return null;
 	return cell.blocks;
+}
+
+function paragraphTextFor(view: CountView): (p: Paragraph) => string {
+	if (view === "accepted") return paragraphTextAccepted;
+	if (view === "baseline") return paragraphTextBaseline;
+	return paragraphText;
 }

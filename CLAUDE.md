@@ -37,7 +37,12 @@ src/
       index.ts                # sub-dispatcher for add/list/replace/delete
       wrap.tsx                # in-place run-splitting for hyperlinks add
       add | list | replace | delete
-    track-changes/            # docx track-changes FILE on|off
+    track-changes/            # docx track-changes <verb>
+      index.ts                # sub-dispatcher: routes accept/reject/list to verb files; falls through to toggle
+      toggle.tsx              # FILE on|off (sets/clears <w:trackChanges/>)
+      list.ts                 # JSON inventory of every <w:ins>/<w:del>
+      accept.ts | reject.ts   # thin wrappers over apply.ts
+      apply.ts                # collectTrackedChanges + unwrap/delete/renameDelTextToText helpers
     info/                     # docx info <topic>
       index.ts                # sub-dispatcher for schema/locators
       schema.ts               # docx info schema [--ts]  (TS source via Bun text import)
@@ -97,10 +102,10 @@ These are not architectural suggestions, but requirements. If you disagree, make
 - **In-place XML mutation, not AST round-trip emission**. The typed AST returned by `read` is a _view_ over the parsed XML tree. Mutations (insert/edit/delete/comments add) operate on the underlying `XmlNode` references via `BlockReference.parent.splice(...)`. Anything we don't model survives because we never re-emit untouched regions. Only emit fresh XML for nodes we're inserting (via JSX) — never round-trip whole subtrees through the AST.
 - **fast-xml-builder owns escaping**. On the JSX path, never manually escape — the builder handles entities correctly (uses `&apos;` for `'`, which fast-xml-parser decodes back). The static templates in `cli/create/template.tsx` carry no user-supplied content, so they don't need escaping at all.
 - **JSX.Element = XmlNode** (single, not nullable union). `Fragment` returns a sentinel `#fragment` XmlNode that gets unwrapped both in `flatten()` (composition) and `XmlNode.serialize()` (top-level). Components that want to "render nothing" return `null`; `jsx()` converts that to an empty fragment so callers always see `XmlNode`.
-- **Stable positional ids** (`p0`, `t0`, `c0`, `img0`, `link0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image and hyperlink ids are positional (document order).
+- **Stable positional ids** (`p0`, `t0`, `c0`, `img0`, `link0`, `tc0`). Block ids shift after structural edits — agents must re-read between non-trivial mutations. Comment numeric ids are allocated as `max-existing + 1`. Image, hyperlink, and tracked-change ids are positional (document order).
 - **Hyperlinks own a relationship, not their text.** `hyperlinks replace` updates the `Target` of the underlying `<Relationship>` — but if multiple `<w:hyperlink>` elements share the same `r:id`, it allocates a new rId so the others stay pointing at the original URL. `hyperlinks delete` unwraps the `<w:hyperlink>` (text survives as plain runs) and prunes the rId from the rels file when no other element references it.
 - **paraId is required for resolve/reply**. Comments authored by external tools may lack `w14:paraId` on their bodies. The `resolve` and `reply` verbs auto-inject one via `ensureCommentParaId()` (also adds `xmlns:w14` to the `<w:comments>` root if missing). Do this rather than failing — agents shouldn't have to recreate comments.
-- **Track-changes is doc-level, not per-command**. When `<w:trackChanges/>` is set in `settings.xml`, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` markers — there is no per-command override flag. To make a one-off untracked edit, run `docx track-changes FILE off`, edit, then `track-changes on`. Author/date come from the per-call `--author NAME` flag, then the `DOCX_AUTHOR` env var, then the `"docx-cli"` default (resolved in `core/track-changes/index.ts → resolveAuthor`); `DOCX_CLI_NOW` injects a fixed date for tests. `delete tN` rejects with `TRACKED_CHANGE_CONFLICT` when tracking is on (tracked table-row deletion isn't supported).
+- **Track-changes is doc-level, not per-command**. When `<w:trackChanges/>` is set in `settings.xml`, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` markers — there is no per-command override flag. To make a one-off untracked edit, run `docx track-changes FILE off`, edit, then `track-changes on`. **Accept/reject bypass tracking** (`docx track-changes accept|reject FILE --at tcN | --all`): they directly mutate the XML tree without wrapping the change itself in `<w:ins>`/`<w:del>` — accept-ins unwraps, accept-del deletes, reject-ins deletes, reject-del unwraps after renaming `<w:delText>` → `<w:t>`. Targets walk fresh on each invocation (stored `view.trackedChangeReferences` would go stale across mutations) and process in reverse pre-order so nested changes are applied before their parents. Out of scope (silently skipped by `--all`): tracked paragraph marks, `<w:rPrChange>`, `<w:pPrChange>`, `<w:moveFrom>`/`<w:moveTo>`. Author/date come from the per-call `--author NAME` flag, then the `DOCX_AUTHOR` env var, then the `"docx-cli"` default (resolved in `core/track-changes/index.ts → resolveAuthor`); `DOCX_CLI_NOW` injects a fixed date for tests. `delete tN` rejects with `TRACKED_CHANGE_CONFLICT` when tracking is on (tracked table-row deletion isn't supported).
 - **Hyperlink and image edits emit audit comments under track-changes**. OOXML has no `w:hyperlinkChange` / `w:drawingChange` element — Word itself silently bypasses tracking for hyperlink edits and image swaps. We compromise: when `<w:trackChanges/>` is on, `hyperlinks add/replace/delete` and `images replace` each auto-emit a `[docx-cli] …` comment anchored to the affected span/run, attributed via the same `--author` chain. The mutation itself stays silent (no fake `<w:ins>`/`<w:del>` since OOXML has no honest construct for it). Helpers live in `cli/comments/helpers.tsx` (`emitAuditComment`, `findContainingParagraph`, `findElementOffsetsInParagraph`, `addCommentMarkersAroundRun`). When track-changes is off, no comment is emitted.
 - **No undo, no journal**. Mutating commands overwrite `FILE` in place. Pass `-o/--output PATH` to write to a parallel file instead, or `--dry-run` to preview. There is no snapshot ring, restore command, or trash directory — git is the version history. When both `--dry-run` and `--output` are passed, `--dry-run` wins (nothing is written to either path); the dry-run payload echoes `output` so the agent knows where a real run would have written.
 
@@ -108,28 +113,31 @@ These are not architectural suggestions, but requirements. If you disagree, make
 
 `docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default; structured `{ok: false, code, error, hint}` on failure.
 
-| Surface       | Verbs                                                                                |
-| ------------- | ------------------------------------------------------------------------------------ |
-| top-level     | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline` `track-changes` |
-| `comments`    | `add` `reply` `resolve` `delete` `list`                                              |
-| `images`      | `list` `extract` `replace`                                                           |
-| `hyperlinks`  | `add` `list` `replace` `delete`                                                      |
-| `info`        | `schema` `locators`                                                                  |
+| Surface         | Verbs                                                                                |
+| --------------- | ------------------------------------------------------------------------------------ |
+| top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline`             |
+| `comments`      | `add` `reply` `resolve` `delete` `list`                                              |
+| `images`        | `list` `extract` `replace`                                                           |
+| `hyperlinks`    | `add` `list` `replace` `delete`                                                      |
+| `track-changes` | `FILE on\|off` (toggle), `list FILE`, `accept`/`reject FILE (--at tcN \| --all)`    |
+| `info`          | `schema` `locators`                                                                  |
 
 `insert --url URL --text "label"` wraps the inserted run in a `<w:hyperlink>`. To wrap an existing span, use `hyperlinks add --at pN:S-E --url URL`.
 
-`docx read FILE --markdown` renders the body as GFM (instead of JSON). Each paragraph trails its locator as an HTML comment (`<!-- p3 -->`) — invisible in rendered view, parseable from raw text. Headings → `#`, lists → `-`, tables → pipe tables (with per-cell-paragraph locators, multi-paragraph cells joined by `<br>`), images → `![alt](imgN)`, run color / highlight → `<span style="color:#hex">…</span>` / `<span style="background-color:NAME">…</span>`. `--from`/`--to` slice top-level blocks (paragraph/table/cell/span/range locators all collapse to enclosing top-level block). `--changes` renders `<ins>`/`<del>`; default view is the accepted view (drops `del` runs, inlines `ins` runs as plain). `--comments` appends GFM footnote refs (`[^cN]`) at the end of each commented span and emits `[^cN]: "span" — author (date): body` definitions at end of output (replies marked `↳ cP`). Footnotes / endnotes (the document's own) render unconditionally as `[^fnN]` / `[^enN]` with definitions at the end. Equations (OOMath / `<m:oMath>` / `<m:oMathPara>`) surface as `` `equation: text` `` (concatenated `<m:t>` plaintext — degraded but readable; structure like sub/sup collapses to literal characters). Charts / SmartArt / shapes / other non-picture drawings render as `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders. All locator/render logic in `cli/read/markdown.ts`; footnote/endnote/equation/chart detection in `core/ast/read.ts`.
+`docx read FILE --markdown` renders the body as GFM (instead of JSON). Each paragraph trails its locator as an HTML comment (`<!-- p3 -->`) — invisible in rendered view, parseable from raw text. Headings → `#`, lists → `-`, tables → pipe tables (with per-cell-paragraph locators, multi-paragraph cells joined by `<br>`), images → `![alt](imgN)`, run color / highlight → `<span style="color:#hex">…</span>` / `<span style="background-color:NAME">…</span>`. `--from`/`--to` slice top-level blocks (paragraph/table/cell/span/range locators all collapse to enclosing top-level block). Tracked changes have three views: default (`current`) renders insertions as `{++text++}[^tcN]` and deletions as `{--text--}[^tcN]` (CriticMarkup) with `[^tcN]: insertion|deletion by author (date)` definitions at the end; `--accepted` shows the post-accept view (drops `del` runs, inlines `ins` as plain); `--baseline` shows the pre-change view (drops `ins` runs, inlines `del` as plain). `--accepted` and `--baseline` are mutually exclusive. `--comments` appends GFM footnote refs (`[^cN]`) at the end of each commented span and emits `[^cN]: "span" — author (date): body` definitions at end of output (replies marked `↳ cP`). Footnotes / endnotes (the document's own) render unconditionally as `[^fnN]` / `[^enN]` with definitions at the end. Equations (OOMath / `<m:oMath>` / `<m:oMathPara>`) surface as `` `equation: text` `` (concatenated `<m:t>` plaintext — degraded but readable; structure like sub/sup collapses to literal characters). Charts / SmartArt / shapes / other non-picture drawings render as `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders. All locator/render logic in `cli/read/markdown.ts`; footnote/endnote/equation/chart detection in `core/ast/read.ts`.
+
+`docx wc FILE [LOCATOR]` accepts the same `--accepted` / `--baseline` flags. Default is the `current` view (counts plain + ins + del, i.e., everything on disk); `--accepted` skips `<w:del>` runs; `--baseline` skips `<w:ins>` runs. Helpers: `paragraphTextAccepted` / `paragraphTextBaseline` in [src/core/ast/text.ts](src/core/ast/text.ts).
 
 Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (file/locator/comment/image/hyperlink). Defined in `src/cli/respond.ts` (`EXIT` const + `ErrorCode` union).
 
 ## Locators
 
 ```
-pN              paragraph N
-pN:S-E          chars S..E within paragraph N
-pN:S-pM:E       cross-paragraph range
-tN              table N; tN:rRcC for cell at row R, col C; chainable :pK
-cN, imgN, linkN comment / image / hyperlink ids
+pN                   paragraph N
+pN:S-E               chars S..E within paragraph N
+pN:S-pM:E            cross-paragraph range
+tN                   table N; tN:rRcC for cell at row R, col C; chainable :pK
+cN, imgN, linkN, tcN comment / image / hyperlink / tracked-change ids
 ```
 
 Span comments split runs at offsets, preserving `<w:rPr>` on both halves (logic in `cli/comments/helpers.tsx → addCommentMarkersToParagraph`). `hyperlinks add` does similar run-splitting in `cli/hyperlinks/wrap.tsx → wrapSpanInHyperlink`.

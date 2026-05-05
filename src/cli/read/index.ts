@@ -19,8 +19,13 @@ Options:
                     Accepts pN, tN, tN:rRcC[:pK[:S-E]], pN:S-E, pN:S-pM:E.
                     Cell/span/range locators collapse to their enclosing
                     top-level block (the table or paragraph).
-  --changes         With --markdown, render tracked insertions/deletions as
-                    <ins>/<del> instead of producing the accepted view.
+  --accepted        With --markdown, render the post-accept view: drop <w:del>
+                    runs, inline <w:ins> as plain text, no markers/refs.
+  --baseline        With --markdown, render the pre-change view: drop <w:ins>
+                    runs, inline <w:del> as plain text, no markers/refs.
+                    Mutually exclusive with --accepted.
+                    Default --markdown shows both: insertions as {++text++}[^tcN]
+                    and deletions as {--text--}[^tcN] (CriticMarkup).
   --comments        With --markdown, append [^cN] after each commented span
                     and emit a footnote definition for each comment at the
                     end of the output (author, date, body).
@@ -30,7 +35,8 @@ Examples:
   docx read input.docx
   docx read input.docx --markdown
   docx read input.docx --markdown --from p3 --to p20
-  docx read input.docx --markdown --changes --comments
+  docx read input.docx --markdown --accepted --comments
+  docx read input.docx --markdown --baseline
   docx read input.docx | jq '.blocks[] | select(.type == "paragraph")'
 `;
 
@@ -44,7 +50,8 @@ export async function run(args: string[]): Promise<number> {
 				markdown: { type: "boolean" },
 				from: { type: "string" },
 				to: { type: "string" },
-				changes: { type: "boolean" },
+				accepted: { type: "boolean" },
+				baseline: { type: "boolean" },
 				comments: { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -64,26 +71,37 @@ export async function run(args: string[]): Promise<number> {
 	const markdown = Boolean(parsed.values.markdown);
 	const from = parsed.values.from as string | undefined;
 	const to = parsed.values.to as string | undefined;
-	const showChanges = Boolean(parsed.values.changes);
+	const accepted = Boolean(parsed.values.accepted);
+	const baseline = Boolean(parsed.values.baseline);
 	const showComments = Boolean(parsed.values.comments);
 
-	if (!markdown && (from || to || showChanges || showComments)) {
+	if (!markdown && (from || to || accepted || baseline || showComments)) {
 		return fail(
 			"USAGE",
-			"--from, --to, --changes, and --comments require --markdown",
+			"--from, --to, --accepted, --baseline, and --comments require --markdown",
 			HELP,
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	if (accepted && baseline) {
+		return fail(
+			"USAGE",
+			"--accepted and --baseline are mutually exclusive",
+			HELP,
+		);
+	}
+
+	const view = accepted ? "accepted" : baseline ? "baseline" : "current";
+
+	const docView = await openOrFail(path);
+	if (typeof docView === "number") return docView;
 
 	if (markdown) {
 		try {
-			const rendered = renderMarkdown(view.doc, {
+			const rendered = renderMarkdown(docView.doc, {
 				from,
 				to,
-				showChanges,
+				view,
 				showComments,
 			});
 			await writeStdout(rendered);
@@ -96,7 +114,7 @@ export async function run(args: string[]): Promise<number> {
 		}
 	}
 
-	await enrichImageHashes(view);
-	await respond(view.doc);
+	await enrichImageHashes(docView);
+	await respond(docView.doc);
 	return EXIT.OK;
 }

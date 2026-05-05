@@ -21,9 +21,10 @@ Commands:
   comments  …     Add, reply, resolve, delete, list comments
   images    …     Extract, replace, list images
   hyperlinks …    Add, list, replace, delete hyperlinks
-  track-changes FILE on|off  Toggle tracked-changes mode
+  track-changes …  Toggle (FILE on|off), list / accept / reject changes
   info      …     Reference material (schema, locators)
 
+It is highly recommended to agents to run "docx info locators" to understand their capabilities.
 Run "docx <command> --help" for command-specific help.
 
 Environment:
@@ -31,9 +32,19 @@ Environment:
   DOCX_CLI_NOW   Override the timestamp used for tracked changes (test only)
 
 Tracked changes:
-  When <w:trackChanges/> is set in the doc (toggle via "docx track-changes
-  FILE on"), insert/edit/delete/replace automatically emit <w:ins>/<w:del>
-  markers attributed to $DOCX_AUTHOR.
+  Toggle:    docx track-changes FILE on|off
+  Inventory: docx track-changes list FILE  (JSON: id, kind, author, date, blockId, text)
+  Accept:    docx track-changes accept FILE (--at tcN | --all)
+  Reject:    docx track-changes reject FILE (--at tcN | --all)
+
+  When <w:trackChanges/> is set, insert/edit/delete/replace automatically emit
+  <w:ins>/<w:del> markers attributed via --author (or $DOCX_AUTHOR, or "docx-cli").
+
+  "docx read --markdown" surfaces them as CriticMarkup:
+    {++inserted++}[^tcN]   {--deleted--}[^tcN]
+  with a [^tcN]: definition appendix. Switch view with --accepted (post-accept:
+  drop del, ins as plain) or --baseline (pre-change: drop ins, del as plain).
+  "docx wc" mirrors the same --accepted / --baseline flags.
 `;
 
 export async function printTopHelp(): Promise<void> {

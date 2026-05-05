@@ -1,23 +1,43 @@
-import { type Block, type Doc, type Paragraph, paragraphText } from "@core";
+import {
+	type Block,
+	type Doc,
+	type Paragraph,
+	paragraphText,
+	paragraphTextAccepted,
+	paragraphTextBaseline,
+} from "@core";
+
+export type CountView = "current" | "accepted" | "baseline";
+export type CountOptions = { view?: CountView };
+
+function textFor(options: CountOptions): (paragraph: Paragraph) => string {
+	if (options.view === "accepted") return paragraphTextAccepted;
+	if (options.view === "baseline") return paragraphTextBaseline;
+	return paragraphText;
+}
 
 export function countWords(text: string): number {
 	const matches = text.match(/\S+/g);
 	return matches?.length ?? 0;
 }
 
-export function countWordsInDoc(doc: Doc): number {
-	return countWordsInBlocks(doc.blocks);
+export function countWordsInDoc(doc: Doc, options: CountOptions = {}): number {
+	return countWordsInBlocks(doc.blocks, options);
 }
 
-export function countWordsInBlocks(blocks: Block[]): number {
+export function countWordsInBlocks(
+	blocks: Block[],
+	options: CountOptions = {},
+): number {
+	const text = textFor(options);
 	let total = 0;
 	for (const block of blocks) {
 		if (block.type === "paragraph") {
-			total += countWords(paragraphText(block));
+			total += countWords(text(block));
 		} else if (block.type === "table") {
 			for (const row of block.rows) {
 				for (const cell of row.cells) {
-					total += countWordsInBlocks(cell.blocks);
+					total += countWordsInBlocks(cell.blocks, options);
 				}
 			}
 		}
@@ -25,13 +45,16 @@ export function countWordsInBlocks(blocks: Block[]): number {
 	return total;
 }
 
-/** Word-count the half-open paragraph slice [start, end). */
+/** Word-count the half-open paragraph slice [start, end). Offsets are over
+ * whichever view is selected by `options.view` — default ("current") counts
+ * everything on disk, "accepted" skips del runs, "baseline" skips ins runs. */
 export function countWordsInParagraphSpan(
 	paragraph: Paragraph,
 	start: number,
 	end: number,
+	options: CountOptions = {},
 ): number {
-	const text = paragraphText(paragraph);
+	const text = textFor(options)(paragraph);
 	const clampedEnd = Math.min(Math.max(end, 0), text.length);
 	const clampedStart = Math.min(Math.max(start, 0), clampedEnd);
 	return countWords(text.slice(clampedStart, clampedEnd));
@@ -46,16 +69,24 @@ export function countWordsInRange(
 	startOffset: number,
 	endBlockId: string,
 	endOffset: number,
+	options: CountOptions = {},
 ): number {
 	const startIndex = paragraphsInOrder.findIndex((p) => p.id === startBlockId);
 	const endIndex = paragraphsInOrder.findIndex((p) => p.id === endBlockId);
 	if (startIndex === -1 || endIndex === -1) return 0;
 	if (endIndex < startIndex) return 0;
 
+	const text = textFor(options);
+
 	if (startIndex === endIndex) {
 		const paragraph = paragraphsInOrder[startIndex];
 		if (!paragraph) return 0;
-		return countWordsInParagraphSpan(paragraph, startOffset, endOffset);
+		return countWordsInParagraphSpan(
+			paragraph,
+			startOffset,
+			endOffset,
+			options,
+		);
 	}
 
 	let total = 0;
@@ -64,14 +95,15 @@ export function countWordsInRange(
 		total += countWordsInParagraphSpan(
 			first,
 			startOffset,
-			paragraphText(first).length,
+			text(first).length,
+			options,
 		);
 	}
 	for (let index = startIndex + 1; index < endIndex; index++) {
 		const middle = paragraphsInOrder[index];
-		if (middle) total += countWords(paragraphText(middle));
+		if (middle) total += countWords(text(middle));
 	}
 	const last = paragraphsInOrder[endIndex];
-	if (last) total += countWordsInParagraphSpan(last, 0, endOffset);
+	if (last) total += countWordsInParagraphSpan(last, 0, endOffset, options);
 	return total;
 }

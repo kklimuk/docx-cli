@@ -12,12 +12,15 @@ import {
 	type Table,
 	type TableCell,
 	type TextRun,
+	type TrackedChange,
 } from "@core";
+
+export type MarkdownView = "current" | "accepted" | "baseline";
 
 export type MarkdownOptions = {
 	from?: string;
 	to?: string;
-	showChanges?: boolean;
+	view?: MarkdownView;
 	showComments?: boolean;
 };
 
@@ -42,6 +45,7 @@ type RenderContext = {
 	commentIndex: CommentIndex;
 	referencedFootnoteIds: Set<string>;
 	referencedEndnoteIds: Set<string>;
+	referencedTrackedChanges: Map<string, TrackedChange>;
 };
 
 export function renderMarkdown(
@@ -57,6 +61,7 @@ export function renderMarkdown(
 		commentIndex,
 		referencedFootnoteIds: new Set(),
 		referencedEndnoteIds: new Set(),
+		referencedTrackedChanges: new Map(),
 	};
 
 	const parts: string[] = [];
@@ -79,6 +84,10 @@ export function renderMarkdown(
 		ctx.referencedEndnoteIds,
 	);
 	if (endnoteDefs.length > 0) definitions.push(endnoteDefs);
+	const trackedChangeDefs = renderTrackedChangeFootnotes(
+		ctx.referencedTrackedChanges,
+	);
+	if (trackedChangeDefs.length > 0) definitions.push(trackedChangeDefs);
 	if (definitions.length > 0) parts.push(definitions.join("\n"));
 	if (parts.length === 0) return "";
 	return `${parts.join("\n\n")}\n`;
@@ -92,11 +101,19 @@ function emptyCommentIndex(): CommentIndex {
 	};
 }
 
+function isRunVisible(run: TextRun, view: MarkdownView): boolean {
+	const kind = run.trackedChange?.kind;
+	if (!kind) return true;
+	if (view === "accepted" && kind === "del") return false;
+	if (view === "baseline" && kind === "ins") return false;
+	return true;
+}
+
 function buildCommentIndex(
 	blocks: Block[],
 	options: MarkdownOptions,
 ): CommentIndex {
-	const showChanges = options.showChanges ?? false;
+	const view = options.view ?? "current";
 	const lastSlot = new Map<string, string>();
 	const spanText = new Map<string, string>();
 	const orderedIds: string[] = [];
@@ -104,7 +121,7 @@ function buildCommentIndex(
 	for (const paragraph of flattenParagraphs(blocks)) {
 		paragraph.runs.forEach((run, index) => {
 			if (run.type !== "text") return;
-			if (!showChanges && run.trackedChange?.kind === "del") return;
+			if (!isRunVisible(run, view)) return;
 			for (const commentId of run.comments ?? []) {
 				if (!spanText.has(commentId)) orderedIds.push(commentId);
 				spanText.set(commentId, (spanText.get(commentId) ?? "") + run.text);
@@ -171,16 +188,10 @@ function renderRuns(
 	runs: Run[],
 	ctx: RenderContext,
 ): string {
-	const showChanges = ctx.options.showChanges ?? false;
+	const view = ctx.options.view ?? "current";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
-		if (
-			!showChanges &&
-			run.type === "text" &&
-			run.trackedChange?.kind === "del"
-		) {
-			return;
-		}
+		if (run.type === "text" && !isRunVisible(run, view)) return;
 		visibleEntries.push({ run, originalIndex: index });
 	});
 
@@ -202,10 +213,18 @@ function renderRuns(
 				lookahead++;
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
-			out += renderTextSegment(
-				segment.map((entry) => entry.run as TextRun),
-				showChanges,
-			);
+			const segmentRuns = segment.map((entry) => entry.run as TextRun);
+			out += renderTextSegment(segmentRuns, view);
+			if (view === "current") {
+				for (const segmentRun of segmentRuns) {
+					if (segmentRun.trackedChange) {
+						ctx.referencedTrackedChanges.set(
+							segmentRun.trackedChange.id,
+							segmentRun.trackedChange,
+						);
+					}
+				}
+			}
 			out += commentEndingsFor(paragraphId, segment, ctx.commentIndex);
 			cursor = lookahead;
 			continue;
@@ -258,7 +277,7 @@ function sameDecoration(a: TextRun, b: TextRun): boolean {
 		(a.color ?? "") === (b.color ?? "") &&
 		(a.highlight ?? "") === (b.highlight ?? "") &&
 		a.hyperlink?.id === b.hyperlink?.id &&
-		a.trackedChange?.kind === b.trackedChange?.kind &&
+		a.trackedChange?.id === b.trackedChange?.id &&
 		sameCommentSet(a.comments, b.comments)
 	);
 }
@@ -276,7 +295,7 @@ function sameCommentSet(
 	return true;
 }
 
-function renderTextSegment(runs: TextRun[], showChanges: boolean): string {
+function renderTextSegment(runs: TextRun[], view: MarkdownView): string {
 	const text = runs.map((run) => run.text).join("");
 	if (text.length === 0) return "";
 	const first = runs[0];
@@ -295,8 +314,9 @@ function renderTextSegment(runs: TextRun[], showChanges: boolean): string {
 		const target = first.hyperlink.url ?? `#${first.hyperlink.anchor ?? ""}`;
 		out = `[${out}](${target})`;
 	}
-	if (showChanges && first.trackedChange) {
-		out = `<${first.trackedChange.kind}>${out}</${first.trackedChange.kind}>`;
+	if (view === "current" && first.trackedChange) {
+		const marker = first.trackedChange.kind === "ins" ? "++" : "--";
+		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
 	}
 	return out;
 }
@@ -409,6 +429,27 @@ function renderNoteDefinitions(
 	return lines.join("\n");
 }
 
+function renderTrackedChangeFootnotes(
+	referenced: Map<string, TrackedChange>,
+): string {
+	if (referenced.size === 0) return "";
+	const sorted = [...referenced.values()].sort((a, b) =>
+		trackedChangeIdCompare(a.id, b.id),
+	);
+	const lines: string[] = [];
+	for (const change of sorted) {
+		const kind = change.kind === "ins" ? "insertion" : "deletion";
+		const author = change.author || "unknown";
+		const meta = change.date ? `${author} (${change.date})` : author;
+		lines.push(`[^${change.id}]: ${kind} by ${meta}`);
+	}
+	return lines.join("\n");
+}
+
+function trackedChangeIdCompare(left: string, right: string): number {
+	return numericIdCompare(left, right, /^tc(\d+)$/);
+}
+
 function noteIdCompare(left: string, right: string): number {
 	return numericIdCompare(left, right, /(\d+)$/);
 }
@@ -494,6 +535,7 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "comment":
 		case "image":
 		case "hyperlink":
+		case "trackedChange":
 			throw new MarkdownLocatorError(
 				input,
 				`--${position} does not accept a ${parsed.kind} locator — use a paragraph or table locator`,

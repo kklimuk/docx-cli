@@ -31,7 +31,7 @@ bunx bun-docx read doc.docx
 
 ```sh
 docx create FILE [--title T] [--author A] [--text "..."]
-docx read FILE [--markdown [--from pN] [--to pN] [--changes] [--comments]]
+docx read FILE [--markdown [--from pN] [--to pN] [--accepted | --baseline] [--comments]]
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx edit   FILE --at p3 --text "..." | --runs '[...]'
@@ -40,7 +40,7 @@ docx delete FILE --at p3
 docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N]
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--dry-run]
 
-docx wc      FILE [LOCATOR]
+docx wc      FILE [LOCATOR] [--accepted | --baseline]
 docx outline FILE
 
 docx comments add     FILE --range p3:5-20 --text "..." [--author NAME]
@@ -59,13 +59,16 @@ docx hyperlinks replace FILE --at linkN --with URL
 docx hyperlinks delete  FILE --at linkN
 
 docx track-changes FILE on|off
+docx track-changes list   FILE
+docx track-changes accept FILE (--at tcN | --all)
+docx track-changes reject FILE (--at tcN | --all)
 docx info schema [--ts]
 docx info locators [--json]
 ```
 
 Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
 
-When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers. Author resolution: per-call `--author NAME` overrides `$DOCX_AUTHOR`, which falls back to `docx-cli`. To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions.
+When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers. Author resolution: per-call `--author NAME` overrides `$DOCX_AUTHOR`, which falls back to `docx-cli`. To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions. `docx track-changes list FILE` returns a JSON inventory of every `<w:ins>`/`<w:del>` with stable `tcN` ids, author, date, paragraph location, and the affected text. `docx track-changes accept FILE --at tcN | --all` incorporates changes (unwrap insertions, drop deletions); `docx track-changes reject FILE --at tcN | --all` discards them (drop insertions, restore deletions as plain text). Accept/reject themselves bypass tracking — they're doc surgery, not edits.
 
 OOXML has no native tracked-change form for hyperlink edits or image swaps, so when track-changes is on, `hyperlinks add/replace/delete` and `images replace` auto-emit a `[docx-cli] …` comment anchored to the affected span/run instead. The comment carries the same `--author` attribution as the other tracked operations. Word itself silently bypasses tracking for these — we trade silence for an explicit audit trail.
 
@@ -85,9 +88,14 @@ OOXML has no native tracked-change form for hyperlink edits or image swaps, so w
 - Footnotes / endnotes → inline `[^fnN]` / `[^enN]` refs with GFM footnote definitions at end of output
 - Charts / SmartArt / shapes / other non-picture drawings → `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders
 
-`--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block. Comment/image/hyperlink locators are rejected.
+`--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block. Comment/image/hyperlink/tracked-change locators are rejected.
 
-`--changes` renders tracked insertions and deletions as `<ins>`/`<del>` instead of producing the accepted view (which silently drops deletions and inlines insertions).
+**Tracked changes — three views.** By default, tracked insertions render as CriticMarkup `{++text++}[^tcN]` and deletions as `{--text--}[^tcN]`, with `[^tcN]: insertion|deletion by author (date)` definitions appended after any comment/footnote/endnote definitions. The `[^tcN]` reference is a stable positional id (`tc0`, `tc1`, …) that's also addressable as a locator and reported by `docx track-changes list`. Two flags switch view; they're mutually exclusive:
+
+- `--accepted` — post-accept view: `<w:del>` runs are dropped, `<w:ins>` runs render as plain text. No CriticMarkup, no `[^tcN]` refs, no appendix.
+- `--baseline` — pre-change view: `<w:ins>` runs are dropped, `<w:del>` runs render as plain text. No CriticMarkup, no `[^tcN]` refs, no appendix.
+
+`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics: default counts everything currently on disk (plain + ins + del), `--accepted` skips deletions, `--baseline` skips insertions. The response includes a `view` field so agents know which mode the count was taken from.
 
 `--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output:
 
@@ -103,11 +111,11 @@ Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteRefe
 ### Locators
 
 ```
-pN              paragraph N (e.g., p3)
-pN:S-E          characters S..E within paragraph N
-pN:S-pM:E       cross-paragraph range
-tN              table N; tN:rRcC for cell at row R, col C
-cN, imgN, linkN comment / image / hyperlink ids
+pN                   paragraph N (e.g., p3)
+pN:S-E               characters S..E within paragraph N
+pN:S-pM:E            cross-paragraph range
+tN                   table N; tN:rRcC for cell at row R, col C
+cN, imgN, linkN, tcN comment / image / hyperlink / tracked-change ids
 ```
 
 Run `docx info locators` for the full reference.
@@ -151,7 +159,7 @@ src/
     comments/            # add | reply | resolve | delete | list
     images/              # list | extract | replace
     hyperlinks/          # add | list | replace | delete
-    track-changes/       # FILE on|off
+    track-changes/       # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
     info/                # schema | locators (reference output)
   core/
     package/             # JSZip open/close, named-part read/write

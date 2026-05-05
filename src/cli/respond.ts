@@ -24,6 +24,7 @@ export type ErrorCode =
 	| "COMMENT_NOT_FOUND"
 	| "IMAGE_NOT_FOUND"
 	| "HYPERLINK_NOT_FOUND"
+	| "TRACKED_CHANGE_NOT_FOUND"
 	| "MATCH_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT"
 	| "UNHANDLED";
@@ -63,6 +64,7 @@ function exitCodeFor(code: ErrorCode): number {
 		case "COMMENT_NOT_FOUND":
 		case "IMAGE_NOT_FOUND":
 		case "HYPERLINK_NOT_FOUND":
+		case "TRACKED_CHANGE_NOT_FOUND":
 		case "MATCH_NOT_FOUND":
 			return EXIT.NOT_FOUND;
 		case "NOT_A_ZIP":

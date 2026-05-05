@@ -9,7 +9,10 @@ export {
 	type ImageReference,
 	openDocView,
 	paragraphText,
+	paragraphTextAccepted,
+	paragraphTextBaseline,
 	saveDocView,
+	type TrackedChangeReference,
 } from "./ast";
 export type {
 	Block,
@@ -45,6 +48,7 @@ export {
 	resolveComment,
 	resolveHyperlink,
 	resolveImage,
+	resolveTrackedChange,
 } from "./locators";
 export { PkgError } from "./package";
 export { XmlNode } from "./parser";

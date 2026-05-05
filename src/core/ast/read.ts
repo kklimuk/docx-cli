@@ -27,6 +27,7 @@ const RELATIONSHIP_NAMESPACE_HYPERLINK =
 type WalkState = {
 	imageIndex: number;
 	hyperlinkIndex: number;
+	trackedChangeIndex: number;
 	commentAnchors: Map<string, CommentAnchor>;
 	openComments: Map<string, { blockId: string; offset: number }>;
 };
@@ -47,6 +48,7 @@ export function buildDoc(view: DocView, path: string): Doc {
 	const state: WalkState = {
 		imageIndex: 0,
 		hyperlinkIndex: 0,
+		trackedChangeIndex: 0,
 		commentAnchors: new Map(),
 		openComments: new Map(),
 	};
@@ -221,12 +223,19 @@ function walkRunContainer(
 		}
 
 		if (child.tag === "w:ins" || child.tag === "w:del") {
+			const trackedChangeId = `tc${context.state.trackedChangeIndex++}`;
 			const change: TrackedChange = {
+				id: trackedChangeId,
 				kind: child.tag === "w:ins" ? "ins" : "del",
 				author: child.getAttribute("w:author") ?? "",
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
+			context.view.trackedChangeReferences.set(trackedChangeId, {
+				node: child,
+				parent: container.children,
+				blockId: context.blockId,
+			});
 			walkRunContainer(context, child, change, hyperlink);
 			continue;
 		}

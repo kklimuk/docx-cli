@@ -199,21 +199,76 @@ describe("docx read --markdown --from / --to", () => {
 	});
 });
 
-describe("docx read --markdown --changes", () => {
-	test("default view drops nothing (no del runs in fixture) but skips ins markup", async () => {
+describe("docx read --markdown tracked changes", () => {
+	test("default --markdown renders insertions as CriticMarkup {++...++} with [^tcN] refs and an appendix", async () => {
 		const out = await render(fixture("tracked-changes.docx"), "--markdown");
-		expect(out).toContain("two exciting");
+		expect(out).toContain("{++two exciting ++}[^tc0]insertions");
+		expect(out).toContain(
+			"[^tc0]: insertion by eng-dept (2014-06-25T10:40:00Z)",
+		);
 		expect(out).not.toContain("<ins>");
 		expect(out).not.toContain("<del>");
 	});
 
-	test("--changes wraps inserted text in <ins>", async () => {
+	test("--accepted shows post-accept view (ins as plain, del gone, no markers)", async () => {
 		const out = await render(
 			fixture("tracked-changes.docx"),
 			"--markdown",
-			"--changes",
+			"--accepted",
 		);
-		expect(out).toContain("<ins>two exciting </ins>insertions");
+		expect(out).toContain("two exciting");
+		expect(out).not.toContain("{++");
+		expect(out).not.toContain("{--");
+		expect(out).not.toMatch(/\[\^tc\d+\]/);
+		expect(out).not.toContain("<ins>");
+		expect(out).not.toContain("<del>");
+	});
+
+	test("--baseline shows pre-change view (ins gone, del as plain, no markers)", async () => {
+		const out = await render(
+			fixture("tracked-changes.docx"),
+			"--markdown",
+			"--baseline",
+		);
+		// Fixture has only an insertion ("two exciting"), so baseline drops it.
+		expect(out).toContain("This is a text with insertions.");
+		expect(out).not.toContain("two exciting");
+		expect(out).not.toContain("{++");
+		expect(out).not.toContain("{--");
+		expect(out).not.toMatch(/\[\^tc\d+\]/);
+	});
+
+	test("--accepted and --baseline together are rejected", async () => {
+		const result = await runCli(
+			"read",
+			fixture("tracked-changes.docx"),
+			"--markdown",
+			"--accepted",
+			"--baseline",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+	});
+
+	test("AST exposes stable tcN id on tracked-change runs", async () => {
+		const result = await runCli("read", fixture("tracked-changes.docx"));
+		expect(result.exitCode).toBe(0);
+		const doc = result.parsed as {
+			blocks: Array<{
+				type: string;
+				runs?: Array<{
+					type: string;
+					trackedChange?: { id: string; kind: string };
+				}>;
+			}>;
+		};
+		const changes = doc.blocks
+			.flatMap((block) => block.runs ?? [])
+			.filter((run) => run.trackedChange !== undefined)
+			.map((run) => run.trackedChange);
+		expect(changes.length).toBeGreaterThan(0);
+		expect(changes[0]?.id).toBe("tc0");
+		expect(changes[0]?.kind).toBe("ins");
 	});
 });
 
@@ -482,12 +537,12 @@ describe("docx read --markdown smoke-test all fixtures", () => {
 			expect(result.stdout.length).toBeGreaterThan(0);
 		});
 
-		test(`${name}: --markdown --changes --comments completes`, async () => {
+		test(`${name}: --markdown --accepted --comments completes`, async () => {
 			const result = await runCli(
 				"read",
 				fixture(name),
 				"--markdown",
-				"--changes",
+				"--accepted",
 				"--comments",
 			);
 			expect(result.exitCode).toBe(0);

@@ -126,9 +126,8 @@ function trackedChangesOverlapping(
 		if (runEnd <= start || runStart >= end) continue;
 		const change = run.trackedChange;
 		if (!change) continue;
-		const key = `${change.kind}:${change.revisionId}:${change.author}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
+		if (seen.has(change.id)) continue;
+		seen.add(change.id);
 		out.push(change);
 	}
 	return out;

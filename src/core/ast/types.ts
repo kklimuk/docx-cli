@@ -128,6 +128,7 @@ export type Footnote = {
 };
 
 export type TrackedChange = {
+	id: string;
 	kind: "ins" | "del";
 	author: string;
 	date: string;

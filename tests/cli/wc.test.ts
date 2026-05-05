@@ -141,3 +141,78 @@ describe("docx wc", () => {
 		});
 	});
 });
+
+describe("docx wc — tracked changes", () => {
+	async function trackedFixture(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "The quick brown fox jumps.");
+		await runCli("track-changes", docPath, "on");
+		// `replace` under track-changes emits a <w:del> for "quick brown " and
+		// a <w:ins> for "old slow ", giving us both kinds in one paragraph.
+		await runCli("replace", docPath, "quick brown ", "old slow ");
+		return docPath;
+	}
+
+	test("default counts current on-disk view (plain + ins + del)", async () => {
+		const docPath = await trackedFixture("wc-current");
+		const result = await runCli("wc", docPath);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { words: number; view: string }).view).toBe(
+			"current",
+		);
+		// Plain "The fox jumps." (3 words) + ins "old slow " (2) + del "quick brown " (2) = 7
+		expect((result.parsed as { words: number }).words).toBe(7);
+	});
+
+	test("--accepted skips deletions, keeps insertions", async () => {
+		const docPath = await trackedFixture("wc-accepted");
+		const result = await runCli("wc", docPath, "--accepted");
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { view: string }).view).toBe("accepted");
+		// "The old slow fox jumps." = 5 words (skip the 2-word del)
+		expect((result.parsed as { words: number }).words).toBe(5);
+	});
+
+	test("--baseline skips insertions, keeps deletions", async () => {
+		const docPath = await trackedFixture("wc-baseline");
+		const result = await runCli("wc", docPath, "--baseline");
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { view: string }).view).toBe("baseline");
+		// "The quick brown fox jumps." = 5 words (skip the 2-word ins)
+		expect((result.parsed as { words: number }).words).toBe(5);
+	});
+
+	test("--accepted and --baseline together are rejected", async () => {
+		const result = await runCli(
+			"wc",
+			"tests/fixtures/tracked-changes.docx",
+			"--accepted",
+			"--baseline",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+	});
+
+	test("tracked-changes fixture: current/accepted both count ins, baseline skips it", async () => {
+		// Fixture has only <w:ins> ("two exciting"), no <w:del>.
+		// "This is a text with two exciting insertions." — 8 words on disk.
+		const current = await runCli("wc", "tests/fixtures/tracked-changes.docx");
+		expect((current.parsed as { words: number }).words).toBe(8);
+
+		const accepted = await runCli(
+			"wc",
+			"tests/fixtures/tracked-changes.docx",
+			"--accepted",
+		);
+		expect((accepted.parsed as { words: number }).words).toBe(8);
+
+		const baseline = await runCli(
+			"wc",
+			"tests/fixtures/tracked-changes.docx",
+			"--baseline",
+		);
+		// "This is a text with insertions." = 6 words.
+		expect((baseline.parsed as { words: number }).words).toBe(6);
+	});
+});

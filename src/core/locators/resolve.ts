@@ -4,6 +4,7 @@ import type {
 	DocView,
 	HyperlinkReference,
 	ImageReference,
+	TrackedChangeReference,
 } from "../ast";
 import type { Locator } from "./parse";
 
@@ -92,6 +93,20 @@ export function resolveHyperlink(
 		throw new LocatorResolveError(
 			{ kind: "hyperlink", hyperlinkId },
 			`Hyperlink not found: ${hyperlinkId}`,
+		);
+	}
+	return reference;
+}
+
+export function resolveTrackedChange(
+	view: DocView,
+	trackedChangeId: string,
+): TrackedChangeReference {
+	const reference = view.trackedChangeReferences.get(trackedChangeId);
+	if (!reference) {
+		throw new LocatorResolveError(
+			{ kind: "trackedChange", trackedChangeId },
+			`Tracked change not found: ${trackedChangeId}`,
 		);
 	}
 	return reference;

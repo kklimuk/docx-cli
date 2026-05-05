@@ -7,11 +7,14 @@ export {
 	type ImageReference,
 	openDocView,
 	saveDocView,
+	type TrackedChangeReference,
 } from "./doc-view";
 export {
 	findBlockById,
 	flattenParagraphs,
 	paragraphText,
+	paragraphTextAccepted,
+	paragraphTextBaseline,
 } from "./text";
 export type {
 	Block,

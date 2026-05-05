@@ -104,8 +104,9 @@ const JSON_SCHEMA = {
 				comments: { type: "array", items: { type: "string" } },
 				trackedChange: {
 					type: "object",
-					required: ["kind", "author", "date", "revisionId"],
+					required: ["id", "kind", "author", "date", "revisionId"],
 					properties: {
+						id: { type: "string" },
 						kind: { enum: ["ins", "del"] },
 						author: { type: "string" },
 						date: { type: "string" },

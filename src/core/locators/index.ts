@@ -7,4 +7,5 @@ export {
 	resolveComment,
 	resolveHyperlink,
 	resolveImage,
+	resolveTrackedChange,
 } from "./resolve";

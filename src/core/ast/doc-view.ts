@@ -15,6 +15,11 @@ export type HyperlinkReference = {
 	parent: XmlNode[];
 	relationshipId?: string;
 };
+export type TrackedChangeReference = {
+	node: XmlNode;
+	parent: XmlNode[];
+	blockId: string;
+};
 
 export type DocView = {
 	pkg: Pkg;
@@ -37,6 +42,7 @@ export type DocView = {
 	imageById: Map<string, ImageReference>;
 	hyperlinksByRelationshipId: Map<string, { url: string }>;
 	hyperlinkById: Map<string, HyperlinkReference>;
+	trackedChangeReferences: Map<string, TrackedChangeReference>;
 };
 
 export async function openDocView(path: string): Promise<DocView> {
@@ -86,6 +92,7 @@ export async function openDocView(path: string): Promise<DocView> {
 		imageById: new Map(),
 		hyperlinksByRelationshipId: new Map(),
 		hyperlinkById: new Map(),
+		trackedChangeReferences: new Map(),
 	};
 
 	view.doc = buildDoc(view, pkg.path);

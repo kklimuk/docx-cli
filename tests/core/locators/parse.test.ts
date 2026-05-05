@@ -24,6 +24,17 @@ describe("parseLocator", () => {
 		});
 	});
 
+	test("parses tracked-change ids", () => {
+		expect(parseLocator("tc0")).toEqual({
+			kind: "trackedChange",
+			trackedChangeId: "tc0",
+		});
+		expect(parseLocator("tc7")).toEqual({
+			kind: "trackedChange",
+			trackedChangeId: "tc7",
+		});
+	});
+
 	test("parses span within a paragraph", () => {
 		expect(parseLocator("p3:5-20")).toEqual({
 			kind: "blockSpan",
