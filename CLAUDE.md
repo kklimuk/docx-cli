@@ -4,6 +4,21 @@ CLI for AI agents (Claude, Codex) to read, edit, and comment on `.docx` files. J
 
 Default to **Bun**, not Node. Use `Bun.file`, `Bun.write`, `Bun.env`, `Bun.$` over Node equivalents. Bun loads `.env` automatically — don't use dotenv.
 
+## Docs layout
+
+Three docs, each for a different reader. Don't cross the streams.
+
+- **README.md** — user-facing. Hero (Loom embed + tagline), install, the NDA quick-example, full command reference, markdown-rendering details, locators, "How It Works" for engineers digging in. Anything a drive-by visitor or returning user wants.
+- **CONTRIBUTING.md** — dev-facing. `bun install`/`bun dev`/test commands, LibreOffice install for integration tests, the `src/` architecture tree, CI job table. Pointers back to this file for deeper conventions. External visitors don't need this in the README.
+- **CLAUDE.md** *(this file)* — agent-facing. Conventions, architectural invariants, what to do when editing different parts of the codebase, the full project structure walkthrough. Lives at the repo root so it's auto-loaded by Claude Code.
+
+When you change one, check whether the others need a parallel edit:
+
+- New CLI command → README (Commands block + maybe Quick example) + CLAUDE.md ("When Editing")
+- New architectural invariant → CLAUDE.md only (it's not user-facing)
+- New build/test step → CONTRIBUTING.md + CLAUDE.md (Testing section)
+- New top-level dependency or runtime requirement → README (Stack — currently lives in README; check if still there) + CONTRIBUTING.md if it affects dev setup
+
 ## Project Structure
 
 ```

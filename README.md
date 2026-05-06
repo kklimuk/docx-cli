@@ -1,9 +1,12 @@
 # docx-cli
 
-[![docx-cli - read, edit, and comment on `.docx` files safely - Watch Video](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
+[![Watch: Claude filling out and redlining an NDA](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
 
-A CLI for AI agents (Claude, Codex) to safely read, edit, and comment on `.docx` files with full format fidelity. 
-Outputs JSON-AST for precise locator-based editing; preserves anything it doesn't model by mutating XML in place.
+**Let your AI agent review Word documents the way a human would.** Leave comments, suggest redlines, never break the formatting or remove content. You accept or reject in Word.
+
+- Hand a `.docx` to Claude or Codex and get back a redlined copy with comments — open it in Word, accept or reject as usual.
+- Agents see a structured AST with stable character offsets (`p3:5-20`); humans see normal Word formatting on disk.
+- Custom styles, theme colors, embedded objects — all of it survives. We mutate XML in place rather than re-emitting from a lossy model.
 
 ## Install
 
@@ -29,6 +32,41 @@ bun add -g bun-docx
 # or
 bunx bun-docx read doc.docx
 ```
+
+## Quick example: filling out an NDA
+
+The repo includes a Common Paper Mutual NDA template at `tests/fixtures/mnda.docx`. Below are the primitives an agent would compose to fill in the cover page and leave redline edits — the same flow shown in the video above. Every command was verified end-to-end against the fixture:
+
+```sh
+# Make a copy first — there's no undo
+cp tests/fixtures/mnda.docx mnda-filled.docx
+
+# Read the cover-page table so the agent knows what placeholders exist
+docx read mnda-filled.docx --markdown --to t1
+
+# Fill the yellow-highlighted bracketed placeholders
+docx replace mnda-filled.docx "Fill in: today’s date" "May 6, 2026"
+docx replace mnda-filled.docx "fill in state and/or county" "California"
+docx replace mnda-filled.docx "fill in state" "California"
+docx replace mnda-filled.docx "Fill in, if any." "None."
+
+# Verify nothing's left to fill
+docx find mnda-filled.docx '\[(Fill|fill)[^]]*\]' --regex --all
+
+# Flip on tracked changes for the redline pass
+docx track-changes mnda-filled.docx on
+
+# Tighten "having a reasonable need to know" in the Use & Protection clause
+docx replace mnda-filled.docx \
+    "having a reasonable need to know" \
+    "with a documented need to know"
+
+# Leave a comment for the human reviewer
+docx comments add mnda-filled.docx --range p7:0-30 \
+    --text "Should we narrow 'representatives' to a named list?"
+```
+
+Open `mnda-filled.docx` in Word: tracked changes and comments appear in the review pane, ready to accept, reject, or reply. Or run `docx track-changes accept --all mnda-filled.docx` to bake them in from the CLI.
 
 ## Commands
 
@@ -71,45 +109,20 @@ docx info locators [--json]
 
 Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
 
-When `<w:trackChanges/>` is set in the doc (toggle via `docx track-changes FILE on`), `insert`/`edit`/`delete`/`replace` automatically emit `<w:ins>`/`<w:del>` markers. Author resolution: per-call `--author NAME` overrides `$DOCX_AUTHOR`, which falls back to `docx-cli`. To make a one-off untracked edit, flip the flag off, edit, then flip it back on. `find` results inside tracked-change wrappers carry a `trackedChanges` array so agents can decide what to do with hits in pending insertions/deletions. `docx track-changes list FILE` returns a JSON inventory of every revision wrapper (`<w:ins>` / `<w:del>` / `<w:moveFrom>` / `<w:moveTo>`) with stable `tcN` ids, author, date, paragraph location, and the affected text. `docx track-changes accept FILE --at tcN | --all` incorporates changes — additive wrappers (`<w:ins>` / `<w:moveTo>`) get unwrapped, subtractive wrappers (`<w:del>` / `<w:moveFrom>`) get deleted; `reject` is the inverse (additive deleted, subtractive unwrapped after `<w:delText>` → `<w:t>`). moveFrom/moveTo halves are processed independently, so `--all` handles a complete move; targeting one half by `tcN` leaves the other in place. Accept/reject themselves bypass tracking — they're doc surgery, not edits.
-
-OOXML has no native tracked-change form for hyperlink edits or image swaps, so when track-changes is on, `hyperlinks add/replace/delete` and `images replace` auto-emit a `[docx-cli] …` comment anchored to the affected span/run instead. The comment carries the same `--author` attribution as the other tracked operations. Word itself silently bypasses tracking for these — we trade silence for an explicit audit trail.
-
 ### Markdown rendering
 
-`docx read FILE --markdown` renders the document body as GitHub-flavored Markdown instead of JSON. Useful when you (or an LLM) want to skim a doc quickly without parsing the AST. Each rendered paragraph is followed by an HTML comment with its locator (`<!-- p3 -->`) so the markdown is invisible-pinned: humans see clean prose in a renderer, agents parse the locators from raw text.
+`docx read FILE --markdown` renders the document body as GitHub-flavored Markdown instead of JSON. Useful when an LLM wants to skim a doc without parsing the AST. Each rendered paragraph is followed by an HTML comment with its locator (`<!-- p3 -->`) so the markdown is invisible-pinned: humans see clean prose in a renderer, agents parse the locators from raw text.
 
-- Headings → `#`/`##`/`###` based on `style="HeadingN"`
-- Lists → `- ` indented per `level`
-- Bold/italic/strike → `**…**` / `*…*` / `~~…~~`; underline → `<u>…</u>`
-- Run color → `<span style="color:#hex">…</span>`; highlight → `<span style="background-color:NAME">…</span>`
-- Hyperlinks → `[text](url)`
-- Images → `![alt](imgN)`
-- Tables → GitHub pipe tables; multi-paragraph cells joined with `<br>`; per-cell-paragraph locators inline
-- Section breaks → `---`
-- Equations (`<m:oMath>`/`<m:oMathPara>`) → `` `equation: text` `` (concatenated `<m:t>` plaintext; structure like sub/sup/fractions collapses to literal characters — degraded but readable)
-- Footnotes / endnotes → inline `[^fnN]` / `[^enN]` refs with GFM footnote definitions at end of output
-- Charts / SmartArt / shapes / other non-picture drawings → `` `[chart]` `` / `` `[smartart]` `` / `` `[shape]` `` / `` `[drawing]` `` placeholders
+`--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block.
 
-`--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block. Comment/image/hyperlink/tracked-change locators are rejected.
+**Tracked changes — three views.** By default, additive wrappers (`<w:ins>`, `<w:moveTo>`) render as CriticMarkup `{++text++}[^tcN]` and subtractive wrappers (`<w:del>`, `<w:moveFrom>`) as `{--text--}[^tcN]`, with `[^tcN]: …` definitions appended at end. Two flags switch view (mutually exclusive):
 
-**Tracked changes — three views.** By default, additive wrappers (`<w:ins>`, `<w:moveTo>`) render as CriticMarkup `{++text++}[^tcN]` and subtractive wrappers (`<w:del>`, `<w:moveFrom>`) as `{--text--}[^tcN]`, with `[^tcN]: insertion|deletion|moveTo|moveFrom by author (date)` definitions appended after any comment/footnote/endnote definitions. The `[^tcN]` reference is a stable positional id (`tc0`, `tc1`, …) that's also addressable as a locator and reported by `docx track-changes list`. Two flags switch view; they're mutually exclusive:
+- `--accepted` — post-accept view: `<w:del>` and `<w:moveFrom>` runs are dropped; `<w:ins>` and `<w:moveTo>` runs render as plain text.
+- `--baseline` — pre-change view: the inverse.
 
-- `--accepted` — post-accept view: `<w:del>` and `<w:moveFrom>` runs are dropped, `<w:ins>` and `<w:moveTo>` runs render as plain text. No CriticMarkup, no `[^tcN]` refs, no appendix.
-- `--baseline` — pre-change view: `<w:ins>` and `<w:moveTo>` runs are dropped, `<w:del>` and `<w:moveFrom>` runs render as plain text. No CriticMarkup, no `[^tcN]` refs, no appendix.
+`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics.
 
-`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics: default counts everything currently on disk (plain + ins + del), `--accepted` skips deletions, `--baseline` skips insertions. The response includes a `view` field so agents know which mode the count was taken from.
-
-`--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output:
-
-```
-… some commented text[^c0] …
-
-[^c0]: "commented span" — Author Name (2024-01-15T...): comment body
-[^c1]: "another span" — Author Name (2024-01-15T...) ↳ c0: reply body
-```
-
-Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally — `[^fn1]` / `[^en1]` inline + `[^fn1]: body` definitions at the end of the output, alongside any `--comments` footnotes. They use `fn`/`en` prefixes so the namespaces don't collide.
+`--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output. Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally as `[^fnN]` / `[^enN]`. Run `docx info schema` for the full mapping table.
 
 ### Locators
 
@@ -123,57 +136,19 @@ cN, imgN, linkN, tcN comment / image / hyperlink / tracked-change ids
 
 Run `docx info locators` for the full reference.
 
-## Development
+## How It Works
 
-```sh
-bun install && bun run prepare      # set up + git hooks
-bun dev <subcommand>                # run via source
-bun run check                       # biome + knip + tsc
-bun run test:unit                   # core + cli tests (fast)
-bun run test:integration            # LibreOffice round-trip (needs `soffice` on PATH)
-bun test                            # everything
-bun run build                       # produce dist/docx via bun build --compile
-```
+**In-place XML mutation.** The AST returned by `read` is a _view_ over the parsed XML tree, not a separate model. When you `edit` or `comments add`, we mutate the underlying XML nodes directly and serialize back. Anything we don't model in the AST (custom styles, theme colors, schema extensions) survives because we never re-emit untouched regions.
 
-### LibreOffice (for integration tests)
+**JSX for emitters.** Constructing OOXML fragments imperatively (`<w:rPr>` → `<w:b/>` → `<w:color w:val="800080"/>`) gets verbose. We write emitters in JSX with a custom factory: `<w.rPr><w.b/><w.color w-val="800080"/></w.rPr>` becomes the right `XmlNode` tree. Component names are PascalCase (`<Paragraph>`, `<RunProperties>`); they return `XmlNode | null` so empty wrappers get omitted automatically.
 
-- **macOS**: `brew install --cask libreoffice`
-- **Linux**: `sudo apt-get install libreoffice-core libreoffice-writer`
-- **Windows**: <https://www.libreoffice.org/download/>
+**Span-aware comments.** `comments add --range p3:5-20` finds the runs that contain offsets 5 and 20, splits them at the boundaries (preserving rPr formatting on both halves), and inserts `<w:commentRangeStart>` / `<w:commentRangeEnd>` markers between the slices.
 
-## Architecture
+**ParaId auto-injection.** Comments authored by tools like mammoth or older Word versions lack `w14:paraId`, which `commentsExtended.xml` requires for resolve/reply. We detect this on resolve/reply and inject a fresh paraId, also adding the `xmlns:w14` namespace declaration to the `<w:comments>` root if missing.
 
-```
-src/
-  index.ts               # binary entrypoint
-  cli/
-    index.ts             # parseArgs dispatch
-    help.ts              # top-level --help
-    respond.ts           # JSON ack / structured error helpers
-    create/              # create FILE
-    read/                # read FILE [--markdown ...]  (markdown.ts renderer)
-    insert/              # insert FILE  (uses ./emit Paragraph component)
-    edit/                # edit FILE
-    delete/              # delete FILE
-    find/                # find FILE QUERY
-    replace/             # replace FILE PATTERN REPLACEMENT
-    wc/                  # wc FILE [LOCATOR]
-    outline/             # outline FILE
-    comments/            # add | reply | resolve | delete | list
-    images/              # list | extract | replace
-    hyperlinks/          # add | list | replace | delete
-    track-changes/       # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
-    info/                # schema | locators (reference output)
-  core/
-    package/             # JSZip open/close, named-part read/write
-    parser/              # XmlNode class + parse/serialize + JSX factory
-    jsx/                 # h, Fragment, namespaces (w, r, a, wp, pic, ...)
-    ast/                 # types + DocView + XML→AST reader (text.ts: shared paragraph helpers)
-    locators/            # parse "p3:5-20" + resolve to refs
-tests/
-  core/, cli/, integration/
-  fixtures/
-```
+**Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
+
+**Hyperlink CRUD.** `hyperlinks list` enumerates `<w:hyperlink>` elements with positional `linkN` ids; `hyperlinks add --at p3:5-20 --url URL` wraps an existing span (splitting runs at offsets); `hyperlinks replace --at link0 --with URL` updates the rels `Target`, allocating a new rId if the existing one is shared so siblings stay pointed at the original URL; `hyperlinks delete --at link0` unwraps the link (text survives) and prunes the rels entry when no longer referenced.
 
 ## Stack
 
@@ -182,29 +157,6 @@ tests/
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile
 
-## How It Works
+## Contributing
 
-**In-place XML mutation.** The AST returned by `read` is a _view_ over the parsed XML tree, not a separate model. When you `edit` or `comments add`, we mutate the underlying XML nodes directly and serialize back. Anything we don't model in the AST (custom styles, theme colors, schema extensions) survives because we never re-emit untouched regions.
-
-**JSX for emitters.** Constructing OOXML fragments imperatively (`<w:rPr>` → `<w:b/>` → `<w:color w:val="800080"/>`) gets verbose. We write emitters in JSX with a custom factory: `<w.rPr><w.b/><w.color w-val="800080"/></w.rPr>` becomes the right `XmlNode` tree. Component names are PascalCase (`<Paragraph>`, `<RunProperties>`); they return `XmlNode | null` so empty wrappers get omitted automatically.
-
-**Span-aware comments.** `comments add --range p3:5-20` finds the runs that contain offsets 5 and 20, splits them at the boundaries (preserving rPr formatting on both halves), and inserts `<w:commentRangeStart>` / `<w:commentRangeEnd>` markers between the slices. The `<w:commentReference>` run goes after the end marker.
-
-**ParaId auto-injection.** Comments authored by tools like mammoth or older Word versions lack `w14:paraId`, which `commentsExtended.xml` requires for resolve/reply. We detect this on resolve/reply and inject a fresh paraId, also adding the `xmlns:w14` namespace declaration to the `<w:comments>` root if missing.
-
-**Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
-
-**Hyperlink CRUD.** `hyperlinks list` enumerates `<w:hyperlink>` elements with positional `linkN` ids; `hyperlinks add --at p3:5-20 --url URL` wraps an existing span (splitting runs at offsets); `hyperlinks replace --at link0 --with URL` updates the rels `Target`, allocating a new rId if the existing one is shared so siblings stay pointed at the original URL; `hyperlinks delete --at link0` unwraps the link (text survives) and prunes the rels entry when no longer referenced.
-
-## CI
-
-GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on push to `main` and on PRs:
-
-| Job                 | What                                                        |
-| ------------------- | ----------------------------------------------------------- |
-| `check`             | `biome check . && knip-bun && tsc --noEmit`                 |
-| `unit-tests`        | `bun run test:unit` (core + cli, fast)                      |
-| `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
-| `build-binary`      | Smoke-builds via `bun build --compile` and runs `--version` |
-
-`.github/workflows/release.yml` triggers on `v*` tags, matrix-builds the five binaries, and uploads them to a GitHub Release via [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture overview, and CI.
