@@ -1,6 +1,13 @@
 import { Del, Ins, type RevisionAllocator, type TrackedMeta } from "@core";
 import { w } from "@core/jsx";
-import { runTextLength, sliceRun, XmlNode } from "@core/parser";
+import {
+	isRunBearingWrapper,
+	isSubtractiveTrackedChangeWrapper,
+	runTextLength,
+	sliceRun,
+	sumRunBearingTextLength,
+	XmlNode,
+} from "@core/parser";
 
 export type Span = { start: number; end: number };
 
@@ -92,36 +99,25 @@ type RunSlot = {
 function collectRunSlots(paragraph: XmlNode): RunSlot[] {
 	const slots: RunSlot[] = [];
 	let offset = 0;
-	for (const child of paragraph.children) {
-		if (child.tag === "w:r") {
-			const length = runTextLength(child);
-			slots.push({
-				parent: paragraph,
-				run: child,
-				offsetBefore: offset,
-				length,
-			});
-			offset += length;
-			continue;
-		}
-		if (
-			child.tag === "w:ins" ||
-			child.tag === "w:del" ||
-			child.tag === "w:hyperlink"
-		) {
-			for (const inner of child.children) {
-				if (inner.tag !== "w:r") continue;
-				const length = runTextLength(inner);
+	function walk(parent: XmlNode, children: XmlNode[]): void {
+		for (const child of children) {
+			if (child.tag === "w:r") {
+				const length = runTextLength(child);
 				slots.push({
-					parent: child,
-					run: inner,
+					parent,
+					run: child,
 					offsetBefore: offset,
 					length,
 				});
 				offset += length;
+				continue;
+			}
+			if (isRunBearingWrapper(child.tag)) {
+				walk(child, child.children);
 			}
 		}
 	}
+	walk(paragraph, paragraph.children);
 	return slots;
 }
 
@@ -182,17 +178,8 @@ function rebuildContainer(
 			}
 			continue;
 		}
-		if (
-			isParagraph &&
-			(child.tag === "w:ins" ||
-				child.tag === "w:del" ||
-				child.tag === "w:hyperlink")
-		) {
-			let innerLength = 0;
-			for (const inner of child.children) {
-				if (inner.tag === "w:r") innerLength += runTextLength(inner);
-			}
-			offset += innerLength;
+		if (isParagraph && isRunBearingWrapper(child.tag)) {
+			offset += sumRunBearingTextLength(child.children);
 			newChildren.push(child);
 			continue;
 		}
@@ -257,8 +244,13 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
-		if (child.tag === "w:ins" || child.tag === "w:del") {
-			const innerLength = sumInnerRunLengths(child);
+		if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:moveFrom" ||
+			child.tag === "w:moveTo"
+		) {
+			const innerLength = sumRunBearingTextLength(child.children);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -285,7 +277,7 @@ function rebuildAcrossBoundaries(
 		}
 
 		if (child.tag === "w:hyperlink") {
-			const innerLength = sumInnerRunLengths(child);
+			const innerLength = sumRunBearingTextLength(child.children);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -316,6 +308,38 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
+		// Transparent wrappers (w:fldSimple, w:smartTag): contents contribute
+		// to offset and may be split. Their attributes (e.g. w:fldSimple's
+		// w:instr) are preserved on both halves of any split — splitting a
+		// fldSimple would technically duplicate the field instruction, but
+		// Word re-evaluates fields on next render and any other behavior
+		// would silently drop the user's replacement intent.
+		if (isRunBearingWrapper(child.tag)) {
+			const innerLength = sumRunBearingTextLength(child.children);
+			const wrapperStart = offset;
+			const wrapperEnd = offset + innerLength;
+			offset = wrapperEnd;
+
+			if (wrapperEnd <= span.start) {
+				newChildren.push(child);
+				continue;
+			}
+			if (wrapperStart >= span.end) {
+				placeReplacement();
+				newChildren.push(child);
+				continue;
+			}
+
+			splitTransparentWrapperAcrossSpan(
+				child,
+				wrapperStart,
+				span,
+				newChildren,
+				placeReplacement,
+			);
+			continue;
+		}
+
 		newChildren.push(child);
 	}
 
@@ -331,7 +355,12 @@ function splitWrapperAcrossSpan(
 	out: XmlNode[],
 	placeReplacement: () => void,
 ): void {
-	const isDel = wrapper.tag === "w:del";
+	// Subtractive wrappers (w:del, w:moveFrom) hold content that's already
+	// considered deleted — the cut portion stays in the pre-half wrapper.
+	// Additive wrappers (w:ins, w:moveTo) hold "live" content; under tracking
+	// the cut needs a new <w:del> wrapper nested inside, preserving the
+	// surrounding author's insert/move-to attribution.
+	const isSubtractive = isSubtractiveTrackedChangeWrapper(wrapper.tag);
 	const preInner: XmlNode[] = [];
 	const cutInner: XmlNode[] = [];
 	const postInner: XmlNode[] = [];
@@ -365,12 +394,9 @@ function splitWrapperAcrossSpan(
 	}
 
 	const preChildren = preInner.slice();
-	if (isDel) {
-		// Already deleted; the cut portion stays inside the original <w:del>.
+	if (isSubtractive) {
 		preChildren.push(...cutInner);
 	} else if (tracked && cutInner.length > 0) {
-		// <w:ins> overlap with tracking on: nest <w:del> inside, preserving original
-		// author's insertion attribution.
 		for (const cutRun of cutInner) convertRunTextToDelText(cutRun);
 		preChildren.push(<Del meta={mintMeta(tracked)}>{cutInner}</Del>);
 	}
@@ -389,6 +415,61 @@ function splitWrapperAcrossSpan(
 	}
 }
 
+/** Split a transparent wrapper (`<w:fldSimple>`, `<w:smartTag>`) where its
+ * inner runs cross `span`. Cut content is dropped; pre/post halves carry the
+ * wrapper's original attributes. The replacement run is placed at top level
+ * (between pre and post halves) so it does not inherit wrapper semantics. */
+function splitTransparentWrapperAcrossSpan(
+	wrapper: XmlNode,
+	wrapperStart: number,
+	span: Span,
+	out: XmlNode[],
+	placeReplacement: () => void,
+): void {
+	const preInner: XmlNode[] = [];
+	const postInner: XmlNode[] = [];
+	let innerOffset = wrapperStart;
+
+	for (const inner of wrapper.children) {
+		if (inner.tag !== "w:r") {
+			preInner.push(inner);
+			continue;
+		}
+		const length = runTextLength(inner);
+		const runStart = innerOffset;
+		const runEnd = innerOffset + length;
+		innerOffset = runEnd;
+
+		if (runEnd <= span.start) {
+			preInner.push(inner);
+			continue;
+		}
+		if (runStart >= span.end) {
+			postInner.push(inner);
+			continue;
+		}
+
+		const sliceStartInRun = Math.max(0, span.start - runStart);
+		const sliceEndInRun = Math.min(length, span.end - runStart);
+		if (sliceStartInRun > 0) preInner.push(sliceRun(inner, 0, sliceStartInRun));
+		// cut content is dropped (replaced).
+		if (sliceEndInRun < length)
+			postInner.push(sliceRun(inner, sliceEndInRun, length));
+	}
+
+	if (preInner.length > 0) {
+		const preWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		preWrapper.children = preInner;
+		out.push(preWrapper);
+	}
+	placeReplacement();
+	if (postInner.length > 0) {
+		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		postWrapper.children = postInner;
+		out.push(postWrapper);
+	}
+}
+
 function splitHyperlinkAcrossSpan(
 	wrapper: XmlNode,
 	wrapperStart: number,
@@ -400,13 +481,7 @@ function splitHyperlinkAcrossSpan(
 	placeReplacement: () => void,
 	markReplacementPlaced: () => void,
 ): void {
-	const wrapperEnd =
-		wrapperStart +
-		wrapper.children.reduce(
-			(total, inner) =>
-				inner.tag === "w:r" ? total + runTextLength(inner) : total,
-			0,
-		);
+	const wrapperEnd = wrapperStart + sumRunBearingTextLength(wrapper.children);
 	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
 
 	const preInner: XmlNode[] = [];
@@ -469,14 +544,6 @@ function splitHyperlinkAcrossSpan(
 		postWrapper.children = postInner;
 		out.push(postWrapper);
 	}
-}
-
-function sumInnerRunLengths(wrapper: XmlNode): number {
-	let total = 0;
-	for (const inner of wrapper.children) {
-		if (inner.tag === "w:r") total += runTextLength(inner);
-	}
-	return total;
 }
 
 function mintMeta(tracked: TrackedReplaceOptions): TrackedMeta {

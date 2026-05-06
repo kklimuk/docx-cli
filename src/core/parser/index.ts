@@ -1,4 +1,11 @@
-export { runTextLength, sliceRun } from "./run-ops";
+export {
+	isRunBearingWrapper,
+	isSubtractiveTrackedChangeWrapper,
+	RUN_BEARING_WRAPPER_TAGS,
+	runTextLength,
+	sliceRun,
+	sumRunBearingTextLength,
+} from "./run-ops";
 export {
 	type NullableXmlNode,
 	type XmlAttributes,

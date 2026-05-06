@@ -6,13 +6,14 @@ Usage:
   docx track-changes accept FILE --at tcN [options]
   docx track-changes accept FILE --all [options]
 
-Accepting an insertion (<w:ins>) unwraps the wrapper — the inserted text
-becomes plain runs. Accepting a deletion (<w:del>) removes the element and
-its <w:delText> entirely (the text disappears for real).
+Accepting an insertion (<w:ins>) or move destination (<w:moveTo>) unwraps the
+wrapper — the content becomes plain runs at this location. Accepting a
+deletion (<w:del>) or move source (<w:moveFrom>) removes the element and its
+<w:delText> entirely (the text disappears for real).
 
-Out of scope: tracked paragraph marks (<w:rPr><w:ins/></w:rPr> inside <w:pPr>),
-formatting changes (<w:rPrChange>/<w:pPrChange>), and tracked moves (<w:moveFrom>/
-<w:moveTo>). These aren't modeled in the AST today and --all silently skips them.
+Out of scope: tracked paragraph marks (<w:rPr><w:ins/></w:rPr> inside <w:pPr>)
+and formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't modeled in
+the AST today and --all silently skips them.
 
 Options:
   --at tcN          Accept a single tracked change by id

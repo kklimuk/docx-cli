@@ -41,7 +41,9 @@ Optional:
   -h, --help        Show this help
 
 The span must lie inside a single paragraph and must not overlap an existing
-hyperlink or a tracked-change wrapper.
+hyperlink, a tracked-change wrapper (<w:ins>/<w:del>/<w:moveFrom>/<w:moveTo>),
+or any other run-bearing wrapper that we model. Resolve or accept the
+wrapper first, then add the hyperlink.
 
 When track-changes is on, an audit comment is anchored to the wrapped span
 since OOXML has no native tracked-change form for hyperlink edits.

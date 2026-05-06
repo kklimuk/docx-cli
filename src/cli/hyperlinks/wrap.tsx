@@ -1,5 +1,11 @@
 import { w } from "@core/jsx";
-import { runTextLength, sliceRun, type XmlNode } from "@core/parser";
+import {
+	isRunBearingWrapper,
+	runTextLength,
+	sliceRun,
+	sumRunBearingTextLength,
+	type XmlNode,
+} from "@core/parser";
 
 export type Span = { start: number; end: number };
 
@@ -68,25 +74,8 @@ export function wrapSpanInHyperlink(
 			continue;
 		}
 
-		if (child.tag === "w:hyperlink") {
-			const hyperlinkLength = sumInnerRunLengths(child);
-			const hyperlinkStart = offset;
-			const hyperlinkEnd = offset + hyperlinkLength;
-			offset = hyperlinkEnd;
-
-			if (hyperlinkEnd <= span.start || hyperlinkStart >= span.end) {
-				placeWrapper();
-				newChildren.push(child);
-				continue;
-			}
-
-			throw new HyperlinkWrapError(
-				`Span ${span.start}-${span.end} overlaps an existing hyperlink at ${hyperlinkStart}-${hyperlinkEnd}; nested hyperlinks are not allowed`,
-			);
-		}
-
-		if (child.tag === "w:ins" || child.tag === "w:del") {
-			const innerLength = sumInnerRunLengths(child);
+		if (isRunBearingWrapper(child.tag)) {
+			const innerLength = sumRunBearingTextLength(child.children);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -97,9 +86,7 @@ export function wrapSpanInHyperlink(
 				continue;
 			}
 
-			throw new HyperlinkWrapError(
-				`Span ${span.start}-${span.end} crosses a tracked-change wrapper at ${wrapperStart}-${wrapperEnd}; resolve or accept the change first`,
-			);
+			throw new HyperlinkWrapError(messageForOverlap(child.tag, span));
 		}
 
 		newChildren.push(child);
@@ -109,14 +96,21 @@ export function wrapSpanInHyperlink(
 	paragraph.children = newChildren;
 }
 
-function hyperlinkWrapper(relationshipId: string, runs: XmlNode[]): XmlNode {
-	return <w.hyperlink {...{ "r:id": relationshipId }}>{runs}</w.hyperlink>;
+function messageForOverlap(tag: string, span: Span): string {
+	if (tag === "w:hyperlink") {
+		return `Span ${span.start}-${span.end} overlaps an existing hyperlink; nested hyperlinks are not allowed`;
+	}
+	if (
+		tag === "w:ins" ||
+		tag === "w:del" ||
+		tag === "w:moveFrom" ||
+		tag === "w:moveTo"
+	) {
+		return `Span ${span.start}-${span.end} crosses a tracked-change wrapper (${tag}); resolve or accept the change first`;
+	}
+	return `Span ${span.start}-${span.end} crosses a ${tag} wrapper; cannot wrap a hyperlink across it`;
 }
 
-function sumInnerRunLengths(wrapper: XmlNode): number {
-	let total = 0;
-	for (const inner of wrapper.children) {
-		if (inner.tag === "w:r") total += runTextLength(inner);
-	}
-	return total;
+function hyperlinkWrapper(relationshipId: string, runs: XmlNode[]): XmlNode {
+	return <w.hyperlink {...{ "r:id": relationshipId }}>{runs}</w.hyperlink>;
 }

@@ -35,16 +35,19 @@ Locators (optional; default: whole document):
   tN:rRcC:pK:S-E  span within a cell paragraph
 
 Options:
-  --accepted        Count the accepted view: skip <w:del> runs, keep <w:ins>
-                    runs as plain text. Mirrors "docx read --markdown --accepted".
-  --baseline        Count the baseline view: skip <w:ins> runs, keep <w:del>
-                    runs as plain text — i.e., the doc as it was before any
-                    tracked changes were made.
+  --accepted        Count the accepted view: skip subtractive wrappers
+                    (<w:del>, <w:moveFrom>); keep additive wrappers
+                    (<w:ins>, <w:moveTo>) as plain text. Mirrors
+                    "docx read --markdown --accepted".
+  --baseline        Count the baseline view: skip additive wrappers
+                    (<w:ins>, <w:moveTo>); keep subtractive wrappers
+                    (<w:del>, <w:moveFrom>) as plain text — i.e., the doc as
+                    it was before any tracked changes were made.
   -h, --help        show this help
 
 Counting is whitespace-segmented (\\S+) over the joined paragraph text. Hidden
-content like images/breaks/tabs contributes no words. By default, tracked
-deletions and insertions both count (they're on-disk text); pass --accepted
+content like images/breaks/tabs contributes no words. By default, every
+tracked-change wrapper's text counts (they're all on disk); pass --accepted
 or --baseline (mutually exclusive) to count a tracked-change-aware slice.
 
 Examples:

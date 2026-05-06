@@ -46,7 +46,15 @@ export function convertTextToDelText(node: XmlNode): XmlNode {
 function computeMaxRevisionId(view: DocView): number {
 	let max = -1;
 	walkXml(view.documentTree, (node) => {
-		if (node.tag !== "w:ins" && node.tag !== "w:del") return;
+		// All revision-tracking wrappers share the same `w:id` namespace —
+		// scan moves alongside ins/del so newly minted ids don't collide.
+		if (
+			node.tag !== "w:ins" &&
+			node.tag !== "w:del" &&
+			node.tag !== "w:moveFrom" &&
+			node.tag !== "w:moveTo"
+		)
+			return;
 		const idAttr = node.getAttribute("w:id");
 		if (!idAttr) return;
 		const value = Number(idAttr);

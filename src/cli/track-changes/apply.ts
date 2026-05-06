@@ -1,3 +1,4 @@
+import type { TrackedChangeKind } from "@core";
 import { saveDocView } from "@core";
 import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
@@ -113,11 +114,12 @@ function collectTrackedChanges(tree: XmlNode[]): ChangeFound[] {
 	let counter = 0;
 	function walk(children: XmlNode[]): void {
 		for (const node of children) {
-			if (node.tag === "w:ins" || node.tag === "w:del") {
+			const kind = trackedChangeKindForTag(node.tag);
+			if (kind) {
 				out.push({
 					node,
 					parent: children,
-					kind: node.tag === "w:ins" ? "ins" : "del",
+					kind,
 					id: `tc${counter++}`,
 					author: node.getAttribute("w:author") ?? "",
 					date: node.getAttribute("w:date") ?? "",
@@ -130,21 +132,41 @@ function collectTrackedChanges(tree: XmlNode[]): ChangeFound[] {
 	return out;
 }
 
-function actionFor(kind: "ins" | "del", verb: ApplyVerb): "unwrap" | "delete" {
-	if (verb === "accept") return kind === "ins" ? "unwrap" : "delete";
-	return kind === "ins" ? "delete" : "unwrap";
+function trackedChangeKindForTag(tag: string): TrackedChangeKind | null {
+	if (tag === "w:ins") return "ins";
+	if (tag === "w:del") return "del";
+	if (tag === "w:moveFrom") return "moveFrom";
+	if (tag === "w:moveTo") return "moveTo";
+	return null;
+}
+
+/** "Additive" wrappers (ins / moveTo) carry content that shouldn't be in the
+ * baseline — accept means "keep this", reject means "throw it out".
+ * "Subtractive" wrappers (del / moveFrom) wrap content stored as <w:delText>
+ * — accept means "drop it for real", reject means "restore it as plain text". */
+function actionFor(
+	kind: TrackedChangeKind,
+	verb: ApplyVerb,
+): "unwrap" | "delete" {
+	const isAdditive = kind === "ins" || kind === "moveTo";
+	if (verb === "accept") return isAdditive ? "unwrap" : "delete";
+	return isAdditive ? "delete" : "unwrap";
 }
 
 function applyAccept(node: XmlNode, parent: XmlNode[]): void {
-	if (node.tag === "w:ins") unwrapNode(node, parent);
-	else deleteNode(node, parent);
+	if (node.tag === "w:ins" || node.tag === "w:moveTo") {
+		unwrapNode(node, parent);
+		return;
+	}
+	deleteNode(node, parent);
 }
 
 function applyReject(node: XmlNode, parent: XmlNode[]): void {
-	if (node.tag === "w:ins") {
+	if (node.tag === "w:ins" || node.tag === "w:moveTo") {
 		deleteNode(node, parent);
 		return;
 	}
+	// del / moveFrom: contents stored as <w:delText>; restore to <w:t> and unwrap.
 	renameDelTextToText(node);
 	unwrapNode(node, parent);
 }
@@ -169,7 +191,7 @@ function renameDelTextToText(node: XmlNode): void {
 type ChangeFound = {
 	node: XmlNode;
 	parent: XmlNode[];
-	kind: "ins" | "del";
+	kind: TrackedChangeKind;
 	id: string;
 	author: string;
 	date: string;
@@ -177,7 +199,7 @@ type ChangeFound = {
 
 type ChangeRecord = {
 	id: string;
-	kind: "ins" | "del";
+	kind: TrackedChangeKind;
 	action: "unwrap" | "delete";
 	author: string;
 	date: string;

@@ -1,9 +1,9 @@
-import type { TrackedChange } from "@core";
+import type { TrackedChange, TrackedChangeKind } from "@core";
 import { flattenParagraphs } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
-const HELP = `docx track-changes list — list every <w:ins>/<w:del> with metadata
+const HELP = `docx track-changes list — inventory every revision wrapper
 
 Usage:
   docx track-changes list FILE [options]
@@ -11,12 +11,18 @@ Usage:
 Options:
   -h, --help    Show this help
 
+Lists every <w:ins>, <w:del>, <w:moveFrom>, and <w:moveTo> wrapper with
+stable tcN ids. moveFrom/moveTo halves of the same logical move appear
+as separate entries (one for each side); their kind tells them apart.
+
 Output: JSON array of { id, kind, author, date, revisionId, blockId, text }
-sorted by id (document order).
+sorted by id (document order). kind is one of: "ins", "del", "moveFrom",
+"moveTo".
 
 Examples:
   docx track-changes list doc.docx
   docx track-changes list doc.docx | jq '.[] | select(.kind == "del")'
+  docx track-changes list doc.docx | jq '.[] | select(.kind | test("move"))'
 `;
 
 type TrackedChangeRecord = TrackedChange & {
@@ -74,9 +80,11 @@ export async function run(args: string[]): Promise<number> {
 	// inventory stays in sync with what `resolveTrackedChange` can address.
 	for (const [id, reference] of view.trackedChangeReferences) {
 		if (byId.has(id)) continue;
+		const kind = trackedChangeKindForTag(reference.node.tag);
+		if (!kind) continue;
 		byId.set(id, {
 			id,
-			kind: reference.node.tag === "w:ins" ? "ins" : "del",
+			kind,
 			author: reference.node.getAttribute("w:author") ?? "",
 			date: reference.node.getAttribute("w:date") ?? "",
 			revisionId: reference.node.getAttribute("w:id") ?? "",
@@ -96,4 +104,12 @@ export async function run(args: string[]): Promise<number> {
 function trackedChangeIndex(id: string): number {
 	const match = id.match(/^tc(\d+)$/);
 	return match?.[1] ? Number(match[1]) : 0;
+}
+
+function trackedChangeKindForTag(tag: string): TrackedChangeKind | null {
+	if (tag === "w:ins") return "ins";
+	if (tag === "w:del") return "del";
+	if (tag === "w:moveFrom") return "moveFrom";
+	if (tag === "w:moveTo") return "moveTo";
+	return null;
 }

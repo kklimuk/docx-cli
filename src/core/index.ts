@@ -36,6 +36,7 @@ export type {
 	TabRun,
 	TextRun,
 	TrackedChange,
+	TrackedChangeKind,
 } from "./ast/types";
 export {
 	type BlockTarget,

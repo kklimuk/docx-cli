@@ -13,6 +13,8 @@ const FIXTURES = [
 	"large-mixed.docx",
 	"resume-styling.docx",
 	"tracked-changes.docx",
+	"tracked-moves.docx",
+	"transparent-wrappers.docx",
 	"multi-column.docx",
 	"notes.docx",
 ] as const;

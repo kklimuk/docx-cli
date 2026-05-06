@@ -1,7 +1,13 @@
 import type { DocView } from "@core";
 import { w, w15 } from "@core/jsx";
 import { registerPart } from "@core/package";
-import { runTextLength, sliceRun, XmlNode } from "@core/parser";
+import {
+	isRunBearingWrapper,
+	runTextLength,
+	sliceRun,
+	sumRunBearingTextLength,
+	XmlNode,
+} from "@core/parser";
 
 const COMMENTS_REL_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
@@ -99,22 +105,7 @@ export class SpanOutOfRangeError extends Error {
 }
 
 export function paragraphTextLength(paragraph: XmlNode): number {
-	return sumTextLength(paragraph.children);
-}
-
-function sumTextLength(children: XmlNode[]): number {
-	let total = 0;
-	for (const child of children) {
-		if (child.tag === "w:r") total += runTextLength(child);
-		else if (
-			child.tag === "w:ins" ||
-			child.tag === "w:del" ||
-			child.tag === "w:hyperlink"
-		) {
-			total += sumTextLength(child.children);
-		}
-	}
-	return total;
+	return sumRunBearingTextLength(paragraph.children);
 }
 
 export function addCommentMarkersToParagraph(
@@ -199,12 +190,7 @@ export function addCommentMarkersAroundRun(
 				);
 				return true;
 			}
-			if (
-				child &&
-				(child.tag === "w:ins" ||
-					child.tag === "w:del" ||
-					child.tag === "w:hyperlink")
-			) {
+			if (child && isRunBearingWrapper(child.tag)) {
 				if (walk(child)) return true;
 			}
 		}
@@ -216,7 +202,7 @@ export function addCommentMarkersAroundRun(
 /**
  * Returns the text-offset range that `target` occupies inside `paragraph`,
  * or null if `target` is not a descendant of the paragraph. Recurses through
- * `<w:ins>` / `<w:del>` / `<w:hyperlink>` wrappers.
+ * every run-bearing wrapper (see `RUN_BEARING_WRAPPER_TAGS`).
  */
 export function findElementOffsetsInParagraph(
 	paragraph: XmlNode,
@@ -228,7 +214,7 @@ export function findElementOffsetsInParagraph(
 		for (const child of children) {
 			if (child === target) {
 				const start = cursor;
-				cursor += sumTextLength([child]);
+				cursor += sumRunBearingTextLength([child]);
 				result = { start, end: cursor };
 				return true;
 			}
@@ -236,11 +222,7 @@ export function findElementOffsetsInParagraph(
 				cursor += runTextLength(child);
 				continue;
 			}
-			if (
-				child.tag === "w:ins" ||
-				child.tag === "w:del" ||
-				child.tag === "w:hyperlink"
-			) {
+			if (isRunBearingWrapper(child.tag)) {
 				if (walk(child.children)) return true;
 			}
 		}
@@ -430,11 +412,7 @@ function walkAndPlace(
 			continue;
 		}
 
-		if (
-			child.tag === "w:ins" ||
-			child.tag === "w:del" ||
-			child.tag === "w:hyperlink"
-		) {
+		if (isRunBearingWrapper(child.tag)) {
 			// Boundary at the wrapper's start: place markers BEFORE descending so
 			// they sit outside the wrapper when offsets align.
 			flushAtCurrentOffset(result, pending, state);

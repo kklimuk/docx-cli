@@ -9,24 +9,28 @@ export function paragraphText(paragraph: Paragraph): string {
 }
 
 /** Concatenate text as it would read in the accepted view: skip runs inside
- * a tracked deletion (`<w:del>`), keep tracked insertions. */
+ * a tracked deletion (`<w:del>`) or a tracked-move source (`<w:moveFrom>`);
+ * keep insertions and move destinations. */
 export function paragraphTextAccepted(paragraph: Paragraph): string {
 	let out = "";
 	for (const run of paragraph.runs) {
 		if (run.type !== "text") continue;
-		if (run.trackedChange?.kind === "del") continue;
+		const kind = run.trackedChange?.kind;
+		if (kind === "del" || kind === "moveFrom") continue;
 		out += run.text;
 	}
 	return out;
 }
 
 /** Concatenate text as it would read in the baseline (pre-change) view: skip
- * runs inside a tracked insertion (`<w:ins>`), keep tracked deletions. */
+ * runs inside a tracked insertion (`<w:ins>`) or a tracked-move destination
+ * (`<w:moveTo>`); keep deletions and move sources. */
 export function paragraphTextBaseline(paragraph: Paragraph): string {
 	let out = "";
 	for (const run of paragraph.runs) {
 		if (run.type !== "text") continue;
-		if (run.trackedChange?.kind === "ins") continue;
+		const kind = run.trackedChange?.kind;
+		if (kind === "ins" || kind === "moveTo") continue;
 		out += run.text;
 	}
 	return out;

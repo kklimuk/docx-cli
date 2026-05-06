@@ -107,7 +107,7 @@ const JSON_SCHEMA = {
 					required: ["id", "kind", "author", "date", "revisionId"],
 					properties: {
 						id: { type: "string" },
-						kind: { enum: ["ins", "del"] },
+						kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
 						author: { type: "string" },
 						date: { type: "string" },
 						revisionId: { type: "string" },

@@ -11,12 +11,17 @@ Usage:
 Verbs:
   on        Set <w:trackChanges/> in word/settings.xml
   off       Remove <w:trackChanges/>
-  list      List every <w:ins>/<w:del> with id, kind, author, date, location
-  accept    Accept tracked changes (incorporate insertions; remove deletions)
-  reject    Reject tracked changes (drop insertions; restore deletions as plain)
+  list      Inventory every <w:ins>/<w:del>/<w:moveFrom>/<w:moveTo> with
+            id, kind, author, date, location
+  accept    Accept tracked changes — additive wrappers (<w:ins>, <w:moveTo>)
+            unwrap; subtractive wrappers (<w:del>, <w:moveFrom>) are removed
+  reject    Reject tracked changes — additive wrappers are removed;
+            subtractive wrappers unwrap (with <w:delText> → <w:t> rename)
 
 When tracking is on, this CLI's insert/edit/delete/replace commands
 emit <w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR).
+moveFrom/moveTo are read, listed, and accept/reject independently — we
+don't emit them ourselves (Word does that interactively).
 Accept/reject themselves bypass tracking — they're doc surgery, not edits.
 
 Run "docx track-changes <verb> --help" for verb-specific help.

@@ -19,13 +19,18 @@ Options:
                     Accepts pN, tN, tN:rRcC[:pK[:S-E]], pN:S-E, pN:S-pM:E.
                     Cell/span/range locators collapse to their enclosing
                     top-level block (the table or paragraph).
-  --accepted        With --markdown, render the post-accept view: drop <w:del>
-                    runs, inline <w:ins> as plain text, no markers/refs.
-  --baseline        With --markdown, render the pre-change view: drop <w:ins>
-                    runs, inline <w:del> as plain text, no markers/refs.
-                    Mutually exclusive with --accepted.
-                    Default --markdown shows both: insertions as {++text++}[^tcN]
-                    and deletions as {--text--}[^tcN] (CriticMarkup).
+  --accepted        With --markdown, render the post-accept view: drop
+                    subtractive wrappers (<w:del>, <w:moveFrom>), inline
+                    additive wrappers (<w:ins>, <w:moveTo>) as plain text,
+                    no markers/refs.
+  --baseline        With --markdown, render the pre-change view: drop
+                    additive wrappers (<w:ins>, <w:moveTo>), inline
+                    subtractive wrappers (<w:del>, <w:moveFrom>) as plain
+                    text, no markers/refs. Mutually exclusive with --accepted.
+                    Default --markdown shows all four: additive wrappers as
+                    {++text++}[^tcN] and subtractive as {--text--}[^tcN]
+                    (CriticMarkup); the [^tcN] footnote spells out the kind
+                    (insertion / deletion / moveTo / moveFrom).
   --comments        With --markdown, append [^cN] after each commented span
                     and emit a footnote definition for each comment at the
                     end of the output (author, date, body).

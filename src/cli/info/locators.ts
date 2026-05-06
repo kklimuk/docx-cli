@@ -34,7 +34,8 @@ Entity locators:
   cN              Comment id (e.g., c0)
   imgN            Image id (e.g., img2)
   linkN           Hyperlink id (e.g., link0)
-  tcN             Tracked change id (e.g., tc0) — the Nth <w:ins>/<w:del> in document order
+  tcN             Tracked change id (e.g., tc0) — the Nth revision wrapper
+                  (<w:ins>/<w:del>/<w:moveFrom>/<w:moveTo>) in document order
   tN:rRcC         Cell at row R, column C of table tN
 
 Examples:

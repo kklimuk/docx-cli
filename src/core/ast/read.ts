@@ -1,5 +1,6 @@
 import { XmlNode } from "../parser";
 import type { DocView } from "./doc-view";
+import { decodeSym } from "./sym";
 import type {
 	Block,
 	ChartRun,
@@ -183,7 +184,7 @@ function walkRunContainer(
 		}
 
 		if (child.tag === "w:r") {
-			const run = readRun(
+			const runs = readRun(
 				context.view,
 				child,
 				context.activeComments,
@@ -191,7 +192,7 @@ function walkRunContainer(
 				hyperlink,
 				context.state,
 			);
-			if (run) {
+			for (const run of runs) {
 				if (run.type === "text") context.offsetRef.value += run.text.length;
 				context.paragraph.runs.push(run);
 			}
@@ -222,11 +223,16 @@ function walkRunContainer(
 			continue;
 		}
 
-		if (child.tag === "w:ins" || child.tag === "w:del") {
+		if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:moveFrom" ||
+			child.tag === "w:moveTo"
+		) {
 			const trackedChangeId = `tc${context.state.trackedChangeIndex++}`;
 			const change: TrackedChange = {
 				id: trackedChangeId,
-				kind: child.tag === "w:ins" ? "ins" : "del",
+				kind: TRACKED_CHANGE_KIND_BY_TAG[child.tag],
 				author: child.getAttribute("w:author") ?? "",
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
@@ -248,9 +254,29 @@ function walkRunContainer(
 				context.state,
 			);
 			walkRunContainer(context, child, trackedChange, link);
+			continue;
+		}
+
+		// Transparent wrappers — recurse but contribute no AST node themselves.
+		// <w:fldSimple>: a self-contained field; its result text lives in inner
+		//   <w:r> / <w:t> children. Dropping it would lose the rendered text.
+		// <w:smartTag>: Word's semantic tagging for proper nouns / dates;
+		//   contains plain runs.
+		if (child.tag === "w:fldSimple" || child.tag === "w:smartTag") {
+			walkRunContainer(context, child, trackedChange, hyperlink);
 		}
 	}
 }
+
+const TRACKED_CHANGE_KIND_BY_TAG: Record<
+	"w:ins" | "w:del" | "w:moveFrom" | "w:moveTo",
+	TrackedChange["kind"]
+> = {
+	"w:ins": "ins",
+	"w:del": "del",
+	"w:moveFrom": "moveFrom",
+	"w:moveTo": "moveTo",
+};
 
 function readHyperlinkProperties(
 	view: DocView,
@@ -316,6 +342,11 @@ function applyParagraphProperties(
 	}
 }
 
+/** A single <w:r> can contain a mix of <w:t>, <w:tab>, <w:br>, <w:drawing>,
+ * footnote/endnote refs in any order. We emit one AST Run per child in
+ * document order; consecutive <w:t>/<w:delText> siblings fold into one
+ * TextRun until interrupted by an inline child. <w:rPr>, activeComments,
+ * trackedChange, and hyperlink apply to every TextRun produced. */
 function readRun(
 	view: DocView,
 	node: XmlNode,
@@ -323,48 +354,93 @@ function readRun(
 	trackedChange: TrackedChange | undefined,
 	hyperlink: Hyperlink | undefined,
 	state: WalkState,
-): Run | null {
+): Run[] {
 	const runProperties = node.findChild("w:rPr");
+	const out: Run[] = [];
+	let pendingText = "";
+
+	function flushText(): void {
+		if (pendingText.length === 0) return;
+		const run: TextRun = { type: "text", text: pendingText };
+		if (runProperties) applyRunProperties(run, runProperties);
+		if (activeComments.size > 0) run.comments = [...activeComments];
+		if (trackedChange) run.trackedChange = trackedChange;
+		if (hyperlink) run.hyperlink = hyperlink;
+		out.push(run);
+		pendingText = "";
+	}
 
 	for (const child of node.children) {
+		if (child.tag === "w:rPr") continue;
+		if (child.tag === "w:t" || child.tag === "w:delText") {
+			pendingText += child.collectText();
+			continue;
+		}
+		// Single-character text equivalents — fold into pendingText so they
+		// share the surrounding rPr/tracking decoration. Each contributes
+		// exactly one character to the AST text and to offset accounting.
+		if (child.tag === "w:noBreakHyphen") {
+			pendingText += "‑";
+			continue;
+		}
+		if (child.tag === "w:softHyphen") {
+			pendingText += "­";
+			continue;
+		}
+		if (child.tag === "w:sym") {
+			const font = child.getAttribute("w:font") ?? "";
+			const charHex = child.getAttribute("w:char") ?? "";
+			pendingText += decodeSym(font, charHex);
+			continue;
+		}
 		if (child.tag === "w:drawing") {
+			flushText();
 			const drawing = readDrawing(view, child, state);
-			if (drawing) return drawing;
+			if (drawing) out.push(drawing);
+			continue;
 		}
-		if (child.tag === "w:br") {
-			const kind = (child.getAttribute("w:type") ?? "line") as
-				| "page"
-				| "line"
-				| "column";
-			return { type: "break", kind };
+		// Legacy embeds — surface as ChartRun placeholders so callers know
+		// "something visual lives here." Underlying XML is preserved.
+		if (child.tag === "w:pict" || child.tag === "w:object") {
+			flushText();
+			out.push({ type: "chart", kind: "drawing" });
+			continue;
 		}
-		if (child.tag === "w:tab") {
-			return { type: "tab" };
+		if (child.tag === "w:br" || child.tag === "w:cr") {
+			flushText();
+			// <w:cr> is an in-paragraph carriage return — semantically a line
+			// break, same shape as <w:br w:type="line"/>.
+			const kind =
+				child.tag === "w:cr"
+					? "line"
+					: ((child.getAttribute("w:type") ?? "line") as
+							| "page"
+							| "line"
+							| "column");
+			out.push({ type: "break", kind });
+			continue;
+		}
+		if (child.tag === "w:tab" || child.tag === "w:ptab") {
+			flushText();
+			out.push({ type: "tab" });
+			continue;
 		}
 		if (child.tag === "w:footnoteReference") {
+			flushText();
 			const id = child.getAttribute("w:id");
-			if (id) return { type: "footnoteRef", kind: "footnote", id: `fn${id}` };
+			if (id)
+				out.push({ type: "footnoteRef", kind: "footnote", id: `fn${id}` });
+			continue;
 		}
 		if (child.tag === "w:endnoteReference") {
+			flushText();
 			const id = child.getAttribute("w:id");
-			if (id) return { type: "footnoteRef", kind: "endnote", id: `en${id}` };
+			if (id) out.push({ type: "footnoteRef", kind: "endnote", id: `en${id}` });
 		}
 	}
 
-	let combinedText = "";
-	for (const child of node.children) {
-		if (child.tag === "w:t" || child.tag === "w:delText") {
-			combinedText += child.collectText();
-		}
-	}
-	if (combinedText.length === 0) return null;
-
-	const run: TextRun = { type: "text", text: combinedText };
-	if (runProperties) applyRunProperties(run, runProperties);
-	if (activeComments.size > 0) run.comments = [...activeComments];
-	if (trackedChange) run.trackedChange = trackedChange;
-	if (hyperlink) run.hyperlink = hyperlink;
-	return run;
+	flushText();
+	return out;
 }
 
 /** A <w:drawing> may wrap a picture (rendered as ImageRun) or a chart/shape/

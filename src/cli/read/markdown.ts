@@ -104,8 +104,10 @@ function emptyCommentIndex(): CommentIndex {
 function isRunVisible(run: TextRun, view: MarkdownView): boolean {
 	const kind = run.trackedChange?.kind;
 	if (!kind) return true;
-	if (view === "accepted" && kind === "del") return false;
-	if (view === "baseline" && kind === "ins") return false;
+	if (view === "accepted" && (kind === "del" || kind === "moveFrom"))
+		return false;
+	if (view === "baseline" && (kind === "ins" || kind === "moveTo"))
+		return false;
 	return true;
 }
 
@@ -315,10 +317,20 @@ function renderTextSegment(runs: TextRun[], view: MarkdownView): string {
 		out = `[${out}](${target})`;
 	}
 	if (view === "current" && first.trackedChange) {
-		const marker = first.trackedChange.kind === "ins" ? "++" : "--";
+		const marker = criticMarkerFor(first.trackedChange.kind);
 		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
 	}
 	return out;
+}
+
+/** CriticMarkup doesn't have a native "moved" marker, so we render moveTo
+ * with the same `++` markers as an insertion (the text appears at this
+ * location in the accepted view) and moveFrom with the same `--` as a
+ * deletion (the text leaves this location). The footnote definition
+ * carries the precise kind so a reader can distinguish move vs. ins/del. */
+function criticMarkerFor(kind: TrackedChange["kind"]): "++" | "--" {
+	if (kind === "ins" || kind === "moveTo") return "++";
+	return "--";
 }
 
 function colorAttrFor(value: string | undefined): string | null {
@@ -438,12 +450,19 @@ function renderTrackedChangeFootnotes(
 	);
 	const lines: string[] = [];
 	for (const change of sorted) {
-		const kind = change.kind === "ins" ? "insertion" : "deletion";
+		const kind = trackedChangeLabelFor(change.kind);
 		const author = change.author || "unknown";
 		const meta = change.date ? `${author} (${change.date})` : author;
 		lines.push(`[^${change.id}]: ${kind} by ${meta}`);
 	}
 	return lines.join("\n");
+}
+
+function trackedChangeLabelFor(kind: TrackedChange["kind"]): string {
+	if (kind === "ins") return "insertion";
+	if (kind === "del") return "deletion";
+	if (kind === "moveTo") return "moveTo";
+	return "moveFrom";
 }
 
 function trackedChangeIdCompare(left: string, right: string): number {

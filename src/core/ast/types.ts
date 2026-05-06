@@ -129,11 +129,20 @@ export type Footnote = {
 
 export type TrackedChange = {
 	id: string;
-	kind: "ins" | "del";
+	kind: TrackedChangeKind;
 	author: string;
 	date: string;
 	revisionId: string;
 };
+
+/** OOXML revision-tracking wrappers we surface in the AST.
+ *  - `ins` / `del`: <w:ins> / <w:del> — inserted / deleted runs.
+ *  - `moveFrom` / `moveTo`: <w:moveFrom> / <w:moveTo> — origin / destination
+ *    of a tracked move. moveFrom behaves like a delete (text leaves this
+ *    location, stored as <w:delText> internally); moveTo behaves like an
+ *    insert (text arrives at this location).
+ */
+export type TrackedChangeKind = "ins" | "del" | "moveFrom" | "moveTo";
 
 export type Comment = {
 	id: string;
