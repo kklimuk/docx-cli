@@ -1,6 +1,6 @@
 # docx-cli
 
-![docx-cli - read, edit, and comment on `.docx` files safely - Watch Video](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)
+[![docx-cli - read, edit, and comment on `.docx` files safely - Watch Video](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
 
 A CLI for AI agents (Claude, Codex) to safely read, edit, and comment on `.docx` files with full format fidelity. 
 Outputs JSON-AST for precise locator-based editing; preserves anything it doesn't model by mutating XML in place.
