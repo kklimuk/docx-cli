@@ -24,6 +24,8 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	respond,
+	respondAck,
+	setVerboseAck,
 	writeStdout,
 } from "../respond";
 import { Paragraph, type ParagraphOptions } from "./emit";
@@ -62,6 +64,7 @@ General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
+  -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
 
 Examples:
@@ -112,6 +115,8 @@ async function parseAndValidateOptions(
 		return EXIT.OK;
 	}
 
+	setVerboseAck(Boolean(parsed.values.verbose));
+
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
 
@@ -154,6 +159,7 @@ const OPTION_SPEC = {
 	author: { type: "string" },
 	output: { type: "string", short: "o" },
 	"dry-run": { type: "boolean" },
+	verbose: { type: "boolean", short: "v" },
 	help: { type: "boolean", short: "h" },
 } as const;
 
@@ -428,7 +434,7 @@ async function commitInsertedParagraph(
 	blockRef.parent.splice(insertIndex, 0, paragraph);
 	await saveDocView(view, opts.outputPath);
 
-	await respond({
+	await respondAck({
 		ok: true,
 		operation: "insert",
 		path: opts.outputPath ?? opts.filePath,

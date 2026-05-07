@@ -11,7 +11,15 @@ import {
 	findContainingParagraph,
 	findElementOffsetsInParagraph,
 } from "../comments/helpers";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	respondAck,
+	setVerboseAck,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx hyperlinks delete — unwrap a hyperlink (keep the text)
 
@@ -26,6 +34,7 @@ Optional:
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
+  -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
 
 The display text stays in place; only the <w:hyperlink> wrapper is removed.
@@ -50,6 +59,7 @@ export async function run(args: string[]): Promise<number> {
 				author: { type: "string" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
+				verbose: { type: "boolean", short: "v" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -63,6 +73,8 @@ export async function run(args: string[]): Promise<number> {
 		await writeStdout(HELP);
 		return EXIT.OK;
 	}
+
+	setVerboseAck(Boolean(parsed.values.verbose));
 
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
@@ -142,7 +154,7 @@ export async function run(args: string[]): Promise<number> {
 
 	await saveDocView(view, outputPath);
 
-	await respond({
+	await respondAck({
 		ok: true,
 		operation: "hyperlinks.delete",
 		path: outputPath ?? path,

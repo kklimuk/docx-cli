@@ -30,14 +30,19 @@ Out of scope: formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't
 modeled in the AST today and --all silently skips them.
 
 Options:
-  --at tcN          Reject a single tracked change by id
+  --at tcN          Reject a tracked change by id. Repeat for multiple ids
+                    (--at tc1 --at tc2 --at tc3) — all targets are resolved
+                    against the pre-mutation tree, so renumbering during the
+                    batch is not a concern.
   --all             Reject every tracked change (mutually exclusive with --at)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
+  -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
 
 Examples:
   docx track-changes reject doc.docx --at tc0
+  docx track-changes reject doc.docx --at tc1 --at tc3 --at tc5
   docx track-changes reject doc.docx --all
   docx track-changes reject doc.docx --all --dry-run
 `;

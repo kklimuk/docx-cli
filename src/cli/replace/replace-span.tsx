@@ -1,11 +1,11 @@
 import { Del, Ins, type RevisionAllocator, type TrackedMeta } from "@core";
+import type { FindView } from "@core/find";
 import { w } from "@core/jsx";
 import {
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	runTextLength,
 	sliceRun,
-	sumRunBearingTextLength,
 	XmlNode,
 } from "@core/parser";
 
@@ -15,6 +15,32 @@ export type TrackedReplaceOptions = {
 	meta: Omit<TrackedMeta, "revisionId">;
 	allocator: RevisionAllocator;
 };
+
+/** Whether a run-bearing wrapper's contents should be treated as VISIBLE in
+ *  the chosen view. Invisible wrappers pass through replace's offset
+ *  arithmetic untouched (their inner text adds nothing to the offset and
+ *  spans don't slice into them). Mirrors `isRunVisibleInView` in
+ *  src/core/find/index.ts so find/replace stay in sync. */
+function isWrapperVisibleInView(tag: string, view: FindView): boolean {
+	if (!isRunBearingWrapper(tag)) return false;
+	if (view === "current") return true;
+	if (view === "accepted") return tag !== "w:del" && tag !== "w:moveFrom";
+	return tag !== "w:ins" && tag !== "w:moveTo";
+}
+
+function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
+	let total = 0;
+	for (const child of children) {
+		if (child.tag === "w:r") {
+			total += runTextLength(child);
+			continue;
+		}
+		if (isWrapperVisibleInView(child.tag, view)) {
+			total += sumVisibleTextLength(child.children, view);
+		}
+	}
+	return total;
+}
 
 /**
  * Replace text in a paragraph's runs at the given span with `replacement`.
@@ -37,6 +63,7 @@ export function replaceSpanInParagraph(
 	span: Span,
 	replacement: string,
 	tracked?: TrackedReplaceOptions,
+	view: FindView = "accepted",
 ): void {
 	if (span.start > span.end) {
 		throw new Error(
@@ -44,7 +71,7 @@ export function replaceSpanInParagraph(
 		);
 	}
 
-	const slots = collectRunSlots(paragraph);
+	const slots = collectRunSlots(paragraph, view);
 	const overlapping = slots.filter(
 		(slot) =>
 			slot.offsetBefore + slot.length > span.start &&
@@ -76,6 +103,7 @@ export function replaceSpanInParagraph(
 			inheritedProperties,
 			firstParent === paragraph,
 			tracked ?? null,
+			view,
 		);
 		return;
 	}
@@ -86,6 +114,7 @@ export function replaceSpanInParagraph(
 		replacement,
 		inheritedProperties,
 		tracked ?? null,
+		view,
 	);
 }
 
@@ -96,7 +125,7 @@ type RunSlot = {
 	length: number;
 };
 
-function collectRunSlots(paragraph: XmlNode): RunSlot[] {
+function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
 	const slots: RunSlot[] = [];
 	let offset = 0;
 	function walk(parent: XmlNode, children: XmlNode[]): void {
@@ -112,7 +141,7 @@ function collectRunSlots(paragraph: XmlNode): RunSlot[] {
 				offset += length;
 				continue;
 			}
-			if (isRunBearingWrapper(child.tag)) {
+			if (isWrapperVisibleInView(child.tag, view)) {
 				walk(child, child.children);
 			}
 		}
@@ -129,6 +158,7 @@ function rebuildContainer(
 	runProperties: XmlNode | null,
 	isParagraph: boolean,
 	tracked: TrackedReplaceOptions | null,
+	view: FindView,
 ): void {
 	const newChildren: XmlNode[] = [];
 	let offset = baseOffset;
@@ -178,8 +208,8 @@ function rebuildContainer(
 			}
 			continue;
 		}
-		if (isParagraph && isRunBearingWrapper(child.tag)) {
-			offset += sumRunBearingTextLength(child.children);
+		if (isParagraph && isWrapperVisibleInView(child.tag, view)) {
+			offset += sumVisibleTextLength(child.children, view);
 			newChildren.push(child);
 			continue;
 		}
@@ -196,6 +226,7 @@ function rebuildAcrossBoundaries(
 	replacement: string,
 	runProperties: XmlNode | null,
 	tracked: TrackedReplaceOptions | null,
+	view: FindView,
 ): void {
 	const newChildren: XmlNode[] = [];
 	let offset = 0;
@@ -244,13 +275,27 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
+		// Tracked-change wrappers invisible in the chosen view pass through
+		// untouched — their inner text contributes nothing to the offset and
+		// the span never slices into them.
+		if (
+			(child.tag === "w:ins" ||
+				child.tag === "w:del" ||
+				child.tag === "w:moveFrom" ||
+				child.tag === "w:moveTo") &&
+			!isWrapperVisibleInView(child.tag, view)
+		) {
+			newChildren.push(child);
+			continue;
+		}
+
 		if (
 			child.tag === "w:ins" ||
 			child.tag === "w:del" ||
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumVisibleTextLength(child.children, view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -277,7 +322,7 @@ function rebuildAcrossBoundaries(
 		}
 
 		if (child.tag === "w:hyperlink") {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumVisibleTextLength(child.children, view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -299,6 +344,7 @@ function rebuildAcrossBoundaries(
 				runProperties,
 				replacement,
 				tracked,
+				view,
 				newChildren,
 				placeReplacement,
 				() => {
@@ -315,7 +361,7 @@ function rebuildAcrossBoundaries(
 		// Word re-evaluates fields on next render and any other behavior
 		// would silently drop the user's replacement intent.
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumVisibleTextLength(child.children, view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -477,11 +523,13 @@ function splitHyperlinkAcrossSpan(
 	runProperties: XmlNode | null,
 	replacement: string,
 	tracked: TrackedReplaceOptions | null,
+	view: FindView,
 	out: XmlNode[],
 	placeReplacement: () => void,
 	markReplacementPlaced: () => void,
 ): void {
-	const wrapperEnd = wrapperStart + sumRunBearingTextLength(wrapper.children);
+	const wrapperEnd =
+		wrapperStart + sumVisibleTextLength(wrapper.children, view);
 	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
 
 	const preInner: XmlNode[] = [];

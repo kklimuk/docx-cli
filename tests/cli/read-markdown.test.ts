@@ -200,8 +200,22 @@ describe("docx read --markdown --from / --to", () => {
 });
 
 describe("docx read --markdown tracked changes", () => {
-	test("default --markdown renders insertions as CriticMarkup {++...++} with [^tcN] refs and an appendix", async () => {
+	test("default --markdown is the accepted view (ins as plain, del gone, no markers)", async () => {
 		const out = await render(fixture("tracked-changes.docx"), "--markdown");
+		expect(out).toContain("two exciting");
+		expect(out).not.toContain("{++");
+		expect(out).not.toContain("{--");
+		expect(out).not.toMatch(/\[\^tc\d+\]/);
+		expect(out).not.toContain("<ins>");
+		expect(out).not.toContain("<del>");
+	});
+
+	test("--current renders insertions as CriticMarkup {++...++} with [^tcN] refs and an appendix", async () => {
+		const out = await render(
+			fixture("tracked-changes.docx"),
+			"--markdown",
+			"--current",
+		);
 		expect(out).toContain("{++two exciting ++}[^tc0]insertions");
 		expect(out).toContain(
 			"[^tc0]: insertion by eng-dept (2014-06-25T10:40:00Z)",

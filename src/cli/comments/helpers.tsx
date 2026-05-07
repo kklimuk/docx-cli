@@ -1,4 +1,5 @@
 import type { DocView } from "@core";
+import type { FindView } from "@core/find";
 import { w, w15 } from "@core/jsx";
 import { registerPart } from "@core/package";
 import {
@@ -8,6 +9,34 @@ import {
 	sumRunBearingTextLength,
 	XmlNode,
 } from "@core/parser";
+
+/** Whether a run-bearing wrapper's contents are visible in the chosen
+ *  view. Mirrors `isWrapperVisibleInView` in `cli/replace/replace-span.tsx`
+ *  and `isRunVisibleInView` in `core/find/index.ts` — they MUST agree, or
+ *  `find → comments add` (and `find → replace`) misalign. */
+function isWrapperVisibleInView(tag: string, view: FindView): boolean {
+	if (!isRunBearingWrapper(tag)) return false;
+	if (view === "current") return true;
+	if (view === "accepted") return tag !== "w:del" && tag !== "w:moveFrom";
+	return tag !== "w:ins" && tag !== "w:moveTo";
+}
+
+/** Sum the text length of `children` counting only runs visible in the
+ *  chosen view. Used for paragraph length / span bounds checks when
+ *  placing comment markers. */
+function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
+	let total = 0;
+	for (const child of children) {
+		if (child.tag === "w:r") {
+			total += runTextLength(child);
+			continue;
+		}
+		if (isWrapperVisibleInView(child.tag, view)) {
+			total += sumVisibleTextLength(child.children, view);
+		}
+	}
+	return total;
+}
 
 const COMMENTS_REL_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
@@ -104,30 +133,39 @@ export class SpanOutOfRangeError extends Error {
 	}
 }
 
-export function paragraphTextLength(paragraph: XmlNode): number {
-	return sumRunBearingTextLength(paragraph.children);
+export function paragraphTextLength(
+	paragraph: XmlNode,
+	view: FindView = "current",
+): number {
+	if (view === "current") return sumRunBearingTextLength(paragraph.children);
+	return sumVisibleTextLength(paragraph.children, view);
 }
 
 export function addCommentMarkersToParagraph(
 	paragraph: XmlNode,
 	commentId: string,
 	span?: CommentSpan,
+	view: FindView = "current",
 ): void {
-	const total = paragraphTextLength(paragraph);
+	const total = paragraphTextLength(paragraph, view);
 	const range: CommentSpan = span ?? { start: 0, end: total };
 	if (range.start < 0 || range.end > total || range.start > range.end) {
 		throw new SpanOutOfRangeError(
 			`Span ${range.start}-${range.end} out of paragraph length ${total}`,
 		);
 	}
-	placeMarkersInParagraph(paragraph, [
-		{ offset: range.start, node: commentRangeStartMarker(commentId) },
-		{
-			offset: range.end,
-			node: commentRangeEndMarker(commentId),
-			follower: commentReferenceRun(commentId),
-		},
-	]);
+	placeMarkersInParagraph(
+		paragraph,
+		[
+			{ offset: range.start, node: commentRangeStartMarker(commentId) },
+			{
+				offset: range.end,
+				node: commentRangeEndMarker(commentId),
+				follower: commentReferenceRun(commentId),
+			},
+		],
+		view,
+	);
 }
 
 /**
@@ -144,24 +182,36 @@ export function addCommentRangeMarkers(
 	endParagraph: XmlNode,
 	endOffset: number,
 	commentId: string,
+	view: FindView = "current",
 ): void {
 	if (startParagraph === endParagraph) {
-		addCommentMarkersToParagraph(startParagraph, commentId, {
-			start: startOffset,
-			end: endOffset,
-		});
+		addCommentMarkersToParagraph(
+			startParagraph,
+			commentId,
+			{
+				start: startOffset,
+				end: endOffset,
+			},
+			view,
+		);
 		return;
 	}
-	placeMarkersInParagraph(startParagraph, [
-		{ offset: startOffset, node: commentRangeStartMarker(commentId) },
-	]);
-	placeMarkersInParagraph(endParagraph, [
-		{
-			offset: endOffset,
-			node: commentRangeEndMarker(commentId),
-			follower: commentReferenceRun(commentId),
-		},
-	]);
+	placeMarkersInParagraph(
+		startParagraph,
+		[{ offset: startOffset, node: commentRangeStartMarker(commentId) }],
+		view,
+	);
+	placeMarkersInParagraph(
+		endParagraph,
+		[
+			{
+				offset: endOffset,
+				node: commentRangeEndMarker(commentId),
+				follower: commentReferenceRun(commentId),
+			},
+		],
+		view,
+	);
 }
 
 /**
@@ -338,9 +388,10 @@ type PlacementState = {
 function placeMarkersInParagraph(
 	paragraph: XmlNode,
 	markers: MarkerSpec[],
+	view: FindView = "current",
 ): void {
 	if (markers.length === 0) return;
-	const total = paragraphTextLength(paragraph);
+	const total = paragraphTextLength(paragraph, view);
 	for (const marker of markers) {
 		if (marker.offset < 0 || marker.offset > total) {
 			throw new SpanOutOfRangeError(
@@ -353,7 +404,7 @@ function placeMarkersInParagraph(
 	const pending: (MarkerSpec | null)[] = markers.slice();
 	const state: PlacementState = { offset: 0, placedCount: 0 };
 
-	paragraph.children = walkAndPlace(paragraph.children, pending, state);
+	paragraph.children = walkAndPlace(paragraph.children, pending, state, view);
 	flushAtCurrentOffset(paragraph.children, pending, state);
 
 	if (state.placedCount !== markers.length) {
@@ -367,6 +418,7 @@ function walkAndPlace(
 	children: XmlNode[],
 	pending: (MarkerSpec | null)[],
 	state: PlacementState,
+	view: FindView,
 ): XmlNode[] {
 	const result: XmlNode[] = [];
 	for (const child of children) {
@@ -413,11 +465,19 @@ function walkAndPlace(
 		}
 
 		if (isRunBearingWrapper(child.tag)) {
-			// Boundary at the wrapper's start: place markers BEFORE descending so
-			// they sit outside the wrapper when offsets align.
+			// Wrapper invisible in the chosen view: pass through with no
+			// offset change. Don't flush pending markers — they belong to a
+			// boundary in the visible-text coordinate space, not to this
+			// invisible wrapper. The next visible run will pick them up.
+			if (!isWrapperVisibleInView(child.tag, view)) {
+				result.push(child);
+				continue;
+			}
+			// Boundary at the visible wrapper's start: place markers BEFORE
+			// descending so they sit outside the wrapper when offsets align.
 			flushAtCurrentOffset(result, pending, state);
 
-			const innerChildren = walkAndPlace(child.children, pending, state);
+			const innerChildren = walkAndPlace(child.children, pending, state, view);
 			const wrapper = new XmlNode(child.tag, { ...child.attributes });
 			wrapper.children = innerChildren;
 			result.push(wrapper);

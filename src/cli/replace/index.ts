@@ -6,9 +6,17 @@ import {
 	resolveDate,
 	saveDocView,
 } from "@core";
-import { findTextSpans, type TextMatch } from "@core/find";
+import { type FindView, findTextSpans, type TextMatch } from "@core/find";
 import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	respondAck,
+	setVerboseAck,
+	writeStdout,
+} from "../respond";
 import {
 	replaceSpanInParagraph,
 	type TrackedReplaceOptions,
@@ -25,8 +33,15 @@ Options:
   --all             replace every match (default: just the first)
   --limit N         replace at most N matches (in document order)
   --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
+  --current         operate on the raw concatenation (both ins and del text)
+  --baseline        operate on the pre-change text (skip ins/moveTo)
+                    default: accepted view (skip del/moveFrom) — matches
+                    "docx find" / "docx read --markdown"
+  --exact           disable pattern normalization (no markdown-emphasis stripping,
+                    no smart/straight quote or em/en-dash equivalence)
   -o, --output PATH write to PATH instead of overwriting FILE
   --dry-run         report what would change without writing the file
+  -v, --verbose     print the success ack JSON (default: silent on success)
   -h, --help        show this help
 
 Within-paragraph matches only. Run formatting (rPr) on the surrounding text
@@ -34,6 +49,12 @@ is preserved; the replacement run inherits the rPr of the first run that
 overlaps the matched span. When a single invocation produces multiple
 replacements in the same paragraph, they're applied in reverse offset order
 so earlier offsets don't shift before being applied.
+
+By default the PATTERN is normalized: balanced markdown emphasis around
+non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
+straight quotes; em-dash and en-dash match the hyphen. The REPLACEMENT
+is always literal — whatever bytes you pass go in as-is. Pass --exact
+to match the raw pattern verbatim. --regex is always verbatim.
 
 With --regex, REPLACEMENT supports JS String.replace substitution syntax:
   $1, $2, ...   numbered capture groups
@@ -62,8 +83,12 @@ export async function run(args: string[]): Promise<number> {
 				all: { type: "boolean" },
 				limit: { type: "string" },
 				author: { type: "string" },
+				current: { type: "boolean" },
+				baseline: { type: "boolean" },
+				exact: { type: "boolean" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
+				verbose: { type: "boolean", short: "v" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -78,6 +103,8 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
+	setVerboseAck(Boolean(parsed.values.verbose));
+
 	const path = parsed.positionals[0];
 	const pattern = parsed.positionals[1];
 	const replacement = parsed.positionals[2];
@@ -90,6 +117,17 @@ export async function run(args: string[]): Promise<number> {
 	const ignoreCase = Boolean(parsed.values["ignore-case"]);
 	const useRegex = Boolean(parsed.values.regex);
 	const wantAll = Boolean(parsed.values.all);
+	const wantCurrent = Boolean(parsed.values.current);
+	const wantBaseline = Boolean(parsed.values.baseline);
+	const exact = Boolean(parsed.values.exact);
+	if (wantCurrent && wantBaseline) {
+		return fail("USAGE", "--current and --baseline are mutually exclusive");
+	}
+	const findView: FindView = wantCurrent
+		? "current"
+		: wantBaseline
+			? "baseline"
+			: "accepted";
 	const limitRaw = parsed.values.limit as string | undefined;
 	const limit = limitRaw === undefined ? undefined : Number(limitRaw);
 	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
@@ -102,11 +140,13 @@ export async function run(args: string[]): Promise<number> {
 	const view = await openOrFail(path);
 	if (typeof view === "number") return view;
 
-	let allMatches: TextMatch[];
+	let findResult: ReturnType<typeof findTextSpans>;
 	try {
-		allMatches = findTextSpans(view.doc, pattern, {
+		findResult = findTextSpans(view.doc, pattern, {
 			regex: useRegex,
 			ignoreCase,
+			view: findView,
+			exact,
 		});
 	} catch (matcherError) {
 		const message =
@@ -115,6 +155,15 @@ export async function run(args: string[]): Promise<number> {
 				: String(matcherError);
 		return fail("USAGE", `Invalid pattern: ${message}`);
 	}
+
+	const allMatches = findResult.matches;
+	const normalizationFields =
+		findResult.normalizedQuery !== undefined
+			? {
+					normalizedPattern: findResult.normalizedQuery,
+					normalizationApplied: findResult.normalizationApplied,
+				}
+			: {};
 
 	let selected: TextMatch[];
 	if (limit !== undefined) {
@@ -145,16 +194,18 @@ export async function run(args: string[]): Promise<number> {
 			replacement,
 			regex: useRegex,
 			ignoreCase,
+			view: findView,
 			totalMatches: allMatches.length,
 			replaced: selected.length,
 			matches: matchesPayload,
+			...normalizationFields,
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
 	if (selected.length === 0) {
-		await respond({
+		await respondAck({
 			ok: true,
 			operation: "replace",
 			path,
@@ -162,9 +213,11 @@ export async function run(args: string[]): Promise<number> {
 			replacement,
 			regex: useRegex,
 			ignoreCase,
+			view: findView,
 			totalMatches: 0,
 			replaced: 0,
 			matches: [],
+			...normalizationFields,
 		});
 		return EXIT.OK;
 	}
@@ -197,12 +250,13 @@ export async function run(args: string[]): Promise<number> {
 			{ start: match.start, end: match.end },
 			concreteReplacement,
 			tracked,
+			findView,
 		);
 	}
 
 	await saveDocView(view, outputPath);
 
-	await respond({
+	await respondAck({
 		ok: true,
 		operation: "replace",
 		path: outputPath ?? path,
@@ -210,9 +264,11 @@ export async function run(args: string[]): Promise<number> {
 		replacement,
 		regex: useRegex,
 		ignoreCase,
+		view: findView,
 		totalMatches: allMatches.length,
 		replaced: selected.length,
 		matches: matchesPayload,
+		...normalizationFields,
 	});
 	return EXIT.OK;
 }

@@ -33,6 +33,23 @@ export async function respond(payload: unknown): Promise<void> {
 	await Bun.write(Bun.stdout, `${JSON.stringify(payload)}\n`);
 }
 
+let verboseAck = false;
+
+/** Switch on full JSON acks for the current process. Mutating commands call
+ *  this when they parse `--verbose`/`-v`. Errors always print regardless;
+ *  dry-run payloads always print regardless. */
+export function setVerboseAck(verbose: boolean): void {
+	verboseAck = verbose;
+}
+
+/** Mutating-command success ack: prints the JSON payload only when
+ *  `--verbose` is set. By default mutators are silent on success — agents
+ *  rely on exit code 0 + the absence of an error payload. */
+export async function respondAck(payload: unknown): Promise<void> {
+	if (!verboseAck) return;
+	await respond(payload);
+}
+
 export async function writeStdout(text: string): Promise<void> {
 	await Bun.write(Bun.stdout, text);
 }

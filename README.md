@@ -72,26 +72,33 @@ Open `mnda-filled.docx` in Word: tracked changes and comments appear in the revi
 
 ```sh
 docx create FILE [--title T] [--author A] [--text "..."]
-docx read FILE [--markdown [--from pN] [--to pN] [--accepted | --baseline] [--comments]]
+docx read FILE [--markdown [--from pN] [--to pN] [--accepted | --baseline | --current] [--comments]]
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx insert FILE --after p3 --page-break | --column-break
 docx insert FILE --after p3 --section [--columns N] [--type continuous|nextPage|evenPage|oddPage|nextColumn]
-docx edit   FILE --at p3 --text "..." | --runs '[...]'
+docx edit   FILE --at p3 --text "..." [--no-formatting]   # word-level diff preserves bold/italic on unchanged words
+docx edit   FILE --at p3 --runs '[...]'
 docx edit   FILE --at s0 [--columns N] [--type T]   # mutate section properties
 docx delete FILE --at p3
 docx delete FILE --at s0                              # strip an inline sectPr
 
-docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N]
-docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--dry-run]
+docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current | --baseline] [--exact]
+docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--dry-run]
 
-docx wc      FILE [LOCATOR] [--accepted | --baseline]
+docx wc      FILE [LOCATOR] [--accepted | --baseline | --current]
 docx outline FILE
 
-docx comments add     FILE --range p3:5-20 --text "..." [--author NAME]
+docx comments add     FILE --range p3:5-20 --text "..." [--author NAME] [--current | --baseline]
+docx comments add     FILE --anchor "phrase" --text "..." [--occurrence N]
+docx comments add     FILE --batch reviews.jsonl              # JSONL: { range | anchor (+occurrence), text, author? }
 docx comments reply   FILE --to c0 --text "..."
 docx comments resolve FILE --id c0 [--unset]
+docx comments resolve FILE --id c1 --id c3 [--unset]          # repeatable
+docx comments resolve FILE --batch resolutions.jsonl
 docx comments delete  FILE --id c0
+docx comments delete  FILE --id c1 --id c3                    # repeatable
+docx comments delete  FILE --batch removals.jsonl
 docx comments list    FILE [--include-resolved] [--thread c0]
 
 docx images list    FILE
@@ -105,13 +112,15 @@ docx hyperlinks delete  FILE --at linkN
 
 docx track-changes FILE on|off
 docx track-changes list   FILE
-docx track-changes accept FILE (--at tcN | --all)
-docx track-changes reject FILE (--at tcN | --all)
+docx track-changes accept FILE (--at tcN [--at tcM ...] | --all)
+docx track-changes reject FILE (--at tcN [--at tcM ...] | --all)
 docx info schema [--ts]
 docx info locators [--json]
 ```
 
-Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`). JSON output by default for `read` and `*.list`; structured `{ok, code, error, hint}` on failure.
+Every command has `--help`. Mutating commands accept `--dry-run`, `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`), and `-v/--verbose` (print the JSON ack — see "Quiet by default" below).
+
+**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace`, `hyperlinks add/replace/delete`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
 
 ### Markdown rendering
 
@@ -119,14 +128,33 @@ Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--outpu
 
 `--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block.
 
-**Tracked changes — three views.** By default, additive wrappers (`<w:ins>`, `<w:moveTo>`) render as CriticMarkup `{++text++}[^tcN]` and subtractive wrappers (`<w:del>`, `<w:moveFrom>`) as `{--text--}[^tcN]`, with `[^tcN]: …` definitions appended at end. Two flags switch view (mutually exclusive):
+**Tracked changes — three views.** Default is the **accepted** view: `<w:del>` and `<w:moveFrom>` runs are dropped; `<w:ins>` and `<w:moveTo>` runs render as plain text. Three mutually-exclusive flags select the view (the default needs no flag):
 
-- `--accepted` — post-accept view: `<w:del>` and `<w:moveFrom>` runs are dropped; `<w:ins>` and `<w:moveTo>` runs render as plain text.
-- `--baseline` — pre-change view: the inverse.
+- `--accepted` — explicit alias for the default. Post-accept view.
+- `--baseline` — pre-change view: drops `<w:ins>` and `<w:moveTo>`, renders `<w:del>` and `<w:moveFrom>` as plain text.
+- `--current` — raw concatenation, with diff markup. Additive wrappers render as CriticMarkup `{++text++}[^tcN]` and subtractive as `{--text--}[^tcN]`, with `[^tcN]: …` definitions appended at end.
 
-`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics. It also accepts `sN` as a locator — the count covers every paragraph and table in that section's content range. Whole-document `wc` returns a `sections` count alongside `words`.
+The same `--current`/`--baseline` flags apply to `find`, `replace`, `wc`, and `comments add` so offsets stay consistent across commands (default everywhere is the accepted view). `comments add` uses the same view to resolve `--anchor` matches and `--range` offsets — agents can pipe `find` output to `comments add` without coordinate translation.
+
+`docx wc` also accepts `sN` as a locator — the count covers every paragraph and table in that section's content range. Whole-document `wc` returns a `sections` count alongside `words`.
+
+`find` and `replace` auto-normalize their query/pattern by default: balanced markdown emphasis around non-whitespace (`**X**`, `__X__`, `*X*`, `` `X` ``) is stripped; smart and straight quotes are equivalent; em-dash and en-dash collapse to a hyphen. Pass `--exact` to disable normalization. `--regex` is always verbatim. `find`'s response surfaces `normalizedQuery` / `normalizationApplied` when normalization changed the query so the agent sees what was actually searched.
 
 `--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output. Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally as `[^fnN]` / `[^enN]`. Run `docx info schema` for the full mapping table.
+
+### Bulk + anchored comments
+
+`comments add --anchor "phrase"` resolves the phrase via the same matcher as `docx find` (default accepted view, query normalization on) and anchors the comment to that match. Pass `--occurrence N` (1-indexed) to disambiguate when the phrase matches more than once; without it, an ambiguous anchor errors atomically before any writes.
+
+`comments add --batch FILE.jsonl` (or `--batch -` for stdin) takes one JSON object per line: `{range | anchor (+ optional occurrence), text, author?}`. The whole batch validates against the pre-mutation tree first and aborts cleanly if any entry fails. `comments delete` and `comments resolve` accept `--batch FILE.jsonl` (`{"id": "cN"}` per line) or repeated `--id c1 --id c3`. Atomic in all cases — no partial writes on error.
+
+### Formatting preservation
+
+`docx edit --at pN --text "..."` runs a word-level diff between the existing paragraph's text and the new text, preserving `<w:rPr>` formatting (bold, italic, color, etc.) on unchanged words. New words inherit formatting via position-pairing with the deleted span (Kth inserted word inherits from the Kth deleted word, falling back to neighboring kept words when the edit group has no deletes). Pass `--no-formatting` to fall back to a single fresh run with no formatting; explicit `--color`/`--bold`/`--italic` also bypass preservation and apply uniformly to the new paragraph. Under tracking, the result is per-word `<w:del>`/`<w:ins>` markers (the same shape Word produces when an author edits a few words mid-tracking) instead of whole-paragraph del+ins.
+
+### Atomic batch accept/reject
+
+`track-changes accept --at tc1 --at tc2 --at tc3` resolves all targets against the pre-mutation tree, deduplicates, and applies in a single call. Mid-batch renumbering doesn't shift the still-pending ids out from under the agent. Mutually exclusive with `--all`. Same shape for `reject`.
 
 ### Locators
 

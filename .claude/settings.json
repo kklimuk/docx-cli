@@ -27,6 +27,7 @@
       "Bash(gh api:*)",
       "Bash(bunx tsc *)",
       "Bash(bun run check)",
+      "Bash(bun test*)",
       "Bash(bun run test*)",
       "Bash(bunx biome *)",
       "Bash(bun src/index.ts *)"

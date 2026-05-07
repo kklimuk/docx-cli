@@ -18,6 +18,11 @@ const FIXTURES = [
 	"multi-column.docx",
 	"notes.docx",
 	"sections.docx",
+	"chained-tracked-edits.docx",
+	"normalize-query.docx",
+	"comments-batch.docx",
+	"word-formatted.docx",
+	"multi-tracked.docx",
 ] as const;
 
 let workspace: string;

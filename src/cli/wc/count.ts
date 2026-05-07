@@ -11,9 +11,10 @@ export type CountView = "current" | "accepted" | "baseline";
 export type CountOptions = { view?: CountView };
 
 function textFor(options: CountOptions): (paragraph: Paragraph) => string {
-	if (options.view === "accepted") return paragraphTextAccepted;
-	if (options.view === "baseline") return paragraphTextBaseline;
-	return paragraphText;
+	const view = options.view ?? "accepted";
+	if (view === "current") return paragraphText;
+	if (view === "baseline") return paragraphTextBaseline;
+	return paragraphTextAccepted;
 }
 
 export function countWords(text: string): number {
@@ -93,8 +94,9 @@ export function countWordsInBlocks(
 }
 
 /** Word-count the half-open paragraph slice [start, end). Offsets are over
- * whichever view is selected by `options.view` — default ("current") counts
- * everything on disk, "accepted" skips del runs, "baseline" skips ins runs. */
+ * whichever view is selected by `options.view` — default ("accepted") skips
+ * del/moveFrom runs, "current" counts everything on disk, "baseline" skips
+ * ins/moveTo runs. */
 export function countWordsInParagraphSpan(
 	paragraph: Paragraph,
 	start: number,

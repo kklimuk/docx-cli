@@ -90,7 +90,7 @@ tests/
     *.test.ts                 # one file per command surface
   integration/
     libreoffice-roundtrip.test.ts  # auto-skips if `soffice` not on PATH
-  fixtures/                   # .docx files exercising different OOXML features (comments, tracked changes, footnotes, equations, tables, sections, ...). All fixtures are MIT-licensed; `minimal.docx`, `notes.docx`, `sections.docx`, `tracked-moves.docx`, and `transparent-wrappers.docx` are built by scripts in `scripts/make-*-fixture.ts`.
+  fixtures/                   # .docx files exercising different OOXML features (comments, tracked changes, footnotes, equations, tables, sections, ...). All fixtures are MIT-licensed; `minimal.docx`, `notes.docx`, `sections.docx`, `tracked-moves.docx`, `transparent-wrappers.docx`, `chained-tracked-edits.docx`, `normalize-query.docx`, `comments-batch.docx`, `word-formatted.docx`, and `multi-tracked.docx` are built by scripts in `scripts/make-*-fixture.ts`.
 scripts/
   move.ts                     # move file + auto-update imports
   fxp-smoke.ts                # JSX → XML smoke test
@@ -100,6 +100,11 @@ scripts/
   make-tracked-moves-fixture.ts        # rebuild tracked-moves.docx
   make-transparent-wrappers-fixture.ts # rebuild transparent-wrappers.docx (fldSimple/smartTag)
   make-sections-fixture.ts             # rebuild sections.docx (all sectionTypes + sectPrChange) — dogfoods the CLI
+  make-chained-tracked-edits-fixture.ts # rebuild chained-tracked-edits.docx (tracking on, baseline for chained replaces)
+  make-normalize-query-fixture.ts       # rebuild normalize-query.docx (smart quotes, em-dash, * between digits)
+  make-comments-batch-fixture.ts        # rebuild comments-batch.docx (3 paragraphs for batch + anchor tests)
+  make-word-formatted-fixture.ts        # rebuild word-formatted.docx (mixed bold/italic/color spans for B3 diff tests)
+  make-multi-tracked-fixture.ts         # rebuild multi-tracked.docx (3 paragraphs × 6 tracked changes for batch accept/reject tests)
   escape-check.ts             # XML entity round-trip sanity
 ```
 

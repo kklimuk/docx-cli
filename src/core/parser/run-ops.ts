@@ -11,8 +11,18 @@ export function isSubtractiveTrackedChangeWrapper(tag: string): boolean {
 export function runTextLength(run: XmlNode): number {
 	let total = 0;
 	for (const child of run.children) {
-		if (child.tag === "w:t") total += child.collectText().length;
-		else if (SINGLE_CHAR_TAGS.has(child.tag)) total += 1;
+		// `<w:delText>` is text content too — runs inside `<w:del>` /
+		// `<w:moveFrom>` carry their text in delText. Counting only `<w:t>`
+		// here under-reports length for those runs and breaks any caller
+		// that walks XML offsets in current view (e.g. find → replace,
+		// find → comments add). The AST reader (core/ast/read.ts) already
+		// surfaces delText in TextRun.text, so XML-side accounting must
+		// agree.
+		if (child.tag === "w:t" || child.tag === "w:delText") {
+			total += child.collectText().length;
+		} else if (SINGLE_CHAR_TAGS.has(child.tag)) {
+			total += 1;
+		}
 	}
 	return total;
 }

@@ -40,20 +40,22 @@ Locators (optional; default: whole document):
                   inline sectPr (or to end of body for the trailing section)
 
 Options:
-  --accepted        Count the accepted view: skip subtractive wrappers
-                    (<w:del>, <w:moveFrom>); keep additive wrappers
-                    (<w:ins>, <w:moveTo>) as plain text. Mirrors
-                    "docx read --markdown --accepted".
+  --accepted        Default. Count the accepted view: skip subtractive
+                    wrappers (<w:del>, <w:moveFrom>); keep additive
+                    wrappers (<w:ins>, <w:moveTo>) as plain text. Mirrors
+                    "docx read --markdown" / "docx find" defaults.
   --baseline        Count the baseline view: skip additive wrappers
                     (<w:ins>, <w:moveTo>); keep subtractive wrappers
                     (<w:del>, <w:moveFrom>) as plain text — i.e., the doc as
                     it was before any tracked changes were made.
+  --current         Count the raw concatenation: every tracked-change
+                    wrapper's text counts (everything on disk).
   -h, --help        show this help
 
 Counting is whitespace-segmented (\\S+) over the joined paragraph text. Hidden
-content like images/breaks/tabs contributes no words. By default, every
-tracked-change wrapper's text counts (they're all on disk); pass --accepted
-or --baseline (mutually exclusive) to count a tracked-change-aware slice.
+content like images/breaks/tabs contributes no words. The three view flags
+are mutually exclusive; default (no flag) is --accepted, matching what a
+reader would see if every tracked change were accepted.
 
 Examples:
   docx wc doc.docx
@@ -73,6 +75,7 @@ export async function run(args: string[]): Promise<number> {
 			options: {
 				accepted: { type: "boolean" },
 				baseline: { type: "boolean" },
+				current: { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -93,18 +96,21 @@ export async function run(args: string[]): Promise<number> {
 
 	const wantAccepted = Boolean(parsed.values.accepted);
 	const wantBaseline = Boolean(parsed.values.baseline);
-	if (wantAccepted && wantBaseline) {
+	const wantCurrent = Boolean(parsed.values.current);
+	const viewFlagCount =
+		(wantAccepted ? 1 : 0) + (wantBaseline ? 1 : 0) + (wantCurrent ? 1 : 0);
+	if (viewFlagCount > 1) {
 		return fail(
 			"USAGE",
-			"--accepted and --baseline are mutually exclusive",
+			"--accepted, --baseline, and --current are mutually exclusive",
 			HELP,
 		);
 	}
-	const view: CountView = wantAccepted
-		? "accepted"
+	const view: CountView = wantCurrent
+		? "current"
 		: wantBaseline
 			? "baseline"
-			: "current";
+			: "accepted";
 	const pickText = paragraphTextFor(view);
 
 	const docView = await openOrFail(path);

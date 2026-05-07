@@ -22,6 +22,8 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	respond,
+	respondAck,
+	setVerboseAck,
 	writeStdout,
 } from "../respond";
 
@@ -41,6 +43,7 @@ Locator (required):
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
+  -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
 
 Tracked behavior:
@@ -95,6 +98,8 @@ async function parseAndValidateOptions(
 		return EXIT.OK;
 	}
 
+	setVerboseAck(Boolean(parsed.values.verbose));
+
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
 
@@ -115,6 +120,7 @@ const OPTION_SPEC = {
 	author: { type: "string" },
 	output: { type: "string", short: "o" },
 	"dry-run": { type: "boolean" },
+	verbose: { type: "boolean", short: "v" },
 	help: { type: "boolean", short: "h" },
 } as const;
 
@@ -164,7 +170,7 @@ async function commitSectionDelete(
 	}
 
 	await saveDocView(view, opts.outputPath);
-	return respondAck(opts);
+	return emitDeleteAck(opts);
 }
 
 async function commitBlockDelete(
@@ -196,7 +202,7 @@ async function commitBlockDelete(
 	}
 
 	await saveDocView(view, opts.outputPath);
-	return respondAck(opts);
+	return emitDeleteAck(opts);
 }
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {
@@ -211,8 +217,8 @@ async function respondDryRun(opts: ValidatedOptions): Promise<number> {
 	return EXIT.OK;
 }
 
-async function respondAck(opts: ValidatedOptions): Promise<number> {
-	await respond({
+async function emitDeleteAck(opts: ValidatedOptions): Promise<number> {
+	await respondAck({
 		ok: true,
 		operation: "delete",
 		path: opts.outputPath ?? opts.filePath,

@@ -94,8 +94,15 @@ describe("tracked moves — wc views", () => {
 		expect((result.parsed as { words: number }).words).toBe(8);
 	});
 
-	test("default counts both halves (current view)", async () => {
+	test("default is the accepted view (skips moveFrom origin)", async () => {
 		const result = await runCli("wc", FIXTURE);
+		// Same as --accepted: 8 words (default flipped from "current"
+		// for consistency with `read --markdown` / `find` / `replace`).
+		expect((result.parsed as { words: number }).words).toBe(8);
+	});
+
+	test("--current counts both halves (legacy default)", async () => {
+		const result = await runCli("wc", FIXTURE, "--current");
 		// Both halves visible: 5 + 5 = 10
 		expect((result.parsed as { words: number }).words).toBe(10);
 	});

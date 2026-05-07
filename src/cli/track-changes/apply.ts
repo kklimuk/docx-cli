@@ -2,7 +2,15 @@ import type { TrackedChangeKind } from "@core";
 import { saveDocView } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	respondAck,
+	setVerboseAck,
+	writeStdout,
+} from "../respond";
 
 export async function runApply(
 	args: string[],
@@ -15,10 +23,11 @@ export async function runApply(
 			args,
 			allowPositionals: true,
 			options: {
-				at: { type: "string" },
+				at: { type: "string", multiple: true },
 				all: { type: "boolean" },
 				output: { type: "string", short: "o" },
 				"dry-run": { type: "boolean" },
+				verbose: { type: "boolean", short: "v" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -33,16 +42,18 @@ export async function runApply(
 		return EXIT.OK;
 	}
 
+	setVerboseAck(Boolean(parsed.values.verbose));
+
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", help);
 
-	const at = parsed.values.at as string | undefined;
+	const atRaw = parsed.values.at as string[] | undefined;
 	const all = Boolean(parsed.values.all);
-	if (at && all) {
+	if (atRaw && atRaw.length > 0 && all) {
 		return fail("USAGE", "--at and --all are mutually exclusive", help);
 	}
-	if (!at && !all) {
-		return fail("USAGE", "Specify --at tcN or --all", help);
+	if ((!atRaw || atRaw.length === 0) && !all) {
+		return fail("USAGE", "Specify --at tcN (repeatable) or --all", help);
 	}
 
 	const view = await openOrFail(path);
@@ -59,14 +70,37 @@ export async function runApply(
 	if (all) {
 		targets = allChanges;
 	} else {
-		const found = allChanges.find((change) => change.id === at);
-		if (!found) {
-			return fail(
-				"TRACKED_CHANGE_NOT_FOUND",
-				`Tracked change not found: ${at}`,
-			);
+		// Resolve all requested ids against the SAME pre-mutation walk so that
+		// `--at tc1 --at tc2 --at tc3` refers to the nodes the agent saw at
+		// `track-changes list` time, even though sibling ids would shift if
+		// applied one-by-one. Dedupe so `--at tc1 --at tc1` doesn't try to
+		// apply the same node twice.
+		const seen = new Set<string>();
+		const ordered: string[] = [];
+		for (const id of atRaw ?? []) {
+			if (seen.has(id)) continue;
+			seen.add(id);
+			ordered.push(id);
 		}
-		targets = [found];
+		const byId = new Map(allChanges.map((change) => [change.id, change]));
+		targets = [];
+		for (const id of ordered) {
+			const found = byId.get(id);
+			if (!found) {
+				return fail(
+					"TRACKED_CHANGE_NOT_FOUND",
+					`Tracked change not found: ${id}`,
+				);
+			}
+			targets.push(found);
+		}
+		// Apply in document order regardless of the order on the command line —
+		// reverse pre-order traversal happens at apply time below.
+		targets.sort((left, right) => {
+			const leftIndex = allChanges.indexOf(left);
+			const rightIndex = allChanges.indexOf(right);
+			return leftIndex - rightIndex;
+		});
 	}
 
 	const records: ChangeRecord[] = targets.map((target) => ({
@@ -100,7 +134,7 @@ export async function runApply(
 
 	await saveDocView(view, outputPath);
 
-	await respond({
+	await respondAck({
 		ok: true,
 		operation: `track-changes.${verb}`,
 		path: outputPath ?? path,

@@ -1,7 +1,7 @@
 import { writeAtomic } from "@core/package";
 import JSZip from "jszip";
 import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, fail, respondAck, setVerboseAck, writeStdout } from "../respond";
 import {
 	CONTENT_TYPES,
 	corePropertiesXml,
@@ -20,6 +20,7 @@ Options:
   --author TEXT    Document author (default: $DOCX_AUTHOR)
   --text TEXT      Seed first paragraph with this text
   --force          Overwrite if file exists
+  -v, --verbose    Print the success ack JSON (default: silent on success)
   -h, --help       Show this help
 
 Examples:
@@ -38,6 +39,7 @@ export async function run(args: string[]): Promise<number> {
 				author: { type: "string" },
 				text: { type: "string" },
 				force: { type: "boolean" },
+				verbose: { type: "boolean", short: "v" },
 				help: { type: "boolean", short: "h" },
 			},
 		});
@@ -49,6 +51,8 @@ export async function run(args: string[]): Promise<number> {
 		await writeStdout(HELP);
 		return EXIT.OK;
 	}
+
+	setVerboseAck(Boolean(parsed.values.verbose));
 
 	const path = parsed.positionals[0];
 	if (!path) {
@@ -83,7 +87,7 @@ export async function run(args: string[]): Promise<number> {
 	});
 	await writeAtomic(path, buf);
 
-	await respond({
+	await respondAck({
 		ok: true,
 		operation: "create",
 		path,

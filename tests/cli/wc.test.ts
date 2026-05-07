@@ -154,9 +154,20 @@ describe("docx wc — tracked changes", () => {
 		return docPath;
 	}
 
-	test("default counts current on-disk view (plain + ins + del)", async () => {
-		const docPath = await trackedFixture("wc-current");
+	test("default is the accepted view (skips del; keeps ins)", async () => {
+		const docPath = await trackedFixture("wc-default");
 		const result = await runCli("wc", docPath);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { view: string }).view).toBe("accepted");
+		// "The old slow fox jumps." = 5 words (skip the 2-word del). Same
+		// as --accepted; default flipped from "current" to match
+		// `read --markdown` / `find` / `replace`.
+		expect((result.parsed as { words: number }).words).toBe(5);
+	});
+
+	test("--current counts the on-disk view (plain + ins + del)", async () => {
+		const docPath = await trackedFixture("wc-current");
+		const result = await runCli("wc", docPath, "--current");
 		expect(result.exitCode).toBe(0);
 		expect((result.parsed as { words: number; view: string }).view).toBe(
 			"current",
@@ -165,7 +176,7 @@ describe("docx wc — tracked changes", () => {
 		expect((result.parsed as { words: number }).words).toBe(7);
 	});
 
-	test("--accepted skips deletions, keeps insertions", async () => {
+	test("--accepted skips deletions, keeps insertions (explicit alias)", async () => {
 		const docPath = await trackedFixture("wc-accepted");
 		const result = await runCli("wc", docPath, "--accepted");
 		expect(result.exitCode).toBe(0);

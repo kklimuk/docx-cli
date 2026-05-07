@@ -19,18 +19,19 @@ Options:
                     Accepts pN, tN, tN:rRcC[:pK[:S-E]], pN:S-E, pN:S-pM:E.
                     Cell/span/range locators collapse to their enclosing
                     top-level block (the table or paragraph).
-  --accepted        With --markdown, render the post-accept view: drop
-                    subtractive wrappers (<w:del>, <w:moveFrom>), inline
+  --accepted        Default with --markdown: render the post-accept view —
+                    drop subtractive wrappers (<w:del>, <w:moveFrom>), inline
                     additive wrappers (<w:ins>, <w:moveTo>) as plain text,
-                    no markers/refs.
+                    no markers/refs. Kept as an explicit alias for clarity.
   --baseline        With --markdown, render the pre-change view: drop
                     additive wrappers (<w:ins>, <w:moveTo>), inline
                     subtractive wrappers (<w:del>, <w:moveFrom>) as plain
-                    text, no markers/refs. Mutually exclusive with --accepted.
-                    Default --markdown shows all four: additive wrappers as
-                    {++text++}[^tcN] and subtractive as {--text--}[^tcN]
-                    (CriticMarkup); the [^tcN] footnote spells out the kind
-                    (insertion / deletion / moveTo / moveFrom).
+                    text, no markers/refs.
+  --current         With --markdown, render the raw concatenation: additive
+                    wrappers as {++text++}[^tcN] and subtractive as
+                    {--text--}[^tcN] (CriticMarkup); the [^tcN] footnote
+                    spells out the kind (insertion / deletion / moveTo /
+                    moveFrom). Mutually exclusive with --accepted/--baseline.
   --comments        With --markdown, append [^cN] after each commented span
                     and emit a footnote definition for each comment at the
                     end of the output (author, date, body).
@@ -57,6 +58,7 @@ export async function run(args: string[]): Promise<number> {
 				to: { type: "string" },
 				accepted: { type: "boolean" },
 				baseline: { type: "boolean" },
+				current: { type: "boolean" },
 				comments: { type: "boolean" },
 				help: { type: "boolean", short: "h" },
 			},
@@ -78,25 +80,31 @@ export async function run(args: string[]): Promise<number> {
 	const to = parsed.values.to as string | undefined;
 	const accepted = Boolean(parsed.values.accepted);
 	const baseline = Boolean(parsed.values.baseline);
+	const current = Boolean(parsed.values.current);
 	const showComments = Boolean(parsed.values.comments);
 
-	if (!markdown && (from || to || accepted || baseline || showComments)) {
+	if (
+		!markdown &&
+		(from || to || accepted || baseline || current || showComments)
+	) {
 		return fail(
 			"USAGE",
-			"--from, --to, --accepted, --baseline, and --comments require --markdown",
+			"--from, --to, --accepted, --baseline, --current, and --comments require --markdown",
 			HELP,
 		);
 	}
 
-	if (accepted && baseline) {
+	const viewFlagCount =
+		(accepted ? 1 : 0) + (baseline ? 1 : 0) + (current ? 1 : 0);
+	if (viewFlagCount > 1) {
 		return fail(
 			"USAGE",
-			"--accepted and --baseline are mutually exclusive",
+			"--accepted, --baseline, and --current are mutually exclusive",
 			HELP,
 		);
 	}
 
-	const view = accepted ? "accepted" : baseline ? "baseline" : "current";
+	const view = current ? "current" : baseline ? "baseline" : "accepted";
 
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;

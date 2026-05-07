@@ -115,7 +115,7 @@ function buildCommentIndex(
 	blocks: Block[],
 	options: MarkdownOptions,
 ): CommentIndex {
-	const view = options.view ?? "current";
+	const view = options.view ?? "accepted";
 	const lastSlot = new Map<string, string>();
 	const spanText = new Map<string, string>();
 	const orderedIds: string[] = [];
@@ -190,7 +190,7 @@ function renderRuns(
 	runs: Run[],
 	ctx: RenderContext,
 ): string {
-	const view = ctx.options.view ?? "current";
+	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
 		if (run.type === "text" && !isRunVisible(run, view)) return;
