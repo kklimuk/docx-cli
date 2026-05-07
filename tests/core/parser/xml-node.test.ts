@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { XmlNode } from "../../../src/core/parser";
+import { XmlNode } from "@core/parser";
 
 describe("XmlNode", () => {
 	test("parses element with attributes and text", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeSym } from "../../../src/core/ast/sym";
+import { decodeSym } from "@core/ast/sym";
 
 describe("decodeSym", () => {
 	test("Symbol font: ASCII codepoints map to Greek/math glyphs", () => {

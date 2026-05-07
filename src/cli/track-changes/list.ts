@@ -1,5 +1,9 @@
-import type { TrackedChange, TrackedChangeKind } from "@core";
-import { flattenParagraphs } from "@core";
+import type {
+	SectionProperties,
+	TrackedChange,
+	TrackedChangeKind,
+} from "@core";
+import { flattenParagraphs, readSectionProperties } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -11,23 +15,35 @@ Usage:
 Options:
   -h, --help    Show this help
 
-Lists every <w:ins>, <w:del>, <w:moveFrom>, and <w:moveTo> wrapper with
-stable tcN ids. moveFrom/moveTo halves of the same logical move appear
-as separate entries (one for each side); their kind tells them apart.
+Lists every revision wrapper with stable tcN ids — run-level <w:ins>, <w:del>,
+<w:moveFrom>, <w:moveTo>; section-property revisions <w:sectPrChange>; and
+paragraph-mark <w:ins>/<w:del> markers (a self-closing element inside
+<w:pPr><w:rPr> that tracks a paragraph break itself). moveFrom/moveTo halves
+of the same logical move appear as separate entries; their kind tells them
+apart.
 
 Output: JSON array of { id, kind, author, date, revisionId, blockId, text }
 sorted by id (document order). kind is one of: "ins", "del", "moveFrom",
-"moveTo".
+"moveTo", "sectPrChange". Paragraph-mark entries have kind "ins"/"del" with
+text "" — their blockId is the owning paragraph's pN.
+
+Section-property revisions (kind="sectPrChange") additionally include
+{ prior, current } objects with the section's columns/sectionType from
+before and after the tracked edit, so agents can see the diff without
+re-reading XML.
 
 Examples:
   docx track-changes list doc.docx
   docx track-changes list doc.docx | jq '.[] | select(.kind == "del")'
   docx track-changes list doc.docx | jq '.[] | select(.kind | test("move"))'
+  docx track-changes list doc.docx | jq '.[] | select(.kind == "sectPrChange") | .prior, .current'
 `;
 
 type TrackedChangeRecord = TrackedChange & {
 	blockId: string;
 	text: string;
+	prior?: SectionProperties;
+	current?: SectionProperties;
 };
 
 export async function run(args: string[]): Promise<number> {
@@ -82,7 +98,7 @@ export async function run(args: string[]): Promise<number> {
 		if (byId.has(id)) continue;
 		const kind = trackedChangeKindForTag(reference.node.tag);
 		if (!kind) continue;
-		byId.set(id, {
+		const record: TrackedChangeRecord = {
 			id,
 			kind,
 			author: reference.node.getAttribute("w:author") ?? "",
@@ -90,7 +106,18 @@ export async function run(args: string[]): Promise<number> {
 			revisionId: reference.node.getAttribute("w:id") ?? "",
 			blockId: reference.blockId,
 			text: "",
-		});
+		};
+		if (kind === "sectPrChange") {
+			// Live siblings (parent array) carry the post-edit values; the
+			// snapshot inside the change marker carries the prior values.
+			const liveSiblings = reference.parent.filter(
+				(child) => child !== reference.node,
+			);
+			record.current = readSectionProperties(liveSiblings);
+			const snapshot = reference.node.findChild("w:sectPr");
+			record.prior = snapshot ? readSectionProperties(snapshot.children) : {};
+		}
+		byId.set(id, record);
 	}
 
 	const sorted = [...byId.values()].sort(
@@ -111,5 +138,6 @@ function trackedChangeKindForTag(tag: string): TrackedChangeKind | null {
 	if (tag === "w:del") return "del";
 	if (tag === "w:moveFrom") return "moveFrom";
 	if (tag === "w:moveTo") return "moveTo";
+	if (tag === "w:sectPrChange") return "sectPrChange";
 	return null;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Pkg } from "../../src/core/package";
+import { Pkg } from "@core/package";
 import { runCli, tempWorkspace } from "./harness";
 
 /**

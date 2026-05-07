@@ -35,13 +35,17 @@ Entity locators:
   imgN            Image id (e.g., img2)
   linkN           Hyperlink id (e.g., link0)
   tcN             Tracked change id (e.g., tc0) — the Nth revision wrapper
-                  (<w:ins>/<w:del>/<w:moveFrom>/<w:moveTo>) in document order
+                  in document order. Includes run-level <w:ins>/<w:del>/
+                  <w:moveFrom>/<w:moveTo>, section-property revisions
+                  <w:sectPrChange>, and paragraph-mark <w:ins>/<w:del>
+                  (a self-closing element inside <w:pPr><w:rPr>).
   tN:rRcC         Cell at row R, column C of table tN
 
 Examples:
   p3              -> the entire paragraph p3
   p3:5-20         -> characters 5..20 of p3
   p3:5-p5:10      -> from char 5 of p3 to char 10 of p5
+  s0              -> first section break (typically the front-matter section)
   c1              -> comment c1
   img0            -> image img0
   link0           -> hyperlink link0
@@ -79,7 +83,12 @@ const JSON_REFERENCE = {
 		comment: { syntax: "cN", example: "c1" },
 		image: { syntax: "imgN", example: "img0" },
 		hyperlink: { syntax: "linkN", example: "link0" },
-		trackedChange: { syntax: "tcN", example: "tc0" },
+		trackedChange: {
+			syntax: "tcN",
+			example: "tc0",
+			notes:
+				"Covers run-level <w:ins>/<w:del>/<w:moveFrom>/<w:moveTo>, <w:sectPrChange>, and paragraph-mark <w:ins>/<w:del>.",
+		},
 		cell: { syntax: "tN:rRcC", example: "t0:r1c2" },
 		nestedCell: { syntax: "tN:rRcC:pK", example: "t0:r1c2:p0" },
 	},

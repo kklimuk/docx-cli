@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Pkg } from "@core/package";
 import JSZip from "jszip";
-import { Pkg } from "../../src/core/package";
 import { runCli } from "./harness";
 
 /**

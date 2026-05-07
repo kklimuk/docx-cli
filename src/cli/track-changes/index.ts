@@ -11,18 +11,23 @@ Usage:
 Verbs:
   on        Set <w:trackChanges/> in word/settings.xml
   off       Remove <w:trackChanges/>
-  list      Inventory every <w:ins>/<w:del>/<w:moveFrom>/<w:moveTo> with
-            id, kind, author, date, location
-  accept    Accept tracked changes — additive wrappers (<w:ins>, <w:moveTo>)
-            unwrap; subtractive wrappers (<w:del>, <w:moveFrom>) are removed
-  reject    Reject tracked changes — additive wrappers are removed;
-            subtractive wrappers unwrap (with <w:delText> → <w:t> rename)
+  list      Inventory every revision wrapper (run-level ins/del/move,
+            <w:sectPrChange>, paragraph-mark <w:ins>/<w:del>) with stable
+            tcN ids
+  accept    Accept tracked changes — ins/moveTo unwrap; del/moveFrom are
+            removed; sectPrChange drops its snapshot (live state stays);
+            paragraph-mark del merges with the next paragraph
+  reject    Reject tracked changes — ins/moveTo are removed (and for a
+            paragraph-mark ins the entire paragraph is removed); del/moveFrom
+            unwrap (with <w:delText> → <w:t> rename); sectPrChange restores
+            its snapshot
 
 When tracking is on, this CLI's insert/edit/delete/replace commands
-emit <w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR).
-moveFrom/moveTo are read, listed, and accept/reject independently — we
-don't emit them ourselves (Word does that interactively).
-Accept/reject themselves bypass tracking — they're doc surgery, not edits.
+emit <w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR);
+edit --at sN under tracking emits <w:sectPrChange>. moveFrom/moveTo are
+read, listed, and accept/reject independently — we don't emit them
+ourselves (Word does that interactively). Accept/reject themselves
+bypass tracking — they're doc surgery, not edits.
 
 Run "docx track-changes <verb> --help" for verb-specific help.
 `;

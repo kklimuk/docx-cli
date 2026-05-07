@@ -32,6 +32,7 @@ export type {
 	Paragraph,
 	Run,
 	SectionBreak,
+	SectionType,
 	Table,
 	TableCell,
 	TableRow,

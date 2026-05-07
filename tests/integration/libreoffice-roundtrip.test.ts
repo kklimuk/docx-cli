@@ -17,6 +17,7 @@ const FIXTURES = [
 	"transparent-wrappers.docx",
 	"multi-column.docx",
 	"notes.docx",
+	"sections.docx",
 ] as const;
 
 let workspace: string;

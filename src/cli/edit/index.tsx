@@ -1,15 +1,21 @@
 import {
+	applyColumns,
+	applySectionType,
+	type BlockReference,
 	convertTextToDelText,
 	createRevisionAllocator,
 	Del,
 	type DocView,
 	Ins,
+	isSectionType,
 	isTrackChangesEnabled,
 	type Run,
 	resolveAuthor,
 	resolveDate,
+	type SectionType,
 	saveDocView,
 	type TrackedMeta,
+	wrapSectPrChange,
 } from "@core";
 import type { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
@@ -23,15 +29,15 @@ import {
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx edit — replace a paragraph at a locator
+const HELP = `docx edit — replace a paragraph or modify a section at a locator
 
 Usage:
   docx edit FILE [options]
 
 Locator (required):
-  --at LOCATOR      Block to replace (e.g., p3)
+  --at LOCATOR      Block to edit (paragraph pN or section sN)
 
-Content (one required):
+Paragraph content (one required for paragraph locators):
   --text TEXT       Replace with a single-run paragraph
   --runs JSON       Replace with custom runs (Run[] JSON)
 
@@ -44,6 +50,11 @@ Run options (only with --text):
   --bold            Bold
   --italic          Italic
 
+Section options (for section locators sN):
+  --columns N        Number of columns for the targeted section
+  --type T           continuous | nextPage | evenPage | oddPage | nextColumn
+
+General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
@@ -52,28 +63,34 @@ Run options (only with --text):
 Examples:
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
   docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
+  docx edit doc.docx --at s0 --columns 2 --type continuous
 `;
 
 export async function run(args: string[]): Promise<number> {
+	const opts = await parseAndValidateOptions(args);
+	if (typeof opts === "number") return opts;
+
+	const view = await openOrFail(opts.filePath);
+	if (typeof view === "number") return view;
+
+	const blockRef = await resolveBlockOrFail(view, opts.locator);
+	if (typeof blockRef === "number") return blockRef;
+
+	if (opts.spec.kind === "section") {
+		return commitSectionPropertyEdit(view, blockRef, opts.spec, opts);
+	}
+	return commitParagraphReplacement(view, blockRef, opts.spec, opts);
+}
+
+async function parseAndValidateOptions(
+	args: string[],
+): Promise<ValidatedOptions | number> {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
 		parsed = parseArgs({
 			args,
 			allowPositionals: true,
-			options: {
-				at: { type: "string" },
-				text: { type: "string" },
-				runs: { type: "string" },
-				style: { type: "string" },
-				alignment: { type: "string" },
-				color: { type: "string" },
-				bold: { type: "boolean" },
-				italic: { type: "boolean" },
-				author: { type: "string" },
-				output: { type: "string", short: "o" },
-				"dry-run": { type: "boolean" },
-				help: { type: "boolean", short: "h" },
-			},
+			options: OPTION_SPEC,
 		});
 	} catch (parseError) {
 		const message =
@@ -86,14 +103,106 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const path = parsed.positionals[0];
-	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
+	const filePath = parsed.positionals[0];
+	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const at = parsed.values.at as string | undefined;
-	if (!at) return fail("USAGE", "Missing --at LOCATOR", HELP);
+	const locator = parsed.values.at as string | undefined;
+	if (!locator) return fail("USAGE", "Missing --at LOCATOR", HELP);
 
-	const text = parsed.values.text as string | undefined;
-	const runsJson = parsed.values.runs as string | undefined;
+	const paragraphOptions = await parseParagraphOptions(parsed.values);
+	if (typeof paragraphOptions === "number") return paragraphOptions;
+
+	const isSectionLocator = /^s\d+$/.test(locator);
+	const spec = isSectionLocator
+		? await validateSectionEdit(parsed.values)
+		: await validateParagraphEdit(parsed.values, paragraphOptions);
+	if (typeof spec === "number") return spec;
+
+	return {
+		filePath,
+		locator,
+		spec,
+		authorFlag: parsed.values.author as string | undefined,
+		outputPath: parsed.values.output as string | undefined,
+		dryRun: Boolean(parsed.values["dry-run"]),
+	};
+}
+
+const OPTION_SPEC = {
+	at: { type: "string" },
+	text: { type: "string" },
+	runs: { type: "string" },
+	columns: { type: "string" },
+	type: { type: "string" },
+	style: { type: "string" },
+	alignment: { type: "string" },
+	color: { type: "string" },
+	bold: { type: "boolean" },
+	italic: { type: "boolean" },
+	author: { type: "string" },
+	output: { type: "string", short: "o" },
+	"dry-run": { type: "boolean" },
+	help: { type: "boolean", short: "h" },
+} as const;
+
+type ValidatedOptions = {
+	filePath: string;
+	locator: string;
+	spec: EditSpec;
+	authorFlag?: string;
+	outputPath?: string;
+	dryRun: boolean;
+};
+
+type EditSpec =
+	| { kind: "section"; columns?: number; sectionType?: SectionType }
+	| {
+			kind: "text";
+			text: string;
+			format: TextFormatting;
+			paragraphOptions: ParagraphOptions;
+	  }
+	| { kind: "runs"; runs: Run[]; paragraphOptions: ParagraphOptions };
+
+type TextFormatting = {
+	color?: string;
+	bold?: boolean;
+	italic?: boolean;
+};
+
+type RawValues = ReturnType<typeof parseArgs>["values"];
+
+async function validateSectionEdit(
+	values: RawValues,
+): Promise<EditSpec | number> {
+	if (values.text !== undefined || values.runs !== undefined) {
+		return fail(
+			"USAGE",
+			"Section locators (sN) take --columns and --type, not --text/--runs",
+			HELP,
+		);
+	}
+	if (values.columns === undefined && values.type === undefined) {
+		return fail("USAGE", "Section edit requires --columns and/or --type", HELP);
+	}
+	const sectionFlags = await parseSectionFlags(values);
+	if (typeof sectionFlags === "number") return sectionFlags;
+	return { kind: "section", ...sectionFlags };
+}
+
+async function validateParagraphEdit(
+	values: RawValues,
+	paragraphOptions: ParagraphOptions,
+): Promise<EditSpec | number> {
+	if (values.columns !== undefined || values.type !== undefined) {
+		return fail(
+			"USAGE",
+			"--columns and --type require a section locator (sN)",
+			HELP,
+		);
+	}
+	const text = values.text as string | undefined;
+	const runsJson = values.runs as string | undefined;
 	if (!text && !runsJson) {
 		return fail("USAGE", "Missing content: pass --text or --runs", HELP);
 	}
@@ -101,10 +210,80 @@ export async function run(args: string[]): Promise<number> {
 		return fail("USAGE", "Pass either --text or --runs, not both", HELP);
 	}
 
-	const paragraphOptions: ParagraphOptions = {};
-	const styleValue = parsed.values.style as string | undefined;
-	if (styleValue) paragraphOptions.style = styleValue;
-	const alignmentValue = parsed.values.alignment as string | undefined;
+	if (text !== undefined) {
+		return {
+			kind: "text",
+			text,
+			format: {
+				color: values.color as string | undefined,
+				bold: values.bold as boolean | undefined,
+				italic: values.italic as boolean | undefined,
+			},
+			paragraphOptions,
+		};
+	}
+
+	const runs = await parseRunsArg(runsJson as string);
+	if (typeof runs === "number") return runs;
+	return { kind: "runs", runs, paragraphOptions };
+}
+
+async function parseSectionFlags(
+	values: RawValues,
+): Promise<{ columns?: number; sectionType?: SectionType } | number> {
+	const out: { columns?: number; sectionType?: SectionType } = {};
+
+	const columnsRaw = values.columns as string | undefined;
+	if (columnsRaw !== undefined) {
+		const columns = Number.parseInt(columnsRaw, 10);
+		if (!Number.isFinite(columns) || columns <= 0) {
+			return fail(
+				"USAGE",
+				`--columns must be a positive integer, got "${columnsRaw}"`,
+			);
+		}
+		out.columns = columns;
+	}
+
+	const sectionTypeRaw = values.type as string | undefined;
+	if (sectionTypeRaw !== undefined) {
+		if (!isSectionType(sectionTypeRaw)) {
+			return fail(
+				"USAGE",
+				`Invalid --type: ${sectionTypeRaw}`,
+				"Valid values: continuous, nextPage, evenPage, oddPage, nextColumn",
+			);
+		}
+		out.sectionType = sectionTypeRaw;
+	}
+
+	return out;
+}
+
+async function parseRunsArg(json: string): Promise<Run[] | number> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch (jsonError) {
+		const message =
+			jsonError instanceof Error ? jsonError.message : String(jsonError);
+		return fail("USAGE", `Invalid --runs JSON: ${message}`);
+	}
+	if (!Array.isArray(parsed)) {
+		return fail("USAGE", "--runs must be a JSON array of Run objects");
+	}
+	return parsed as Run[];
+}
+
+async function parseParagraphOptions(
+	values: RawValues,
+): Promise<ParagraphOptions | number> {
+	const out: ParagraphOptions = {};
+
+	const styleValue = values.style as string | undefined;
+	if (styleValue) out.style = styleValue;
+
+	const alignmentValue = values.alignment as string | undefined;
 	if (alignmentValue) {
 		if (
 			alignmentValue !== "left" &&
@@ -118,42 +297,49 @@ export async function run(args: string[]): Promise<number> {
 				"Valid values: left, center, right, justify",
 			);
 		}
-		paragraphOptions.alignment = alignmentValue;
+		out.alignment = alignmentValue;
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	return out;
+}
 
-	const blockRef = await resolveBlockOrFail(view, at);
-	if (typeof blockRef === "number") return blockRef;
-
-	let paragraphNode: XmlNode;
-	if (text !== undefined) {
-		const color = parsed.values.color as string | undefined;
-		paragraphNode = (
-			<Paragraph
-				text={text}
-				{...paragraphOptions}
-				{...(color ? { color } : {})}
-				{...(parsed.values.bold ? { bold: true as const } : {})}
-				{...(parsed.values.italic ? { italic: true as const } : {})}
-			/>
+async function commitSectionPropertyEdit(
+	view: DocView,
+	blockRef: BlockReference,
+	spec: Extract<EditSpec, { kind: "section" }>,
+	opts: ValidatedOptions,
+): Promise<number> {
+	if (blockRef.node.tag !== "w:sectPr") {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			`Locator ${opts.locator} did not resolve to a section break`,
 		);
-	} else {
-		let runsValue: Run[];
-		try {
-			runsValue = JSON.parse(runsJson as string) as Run[];
-		} catch (jsonError) {
-			const message =
-				jsonError instanceof Error ? jsonError.message : String(jsonError);
-			return fail("USAGE", `Invalid --runs JSON: ${message}`);
-		}
-		if (!Array.isArray(runsValue)) {
-			return fail("USAGE", "--runs must be a JSON array of Run objects");
-		}
-		paragraphNode = <Paragraph runs={runsValue} {...paragraphOptions} />;
 	}
 
+	if (opts.dryRun) return respondDryRun(opts);
+
+	if (isTrackChangesEnabled(view)) {
+		const allocator = createRevisionAllocator(view);
+		const meta: TrackedMeta = {
+			author: resolveAuthor(opts.authorFlag),
+			date: resolveDate(),
+			revisionId: allocator.next(),
+		};
+		wrapSectPrChange(blockRef.node, meta);
+	}
+	applyColumns(blockRef.node, spec.columns);
+	applySectionType(blockRef.node, spec.sectionType);
+
+	await saveDocView(view, opts.outputPath);
+	return respondAck(opts);
+}
+
+async function commitParagraphReplacement(
+	view: DocView,
+	blockRef: BlockReference,
+	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }>,
+	opts: ValidatedOptions,
+): Promise<number> {
 	const targetIndex = blockRef.parent.indexOf(blockRef.node);
 	if (targetIndex === -1) {
 		return fail(
@@ -162,37 +348,55 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const outputPath = parsed.values.output as string | undefined;
+	if (opts.dryRun) return respondDryRun(opts);
 
-	if (parsed.values["dry-run"]) {
-		await respond({
-			ok: true,
-			operation: "edit",
-			dryRun: true,
-			path,
-			locator: at,
-			...(outputPath ? { output: outputPath } : {}),
-		});
-		return EXIT.OK;
-	}
+	const newParagraph = buildReplacementParagraph(spec);
 
 	if (isTrackChangesEnabled(view)) {
-		applyTrackedEdit(
-			view,
-			blockRef.node,
-			paragraphNode,
-			parsed.values.author as string | undefined,
-		);
+		applyTrackedEdit(view, blockRef.node, newParagraph, opts.authorFlag);
 	} else {
-		blockRef.parent.splice(targetIndex, 1, paragraphNode);
+		blockRef.parent.splice(targetIndex, 1, newParagraph);
 	}
-	await saveDocView(view, outputPath);
 
+	await saveDocView(view, opts.outputPath);
+	return respondAck(opts);
+}
+
+function buildReplacementParagraph(
+	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }>,
+): XmlNode {
+	if (spec.kind === "text") {
+		return (
+			<Paragraph
+				text={spec.text}
+				{...spec.paragraphOptions}
+				{...(spec.format.color ? { color: spec.format.color } : {})}
+				{...(spec.format.bold ? { bold: true as const } : {})}
+				{...(spec.format.italic ? { italic: true as const } : {})}
+			/>
+		);
+	}
+	return <Paragraph runs={spec.runs} {...spec.paragraphOptions} />;
+}
+
+async function respondDryRun(opts: ValidatedOptions): Promise<number> {
 	await respond({
 		ok: true,
 		operation: "edit",
-		path: outputPath ?? path,
-		locator: at,
+		dryRun: true,
+		path: opts.filePath,
+		locator: opts.locator,
+		...(opts.outputPath ? { output: opts.outputPath } : {}),
+	});
+	return EXIT.OK;
+}
+
+async function respondAck(opts: ValidatedOptions): Promise<number> {
+	await respond({
+		ok: true,
+		operation: "edit",
+		path: opts.outputPath ?? opts.filePath,
+		locator: opts.locator,
 	});
 	return EXIT.OK;
 }

@@ -43,7 +43,16 @@ export type TableCell = {
 export type SectionBreak = {
 	id: string;
 	type: "sectionBreak";
+	columns?: number;
+	sectionType?: SectionType;
 };
+
+export type SectionType =
+	| "continuous"
+	| "nextPage"
+	| "evenPage"
+	| "oddPage"
+	| "nextColumn";
 
 export type Run =
 	| TextRun
@@ -141,8 +150,17 @@ export type TrackedChange = {
  *    of a tracked move. moveFrom behaves like a delete (text leaves this
  *    location, stored as <w:delText> internally); moveTo behaves like an
  *    insert (text arrives at this location).
+ *  - `sectPrChange`: <w:sectPrChange> — section-property revision marker
+ *    embedded inside a <w:sectPr>. Carries a snapshot of the prior section
+ *    properties (e.g. columns / type) so accept/reject can drop or restore
+ *    them. Has no run text.
  */
-export type TrackedChangeKind = "ins" | "del" | "moveFrom" | "moveTo";
+export type TrackedChangeKind =
+	| "ins"
+	| "del"
+	| "moveFrom"
+	| "moveTo"
+	| "sectPrChange";
 
 export type Comment = {
 	id: string;

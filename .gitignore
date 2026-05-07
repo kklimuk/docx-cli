@@ -56,3 +56,6 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Local sample / scratch docs
+scripts/data/

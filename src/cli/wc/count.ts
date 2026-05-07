@@ -25,6 +25,53 @@ export function countWordsInDoc(doc: Doc, options: CountOptions = {}): number {
 	return countWordsInBlocks(doc.blocks, options);
 }
 
+/** Count words in the content range belonging to one section. The section's
+ * range starts after the prior section break (or the start of the body) and
+ * ends at the SectionBreak with id `targetId` — which means the paragraph
+ * holding the inline sectPr is included for inline sections, and everything
+ * since the last boundary is included for the trailing section. Returns null
+ * if no SectionBreak with that id exists. */
+export function countWordsInSection(
+	blocks: Block[],
+	targetId: string,
+	options: CountOptions = {},
+): number | null {
+	let bucket: Block[] = [];
+	for (const block of blocks) {
+		if (block.type === "sectionBreak") {
+			if (block.id === targetId) {
+				return countWordsInBlocks(bucket, options);
+			}
+			bucket = [];
+			continue;
+		}
+		bucket.push(block);
+	}
+	return null;
+}
+
+/** Count section breaks (both inline and trailing) in a block list. Sections
+ * are doc-level structural markers, so they only appear at the body level —
+ * but recursing into tables defensively keeps this honest if that assumption
+ * ever changes. */
+export function countSectionsInBlocks(blocks: Block[]): number {
+	let total = 0;
+	for (const block of blocks) {
+		if (block.type === "sectionBreak") {
+			total += 1;
+			continue;
+		}
+		if (block.type === "table") {
+			for (const row of block.rows) {
+				for (const cell of row.cells) {
+					total += countSectionsInBlocks(cell.blocks);
+				}
+			}
+		}
+	}
+	return total;
+}
+
 export function countWordsInBlocks(
 	blocks: Block[],
 	options: CountOptions = {},

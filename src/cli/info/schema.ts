@@ -107,7 +107,9 @@ const JSON_SCHEMA = {
 					required: ["id", "kind", "author", "date", "revisionId"],
 					properties: {
 						id: { type: "string" },
-						kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
+						kind: {
+							enum: ["ins", "del", "moveFrom", "moveTo"],
+						},
 						author: { type: "string" },
 						date: { type: "string" },
 						revisionId: { type: "string" },
@@ -220,6 +222,10 @@ const JSON_SCHEMA = {
 			properties: {
 				id: { type: "string" },
 				type: { const: "sectionBreak" },
+				columns: { type: "number" },
+				sectionType: {
+					enum: ["continuous", "nextPage", "evenPage", "oddPage", "nextColumn"],
+				},
 			},
 		},
 		Comment: {

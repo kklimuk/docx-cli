@@ -75,8 +75,12 @@ docx create FILE [--title T] [--author A] [--text "..."]
 docx read FILE [--markdown [--from pN] [--to pN] [--accepted | --baseline] [--comments]]
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
+docx insert FILE --after p3 --page-break | --column-break
+docx insert FILE --after p3 --section [--columns N] [--type continuous|nextPage|evenPage|oddPage|nextColumn]
 docx edit   FILE --at p3 --text "..." | --runs '[...]'
+docx edit   FILE --at s0 [--columns N] [--type T]   # mutate section properties
 docx delete FILE --at p3
+docx delete FILE --at s0                              # strip an inline sectPr
 
 docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N]
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--dry-run]
@@ -120,7 +124,7 @@ Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--outpu
 - `--accepted` — post-accept view: `<w:del>` and `<w:moveFrom>` runs are dropped; `<w:ins>` and `<w:moveTo>` runs render as plain text.
 - `--baseline` — pre-change view: the inverse.
 
-`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics.
+`docx wc` accepts the same `--accepted` / `--baseline` flags with parallel semantics. It also accepts `sN` as a locator — the count covers every paragraph and table in that section's content range. Whole-document `wc` returns a `sections` count alongside `words`.
 
 `--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output. Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally as `[^fnN]` / `[^enN]`. Run `docx info schema` for the full mapping table.
 
@@ -131,6 +135,8 @@ pN                   paragraph N (e.g., p3)
 pN:S-E               characters S..E within paragraph N
 pN:S-pM:E            cross-paragraph range
 tN                   table N; tN:rRcC for cell at row R, col C
+sN                   section break N — column count, type (continuous /
+                     nextPage / nextColumn / evenPage / oddPage)
 cN, imgN, linkN, tcN comment / image / hyperlink / tracked-change ids
 ```
 

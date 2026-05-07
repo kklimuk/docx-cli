@@ -30,6 +30,7 @@ export type {
 	Paragraph,
 	Run,
 	SectionBreak,
+	SectionType,
 	Table,
 	TableCell,
 	TableRow,
@@ -58,6 +59,17 @@ export {
 	HYPERLINK_RELATIONSHIP_TYPE,
 	mintRelationshipId,
 } from "./relationships";
+export {
+	applyColumns,
+	applySectionType,
+	isSectionType,
+	isTrailingSectPr,
+	readSectionProperties,
+	removeInlineSectPr,
+	type SectionProperties,
+	SentinelSectionParagraph,
+	wrapSectPrChange,
+} from "./sections";
 export {
 	convertTextToDelText,
 	createRevisionAllocator,

@@ -33,12 +33,21 @@ Environment:
 
 Tracked changes:
   Toggle:    docx track-changes FILE on|off
-  Inventory: docx track-changes list FILE  (JSON: id, kind, author, date, blockId, text)
+  Inventory: docx track-changes list FILE  (JSON array of { id, kind, author,
+             date, revisionId, blockId, text }; sectPrChange entries also
+             include { prior, current } with the section properties on each
+             side of the edit)
   Accept:    docx track-changes accept FILE (--at tcN | --all)
   Reject:    docx track-changes reject FILE (--at tcN | --all)
 
   When <w:trackChanges/> is set, insert/edit/delete/replace automatically emit
   <w:ins>/<w:del> markers attributed via --author (or $DOCX_AUTHOR, or "docx-cli").
+  edit --at sN under tracking emits <w:sectPrChange> snapshots on the section.
+
+  Accept/reject handle: run-level ins/del/moveFrom/moveTo, sectPrChange
+  (snapshot drop or restore), and paragraph-mark ins/del (accept-del merges
+  with the next paragraph; reject-ins removes the entire owning paragraph).
+  Out of scope: rPrChange / pPrChange formatting revisions.
 
   "docx read --markdown" surfaces them as CriticMarkup:
     {++inserted++}[^tcN]   {--deleted--}[^tcN]

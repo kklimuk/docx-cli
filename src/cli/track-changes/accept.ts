@@ -11,9 +11,18 @@ wrapper — the content becomes plain runs at this location. Accepting a
 deletion (<w:del>) or move source (<w:moveFrom>) removes the element and its
 <w:delText> entirely (the text disappears for real).
 
-Out of scope: tracked paragraph marks (<w:rPr><w:ins/></w:rPr> inside <w:pPr>)
-and formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't modeled in
-the AST today and --all silently skips them.
+Section-property revisions (<w:sectPrChange>): accept drops the prior-state
+snapshot, leaving the live section properties in place.
+
+Paragraph-mark trackings (<w:ins>/<w:del> inside <w:pPr><w:rPr>): accepting
+a paragraph-mark insertion just removes the marker (the inserted paragraph
+stays as a regular paragraph). Accepting a paragraph-mark deletion merges
+the owning paragraph with the next paragraph — the next paragraph's runs
+are appended to this one and the next paragraph is removed (per ECMA-376
+§17.13.5.4).
+
+Out of scope: formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't
+modeled in the AST today and --all silently skips them.
 
 Options:
   --at tcN          Accept a single tracked change by id

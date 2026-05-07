@@ -14,10 +14,12 @@ import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import {
 	type CountView,
+	countSectionsInBlocks,
 	countWords,
 	countWordsInBlocks,
 	countWordsInParagraphSpan,
 	countWordsInRange,
+	countWordsInSection,
 } from "./count";
 
 const HELP = `docx wc — count words in a document or a locator-addressed slice
@@ -33,6 +35,9 @@ Locators (optional; default: whole document):
   tN:rRcC         whole cell
   tN:rRcC:pK      paragraph K inside that cell
   tN:rRcC:pK:S-E  span within a cell paragraph
+  sN              section N — every paragraph and table from the prior section
+                  boundary up to and including the paragraph that holds sN's
+                  inline sectPr (or to end of body for the trailing section)
 
 Options:
   --accepted        Count the accepted view: skip subtractive wrappers
@@ -56,6 +61,7 @@ Examples:
   docx wc doc.docx p3:0-120
   docx wc doc.docx p5:10-p9:42
   docx wc doc.docx t0:r1c0
+  docx wc doc.docx s2
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -112,6 +118,7 @@ export async function run(args: string[]): Promise<number> {
 			scope: "document",
 			view,
 			words: countWordsInBlocks(docView.doc.blocks, { view }),
+			sections: countSectionsInBlocks(docView.doc.blocks),
 		});
 		return EXIT.OK;
 	}
@@ -145,6 +152,24 @@ export async function run(args: string[]): Promise<number> {
 		const block = findBlockById(blocks, locator.blockId);
 		if (!block) {
 			return fail("BLOCK_NOT_FOUND", `Block not found: ${locator.blockId}`);
+		}
+		if (block.type === "sectionBreak") {
+			const sectionWords = countWordsInSection(blocks, locator.blockId, {
+				view,
+			});
+			if (sectionWords === null) {
+				return fail("BLOCK_NOT_FOUND", `Section not found: ${locator.blockId}`);
+			}
+			await respond({
+				ok: true,
+				operation: "wc",
+				path,
+				locator: locatorInput,
+				scope: "section",
+				view,
+				words: sectionWords,
+			});
+			return EXIT.OK;
 		}
 		const words =
 			block.type === "paragraph"

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LocatorParseError, parseLocator } from "../../../src/core/locators";
+import { LocatorParseError, parseLocator } from "@core/locators";
 
 describe("parseLocator", () => {
 	test("parses block ids", () => {

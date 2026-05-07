@@ -1,4 +1,5 @@
 import { XmlNode } from "../parser";
+import { readSectionProperties } from "../sections";
 import type { DocView } from "./doc-view";
 import { decodeSym } from "./sym";
 import type {
@@ -13,6 +14,7 @@ import type {
 	ImageRun,
 	Paragraph,
 	Run,
+	SectionBreak,
 	Table,
 	TableCell,
 	TableRow,
@@ -91,6 +93,14 @@ function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
 			const id = `p${paragraphIndex++}`;
 			blocks.push(readParagraph(view, child, id, state));
 			view.blockReferences.set(id, { node: child, parent: body.children });
+			const inlineSectPr = findInlineSectPr(child);
+			if (inlineSectPr) {
+				const sectionId = `s${sectionIndex++}`;
+				blocks.push(buildSectionBreak(sectionId, inlineSectPr.node));
+				view.blockReferences.set(sectionId, inlineSectPr);
+				registerSectPrChange(view, inlineSectPr.node, state, sectionId);
+			}
+			registerParagraphMarkChanges(view, child, state, id);
 			continue;
 		}
 		if (child.tag === "w:tbl") {
@@ -101,11 +111,77 @@ function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
 		}
 		if (child.tag === "w:sectPr") {
 			const id = `s${sectionIndex++}`;
-			blocks.push({ id, type: "sectionBreak" });
+			blocks.push(buildSectionBreak(id, child));
 			view.blockReferences.set(id, { node: child, parent: body.children });
+			registerSectPrChange(view, child, state, id);
 		}
 	}
 	return blocks;
+}
+
+/** Register paragraph-mark `<w:ins>` / `<w:del>` markers (lives inside
+ * `<w:pPr><w:rPr>`) as tracked-change references, so `track-changes list`
+ * surfaces them and `track-changes accept --at tcN` can target them. The
+ * blockId is the owning paragraph's pN. Called AFTER `registerSectPrChange`
+ * so the tcN ordering matches `cli/track-changes/apply.ts collectTrackedChanges`
+ * (run-level → sectPrChange → paragraph-mark, per paragraph). */
+function registerParagraphMarkChanges(
+	view: DocView,
+	paragraph: XmlNode,
+	state: WalkState,
+	blockId: string,
+): void {
+	const pPr = paragraph.findChild("w:pPr");
+	if (!pPr) return;
+	const rPr = pPr.findChild("w:rPr");
+	if (!rPr) return;
+	for (const child of rPr.children) {
+		if (child.tag !== "w:ins" && child.tag !== "w:del") continue;
+		const id = `tc${state.trackedChangeIndex++}`;
+		view.trackedChangeReferences.set(id, {
+			node: child,
+			parent: rPr.children,
+			blockId,
+		});
+	}
+}
+
+/** Register a <w:sectPrChange> element (if present inside the sectPr) as
+ * a tracked-change reference, so `track-changes list/accept/reject` can
+ * address it as tcN. The blockId is the corresponding section's sN (both
+ * inline and trailing sectPrs). */
+function registerSectPrChange(
+	view: DocView,
+	sectPr: XmlNode,
+	state: WalkState,
+	blockId: string,
+): void {
+	const change = sectPr.findChild("w:sectPrChange");
+	if (!change) return;
+	const id = `tc${state.trackedChangeIndex++}`;
+	view.trackedChangeReferences.set(id, {
+		node: change,
+		parent: sectPr.children,
+		blockId,
+	});
+}
+
+function findInlineSectPr(
+	paragraph: XmlNode,
+): { node: XmlNode; parent: XmlNode[] } | undefined {
+	const pPr = paragraph.findChild("w:pPr");
+	if (!pPr) return undefined;
+	const sectPr = pPr.findChild("w:sectPr");
+	if (!sectPr) return undefined;
+	return { node: sectPr, parent: pPr.children };
+}
+
+function buildSectionBreak(id: string, sectPr: XmlNode): SectionBreak {
+	const props = readSectionProperties(sectPr.children);
+	const block: SectionBreak = { id, type: "sectionBreak" };
+	if (props.columns !== undefined) block.columns = props.columns;
+	if (props.sectionType !== undefined) block.sectionType = props.sectionType;
+	return block;
 }
 
 function readParagraph(

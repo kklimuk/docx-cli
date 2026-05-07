@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { DocView } from "../../../src/core/ast/doc-view";
-import { buildDoc } from "../../../src/core/ast/read";
+import type { DocView } from "@core/ast/doc-view";
+import { buildDoc } from "@core/ast/read";
 import {
 	paragraphText,
 	paragraphTextAccepted,
 	paragraphTextBaseline,
-} from "../../../src/core/ast/text";
-import type { Doc, Paragraph } from "../../../src/core/ast/types";
-import { XmlNode } from "../../../src/core/parser";
+} from "@core/ast/text";
+import type { Doc, Paragraph } from "@core/ast/types";
+import { XmlNode } from "@core/parser";
 
 function buildSyntheticView(bodyXml: string): Doc {
 	const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
