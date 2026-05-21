@@ -2,6 +2,7 @@ import { writeAtomic } from "@core/package";
 import JSZip from "jszip";
 import { parseArgs } from "util";
 import { EXIT, fail, respondAck, setVerboseAck, writeStdout } from "../respond";
+import { CANONICAL_PARTS } from "./canonical-parts";
 import {
 	CONTENT_TYPES,
 	corePropertiesXml,
@@ -79,6 +80,9 @@ export async function run(args: string[]): Promise<number> {
 	zip.file("word/document.xml", documentXml(text));
 	zip.file("word/_rels/document.xml.rels", DOCUMENT_RELS);
 	zip.file("docProps/core.xml", corePropertiesXml({ title, author, now }));
+	for (const part of Object.values(CANONICAL_PARTS)) {
+		zip.file(part.zipPath, part.body);
+	}
 
 	const buf = await zip.generateAsync({
 		type: "uint8array",

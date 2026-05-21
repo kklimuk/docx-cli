@@ -23,16 +23,23 @@ const FIXTURES = [
 	"comments-batch.docx",
 	"word-formatted.docx",
 	"multi-tracked.docx",
+	"styles-injection.docx",
 ] as const;
 
 let workspace: string;
+let sofficeProfile: string;
 
 beforeAll(() => {
 	workspace = mkdtempSync(join(tmpdir(), "docx-cli-lo-"));
+	// Isolated soffice user-profile dir, shared across this file's tests (which
+	// run serially) — prevents contention with the system-default profile or
+	// with concurrent `bun test` invocations sharing one machine.
+	sofficeProfile = mkdtempSync(join(tmpdir(), "docx-cli-soffice-"));
 });
 
 afterAll(() => {
 	if (workspace) rmSync(workspace, { recursive: true, force: true });
+	if (sofficeProfile) rmSync(sofficeProfile, { recursive: true, force: true });
 });
 
 describe("LibreOffice round-trip", () => {
@@ -68,21 +75,7 @@ describe("LibreOffice round-trip", () => {
 
 			const outDir = join(workspace, `lo-${fixture}`);
 			mkdirSync(outDir, { recursive: true });
-			const proc = Bun.spawn(
-				[
-					SOFFICE,
-					"--headless",
-					"--convert-to",
-					"docx",
-					docPath,
-					"--outdir",
-					outDir,
-				],
-				{ stdout: "pipe", stderr: "pipe" },
-			);
-			const stdout = await new Response(proc.stdout).text();
-			const stderr = await new Response(proc.stderr).text();
-			const exitCode = await proc.exited;
+			const { exitCode, stdout, stderr } = await runSoffice(docPath, outDir);
 
 			expect(exitCode).toBe(0);
 			// LibreOffice prints some macOS-only "Task policy" noise on stderr; ignore it.
@@ -137,19 +130,7 @@ describe("LibreOffice round-trip", () => {
 
 		const outDir = join(workspace, "lo-tracked");
 		mkdirSync(outDir, { recursive: true });
-		const proc = Bun.spawn(
-			[
-				SOFFICE,
-				"--headless",
-				"--convert-to",
-				"docx",
-				docPath,
-				"--outdir",
-				outDir,
-			],
-			{ stdout: "pipe", stderr: "pipe" },
-		);
-		const exitCode = await proc.exited;
+		const { exitCode } = await runSoffice(docPath, outDir);
 		expect(exitCode).toBe(0);
 
 		const converted = join(outDir, "tracked-roundtrip.docx");
@@ -186,4 +167,34 @@ async function detectSoffice(): Promise<string | null> {
 		if (exitCode === 0) return candidate;
 	}
 	return null;
+}
+
+/** Spawn `soffice --headless --convert-to docx` against the per-file isolated
+ * user-profile directory. Without -env:UserInstallation, every soffice process
+ * competes for a lock on the default profile (~/Library/Application Support/
+ * LibreOffice/4 on macOS). A stale or concurrent soffice causes the new one
+ * to exit non-zero — a real flake source. Tests within this file run serially,
+ * so they safely share the same isolated profile. */
+async function runSoffice(
+	docPath: string,
+	outDir: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+	if (!SOFFICE) throw new Error("soffice not on PATH");
+	const proc = Bun.spawn(
+		[
+			SOFFICE,
+			`-env:UserInstallation=file://${sofficeProfile}`,
+			"--headless",
+			"--convert-to",
+			"docx",
+			docPath,
+			"--outdir",
+			outDir,
+		],
+		{ stdout: "pipe", stderr: "pipe" },
+	);
+	const stdout = await new Response(proc.stdout).text();
+	const stderr = await new Response(proc.stderr).text();
+	const exitCode = await proc.exited;
+	return { exitCode, stdout, stderr };
 }

@@ -101,6 +101,20 @@ const W_TAGS = [
 	"settings",
 	"trackChanges",
 	"hyperlink",
+	"styles",
+	"style",
+	"name",
+	"basedOn",
+	"next",
+	"qFormat",
+	"keepNext",
+	"keepLines",
+	"spacing",
+	"outlineLvl",
+	"ind",
+	"vertAlign",
+	"pBdr",
+	"bottom",
 ] as const;
 
 const R_TAGS = ["embed", "link", "id"] as const;

@@ -81,7 +81,7 @@ const p3Runs = JSON.stringify([
 ]);
 await cli("insert", out, "--after", "p2", "--runs", p3Runs);
 
-const verifyJson = await cli("read", out);
+const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {
 	blocks: Array<{
 		id: string;

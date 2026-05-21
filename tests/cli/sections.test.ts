@@ -380,7 +380,13 @@ describe("sections under track-changes", () => {
 		const changeIndex = childTags.indexOf("sectPrChange");
 		expect(changeIndex).toBeGreaterThanOrEqual(0);
 		const liveChildren = childTags.slice(0, changeIndex + 1);
-		expect(liveChildren).toEqual(["type", "cols", "sectPrChange"]);
+		// The invariant per ECMA-376 §17.6.18: sectPrChange must be the LAST
+		// child of the live sectPr. Don't assert on the full list of siblings —
+		// the create template legitimately seeds pgSz/pgMar/docGrid which would
+		// make a strict equality brittle.
+		expect(liveChildren[liveChildren.length - 1]).toBe("sectPrChange");
+		expect(liveChildren).toContain("type");
+		expect(liveChildren).toContain("cols");
 	});
 });
 

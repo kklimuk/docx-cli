@@ -25,6 +25,21 @@ export type ParagraphProps = ParagraphOptions &
 		| { runs: Run[]; text?: never }
 	);
 
+/** A paragraph rendered as a horizontal rule — empty body with a bottom border.
+ * Word renders this as a thin line spanning the page width. Intended for the
+ * S8 markdown walker's `---` rules; not yet wired into any CLI verb. */
+export function HorizontalRule(): XmlNode {
+	return (
+		<w.p>
+			<w.pPr>
+				<w.pBdr>
+					<w.bottom w-val="single" w-sz="6" w-space="1" w-color="auto" />
+				</w.pBdr>
+			</w.pPr>
+		</w.p>
+	);
+}
+
 export function Paragraph(props: ParagraphProps): XmlNode {
 	const { style, alignment } = props;
 	const runs: Run[] =

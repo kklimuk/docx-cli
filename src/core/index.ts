@@ -53,11 +53,11 @@ export {
 	resolveTrackedChange,
 } from "./locators";
 export { PkgError } from "./package";
+export { nextRelationshipId } from "./package/parts";
 export { XmlNode } from "./parser";
 export {
 	addHyperlinkRelationship,
 	HYPERLINK_RELATIONSHIP_TYPE,
-	mintRelationshipId,
 } from "./relationships";
 export {
 	applyColumns,

@@ -266,7 +266,7 @@ await cliEnv(
 await cli("track-changes", out, "off");
 
 // Verify and report
-const verifyJson = await cli("read", out);
+const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {
 	blocks: Array<{
 		id: string;

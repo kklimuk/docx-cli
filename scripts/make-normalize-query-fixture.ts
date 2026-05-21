@@ -48,7 +48,7 @@ await cli(
 
 await cli("insert", out, "--after", "p0", "--text", 'plan: "hello" today.');
 
-const verifyJson = await cli("read", out);
+const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {
 	blocks: Array<{ id: string; type: string; runs?: Array<{ text?: string }> }>;
 };

@@ -28,10 +28,15 @@ export function registerPart(
 ): void {
 	const relationships = XmlNode.findRoot(relationshipsTree, "Relationships");
 	if (relationships) {
+		// Match by Type AND Target — a relationship type can be present multiple
+		// times for distinct parts (e.g., two `header` rels pointing at header1.xml
+		// and header2.xml). Matching by Type alone would false-positive-skip the
+		// second registration.
 		const alreadyLinked = relationships.children.some(
 			(child) =>
 				child.tag === "Relationship" &&
-				child.getAttribute("Type") === part.relationshipType,
+				child.getAttribute("Type") === part.relationshipType &&
+				child.getAttribute("Target") === part.target,
 		);
 		if (!alreadyLinked) {
 			relationships.children.push(

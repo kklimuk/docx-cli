@@ -52,7 +52,7 @@ await cli("insert", out, "--after", "p0", "--text", "Old plan: ship Tuesday.");
 
 await cli("track-changes", out, "on");
 
-const verifyJson = await cli("read", out);
+const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {
 	blocks: Array<{ id: string; type: string; runs?: Array<{ text?: string }> }>;
 };
