@@ -43,7 +43,7 @@ Options:
   --accepted        Default. Count the accepted view: skip subtractive
                     wrappers (<w:del>, <w:moveFrom>); keep additive
                     wrappers (<w:ins>, <w:moveTo>) as plain text. Mirrors
-                    "docx read --markdown" / "docx find" defaults.
+                    "docx read" / "docx find" defaults.
   --baseline        Count the baseline view: skip additive wrappers
                     (<w:ins>, <w:moveTo>); keep subtractive wrappers
                     (<w:del>, <w:moveFrom>) as plain text — i.e., the doc as

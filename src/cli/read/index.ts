@@ -3,47 +3,42 @@ import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import { MarkdownLocatorError, renderMarkdown } from "./markdown";
 
-const HELP = `docx read — print AST as JSON, or render document body as Markdown
+const HELP = `docx read — render document body as Markdown, or print AST as JSON
 
 Usage:
   docx read FILE [options]
 
 Options:
-  --markdown        Render the body as GitHub-flavored Markdown
-                    (instead of JSON). Locators are emitted as
-                    <!-- pN --> HTML comments after each paragraph and
-                    inside cell content (invisible in rendered view,
-                    but parseable from raw markdown).
-  --from LOC        Start markdown rendering at top-level block LOC (inclusive)
-  --to LOC          End markdown rendering at top-level block LOC (inclusive)
+  --ast             Print the typed AST as JSON instead of rendering Markdown.
+                    Disables all the Markdown-only flags below.
+  --from LOC        Start rendering at top-level block LOC (inclusive)
+  --to LOC          End rendering at top-level block LOC (inclusive)
                     Accepts pN, tN, tN:rRcC[:pK[:S-E]], pN:S-E, pN:S-pM:E.
                     Cell/span/range locators collapse to their enclosing
                     top-level block (the table or paragraph).
-  --accepted        Default with --markdown: render the post-accept view —
-                    drop subtractive wrappers (<w:del>, <w:moveFrom>), inline
+  --accepted        Default view: render the post-accept document — drop
+                    subtractive wrappers (<w:del>, <w:moveFrom>), inline
                     additive wrappers (<w:ins>, <w:moveTo>) as plain text,
                     no markers/refs. Kept as an explicit alias for clarity.
-  --baseline        With --markdown, render the pre-change view: drop
-                    additive wrappers (<w:ins>, <w:moveTo>), inline
-                    subtractive wrappers (<w:del>, <w:moveFrom>) as plain
-                    text, no markers/refs.
-  --current         With --markdown, render the raw concatenation: additive
-                    wrappers as {++text++}[^tcN] and subtractive as
-                    {--text--}[^tcN] (CriticMarkup); the [^tcN] footnote
-                    spells out the kind (insertion / deletion / moveTo /
-                    moveFrom). Mutually exclusive with --accepted/--baseline.
-  --comments        With --markdown, append [^cN] after each commented span
-                    and emit a footnote definition for each comment at the
-                    end of the output (author, date, body).
+  --baseline        Render the pre-change view: drop additive wrappers
+                    (<w:ins>, <w:moveTo>), inline subtractive wrappers
+                    (<w:del>, <w:moveFrom>) as plain text, no markers/refs.
+  --current         Render the raw concatenation: additive wrappers as
+                    {++text++}[^tcN] and subtractive as {--text--}[^tcN]
+                    (CriticMarkup); the [^tcN] footnote spells out the kind
+                    (insertion / deletion / moveTo / moveFrom). Mutually
+                    exclusive with --accepted/--baseline.
+  --comments        Append [^cN] after each commented span and emit a
+                    footnote definition for each comment at the end of the
+                    output (author, date, body).
   -h, --help        Show this help
 
 Examples:
   docx read input.docx
-  docx read input.docx --markdown
-  docx read input.docx --markdown --from p3 --to p20
-  docx read input.docx --markdown --accepted --comments
-  docx read input.docx --markdown --baseline
-  docx read input.docx | jq '.blocks[] | select(.type == "paragraph")'
+  docx read input.docx --from p3 --to p20
+  docx read input.docx --accepted --comments
+  docx read input.docx --baseline
+  docx read input.docx --ast | jq '.blocks[] | select(.type == "paragraph")'
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -53,7 +48,7 @@ export async function run(args: string[]): Promise<number> {
 			args,
 			allowPositionals: true,
 			options: {
-				markdown: { type: "boolean" },
+				ast: { type: "boolean" },
 				from: { type: "string" },
 				to: { type: "string" },
 				accepted: { type: "boolean" },
@@ -75,7 +70,7 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const markdown = Boolean(parsed.values.markdown);
+	const ast = Boolean(parsed.values.ast);
 	const from = parsed.values.from as string | undefined;
 	const to = parsed.values.to as string | undefined;
 	const accepted = Boolean(parsed.values.accepted);
@@ -83,13 +78,10 @@ export async function run(args: string[]): Promise<number> {
 	const current = Boolean(parsed.values.current);
 	const showComments = Boolean(parsed.values.comments);
 
-	if (
-		!markdown &&
-		(from || to || accepted || baseline || current || showComments)
-	) {
+	if (ast && (from || to || accepted || baseline || current || showComments)) {
 		return fail(
 			"USAGE",
-			"--from, --to, --accepted, --baseline, --current, and --comments require --markdown",
+			"--from, --to, --accepted, --baseline, --current, and --comments are Markdown-only and cannot be combined with --ast",
 			HELP,
 		);
 	}
@@ -109,25 +101,25 @@ export async function run(args: string[]): Promise<number> {
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;
 
-	if (markdown) {
-		try {
-			const rendered = renderMarkdown(docView.doc, {
-				from,
-				to,
-				view,
-				showComments,
-			});
-			await writeStdout(rendered);
-			return EXIT.OK;
-		} catch (err) {
-			if (err instanceof MarkdownLocatorError) {
-				return fail("INVALID_LOCATOR", err.message);
-			}
-			throw err;
-		}
+	if (ast) {
+		await enrichImageHashes(docView);
+		await respond(docView.doc);
+		return EXIT.OK;
 	}
 
-	await enrichImageHashes(docView);
-	await respond(docView.doc);
-	return EXIT.OK;
+	try {
+		const rendered = renderMarkdown(docView.doc, {
+			from,
+			to,
+			view,
+			showComments,
+		});
+		await writeStdout(rendered);
+		return EXIT.OK;
+	} catch (err) {
+		if (err instanceof MarkdownLocatorError) {
+			return fail("INVALID_LOCATOR", err.message);
+		}
+		throw err;
+	}
 }

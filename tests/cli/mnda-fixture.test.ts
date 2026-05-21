@@ -15,7 +15,7 @@ describe("mnda fixture — tab + text in same <w:r>", () => {
 	const FIXTURE = "tests/fixtures/mnda.docx";
 
 	test("Bug A: AST exposes <w:t> text that sits after a <w:tab/> sibling", async () => {
-		const result = await runCli("read", FIXTURE);
+		const result = await runCli("read", FIXTURE, "--ast");
 		const allText = collectAllText(result.parsed);
 		expect(allText).toContain("Expires ");
 		expect(allText).toContain(

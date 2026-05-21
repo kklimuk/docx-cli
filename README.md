@@ -42,7 +42,7 @@ The repo includes a Common Paper Mutual NDA template at `tests/fixtures/mnda.doc
 cp tests/fixtures/mnda.docx mnda-filled.docx
 
 # Read the cover-page table so the agent knows what placeholders exist
-docx read mnda-filled.docx --markdown --to t1
+docx read mnda-filled.docx --to t1
 
 # Fill the yellow-highlighted bracketed placeholders
 docx replace mnda-filled.docx "Fill in: today’s date" "May 6, 2026"
@@ -72,7 +72,8 @@ Open `mnda-filled.docx` in Word: tracked changes and comments appear in the revi
 
 ```sh
 docx create FILE [--title T] [--author A] [--text "..."]
-docx read FILE [--markdown [--from pN] [--to pN] [--accepted | --baseline | --current] [--comments]]
+docx read FILE [--from pN] [--to pN] [--accepted | --baseline | --current] [--comments]
+docx read FILE --ast    # JSON-AST opt-in (every other read flag is markdown-only)
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx insert FILE --after p3 --page-break | --column-break
@@ -124,7 +125,7 @@ Every command has `--help`. Mutating commands accept `--dry-run`, `-o/--output P
 
 ### Markdown rendering
 
-`docx read FILE --markdown` renders the document body as GitHub-flavored Markdown instead of JSON. Useful when an LLM wants to skim a doc without parsing the AST. Each rendered paragraph is followed by an HTML comment with its locator (`<!-- p3 -->`) so the markdown is invisible-pinned: humans see clean prose in a renderer, agents parse the locators from raw text.
+`docx read FILE` renders the document body as GitHub-flavored Markdown — the default since v0.9. Useful when an LLM wants to skim a doc without parsing the AST. Each rendered paragraph is followed by an HTML comment with its locator (`<!-- p3 -->`) so the markdown is invisible-pinned: humans see clean prose in a renderer, agents parse the locators from raw text. Pass `--ast` for the structured JSON when programmatic walks need the typed tree (`docx read FILE --ast | jq '.blocks[] | select(.type == "paragraph")'`).
 
 `--from LOC` and `--to LOC` slice by top-level block (both inclusive). Accepts paragraph, table, cell, span, and range locators; cell/span/range collapse to their enclosing top-level block.
 

@@ -69,7 +69,7 @@ describe("transparent wrappers — replace inside the wrapper", () => {
 		expect(result.exitCode).toBe(0);
 
 		// Re-read and confirm the new text appears at the right paragraph.
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;
@@ -91,7 +91,7 @@ describe("transparent wrappers — replace inside the wrapper", () => {
 		const result = await runCli("replace", docPath, "Alice", "Bob");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;
@@ -112,7 +112,7 @@ describe("transparent wrappers — replace inside the wrapper", () => {
 		const result = await runCli("replace", docPath, "is 2026", "was 2025");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;

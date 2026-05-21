@@ -227,7 +227,6 @@ describe("docx comments add — view-aware offset resolution (regression)", () =
 		const rendered = await runCli(
 			"read",
 			docPath,
-			"--markdown",
 			"--comments",
 			"--from",
 			"p0",
@@ -263,7 +262,6 @@ describe("docx comments add — view-aware offset resolution (regression)", () =
 		const rendered = await runCli(
 			"read",
 			docPath,
-			"--markdown",
 			"--current",
 			"--comments",
 			"--from",

@@ -47,7 +47,7 @@ describe("sections via insert / edit / delete", () => {
 			"--type",
 			"continuous",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as { blocks: Block[] };
 		const sections = doc.blocks.filter(
 			(block): block is SectionBlock => block.type === "sectionBreak",
@@ -73,7 +73,7 @@ describe("sections via insert / edit / delete", () => {
 			"--type",
 			"continuous",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as { blocks: Block[] };
 		const section = doc.blocks.find(
 			(block): block is SectionBlock => block.type === "sectionBreak",
@@ -87,7 +87,7 @@ describe("sections via insert / edit / delete", () => {
 
 	test("edit --at sN supports updating only one property at a time", async () => {
 		await runCli("edit", docPath, "--at", "s0", "--columns", "2");
-		const firstRead = await runCli("read", docPath);
+		const firstRead = await runCli("read", docPath, "--ast");
 		const after1 = (firstRead.parsed as { blocks: Block[] }).blocks.find(
 			(block): block is SectionBlock => block.type === "sectionBreak",
 		);
@@ -95,7 +95,7 @@ describe("sections via insert / edit / delete", () => {
 		expect(after1?.sectionType).toBeUndefined();
 
 		await runCli("edit", docPath, "--at", "s0", "--type", "nextPage");
-		const secondRead = await runCli("read", docPath);
+		const secondRead = await runCli("read", docPath, "--ast");
 		const after2 = (secondRead.parsed as { blocks: Block[] }).blocks.find(
 			(block): block is SectionBlock => block.type === "sectionBreak",
 		);
@@ -154,7 +154,7 @@ describe("sections via insert / edit / delete", () => {
 			"--columns",
 			"2",
 		);
-		const beforeRead = await runCli("read", docPath);
+		const beforeRead = await runCli("read", docPath, "--ast");
 		const before = (beforeRead.parsed as { blocks: Block[] }).blocks;
 		const beforeSections = before.filter((b) => b.type === "sectionBreak");
 		expect(beforeSections).toHaveLength(2);
@@ -162,7 +162,7 @@ describe("sections via insert / edit / delete", () => {
 		const deleteResult = await runCli("delete", docPath, "--at", "s0");
 		expect(deleteResult.exitCode).toBe(0);
 
-		const afterRead = await runCli("read", docPath);
+		const afterRead = await runCli("read", docPath, "--ast");
 		const after = (afterRead.parsed as { blocks: Block[] }).blocks;
 		const afterSections = after.filter((b) => b.type === "sectionBreak");
 		expect(afterSections).toHaveLength(1);
@@ -219,7 +219,7 @@ describe("sections under track-changes", () => {
 			"--author",
 			"Alice",
 		);
-		const beforeRead = await runCli("read", docPath);
+		const beforeRead = await runCli("read", docPath, "--ast");
 		const beforeBlocks = (beforeRead.parsed as { blocks: Block[] }).blocks;
 		expect(beforeBlocks.filter((b) => b.type === "sectionBreak")).toHaveLength(
 			2,
@@ -228,7 +228,7 @@ describe("sections under track-changes", () => {
 
 		await runCli("track-changes", "reject", docPath, "--all");
 
-		const afterRead = await runCli("read", docPath);
+		const afterRead = await runCli("read", docPath, "--ast");
 		const afterBlocks = (afterRead.parsed as { blocks: Block[] }).blocks;
 		// Sentinel paragraph + its inline sectPr both gone; only the original
 		// content paragraph and the trailing sectPr remain.
@@ -252,7 +252,7 @@ describe("sections under track-changes", () => {
 
 		await runCli("track-changes", "accept", docPath, "--all");
 
-		const afterRead = await runCli("read", docPath);
+		const afterRead = await runCli("read", docPath, "--ast");
 		const paragraphs = (afterRead.parsed as { blocks: Block[] }).blocks.filter(
 			(b): b is ParagraphBlock => b.type === "paragraph",
 		);
@@ -314,7 +314,7 @@ describe("sections under track-changes", () => {
 			"continuous",
 		);
 		await runCli("track-changes", "accept", docPath, "--all");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const section = (read.parsed as { blocks: Block[] }).blocks.find(
 			(b): b is SectionBlock => b.type === "sectionBreak",
 		);
@@ -341,7 +341,7 @@ describe("sections under track-changes", () => {
 			"continuous",
 		);
 		await runCli("track-changes", "reject", docPath, "--all");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const section = (read.parsed as { blocks: Block[] }).blocks.find(
 			(b): b is SectionBlock => b.type === "sectionBreak",
 		);
@@ -386,7 +386,7 @@ describe("sections under track-changes", () => {
 
 describe("sections.docx fixture", () => {
 	test("AST surfaces every section type with the expected properties", async () => {
-		const read = await runCli("read", SECTIONS_FIXTURE);
+		const read = await runCli("read", SECTIONS_FIXTURE, "--ast");
 		const doc = read.parsed as { blocks: Block[] };
 		const sections = doc.blocks.filter(
 			(block): block is SectionBlock => block.type === "sectionBreak",
@@ -444,7 +444,7 @@ describe("sections.docx fixture", () => {
 
 		await runCli("track-changes", "accept", docPath, "--all");
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const sections = (read.parsed as { blocks: Block[] }).blocks.filter(
 			(block): block is SectionBlock => block.type === "sectionBreak",
 		);
@@ -464,7 +464,7 @@ describe("sections.docx fixture", () => {
 
 		await runCli("track-changes", "reject", docPath, "--all");
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const sections = (read.parsed as { blocks: Block[] }).blocks.filter(
 			(block): block is SectionBlock => block.type === "sectionBreak",
 		);

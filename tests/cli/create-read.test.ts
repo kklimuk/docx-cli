@@ -24,7 +24,7 @@ describe("docx create + read", () => {
 			path: docPath,
 		});
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		expect(read.exitCode).toBe(0);
 		const doc = read.parsed as {
 			properties: { title: string; author: string };
@@ -52,7 +52,7 @@ describe("docx create + read", () => {
 			"--text",
 			"Body: <input> & 'data'",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			properties: { title: string; author: string };
 			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;

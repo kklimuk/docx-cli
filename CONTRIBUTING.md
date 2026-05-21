@@ -28,7 +28,7 @@ src/
     help.ts              # top-level --help
     respond.ts           # JSON ack / structured error helpers
     create/              # create FILE
-    read/                # read FILE [--markdown ...]  (markdown.ts renderer)
+    read/                # read FILE (markdown default; --ast for JSON)  (markdown.ts renderer)
     insert/              # insert FILE  (uses ./emit Paragraph component)
     edit/                # edit FILE
     delete/              # delete FILE

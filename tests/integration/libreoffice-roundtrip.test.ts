@@ -48,7 +48,7 @@ describe("LibreOffice round-trip", () => {
 
 			// Mutate: insert a small paragraph at the end of the body to force
 			// a write through our serializer.
-			const read = await runCli("read", docPath);
+			const read = await runCli("read", docPath, "--ast");
 			const doc = read.parsed as {
 				blocks: Array<{ id: string; type: string }>;
 			};
@@ -118,7 +118,7 @@ describe("LibreOffice round-trip", () => {
 		);
 		await runCli("replace", docPath, "Original", "Modified");
 
-		const beforeRead = await runCli("read", docPath);
+		const beforeRead = await runCli("read", docPath, "--ast");
 		const beforeRuns = (
 			beforeRead.parsed as {
 				blocks: Array<{
@@ -153,7 +153,7 @@ describe("LibreOffice round-trip", () => {
 		expect(exitCode).toBe(0);
 
 		const converted = join(outDir, "tracked-roundtrip.docx");
-		const afterRead = await runCli("read", converted);
+		const afterRead = await runCli("read", converted, "--ast");
 		const afterRuns = (
 			afterRead.parsed as {
 				blocks: Array<{

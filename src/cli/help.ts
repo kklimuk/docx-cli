@@ -10,7 +10,7 @@ Usage:
 
 Commands:
   create    FILE  Create a new minimal .docx
-  read      FILE  Print AST as JSON
+  read      FILE  Render body as Markdown (--ast for JSON)
   edit      FILE  Replace text/properties at a locator
   insert    FILE  Insert a block or run
   delete    FILE  Remove a block or run range
@@ -49,7 +49,7 @@ Tracked changes:
   with the next paragraph; reject-ins removes the entire owning paragraph).
   Out of scope: rPrChange / pPrChange formatting revisions.
 
-  "docx read --markdown" surfaces them as CriticMarkup:
+  "docx read" surfaces them as CriticMarkup:
     {++inserted++}[^tcN]   {--deleted--}[^tcN]
   with a [^tcN]: definition appendix. Switch view with --accepted (post-accept:
   drop del, ins as plain) or --baseline (pre-change: drop ins, del as plain).

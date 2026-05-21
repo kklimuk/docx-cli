@@ -26,7 +26,7 @@ type Run = {
 };
 
 async function readParagraph(docPath: string, blockId: string): Promise<Run[]> {
-	const result = await runCli("read", docPath);
+	const result = await runCli("read", docPath, "--ast");
 	const blocks = (
 		result.parsed as { blocks: Array<{ id: string; runs?: Run[] }> }
 	).blocks;

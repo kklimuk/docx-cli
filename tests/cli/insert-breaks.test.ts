@@ -21,7 +21,7 @@ describe("docx insert --page-break / --column-break", () => {
 		);
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				id: string;
@@ -35,7 +35,7 @@ describe("docx insert --page-break / --column-break", () => {
 
 	test("--column-break inserts a paragraph with a single column break run", async () => {
 		await runCli("insert", docPath, "--before", "p0", "--column-break");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				id: string;

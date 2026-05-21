@@ -11,9 +11,9 @@ async function render(...args: string[]): Promise<string> {
 	return result.stdout;
 }
 
-describe("docx read --markdown", () => {
+describe("docx read (markdown)", () => {
 	test("minimal: emits heading, bold, locator comments", async () => {
-		const out = await render(fixture("minimal.docx"), "--markdown");
+		const out = await render(fixture("minimal.docx"));
 		expect(out).toContain("# Style Guide <!-- p0 -->");
 		expect(out).toContain("**important**");
 		expect(out).toMatch(/Use[^\n]*\*\*important\*\*[^\n]*terms/);
@@ -22,20 +22,20 @@ describe("docx read --markdown", () => {
 	});
 
 	test("academic-paper: heading levels 1 and 2 render with # and ##", async () => {
-		const out = await render(fixture("academic-paper.docx"), "--markdown");
+		const out = await render(fixture("academic-paper.docx"));
 		expect(out).toMatch(/^# Guided Imagery and Progressive Muscle Relaxation/m);
 		expect(out).toMatch(/^## Features of Guided Imagery/m);
 		expect(out).toMatch(/^## Guided Imagery in Group Psychotherapy/m);
 	});
 
 	test("academic-paper: italics and hyperlinks render inline", async () => {
-		const out = await render(fixture("academic-paper.docx"), "--markdown");
+		const out = await render(fixture("academic-paper.docx"));
 		expect(out).toContain("*Guided imagery*");
 		expect(out).toContain("*Progressive muscle relaxation*");
 	});
 
 	test("tables-and-lists: pipe table with cell locators", async () => {
-		const out = await render(fixture("tables-and-lists.docx"), "--markdown");
+		const out = await render(fixture("tables-and-lists.docx"));
 		expect(out).toMatch(/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> \|/m);
 		expect(out).toMatch(/^\| --- \| --- \|$/m);
 		expect(out).toContain("Agilent E3631A Triple Output DC Power Supply");
@@ -43,35 +43,35 @@ describe("docx read --markdown", () => {
 	});
 
 	test("tables-and-lists: top-level list bullets render", async () => {
-		const out = await render(fixture("tables-and-lists.docx"), "--markdown");
+		const out = await render(fixture("tables-and-lists.docx"));
 		expect(out).toMatch(/^- \*\*Introduction\*\*/m);
 		expect(out).toMatch(/^- \*\*Background Information\*\*/m);
 		expect(out).toMatch(/^- \*\*Methods and Materials\*\*/m);
 	});
 
 	test("resume-styling: list bullets and bold runs render", async () => {
-		const out = await render(fixture("resume-styling.docx"), "--markdown");
+		const out = await render(fixture("resume-styling.docx"));
 		expect(out).toMatch(/^- GPA: 3\.5/m);
 		expect(out).toContain("**JANE SMITH**");
 		expect(out).toContain("[j1smith@business.rutgers.edu](mailto:");
 	});
 
 	test("multi-column: SIGCHI three-column table renders as pipe table", async () => {
-		const out = await render(fixture("multi-column.docx"), "--markdown");
+		const out = await render(fixture("multi-column.docx"));
 		expect(out).toMatch(/^\| Leave Authors Anonymous <!-- t0:r0c0:p0 -->/m);
 		expect(out).toMatch(/^\| --- \| --- \| --- \|$/m);
 		expect(out).toContain("<br>for Submission <!-- t0:r0c0:p1 -->");
 	});
 
 	test("large-mixed: images render as ![alt](imgN) and locator survives", async () => {
-		const out = await render(fixture("large-mixed.docx"), "--markdown");
+		const out = await render(fixture("large-mixed.docx"));
 		expect(out).toMatch(/!\[[^\]]*\]\(img0\)/);
 		expect(out).toMatch(/!\[[^\]]*\]\(img1\)/);
 		expect(out).toContain("# Chinese Folding Fan Design Project");
 	});
 
 	test("equations: hyperlinks survive; OOMath surfaces as `equation: ...` placeholder", async () => {
-		const out = await render(fixture("equations.docx"), "--markdown");
+		const out = await render(fixture("equations.docx"));
 		expect(out).toContain("[basis]");
 		expect(out).toContain("[change of basis]");
 		expect(out).toContain("Einstein summation convention");
@@ -80,39 +80,29 @@ describe("docx read --markdown", () => {
 	});
 
 	test("strict-profile: chart/smartart/drawing placeholders render", async () => {
-		const out = await render(fixture("strict-profile.docx"), "--markdown");
+		const out = await render(fixture("strict-profile.docx"));
 		expect(out).toContain("`[chart]`");
 		expect(out).toContain("`[smartart]`");
 		expect(out).toContain("`[drawing]`");
 	});
 
 	test("locator pins use HTML comments, not <sup>", async () => {
-		const out = await render(fixture("minimal.docx"), "--markdown");
+		const out = await render(fixture("minimal.docx"));
 		expect(out).not.toContain("<sup>");
 		expect(out).toMatch(/<!-- p\d+ -->/);
 	});
 });
 
-describe("docx read --markdown --from / --to", () => {
+describe("docx read (markdown) --from / --to", () => {
 	test("--from p1 starts at p1, drops p0", async () => {
-		const out = await render(
-			fixture("minimal.docx"),
-			"--markdown",
-			"--from",
-			"p1",
-		);
+		const out = await render(fixture("minimal.docx"), "--from", "p1");
 		expect(out).not.toContain("# Style Guide");
 		expect(out).toContain("**important**");
 		expect(out).toMatch(/Use[^\n]*\*\*important\*\*[^\n]*terms/);
 	});
 
 	test("--to is inclusive", async () => {
-		const out = await render(
-			fixture("minimal.docx"),
-			"--markdown",
-			"--to",
-			"p1",
-		);
+		const out = await render(fixture("minimal.docx"), "--to", "p1");
 		expect(out).toContain("# Style Guide");
 		expect(out).toContain("**important**");
 		expect(out).toMatch(/Use[^\n]*\*\*important\*\*[^\n]*terms/);
@@ -122,7 +112,6 @@ describe("docx read --markdown --from / --to", () => {
 	test("--from p13 --to p15 slices the middle of academic-paper", async () => {
 		const out = await render(
 			fixture("academic-paper.docx"),
-			"--markdown",
 			"--from",
 			"p13",
 			"--to",
@@ -134,24 +123,14 @@ describe("docx read --markdown --from / --to", () => {
 	});
 
 	test("--from accepts a span locator (offsets ignored)", async () => {
-		const out = await render(
-			fixture("minimal.docx"),
-			"--markdown",
-			"--from",
-			"p1:0-5",
-		);
+		const out = await render(fixture("minimal.docx"), "--from", "p1:0-5");
 		expect(out).toContain("**important**");
 		expect(out).toMatch(/Use[^\n]*\*\*important\*\*[^\n]*terms/);
 		expect(out).not.toContain("# Style Guide");
 	});
 
 	test("--from accepts a range locator (uses start paragraph)", async () => {
-		const out = await render(
-			fixture("minimal.docx"),
-			"--markdown",
-			"--from",
-			"p1:0-p2:3",
-		);
+		const out = await render(fixture("minimal.docx"), "--from", "p1:0-p2:3");
 		expect(out).toContain("**important**");
 		expect(out).toContain("The quick brown fox");
 		expect(out).not.toContain("# Style Guide");
@@ -161,7 +140,6 @@ describe("docx read --markdown --from / --to", () => {
 		const result = await runCli(
 			"read",
 			fixture("minimal.docx"),
-			"--markdown",
 			"--from",
 			"c0",
 		);
@@ -176,7 +154,6 @@ describe("docx read --markdown --from / --to", () => {
 		const result = await runCli(
 			"read",
 			fixture("minimal.docx"),
-			"--markdown",
 			"--from",
 			"p99",
 		);
@@ -187,21 +164,22 @@ describe("docx read --markdown --from / --to", () => {
 		});
 	});
 
-	test("--from without --markdown fails with USAGE", async () => {
+	test("--from with --ast is rejected (Markdown-only flag)", async () => {
 		const result = await runCli(
 			"read",
 			fixture("minimal.docx"),
 			"--from",
 			"p1",
+			"--ast",
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
 	});
 });
 
-describe("docx read --markdown tracked changes", () => {
-	test("default --markdown is the accepted view (ins as plain, del gone, no markers)", async () => {
-		const out = await render(fixture("tracked-changes.docx"), "--markdown");
+describe("docx read (markdown) tracked changes", () => {
+	test("default markdown render is the accepted view (ins as plain, del gone, no markers)", async () => {
+		const out = await render(fixture("tracked-changes.docx"));
 		expect(out).toContain("two exciting");
 		expect(out).not.toContain("{++");
 		expect(out).not.toContain("{--");
@@ -211,11 +189,7 @@ describe("docx read --markdown tracked changes", () => {
 	});
 
 	test("--current renders insertions as CriticMarkup {++...++} with [^tcN] refs and an appendix", async () => {
-		const out = await render(
-			fixture("tracked-changes.docx"),
-			"--markdown",
-			"--current",
-		);
+		const out = await render(fixture("tracked-changes.docx"), "--current");
 		expect(out).toContain("{++two exciting ++}[^tc0]insertions");
 		expect(out).toContain(
 			"[^tc0]: insertion by eng-dept (2014-06-25T10:40:00Z)",
@@ -225,11 +199,7 @@ describe("docx read --markdown tracked changes", () => {
 	});
 
 	test("--accepted shows post-accept view (ins as plain, del gone, no markers)", async () => {
-		const out = await render(
-			fixture("tracked-changes.docx"),
-			"--markdown",
-			"--accepted",
-		);
+		const out = await render(fixture("tracked-changes.docx"), "--accepted");
 		expect(out).toContain("two exciting");
 		expect(out).not.toContain("{++");
 		expect(out).not.toContain("{--");
@@ -239,11 +209,7 @@ describe("docx read --markdown tracked changes", () => {
 	});
 
 	test("--baseline shows pre-change view (ins gone, del as plain, no markers)", async () => {
-		const out = await render(
-			fixture("tracked-changes.docx"),
-			"--markdown",
-			"--baseline",
-		);
+		const out = await render(fixture("tracked-changes.docx"), "--baseline");
 		// Fixture has only an insertion ("two exciting"), so baseline drops it.
 		expect(out).toContain("This is a text with insertions.");
 		expect(out).not.toContain("two exciting");
@@ -256,7 +222,6 @@ describe("docx read --markdown tracked changes", () => {
 		const result = await runCli(
 			"read",
 			fixture("tracked-changes.docx"),
-			"--markdown",
 			"--accepted",
 			"--baseline",
 		);
@@ -265,7 +230,11 @@ describe("docx read --markdown tracked changes", () => {
 	});
 
 	test("AST exposes stable tcN id on tracked-change runs", async () => {
-		const result = await runCli("read", fixture("tracked-changes.docx"));
+		const result = await runCli(
+			"read",
+			fixture("tracked-changes.docx"),
+			"--ast",
+		);
 		expect(result.exitCode).toBe(0);
 		const doc = result.parsed as {
 			blocks: Array<{
@@ -286,12 +255,9 @@ describe("docx read --markdown tracked changes", () => {
 	});
 });
 
-describe("docx read --markdown --comments", () => {
+describe("docx read (markdown) --comments", () => {
 	test("default view (no --comments) emits no [^cN] refs and no footnotes", async () => {
-		const out = await render(
-			fixture("comments-with-replies.docx"),
-			"--markdown",
-		);
+		const out = await render(fixture("comments-with-replies.docx"));
 		expect(out).not.toMatch(/\[\^c\d+\]/);
 		expect(out).not.toContain("[^c0]:");
 	});
@@ -299,7 +265,6 @@ describe("docx read --markdown --comments", () => {
 	test("--comments inlines [^cN] at span end and emits GFM footnotes", async () => {
 		const out = await render(
 			fixture("comments-with-replies.docx"),
-			"--markdown",
 			"--comments",
 		);
 		expect(out).toContain("[^c0]");
@@ -312,7 +277,6 @@ describe("docx read --markdown --comments", () => {
 	test("--comments overlapping anchors stack: [^cP][^cQ]", async () => {
 		const out = await render(
 			fixture("comments-with-replies.docx"),
-			"--markdown",
 			"--comments",
 		);
 		expect(out).toMatch(/comment in a comment\[\^c3\]\[\^c4\]/);
@@ -321,25 +285,19 @@ describe("docx read --markdown --comments", () => {
 	test("--comments reply footnote shows ↳ parent", async () => {
 		const out = await render(
 			fixture("comments-with-replies.docx"),
-			"--markdown",
 			"--comments",
 		);
 		expect(out).toContain("↳ c3:");
 	});
 
 	test("--comments on doc without comments emits no footnote section", async () => {
-		const out = await render(
-			fixture("strict-profile.docx"),
-			"--markdown",
-			"--comments",
-		);
+		const out = await render(fixture("strict-profile.docx"), "--comments");
 		expect(out).not.toContain("[^c");
 	});
 
 	test("--comments + --from drops footnotes whose spans are out of range", async () => {
 		const out = await render(
 			fixture("comments-with-replies.docx"),
-			"--markdown",
 			"--comments",
 			"--from",
 			"p2",
@@ -350,37 +308,29 @@ describe("docx read --markdown --comments", () => {
 	});
 
 	test("--comments works on simple comments fixture", async () => {
-		const out = await render(
-			fixture("comments-simple.docx"),
-			"--markdown",
-			"--comments",
-		);
+		const out = await render(fixture("comments-simple.docx"), "--comments");
 		expect(out).toContain("[^c0]:");
 	});
 
 	test("--comments works on rich comments fixture", async () => {
-		const out = await render(
-			fixture("comments-rich.docx"),
-			"--markdown",
-			"--comments",
-		);
+		const out = await render(fixture("comments-rich.docx"), "--comments");
 		expect(out).toContain("[^c0]:");
 	});
 });
 
-describe("docx read --markdown equations", () => {
+describe("docx read (markdown) equations", () => {
 	test("inline `<m:oMath>` renders as `equation: ...` mid-paragraph", async () => {
-		const out = await render(fixture("equations.docx"), "--markdown");
+		const out = await render(fixture("equations.docx"));
 		expect(out).toContain("`equation: ei`");
 	});
 
 	test("display `<m:oMathPara>` renders on its own line", async () => {
-		const out = await render(fixture("equations.docx"), "--markdown");
+		const out = await render(fixture("equations.docx"));
 		expect(out).toMatch(/^`equation: ei=j=1nejRij=ejRij\.` <!-- p1 -->/m);
 	});
 
 	test("equations marked display=true survive in JSON AST", async () => {
-		const result = await runCli("read", fixture("equations.docx"));
+		const result = await runCli("read", fixture("equations.docx"), "--ast");
 		const doc = result.parsed as {
 			blocks: Array<{
 				type: string;
@@ -398,15 +348,15 @@ describe("docx read --markdown equations", () => {
 	});
 });
 
-describe("docx read --markdown footnotes / endnotes", () => {
+describe("docx read (markdown) footnotes / endnotes", () => {
 	test("notes.docx: footnote ref + definition both render", async () => {
-		const out = await render(fixture("notes.docx"), "--markdown");
+		const out = await render(fixture("notes.docx"));
 		expect(out).toContain("[^fn1]");
 		expect(out).toMatch(/\n\[\^fn1\]: My note\./);
 	});
 
 	test("notes.docx: endnote ref + definition both render", async () => {
-		const out = await render(fixture("notes.docx"), "--markdown");
+		const out = await render(fixture("notes.docx"));
 		expect(out).toContain("[^en1]");
 		expect(out).toContain(
 			"[^en1]: This is an endnote at the end of the document.",
@@ -414,34 +364,29 @@ describe("docx read --markdown footnotes / endnotes", () => {
 	});
 
 	test("notes.docx: footnote and endnote refs both visible inline", async () => {
-		const out = await render(fixture("notes.docx"), "--markdown");
+		const out = await render(fixture("notes.docx"));
 		expect(out).toMatch(/Test footnote\.\[\^fn1\] Test endnote\.\[\^en1\]/);
 	});
 
 	test("equations.docx: substantive footnote with math symbols renders", async () => {
-		const out = await render(fixture("equations.docx"), "--markdown");
+		const out = await render(fixture("equations.docx"));
 		expect(out).toContain("[^fn26]");
 		expect(out).toMatch(/\n\[\^fn26\]: The Einstein summation convention/);
 	});
 
 	test("footnote definitions only emitted for refs visible in slice", async () => {
-		const out = await render(
-			fixture("equations.docx"),
-			"--markdown",
-			"--from",
-			"p3",
-		);
+		const out = await render(fixture("equations.docx"), "--from", "p3");
 		expect(out).not.toContain("[^fn26]");
 	});
 
 	test("doc without footnote refs in body emits no definitions", async () => {
-		const out = await render(fixture("minimal.docx"), "--markdown");
+		const out = await render(fixture("minimal.docx"));
 		expect(out).not.toContain("[^fn");
 		expect(out).not.toContain("[^en");
 	});
 
 	test("footnotes/endnotes arrays present in JSON AST", async () => {
-		const result = await runCli("read", fixture("notes.docx"));
+		const result = await runCli("read", fixture("notes.docx"), "--ast");
 		const doc = result.parsed as {
 			footnotes: Array<{ id: string; text: string }>;
 			endnotes: Array<{ id: string; text: string }>;
@@ -453,7 +398,7 @@ describe("docx read --markdown footnotes / endnotes", () => {
 	});
 
 	test("Word's reserved separator/continuation entries are filtered out", async () => {
-		const result = await runCli("read", fixture("notes.docx"));
+		const result = await runCli("read", fixture("notes.docx"), "--ast");
 		const doc = result.parsed as {
 			footnotes: Array<{ id: string }>;
 		};
@@ -464,33 +409,37 @@ describe("docx read --markdown footnotes / endnotes", () => {
 	});
 });
 
-describe("docx read --markdown color and highlight", () => {
+describe("docx read (markdown) color and highlight", () => {
 	test('non-default run color wraps in <span style="color:#hex">', async () => {
-		const out = await render(fixture("minimal.docx"), "--markdown");
+		const out = await render(fixture("minimal.docx"));
 		expect(out).toContain('<span style="color:#800080">');
 	});
 
 	test("color span sits inside formatting markers (bold etc.)", async () => {
-		const out = await render(fixture("minimal.docx"), "--markdown");
+		const out = await render(fixture("minimal.docx"));
 		// "important" is bold + purple in minimal.docx
 		expect(out).toContain('<span style="color:#800080">**important**</span>');
 	});
 });
 
-describe("docx read --markdown chart / drawing placeholders", () => {
+describe("docx read (markdown) chart / drawing placeholders", () => {
 	test("chart drawing renders as `[chart]`", async () => {
-		const out = await render(fixture("strict-profile.docx"), "--markdown");
+		const out = await render(fixture("strict-profile.docx"));
 		expect(out).toContain("`[chart]`");
 	});
 
 	test("smartart and generic drawing placeholders render too", async () => {
-		const out = await render(fixture("strict-profile.docx"), "--markdown");
+		const out = await render(fixture("strict-profile.docx"));
 		expect(out).toContain("`[smartart]`");
 		expect(out).toContain("`[drawing]`");
 	});
 
 	test("chart placeholders survive in JSON AST", async () => {
-		const result = await runCli("read", fixture("strict-profile.docx"));
+		const result = await runCli(
+			"read",
+			fixture("strict-profile.docx"),
+			"--ast",
+		);
 		const doc = result.parsed as {
 			blocks: Array<{
 				type: string;
@@ -508,26 +457,33 @@ describe("docx read --markdown chart / drawing placeholders", () => {
 	});
 });
 
-describe("docx read JSON mode (default) still works", () => {
-	test("read FILE emits valid JSON AST", async () => {
-		const result = await runCli("read", fixture("minimal.docx"));
+describe("docx read --ast (JSON AST opt-in)", () => {
+	test("--ast emits valid JSON AST", async () => {
+		const result = await runCli("read", fixture("minimal.docx"), "--ast");
 		expect(result.exitCode).toBe(0);
 		const doc = result.parsed as { schemaVersion: number; blocks: unknown[] };
 		expect(doc.schemaVersion).toBe(1);
 		expect(Array.isArray(doc.blocks)).toBe(true);
 	});
 
+	test("read FILE (no flags) emits Markdown, not JSON", async () => {
+		const result = await runCli("read", fixture("minimal.docx"));
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toBeUndefined();
+		expect(result.stdout).toContain("# Style Guide <!-- p0 -->");
+	});
+
 	test("read FILE --help prints usage", async () => {
 		const result = await runCli("read", "--help");
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("docx read");
-		expect(result.stdout).toContain("--markdown");
+		expect(result.stdout).toContain("--ast");
 		expect(result.stdout).toContain("--from");
 		expect(result.stdout).toContain("--comments");
 	});
 });
 
-describe("docx read --markdown smoke-test all fixtures", () => {
+describe("docx read (markdown) smoke-test all fixtures", () => {
 	const FIXTURES_LIST = [
 		"academic-paper.docx",
 		"comments-rich.docx",
@@ -545,17 +501,16 @@ describe("docx read --markdown smoke-test all fixtures", () => {
 	];
 
 	for (const name of FIXTURES_LIST) {
-		test(`${name}: --markdown completes successfully`, async () => {
-			const result = await runCli("read", fixture(name), "--markdown");
+		test(`${name}: default markdown render completes successfully`, async () => {
+			const result = await runCli("read", fixture(name));
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout.length).toBeGreaterThan(0);
 		});
 
-		test(`${name}: --markdown --accepted --comments completes`, async () => {
+		test(`${name}: --accepted --comments completes`, async () => {
 			const result = await runCli(
 				"read",
 				fixture(name),
-				"--markdown",
 				"--accepted",
 				"--comments",
 			);

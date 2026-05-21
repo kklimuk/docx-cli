@@ -43,7 +43,11 @@ function collectHyperlinks(doc: Doc): Array<{
 
 describe("docx read — hyperlinks", () => {
 	test("surfaces every hyperlink from academic-paper.docx", async () => {
-		const result = await runCli("read", "tests/fixtures/academic-paper.docx");
+		const result = await runCli(
+			"read",
+			"tests/fixtures/academic-paper.docx",
+			"--ast",
+		);
 		expect(result.exitCode).toBe(0);
 		const links = collectHyperlinks(result.parsed as Doc);
 		const urls = new Set(
@@ -57,7 +61,11 @@ describe("docx read — hyperlinks", () => {
 	});
 
 	test("surfaces hyperlink in tables-and-lists.docx", async () => {
-		const result = await runCli("read", "tests/fixtures/tables-and-lists.docx");
+		const result = await runCli(
+			"read",
+			"tests/fixtures/tables-and-lists.docx",
+			"--ast",
+		);
 		expect(result.exitCode).toBe(0);
 		const links = collectHyperlinks(result.parsed as Doc);
 		expect(links).toHaveLength(1);
@@ -66,7 +74,11 @@ describe("docx read — hyperlinks", () => {
 	});
 
 	test("multiple runs sharing one link share the same url", async () => {
-		const result = await runCli("read", "tests/fixtures/large-mixed.docx");
+		const result = await runCli(
+			"read",
+			"tests/fixtures/large-mixed.docx",
+			"--ast",
+		);
 		expect(result.exitCode).toBe(0);
 		const doc = result.parsed as Doc;
 		// Group hyperlink-tagged runs by paragraph and url; any paragraph that
@@ -88,7 +100,11 @@ describe("docx read — hyperlinks", () => {
 		// Pick a paragraph in academic-paper that ends with a hyperlink. The
 		// returned text length must equal the sum of all text-run lengths
 		// (including those tagged with a hyperlink).
-		const result = await runCli("read", "tests/fixtures/academic-paper.docx");
+		const result = await runCli(
+			"read",
+			"tests/fixtures/academic-paper.docx",
+			"--ast",
+		);
 		const doc = result.parsed as Doc;
 		const linked = collectHyperlinks(doc);
 		const sample = linked[0];
@@ -104,7 +120,11 @@ describe("docx read — hyperlinks", () => {
 	});
 
 	test("each hyperlink has a positional linkN id", async () => {
-		const result = await runCli("read", "tests/fixtures/academic-paper.docx");
+		const result = await runCli(
+			"read",
+			"tests/fixtures/academic-paper.docx",
+			"--ast",
+		);
 		const links = collectHyperlinks(result.parsed as Doc);
 		const ids = new Set(links.map((entry) => entry.hyperlink.id));
 		expect(ids.size).toBe(16);
@@ -358,7 +378,7 @@ describe("docx hyperlinks add", () => {
 			"--url",
 			"https://example.com",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as Doc;
 		const p1 = doc.blocks.find((entry) => entry.id === "p1");
 		const concatenated = (p1?.runs ?? [])
@@ -460,7 +480,7 @@ describe("docx hyperlinks delete", () => {
 		expect(afterList.length).toBe(beforeList.length - 1);
 
 		// The removed link's text should still be in the document as plain text.
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as Doc;
 		const allText = doc.blocks
 			.flatMap((block) => block.runs ?? [])
@@ -618,7 +638,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const { docPath } = await setupSample("repl-offset");
 		const result = await runCli("replace", docPath, "after", "AFTER");
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = readP1Runs(read.parsed as Doc);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LINKED AFTER");
@@ -628,7 +648,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const { docPath } = await setupSample("repl-inside");
 		const result = await runCli("replace", docPath, "INK", "OOK");
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = readP1Runs(read.parsed as Doc);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LOOKED after");
@@ -643,7 +663,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const { docPath } = await setupSample("repl-cross-start");
 		const result = await runCli("replace", docPath, "before LIN", "X");
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = readP1Runs(read.parsed as Doc);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("XKED after");
@@ -660,7 +680,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const { docPath } = await setupSample("repl-cross-end");
 		const result = await runCli("replace", docPath, "KED after", "Y");
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = readP1Runs(read.parsed as Doc);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LINY");
@@ -675,7 +695,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const { docPath } = await setupSample("repl-contains");
 		const result = await runCli("replace", docPath, "before LINKED after", "Z");
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = readP1Runs(read.parsed as Doc);
 		expect(runs.map((entry) => entry.text).join("")).toBe("Z");
 		expect(runs[0]?.hyperlink).toBeUndefined();

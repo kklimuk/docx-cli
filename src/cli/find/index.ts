@@ -18,7 +18,7 @@ Options:
   --current         search the raw concatenation (both ins and del text)
   --baseline        search the pre-change text (skip ins/moveTo)
                     default: accepted view (skip del/moveFrom) — matches
-                    "docx read --markdown" / "docx wc" / "docx comments add"
+                    "docx read" / "docx wc" / "docx comments add"
   --exact           disable query normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
   -h, --help        show this help

@@ -33,7 +33,7 @@ async function paragraphText(
 	docPath: string,
 	blockId: string,
 ): Promise<string> {
-	const read = await runCli("read", docPath);
+	const read = await runCli("read", docPath, "--ast");
 	const blocks = (
 		read.parsed as {
 			blocks: Array<{

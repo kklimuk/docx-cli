@@ -62,7 +62,7 @@ describe("docx comments", () => {
 			"--author",
 			"Jane",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;

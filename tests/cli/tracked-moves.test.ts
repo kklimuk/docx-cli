@@ -40,7 +40,7 @@ function paragraphText(doc: Doc, index: number): string {
 
 describe("tracked moves — AST surface", () => {
 	test("read exposes moveFrom and moveTo as TrackedChange entries", async () => {
-		const result = await runCli("read", FIXTURE);
+		const result = await runCli("read", FIXTURE, "--ast");
 		const doc = result.parsed as Doc;
 
 		const movedRunFrom = (doc.blocks[0]?.runs ?? []).find(
@@ -97,7 +97,7 @@ describe("tracked moves — wc views", () => {
 	test("default is the accepted view (skips moveFrom origin)", async () => {
 		const result = await runCli("wc", FIXTURE);
 		// Same as --accepted: 8 words (default flipped from "current"
-		// for consistency with `read --markdown` / `find` / `replace`).
+		// for consistency with `read` / `find` / `replace`).
 		expect((result.parsed as { words: number }).words).toBe(8);
 	});
 
@@ -114,7 +114,7 @@ describe("tracked moves — accept", () => {
 		const result = await runCli("track-changes", "accept", docPath, "--all");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as Doc;
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: .");
 		expect(paragraphText(doc, 1)).toBe(
@@ -140,7 +140,7 @@ describe("tracked moves — accept", () => {
 		);
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as Doc;
 		// p0: moveFrom accepted → text gone.
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: .");
@@ -158,7 +158,7 @@ describe("tracked moves — reject", () => {
 		const result = await runCli("track-changes", "reject", docPath, "--all");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as Doc;
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: the moved sentence.");
 		expect(paragraphText(doc, 1)).toBe("Destination paragraph: .");

@@ -36,7 +36,7 @@ Options:
   --current         operate on the raw concatenation (both ins and del text)
   --baseline        operate on the pre-change text (skip ins/moveTo)
                     default: accepted view (skip del/moveFrom) — matches
-                    "docx find" / "docx read --markdown"
+                    "docx find" / "docx read"
   --exact           disable pattern normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
   -o, --output PATH write to PATH instead of overwriting FILE

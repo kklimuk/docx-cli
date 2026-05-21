@@ -99,7 +99,7 @@ describe("docx track-changes accept / reject", () => {
 	}
 
 	async function flatText(docPath: string): Promise<string> {
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const blocks = (
 			read.parsed as {
 				blocks: Array<{ runs?: Array<{ type: string; text: string }> }>;

@@ -16,7 +16,7 @@ async function freshCopy(label: string): Promise<string> {
 }
 
 async function flatText(docPath: string): Promise<string> {
-	const read = await runCli("read", docPath);
+	const read = await runCli("read", docPath, "--ast");
 	const blocks = (
 		read.parsed as {
 			blocks: Array<{ runs?: Array<{ type: string; text: string }> }>;
@@ -89,7 +89,7 @@ describe("docx replace — tracked changes", () => {
 		const result = await runCli("replace", docPath, "exciting", "delightful");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const blocks = (
 			read.parsed as {
 				blocks: Array<{
@@ -138,7 +138,7 @@ describe("docx replace — tracked changes", () => {
 		const result = await runCli("replace", docPath, "text", "string");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = (
 			read.parsed as {
 				blocks: Array<{
@@ -168,7 +168,7 @@ describe("docx delete — tracked changes", () => {
 		const result = await runCli("delete", docPath, "--at", "p0");
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const blocks = (
 			read.parsed as {
 				blocks: Array<{
@@ -205,7 +205,7 @@ describe("docx edit — tracked changes", () => {
 		);
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const runs = (
 			read.parsed as {
 				blocks: Array<{
@@ -241,7 +241,7 @@ describe("docx insert — tracked changes", () => {
 		);
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const blocks = (
 			read.parsed as {
 				blocks: Array<{
@@ -269,7 +269,7 @@ describe("--author flag — tracked-change attribution", () => {
 	};
 
 	async function readRuns(docPath: string): Promise<RunWithChange[]> {
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const blocks = (
 			read.parsed as { blocks: Array<{ runs?: RunWithChange[] }> }
 		).blocks;

@@ -44,7 +44,7 @@ describe("docx replace", () => {
 			totalMatches: 2,
 			replaced: 1,
 		});
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -56,7 +56,7 @@ describe("docx replace", () => {
 
 	test("--all replaces every match", async () => {
 		await runCli("replace", docPath, "fox", "cat", "--all");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -69,7 +69,7 @@ describe("docx replace", () => {
 
 	test("--ignore-case catches mixed case across runs", async () => {
 		await runCli("replace", docPath, "fox", "WOLF", "--all", "--ignore-case");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -82,7 +82,7 @@ describe("docx replace", () => {
 
 	test("--regex with capture-group backrefs", async () => {
 		await runCli("replace", docPath, "(quick) (brown)", "$2 $1", "--regex");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -93,7 +93,7 @@ describe("docx replace", () => {
 
 	test("--regex with $& full-match reference", async () => {
 		await runCli("replace", docPath, "fox", "[$&]", "--regex", "--all");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -144,7 +144,7 @@ describe("docx replace", () => {
 		// minimal.docx has p1 = "Use important terms in purple bold."
 		// where "important" is purple+bold and the rest is unstyled.
 		await runCli("replace", colorPath, "important", "essential");
-		const read = await runCli("read", colorPath);
+		const read = await runCli("read", colorPath, "--ast");
 		const paragraph = (read.parsed as Doc).blocks.find(
 			(block) => block.id === "p1",
 		);
@@ -160,7 +160,7 @@ describe("docx replace", () => {
 		const multiPath = join(workspace, "multi.docx");
 		await runCli("create", multiPath, "--text", "abcabcabc");
 		await runCli("replace", multiPath, "abc", "Z", "--all");
-		const read = await runCli("read", multiPath);
+		const read = await runCli("read", multiPath, "--ast");
 		const text = (read.parsed as Doc).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -216,7 +216,7 @@ describe("docx replace", () => {
 			payload.matches.some((match) => match.blockId.startsWith("t0:r")),
 		).toBe(true);
 
-		const read = await runCli("read", cellPath);
+		const read = await runCli("read", cellPath, "--ast");
 		const text = JSON.stringify(read.parsed);
 		expect(text).toContain("Protoboard");
 		expect(text).not.toContain("Breadboard");

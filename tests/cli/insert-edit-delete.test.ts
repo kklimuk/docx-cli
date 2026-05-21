@@ -27,7 +27,7 @@ describe("docx insert / edit / delete", () => {
 		);
 		expect(result.exitCode).toBe(0);
 
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				id: string;
@@ -48,7 +48,7 @@ describe("docx insert / edit / delete", () => {
 
 	test("insert --before places paragraph before the locator", async () => {
 		await runCli("insert", docPath, "--before", "p0", "--text", "Prepended");
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
 		};
@@ -77,7 +77,7 @@ describe("docx insert / edit / delete", () => {
 			runsJson,
 		);
 		expect(result.exitCode).toBe(0);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{ type: string; runs?: Array<{ text?: string }> }>;
 		};
@@ -98,7 +98,7 @@ describe("docx insert / edit / delete", () => {
 			{ type: "text", text: "bold", bold: true },
 		]);
 		await runCli("insert", docPath, "--after", "p0", "--runs", runsJson);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;
@@ -125,7 +125,7 @@ describe("docx insert / edit / delete", () => {
 			"--style",
 			"Heading1",
 		);
-		const read = await runCli("read", docPath);
+		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{
 				type: string;
@@ -140,7 +140,7 @@ describe("docx insert / edit / delete", () => {
 
 	test("delete removes the block at the locator", async () => {
 		await runCli("insert", docPath, "--after", "p0", "--text", "Second");
-		const beforeRead = await runCli("read", docPath);
+		const beforeRead = await runCli("read", docPath, "--ast");
 		const before = beforeRead.parsed as {
 			blocks: Array<{ type: string }>;
 		};
@@ -149,7 +149,7 @@ describe("docx insert / edit / delete", () => {
 		).length;
 
 		await runCli("delete", docPath, "--at", "p0");
-		const afterRead = await runCli("read", docPath);
+		const afterRead = await runCli("read", docPath, "--ast");
 		const after = afterRead.parsed as {
 			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
 		};
@@ -196,7 +196,7 @@ describe("docx insert / edit / delete", () => {
 		expect(afterBytes.byteLength).toBe(beforeBytes.byteLength);
 		expect(await Bun.file(outPath).exists()).toBe(true);
 
-		const read = await runCli("read", outPath);
+		const read = await runCli("read", outPath, "--ast");
 		const doc = read.parsed as {
 			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
 		};

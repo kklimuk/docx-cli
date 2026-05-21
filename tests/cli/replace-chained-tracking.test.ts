@@ -20,7 +20,7 @@ async function paragraphText(
 	docPath: string,
 	blockId: string,
 ): Promise<string> {
-	const read = await runCli("read", docPath);
+	const read = await runCli("read", docPath, "--ast");
 	const blocks = (
 		read.parsed as {
 			blocks: Array<{
@@ -70,15 +70,7 @@ describe("docx replace — chained edits under tracking", () => {
 
 		// Read the accepted view of just p0 — under accepted view the
 		// <w:del>s are dropped and the <w:ins>s are inlined as plain text.
-		const result = await runCli(
-			"read",
-			docPath,
-			"--markdown",
-			"--from",
-			"p0",
-			"--to",
-			"p0",
-		);
+		const result = await runCli("read", docPath, "--from", "p0", "--to", "p0");
 		expect(result.exitCode).toBe(0);
 		const accepted = result.stdout
 			.split("\n")

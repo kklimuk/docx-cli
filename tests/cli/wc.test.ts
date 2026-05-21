@@ -161,7 +161,7 @@ describe("docx wc — tracked changes", () => {
 		expect((result.parsed as { view: string }).view).toBe("accepted");
 		// "The old slow fox jumps." = 5 words (skip the 2-word del). Same
 		// as --accepted; default flipped from "current" to match
-		// `read --markdown` / `find` / `replace`.
+		// `read` / `find` / `replace`.
 		expect((result.parsed as { words: number }).words).toBe(5);
 	});
 
