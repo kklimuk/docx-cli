@@ -170,7 +170,10 @@ function paragraphPrefix(paragraph: Paragraph): string {
 	if (headingLevel !== null) return `${"#".repeat(headingLevel)} `;
 	if (paragraph.list) {
 		const indent = "  ".repeat(paragraph.list.level);
-		return `${indent}- `;
+		// GFM ordered-list numbering auto-increments client-side; using `1. `
+		// for every item is the idiomatic representation.
+		const marker = paragraph.list.ordered ? "1. " : "- ";
+		return `${indent}${marker}`;
 	}
 	return "";
 }

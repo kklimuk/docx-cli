@@ -1,3 +1,4 @@
+import { getListFormat } from "../numbering";
 import { XmlNode } from "../parser";
 import { readSectionProperties } from "../sections";
 import type { DocView } from "./doc-view";
@@ -193,7 +194,7 @@ function readParagraph(
 	const paragraph: Paragraph = { id, type: "paragraph", runs: [] };
 	const paragraphProperties = node.findChild("w:pPr");
 	if (paragraphProperties) {
-		applyParagraphProperties(paragraph, paragraphProperties);
+		applyParagraphProperties(view, paragraph, paragraphProperties);
 	}
 
 	const context: WalkContext = {
@@ -384,6 +385,7 @@ function readHyperlinkProperties(
 }
 
 function applyParagraphProperties(
+	view: DocView,
 	paragraph: Paragraph,
 	paragraphProperties: XmlNode,
 ): void {
@@ -414,7 +416,17 @@ function applyParagraphProperties(
 			? Number(indentLevel.getAttribute("w:val") ?? "0")
 			: 0;
 		const id = numberingId ? (numberingId.getAttribute("w:val") ?? "") : "";
-		paragraph.list = { level, numId: id };
+		const list: { level: number; numId: string; ordered?: boolean } = {
+			level,
+			numId: id,
+		};
+		// Resolve the level's numFmt via numbering.xml so the renderer knows
+		// whether to emit `1. ` (ordered) or `- ` (bullet) in markdown.
+		const format = id ? getListFormat(view, id, level) : undefined;
+		if (format !== undefined && format !== "bullet" && format !== "none") {
+			list.ordered = true;
+		}
+		paragraph.list = list;
 	}
 }
 

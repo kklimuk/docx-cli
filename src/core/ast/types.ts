@@ -22,7 +22,7 @@ export type Paragraph = {
 	type: "paragraph";
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
-	list?: { level: number; numId: string };
+	list?: { level: number; numId: string; ordered?: boolean };
 	runs: Run[];
 };
 

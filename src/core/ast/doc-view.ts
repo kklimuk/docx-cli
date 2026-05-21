@@ -29,6 +29,7 @@ export type DocView = {
 	footnotesTree?: XmlNode[];
 	endnotesTree?: XmlNode[];
 	stylesTree?: XmlNode[];
+	numberingTree?: XmlNode[];
 	relationshipsTree: XmlNode[];
 	contentTypesTree: XmlNode[];
 	corePropertiesTree?: XmlNode[];
@@ -77,6 +78,9 @@ export async function openDocView(path: string): Promise<DocView> {
 	const stylesTree = pkg.hasPart("word/styles.xml")
 		? XmlNode.parse(await pkg.readText("word/styles.xml"))
 		: undefined;
+	const numberingTree = pkg.hasPart("word/numbering.xml")
+		? XmlNode.parse(await pkg.readText("word/numbering.xml"))
+		: undefined;
 
 	const view: DocView = {
 		pkg,
@@ -86,6 +90,7 @@ export async function openDocView(path: string): Promise<DocView> {
 		footnotesTree,
 		endnotesTree,
 		stylesTree,
+		numberingTree,
 		relationshipsTree,
 		contentTypesTree,
 		corePropertiesTree,
@@ -146,6 +151,12 @@ export async function saveDocView(view: DocView, path?: string): Promise<void> {
 	}
 	if (view.stylesTree) {
 		view.pkg.writeText("word/styles.xml", XmlNode.serialize(view.stylesTree));
+	}
+	if (view.numberingTree) {
+		view.pkg.writeText(
+			"word/numbering.xml",
+			XmlNode.serialize(view.numberingTree),
+		);
 	}
 	await view.pkg.save(path);
 }

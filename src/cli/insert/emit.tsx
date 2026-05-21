@@ -5,6 +5,7 @@ import type { NullableXmlNode, XmlNode } from "@core/parser";
 export type ParagraphOptions = {
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
+	list?: { level: number; numId: number };
 };
 
 type EmittableTextFormatting = Pick<
@@ -41,19 +42,42 @@ export function HorizontalRule(): XmlNode {
 }
 
 export function Paragraph(props: ParagraphProps): XmlNode {
-	const { style, alignment } = props;
+	const { style, alignment, list } = props;
 	const runs: Run[] =
 		"runs" in props && props.runs
 			? props.runs
 			: [textRunFromProps(props as ParagraphProps & { text: string })];
 	return (
 		<w.p>
-			<ParagraphProperties options={{ style, alignment }} />
+			<ParagraphProperties options={{ style, alignment, list }} />
 			{runs.map((run) => (
 				<RunElement run={run} />
 			))}
 		</w.p>
 	);
+}
+
+export type ListParagraphProps = {
+	numId: number;
+	level: number;
+	alignment?: "left" | "center" | "right" | "justify";
+} & ({ text: string } | { runs: Run[] });
+
+/** A paragraph that belongs to a numbered or bulleted list. Sets pStyle to
+ * "ListParagraph" (the canonical Word style for list items — caller is
+ * responsible for ensuring it via `ensureStyle(view, "ListParagraph")`) and
+ * emits the `<w:numPr>` reference. The numId must come from
+ * `allocateNum(view, kind)` in [src/core/numbering.tsx]. */
+export function ListParagraph(props: ListParagraphProps): XmlNode {
+	const baseProps = {
+		style: "ListParagraph",
+		alignment: props.alignment,
+		list: { level: props.level, numId: props.numId },
+	} as const;
+	if ("runs" in props) {
+		return <Paragraph {...baseProps} runs={props.runs} />;
+	}
+	return <Paragraph {...baseProps} text={props.text} />;
 }
 
 /** Emits a run as fresh OOXML. The fresh-emission path supports text/break/tab
@@ -125,10 +149,17 @@ function ParagraphProperties({
 }: {
 	options: ParagraphOptions;
 }): NullableXmlNode {
-	if (!options.style && !options.alignment) return null;
+	if (!options.style && !options.alignment && !options.list) return null;
+	// Schema order (CT_PPrBase, ECMA-376 §17.3.1.26): pStyle → numPr → jc.
 	return (
 		<w.pPr>
 			{options.style && <w.pStyle w-val={options.style} />}
+			{options.list && (
+				<w.numPr>
+					<w.ilvl w-val={String(options.list.level)} />
+					<w.numId w-val={String(options.list.numId)} />
+				</w.numPr>
+			)}
 			{options.alignment && <w.jc w-val={options.alignment} />}
 		</w.pPr>
 	);
@@ -138,6 +169,7 @@ function textRunFromProps(props: ParagraphProps & { text: string }): TextRun {
 	const {
 		style: _style,
 		alignment: _alignment,
+		list: _list,
 		text,
 		runs: _runs,
 		...formatting

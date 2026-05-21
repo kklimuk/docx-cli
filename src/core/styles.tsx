@@ -143,6 +143,9 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			<w.qFormat />
 			<w.pPr>
 				<w.ind w-left="720" />
+				{/* Collapse Normal's spacing.after between adjacent items of this
+				    style — matches Word's own List Paragraph definition. */}
+				<w.contextualSpacing />
 			</w.pPr>
 		</w.style>
 	),

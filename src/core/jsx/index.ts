@@ -115,6 +115,17 @@ const W_TAGS = [
 	"vertAlign",
 	"pBdr",
 	"bottom",
+	"numbering",
+	"num",
+	"abstractNum",
+	"abstractNumId",
+	"multiLevelType",
+	"lvl",
+	"start",
+	"numFmt",
+	"lvlText",
+	"lvlJc",
+	"contextualSpacing",
 ] as const;
 
 const R_TAGS = ["embed", "link", "id"] as const;

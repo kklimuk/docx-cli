@@ -42,11 +42,28 @@ describe("docx read (markdown)", () => {
 		expect(out).toContain("9.1 Ω Resistor");
 	});
 
-	test("tables-and-lists: top-level list bullets render", async () => {
+	test("lists fixture: bullet vs ordered hierarchy renders correctly", async () => {
+		const out = await render(fixture("lists.docx"));
+		// Bullets at nested levels
+		expect(out).toMatch(/^- Apples/m);
+		expect(out).toMatch(/^ {2}- Granny Smith/m);
+		expect(out).toMatch(/^ {4}- From the orchard down the road/m);
+		// Ordered items emit "1. " regardless of depth (GFM auto-increments)
+		expect(out).toMatch(/^1\. Preheat the oven/m);
+		expect(out).toMatch(/^ {2}1\. Sift the flour/m);
+		expect(out).toMatch(/^ {4}1\. Don't overmix/m);
+		// The second bullet list (independent numId) still renders as bullets
+		expect(out).toMatch(/^- Independent item one/m);
+	});
+
+	test("tables-and-lists: top-level ordered items render as `1.`", async () => {
+		// These are Word-numbered items (numFmt=decimal), so they should
+		// render as ordered list items rather than bullets. The renderer
+		// uses `1. ` for every item since GFM auto-increments client-side.
 		const out = await render(fixture("tables-and-lists.docx"));
-		expect(out).toMatch(/^- \*\*Introduction\*\*/m);
-		expect(out).toMatch(/^- \*\*Background Information\*\*/m);
-		expect(out).toMatch(/^- \*\*Methods and Materials\*\*/m);
+		expect(out).toMatch(/^1\. \*\*Introduction\*\*/m);
+		expect(out).toMatch(/^1\. \*\*Background Information\*\*/m);
+		expect(out).toMatch(/^1\. \*\*Methods and Materials\*\*/m);
 	});
 
 	test("resume-styling: list bullets and bold runs render", async () => {
