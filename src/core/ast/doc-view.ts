@@ -127,6 +127,18 @@ export async function saveDocView(view: DocView, path?: string): Promise<void> {
 			XmlNode.serialize(view.settingsTree),
 		);
 	}
+	if (view.footnotesTree) {
+		view.pkg.writeText(
+			"word/footnotes.xml",
+			XmlNode.serialize(view.footnotesTree),
+		);
+	}
+	if (view.endnotesTree) {
+		view.pkg.writeText(
+			"word/endnotes.xml",
+			XmlNode.serialize(view.endnotesTree),
+		);
+	}
 	await view.pkg.save(path);
 }
 
