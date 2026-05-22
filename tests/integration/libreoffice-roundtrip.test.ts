@@ -42,21 +42,90 @@ const FIXTURES = Bun.env.DOCX_LO_ALL
 	? [...CORE_FIXTURES, ...EXTRA_FIXTURES]
 	: CORE_FIXTURES;
 
-let workspace: string;
-let sofficeProfile: string;
+type RoundTrip = {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+	convertedBytes: number;
+};
 
-beforeAll(() => {
+// soffice converts (~1s each) are the slow part and are independent, so we run
+// them through a bounded worker pool. Each worker needs its OWN user-profile —
+// the default profile is a global lock (see CLAUDE.md), so concurrent spawns
+// sharing one would contend.
+const CONCURRENCY = 4;
+let workspace: string;
+const profiles: string[] = [];
+const results = new Map<string, RoundTrip>();
+
+beforeAll(async () => {
 	workspace = mkdtempSync(join(tmpdir(), "docx-cli-lo-"));
-	// Isolated soffice user-profile dir, shared across this file's tests (which
-	// run serially) — prevents contention with the system-default profile or
-	// with concurrent `bun test` invocations sharing one machine.
-	sofficeProfile = mkdtempSync(join(tmpdir(), "docx-cli-soffice-"));
-});
+	if (!SOFFICE) return;
+
+	// 1. Prep every fixture serially: the in-process runCli shares a global
+	//    output sink so it isn't concurrency-safe — but it's fast (no spawn).
+	const jobs: Array<{ fixture: string; docPath: string; outDir: string }> = [];
+	for (const fixture of FIXTURES) {
+		const docPath = join(workspace, fixture);
+		await Bun.write(docPath, Bun.file(`tests/fixtures/${fixture}`));
+		// Force a write through our serializer by inserting a probe paragraph.
+		const read = await runCli("read", docPath, "--ast");
+		const doc = read.parsed as { blocks: Array<{ id: string; type: string }> };
+		const lastParagraph = [...doc.blocks]
+			.reverse()
+			.find((block) => block.type === "paragraph");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			lastParagraph?.id ?? "p0",
+			"--text",
+			"docx-cli round-trip probe",
+		);
+		const outDir = join(workspace, `lo-${fixture}`);
+		mkdirSync(outDir, { recursive: true });
+		jobs.push({ fixture, docPath, outDir });
+	}
+
+	// 2. Convert concurrently — one reusable profile per worker.
+	const queue = [...jobs];
+	const workers = Array.from(
+		{ length: Math.min(CONCURRENCY, jobs.length) },
+		async () => {
+			const profile = newProfile();
+			for (let job = queue.shift(); job; job = queue.shift()) {
+				const { exitCode, stdout, stderr } = await runSoffice(
+					job.docPath,
+					job.outDir,
+					profile,
+				);
+				const converted = Bun.file(join(job.outDir, job.fixture));
+				results.set(job.fixture, {
+					exitCode,
+					stdout,
+					stderr,
+					convertedBytes: (await converted.exists())
+						? (await converted.arrayBuffer()).byteLength
+						: 0,
+				});
+			}
+		},
+	);
+	await Promise.all(workers);
+}, 120_000);
 
 afterAll(() => {
 	if (workspace) rmSync(workspace, { recursive: true, force: true });
-	if (sofficeProfile) rmSync(sofficeProfile, { recursive: true, force: true });
+	for (const profile of profiles) {
+		rmSync(profile, { recursive: true, force: true });
+	}
 });
+
+function newProfile(): string {
+	const profile = mkdtempSync(join(tmpdir(), "docx-cli-soffice-"));
+	profiles.push(profile);
+	return profile;
+}
 
 describe("LibreOffice round-trip", () => {
 	if (!SOFFICE) {
@@ -65,37 +134,14 @@ describe("LibreOffice round-trip", () => {
 	}
 
 	for (const fixture of FIXTURES) {
-		test(`${fixture} re-saves cleanly through the create→insert→read pipeline`, async () => {
-			const docPath = join(workspace, fixture);
-			await Bun.write(docPath, Bun.file(`tests/fixtures/${fixture}`));
-
-			// Mutate: insert a small paragraph at the end of the body to force
-			// a write through our serializer.
-			const read = await runCli("read", docPath, "--ast");
-			const doc = read.parsed as {
-				blocks: Array<{ id: string; type: string }>;
-			};
-			const lastParagraph = [...doc.blocks]
-				.reverse()
-				.find((block) => block.type === "paragraph");
-			expect(lastParagraph).toBeDefined();
-
-			await runCli(
-				"insert",
-				docPath,
-				"--after",
-				lastParagraph?.id ?? "p0",
-				"--text",
-				"docx-cli round-trip probe",
-			);
-
-			const outDir = join(workspace, `lo-${fixture}`);
-			mkdirSync(outDir, { recursive: true });
-			const { exitCode, stdout, stderr } = await runSoffice(docPath, outDir);
-
-			expect(exitCode).toBe(0);
-			// LibreOffice prints some macOS-only "Task policy" noise on stderr; ignore it.
-			const meaningfulStderr = stderr
+		test(`${fixture} re-saves cleanly through the create→insert→read pipeline`, () => {
+			// Conversion ran in the beforeAll pool; assert its precomputed result.
+			const result = results.get(fixture);
+			expect(result).toBeDefined();
+			if (!result) return;
+			expect(result.exitCode).toBe(0);
+			// LibreOffice prints macOS-only "Task policy" noise on stderr; ignore it.
+			const meaningfulStderr = result.stderr
 				.split("\n")
 				.filter(
 					(line) =>
@@ -105,11 +151,9 @@ describe("LibreOffice round-trip", () => {
 				)
 				.join("\n");
 			expect(meaningfulStderr).toBe("");
-			expect(stdout).toContain("convert");
-			const converted = Bun.file(join(outDir, fixture));
-			expect(await converted.exists()).toBe(true);
-			expect((await converted.arrayBuffer()).byteLength).toBeGreaterThan(0);
-		}, 30_000);
+			expect(result.stdout).toContain("convert");
+			expect(result.convertedBytes).toBeGreaterThan(0);
+		});
 	}
 
 	test("tracked-on edits round-trip through LibreOffice with markers preserved", async () => {
@@ -146,7 +190,7 @@ describe("LibreOffice round-trip", () => {
 
 		const outDir = join(workspace, "lo-tracked");
 		mkdirSync(outDir, { recursive: true });
-		const { exitCode } = await runSoffice(docPath, outDir);
+		const { exitCode } = await runSoffice(docPath, outDir, newProfile());
 		expect(exitCode).toBe(0);
 
 		const converted = join(outDir, "tracked-roundtrip.docx");
@@ -185,21 +229,22 @@ async function detectSoffice(): Promise<string | null> {
 	return null;
 }
 
-/** Spawn `soffice --headless --convert-to docx` against the per-file isolated
+/** Spawn `soffice --headless --convert-to docx` against an isolated
  * user-profile directory. Without -env:UserInstallation, every soffice process
  * competes for a lock on the default profile (~/Library/Application Support/
- * LibreOffice/4 on macOS). A stale or concurrent soffice causes the new one
- * to exit non-zero — a real flake source. Tests within this file run serially,
- * so they safely share the same isolated profile. */
+ * LibreOffice/4 on macOS); a stale or concurrent soffice then exits non-zero —
+ * a real flake source. The caller passes a `profile` it owns exclusively for
+ * the duration of the call, so conversions can run concurrently. */
 async function runSoffice(
 	docPath: string,
 	outDir: string,
+	profile: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	if (!SOFFICE) throw new Error("soffice not on PATH");
 	const proc = Bun.spawn(
 		[
 			SOFFICE,
-			`-env:UserInstallation=file://${sofficeProfile}`,
+			`-env:UserInstallation=file://${profile}`,
 			"--headless",
 			"--convert-to",
 			"docx",
