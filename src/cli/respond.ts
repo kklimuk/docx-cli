@@ -23,6 +23,7 @@ export type ErrorCode =
 	| "BLOCK_NOT_FOUND"
 	| "COMMENT_NOT_FOUND"
 	| "IMAGE_NOT_FOUND"
+	| "IMAGE_SOURCE"
 	| "HYPERLINK_NOT_FOUND"
 	| "TRACKED_CHANGE_NOT_FOUND"
 	| "MATCH_NOT_FOUND"
@@ -34,37 +35,36 @@ export type ErrorCode =
 // streams; the test harness redirects them to run the CLI in-process (no
 // subprocess spawn). All CLI output funnels through here, so capturing these
 // two captures everything.
-let stdoutSink: ((text: string) => void) | null = null;
-let stderrSink: ((text: string) => void) | null = null;
+const stdout = async (text: string) => {
+	await Bun.stdout.write(text);
+};
+const stderr = async (text: string) => {
+	await Bun.stderr.write(text);
+};
+const sinks = {
+	stdout,
+	stderr,
+};
 
-/** Redirect CLI stdout/stderr (for in-process testing). Pass `null` to restore
- * the real streams. */
+/** Redirect CLI stdout/stderr (for in-process testing). */
 export function captureOutput(
-	stdout: ((text: string) => void) | null,
-	stderr: ((text: string) => void) | null = null,
+	passedStdout?: ((text: string) => Promise<void>) | null,
+	passedStderr?: ((text: string) => Promise<void>) | null,
 ): void {
-	stdoutSink = stdout;
-	stderrSink = stderr;
+	sinks.stdout = passedStdout ?? stdout;
+	sinks.stderr = passedStderr ?? stderr;
 }
 
-async function emitStdout(text: string): Promise<void> {
-	if (stdoutSink) {
-		stdoutSink(text);
-		return;
-	}
-	await Bun.write(Bun.stdout, text);
+export async function writeStdout(text: string): Promise<void> {
+	await sinks.stdout(text);
 }
 
 export async function writeStderr(text: string): Promise<void> {
-	if (stderrSink) {
-		stderrSink(text);
-		return;
-	}
-	await Bun.stderr.write(text);
+	await sinks.stderr(text);
 }
 
 export async function respond(payload: unknown): Promise<void> {
-	await emitStdout(`${JSON.stringify(payload)}\n`);
+	await sinks.stdout(`${JSON.stringify(payload)}\n`);
 }
 
 let verboseAck = false;
@@ -82,10 +82,6 @@ export function setVerboseAck(verbose: boolean): void {
 export async function respondAck(payload: unknown): Promise<void> {
 	if (!verboseAck) return;
 	await respond(payload);
-}
-
-export async function writeStdout(text: string): Promise<void> {
-	await emitStdout(text);
 }
 
 export async function fail(
@@ -121,6 +117,7 @@ function exitCodeFor(code: ErrorCode): number {
 		case "NOT_A_ZIP":
 		case "TRACKED_CHANGE_CONFLICT":
 		case "TABLE_STRUCTURE":
+		case "IMAGE_SOURCE":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
 	}

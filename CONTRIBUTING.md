@@ -37,7 +37,7 @@ src/
     wc/                       # docx wc FILE [LOCATOR] (count.ts)
     outline/                  # docx outline FILE (build.ts: heading-tree builder)
     comments/                 # add | reply | resolve | delete | list (helpers.tsx: paraId, run-splitting)
-    images/                   # list | extract | replace
+    images/                   # list | extract | replace | delete
     hyperlinks/               # add | list | replace | delete (wrap.tsx: run-splitting)
     tables/                   # row/column insert+delete | set-widths | merge | unmerge | borders (grid.ts: merge-aware model)
     track-changes/            # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
@@ -45,9 +45,10 @@ src/
   core/
     package/                  # JSZip wrapper: open, read/write XML parts, save
     parser/                   # XmlNode class + parse/serialize; run-ops.ts (run text/offsets + RUN_BEARING_WRAPPER_TAGS)
-    jsx/                      # Fragment, namespace() + tag namespaces (w, r, a, wp, pic, cp, dc, …), auto-runtime
+    jsx/                      # Fragment, namespace() + tag namespaces (w, a, wp, pic, cp, dc, …), auto-runtime
     ast/                      # types + DocView + XML→AST reader; text.ts (paragraph helpers), sym.ts (<w:sym> decode)
     locators/                 # parse "p3:5-20" → Locator + resolve to refs
+    image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http + HEIC→JPEG), formats.ts (one mime↔ext table)
     blocks.tsx                # <Paragraph> / <RunElement> / <ListParagraph> / <HorizontalRule> emitters
     table.tsx                 # <BlankTable> / <Table> / <TableRow> / <TableCell> emitters
     sections.tsx              # sectPr emitters + mutators

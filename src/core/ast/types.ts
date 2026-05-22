@@ -126,6 +126,7 @@ export type ImageRun = {
 	widthEmu?: number;
 	heightEmu?: number;
 	alt?: string;
+	trackedChange?: TrackedChange;
 };
 
 export type BreakRun = {

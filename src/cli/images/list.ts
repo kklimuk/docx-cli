@@ -1,4 +1,4 @@
-import { type Block, enrichImageHashes, type ImageRun } from "@core";
+import { enrichImageHashes, flattenImageRuns } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -43,26 +43,6 @@ export async function run(args: string[]): Promise<number> {
 
 	await enrichImageHashes(view);
 
-	const images: ImageRun[] = [];
-	collectImages(view.doc.blocks, images);
-	await respond(images);
+	await respond(flattenImageRuns(view.doc.blocks));
 	return EXIT.OK;
-}
-
-function collectImages(blocks: Block[], out: ImageRun[]): void {
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			for (const run of block.runs) {
-				if (run.type === "image") out.push(run);
-			}
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					collectImages(cell.blocks, out);
-				}
-			}
-		}
-	}
 }

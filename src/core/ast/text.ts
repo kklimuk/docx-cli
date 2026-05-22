@@ -1,4 +1,4 @@
-import type { Block, Paragraph } from "./types";
+import type { Block, ImageRun, Paragraph } from "./types";
 
 export function paragraphText(paragraph: Paragraph): string {
 	let out = "";
@@ -52,6 +52,14 @@ export function flattenParagraphs(blocks: Block[]): Paragraph[] {
 		}
 	}
 	return out;
+}
+
+/** Every image run in the document, in reading order (descending into table
+ * cells) — what `images list`/`extract` enumerate. */
+export function flattenImageRuns(blocks: Block[]): ImageRun[] {
+	return flattenParagraphs(blocks)
+		.flatMap((paragraph) => paragraph.runs)
+		.filter((run): run is ImageRun => run.type === "image");
 }
 
 export function findBlockById(blocks: Block[], blockId: string): Block | null {

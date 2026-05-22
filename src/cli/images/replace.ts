@@ -1,10 +1,17 @@
 import {
+	ensureContentTypeDefault,
+	hasRelationshipWithTarget,
 	isTrackChangesEnabled,
 	resolveAuthor,
 	resolveDate,
 	saveDocView,
+	setRelationshipTarget,
 } from "@core";
-import { XmlNode } from "@core/parser";
+import {
+	collectImageRuns,
+	imageFormatForExtension,
+	SUPPORTED_IMAGE_FORMATS,
+} from "@core/image";
 import { parseArgs } from "util";
 import { emitAuditComment, findContainingParagraph } from "../comments/helpers";
 import {
@@ -46,19 +53,6 @@ Examples:
   docx images replace doc.docx --at img2 --with ./new-photo.png
   docx images replace doc.docx --at img0 --with ./diagram.svg
 `;
-
-const EXTENSION_BY_MIME: Record<string, string> = {
-	"image/png": "png",
-	"image/jpeg": "jpeg",
-	"image/gif": "gif",
-	"image/webp": "webp",
-	"image/bmp": "bmp",
-	"image/tiff": "tiff",
-	"image/svg+xml": "svg",
-	"image/x-emf": "emf",
-	"image/x-wmf": "wmf",
-	"image/vnd.microsoft.icon": "ico",
-};
 
 export async function run(args: string[]): Promise<number> {
 	let parsed: ReturnType<typeof parseArgs>;
@@ -103,15 +97,21 @@ export async function run(args: string[]): Promise<number> {
 		return fail("FILE_NOT_FOUND", `Replacement file not found: ${sourcePath}`);
 	}
 
-	const newMimeType = sourceFile.type;
-	const newExtension = EXTENSION_BY_MIME[newMimeType];
-	if (!newExtension) {
+	// Key off the file extension, not Bun's sniffed MIME — Bun reports
+	// `image/emf`/`image/x-ms-bmp` where the docx (and extract) use
+	// `image/x-emf`/`image/bmp`, so extension → canonical Word MIME is what lets
+	// emf/wmf/bmp/ico round-trip.
+	const sourceExtension = sourcePath.split(".").pop() ?? "";
+	const format = imageFormatForExtension(sourceExtension);
+	if (!format) {
 		return fail(
 			"USAGE",
-			`Unsupported replacement image type: ${newMimeType}`,
-			"Supported: png, jpeg, gif, webp, bmp, tiff, svg, emf, wmf, ico.",
+			`Unsupported replacement image type: .${sourceExtension}`,
+			`Supported: ${SUPPORTED_IMAGE_FORMATS}.`,
 		);
 	}
+	const newMimeType = format.mimeType;
+	const newExtension = format.extension;
 
 	const view = await openOrFail(path);
 	if (typeof view === "number") return view;
@@ -146,12 +146,22 @@ export async function run(args: string[]): Promise<number> {
 		view.pkg.writeBytes(originalPartName, bytes);
 	} else {
 		view.pkg.writeBytes(newPartName, bytes);
-		view.pkg.deletePart(originalPartName);
-		updateRelationshipTarget(
+		setRelationshipTarget(
 			view.relationshipsTree,
 			reference.relationshipId,
 			relativeTargetFor(newPartName),
 		);
+		// Repoint first, then delete the old part only if no OTHER relationship
+		// still targets it — identical images are often deduped to one shared
+		// part, and deleting it would dangle the sibling rId.
+		if (
+			!hasRelationshipWithTarget(
+				view.relationshipsTree,
+				relativeTargetFor(originalPartName),
+			)
+		) {
+			view.pkg.deletePart(originalPartName);
+		}
 		ensureContentTypeDefault(view.contentTypesTree, newExtension, newMimeType);
 		reference.partName = newPartName;
 		reference.contentType = newMimeType;
@@ -161,10 +171,9 @@ export async function run(args: string[]): Promise<number> {
 		const author = resolveAuthor(parsed.values.author as string | undefined);
 		const date = resolveDate();
 		const body = `[docx-cli] image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
-		const drawingRuns = findDrawingRunsForRelationship(
-			view.documentTree,
-			reference.relationshipId,
-		);
+		const drawingRuns = collectImageRuns(view)
+			.filter((hit) => hit.relationshipId === reference.relationshipId)
+			.map((hit) => hit.run);
 		for (const drawingRun of drawingRuns) {
 			const paragraph = findContainingParagraph(view.documentTree, drawingRun);
 			if (!paragraph) continue;
@@ -190,33 +199,6 @@ export async function run(args: string[]): Promise<number> {
 	return EXIT.OK;
 }
 
-function findDrawingRunsForRelationship(
-	documentTree: XmlNode[],
-	relationshipId: string,
-): XmlNode[] {
-	const matches: XmlNode[] = [];
-	function walk(node: XmlNode): void {
-		if (node.tag === "w:r" && runReferencesImage(node, relationshipId)) {
-			matches.push(node);
-			return;
-		}
-		for (const child of node.children) walk(child);
-	}
-	for (const root of documentTree) walk(root);
-	return matches;
-}
-
-function runReferencesImage(run: XmlNode, relationshipId: string): boolean {
-	for (const child of run.children) {
-		if (child.tag !== "w:drawing") continue;
-		const blip = child.findDescendant("a:blip");
-		if (!blip) continue;
-		const embed = blip.getAttribute("r:embed") ?? blip.getAttribute("r:link");
-		if (embed === relationshipId) return true;
-	}
-	return false;
-}
-
 function renameExtension(partName: string, newExtension: string): string {
 	const dotIndex = partName.lastIndexOf(".");
 	const slashIndex = partName.lastIndexOf("/");
@@ -230,36 +212,4 @@ function relativeTargetFor(partName: string): string {
 	return partName.startsWith("word/")
 		? partName.slice("word/".length)
 		: partName;
-}
-
-function updateRelationshipTarget(
-	relationshipsTree: XmlNode[],
-	relationshipId: string,
-	newTarget: string,
-): void {
-	const relationships = XmlNode.findRoot(relationshipsTree, "Relationships");
-	if (!relationships) return;
-	for (const child of relationships.children) {
-		if (child.tag !== "Relationship") continue;
-		if (child.getAttribute("Id") === relationshipId) {
-			child.setAttribute("Target", newTarget);
-			return;
-		}
-	}
-}
-
-function ensureContentTypeDefault(
-	contentTypesTree: XmlNode[],
-	extension: string,
-	mimeType: string,
-): void {
-	const types = XmlNode.findRoot(contentTypesTree, "Types");
-	if (!types) return;
-	for (const child of types.children) {
-		if (child.tag !== "Default") continue;
-		if (child.getAttribute("Extension")?.toLowerCase() === extension) return;
-	}
-	types.children.push(
-		new XmlNode("Default", { Extension: extension, ContentType: mimeType }),
-	);
 }

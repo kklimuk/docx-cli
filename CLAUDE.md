@@ -27,6 +27,7 @@ These conventions are NOT SUGGESTIONS. These are rules.
 These invariants are NOT SUGGESTIONS. These MUST be followed.
 
 - **In-place XML mutation, not AST round-trip** — the AST is a view; mutate `XmlNode` refs, only emit fresh XML for inserted nodes. See [src/core](src/core/CLAUDE.md).
+- **Never delete a relationship or part something still references** — a dangling rId corrupts the file ("unreadable content"), but an unreferenced part is harmless. So pruning is gated on a reference check that scans **everything we don't model** (VML `<v:imagedata>` fallbacks, OLE objects, `<w:background>`, chart rels), not just the construct we authored: `isRelationshipReferenced(documentTree, rId)` before dropping a relationship, `hasRelationshipWithTarget` before deleting a shared media part (both in `core/relationships.ts`). When in doubt, leave the orphan.
 - **`RUN_BEARING_WRAPPER_TAGS`** in `src/core/parser/run-ops.ts` is the AST↔XML offset bridge; every offset-aware walker reads it. See [src/core](src/core/CLAUDE.md).
 - **Stable positional ids** (`p0`, `t0`, `c0`, `img0`, `link0`, `tc0`). Block ids shift after structural edits — re-read between non-trivial mutations. Comment ids are `max-existing + 1`.
 - **Hyperlinks own a relationship, not their text.** `hyperlinks replace` updates the `<Relationship>` `Target` (mints a new rId if multiple `<w:hyperlink>` share one); `delete` unwraps and prunes the rId when unreferenced.

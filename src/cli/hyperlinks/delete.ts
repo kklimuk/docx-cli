@@ -1,10 +1,11 @@
 import {
+	isRelationshipReferenced,
 	isTrackChangesEnabled,
+	removeRelationship,
 	resolveAuthor,
 	resolveDate,
 	saveDocView,
 } from "@core";
-import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
 	emitAuditComment,
@@ -129,15 +130,16 @@ export async function run(args: string[]): Promise<number> {
 	reference.parent.splice(index, 1, ...reference.node.children);
 	view.hyperlinkById.delete(targetId);
 
-	if (reference.relationshipId) {
-		const remaining = countHyperlinkUsages(
-			view.documentTree,
-			reference.relationshipId,
-		);
-		if (remaining === 0) {
-			pruneRelationship(view.relationshipsTree, reference.relationshipId);
-			view.hyperlinksByRelationshipId.delete(reference.relationshipId);
-		}
+	// Prune only when the rId is referenced nowhere in the document — scanning
+	// every attribute, not just `<w:hyperlink>`, so we don't dangle an
+	// `<a:hlinkClick r:id>` in a drawing or a `<w:fldSimple>` HYPERLINK field
+	// that shares this relationship (root CLAUDE.md invariant).
+	if (
+		reference.relationshipId &&
+		!isRelationshipReferenced(view.documentTree, reference.relationshipId)
+	) {
+		removeRelationship(view.relationshipsTree, reference.relationshipId);
+		view.hyperlinksByRelationshipId.delete(reference.relationshipId);
 	}
 
 	if (trackingOn && paragraph && offsets) {
@@ -162,44 +164,4 @@ export async function run(args: string[]): Promise<number> {
 		from: oldUrl,
 	});
 	return EXIT.OK;
-}
-
-function countHyperlinkUsages(
-	documentTree: XmlNode[],
-	relationshipId: string,
-): number {
-	let count = 0;
-	for (const root of documentTree) {
-		count += countInNode(root, relationshipId);
-	}
-	return count;
-}
-
-function countInNode(node: XmlNode, relationshipId: string): number {
-	let count = 0;
-	if (
-		node.tag === "w:hyperlink" &&
-		node.getAttribute("r:id") === relationshipId
-	) {
-		count++;
-	}
-	for (const child of node.children) {
-		count += countInNode(child, relationshipId);
-	}
-	return count;
-}
-
-function pruneRelationship(
-	relationshipsTree: XmlNode[],
-	relationshipId: string,
-): void {
-	const relationships = XmlNode.findRoot(relationshipsTree, "Relationships");
-	if (!relationships) return;
-	relationships.children = relationships.children.filter(
-		(child) =>
-			!(
-				child.tag === "Relationship" &&
-				child.getAttribute("Id") === relationshipId
-			),
-	);
 }

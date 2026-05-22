@@ -485,7 +485,12 @@ function readRun(
 		if (child.tag === "w:drawing") {
 			flushText();
 			const drawing = readDrawing(view, child, state);
-			if (drawing) out.push(drawing);
+			if (drawing) {
+				if (trackedChange && drawing.type === "image") {
+					drawing.trackedChange = trackedChange;
+				}
+				out.push(drawing);
+			}
 			continue;
 		}
 		// Legacy embeds — surface as ChartRun placeholders so callers know

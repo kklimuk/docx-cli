@@ -610,7 +610,7 @@ describe("audit-comments — hyperlinks/images under track-changes", () => {
 			"--id",
 			replacementSrc?.id ?? "img1",
 		);
-		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpg`);
+		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpeg`);
 
 		await runCli("track-changes", docPath, "on");
 

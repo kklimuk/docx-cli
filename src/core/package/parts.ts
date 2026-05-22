@@ -7,6 +7,26 @@ export type PartRegistration = {
 	target: string;
 };
 
+/** Add a `<Default Extension="…" ContentType="…"/>` to [Content_Types].xml if
+ * the extension isn't already declared. Media parts (images) are typed by
+ * extension default rather than per-part Override, so every image writer routes
+ * through here. */
+export function ensureContentTypeDefault(
+	contentTypesTree: XmlNode[],
+	extension: string,
+	contentType: string,
+): void {
+	const types = XmlNode.findRoot(contentTypesTree, "Types");
+	if (!types) return;
+	for (const child of types.children) {
+		if (child.tag !== "Default") continue;
+		if (child.getAttribute("Extension")?.toLowerCase() === extension) return;
+	}
+	types.children.push(
+		new XmlNode("Default", { Extension: extension, ContentType: contentType }),
+	);
+}
+
 export function nextRelationshipId(relationships: XmlNode): string {
 	let highest = 0;
 	for (const child of relationships.children) {

@@ -89,7 +89,7 @@ describe("docx images", () => {
 			"--id",
 			replacementSrc?.id ?? "img1",
 		);
-		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpg`);
+		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpeg`);
 		expect(await Bun.file(replacementPath).exists()).toBe(true);
 
 		const result = await runCli(
@@ -141,7 +141,7 @@ describe("docx images", () => {
 			"img0",
 		);
 		const realImage = (
-			await Array.fromAsync(new Bun.Glob("*.jpg").scan({ cwd: extractDir }))
+			await Array.fromAsync(new Bun.Glob("*.jpeg").scan({ cwd: extractDir }))
 		)[0];
 		expect(realImage).toBeDefined();
 		const result = await runCli(

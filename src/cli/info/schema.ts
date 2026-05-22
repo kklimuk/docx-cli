@@ -139,6 +139,17 @@ const JSON_SCHEMA = {
 				widthEmu: { type: "number" },
 				heightEmu: { type: "number" },
 				alt: { type: "string" },
+				trackedChange: {
+					type: "object",
+					required: ["id", "kind", "author", "date", "revisionId"],
+					properties: {
+						id: { type: "string" },
+						kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
+						author: { type: "string" },
+						date: { type: "string" },
+						revisionId: { type: "string" },
+					},
+				},
 			},
 		},
 		BreakRun: {

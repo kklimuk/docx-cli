@@ -137,16 +137,17 @@ const DC_TAGS = ["title", "creator", "subject", "description"] as const;
 const DCTERMS_TAGS = ["created", "modified"] as const;
 const W15_TAGS = ["commentsEx", "commentEx"] as const;
 
-// Relationship + DrawingML + picture namespaces. Emit-side only, with no
-// internal caller today — r/a/wp/pic get wired by S5 (image insertion: an
-// inline drawing references its blip via r:embed and the a:/wp:/pic: graphic
-// tree); w14 (paraId/textId) is reserved for paragraph-mark identity. `@public`
-// keeps knip from flagging them as dead until those consumers land.
-const R_TAGS = ["embed", "link", "id"] as const;
+// DrawingML + picture namespaces. The a:/wp:/pic: tags build the inline drawing
+// tree in `core/image.tsx` (r:embed is an attribute, so no `r` element
+// namespace is needed). w14 (paraId/textId) is reserved for paragraph-mark
+// identity with no consumer yet — `@public` keeps knip from flagging it.
 const A_TAGS = [
 	"graphic",
 	"graphicData",
 	"blip",
+	"stretch",
+	"fillRect",
+	"graphicFrameLocks",
 	"xfrm",
 	"off",
 	"ext",
@@ -176,13 +177,8 @@ export const cp = namespace("cp", CP_TAGS);
 export const dc = namespace("dc", DC_TAGS);
 export const dcterms = namespace("dcterms", DCTERMS_TAGS);
 export const w15 = namespace("w15", W15_TAGS);
-/** @public Emit-side image/drawing namespaces — wired by S5 (image insertion). */
-export const r = namespace("r", R_TAGS);
-/** @public */
 export const a = namespace("a", A_TAGS);
-/** @public */
 export const wp = namespace("wp", WP_TAGS);
-/** @public */
 export const pic = namespace("pic", PIC_TAGS);
 /** @public Emit-side paragraph-mark identity namespace (paraId/textId). */
 export const w14 = namespace("w14", W14_TAGS);

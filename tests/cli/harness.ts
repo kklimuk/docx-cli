@@ -29,7 +29,7 @@ const TOP_LEVEL_MUTATORS = new Set([
  *  list`, `track-changes list`, `images extract`) is a read. */
 const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	comments: new Set(["add", "reply", "resolve", "delete"]),
-	images: new Set(["replace"]),
+	images: new Set(["replace", "delete"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
 	tables: new Set([
 		"insert-row",
@@ -90,10 +90,10 @@ export async function runCli(...args: string[]): Promise<CliResult> {
 	let stdout = "";
 	let stderr = "";
 	captureOutput(
-		(text) => {
+		async (text) => {
 			stdout += text;
 		},
-		(text) => {
+		async (text) => {
 			stderr += text;
 		},
 	);
@@ -102,7 +102,7 @@ export async function runCli(...args: string[]): Promise<CliResult> {
 	try {
 		exitCode = await main(["bun", "docx", ...withInjectedVerbose(args)]);
 	} finally {
-		captureOutput(null, null);
+		captureOutput();
 	}
 	return { stdout, stderr, exitCode, parsed: parseAck(stdout) };
 }

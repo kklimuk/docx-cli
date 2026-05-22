@@ -11,6 +11,7 @@ export {
 } from "./doc-view";
 export {
 	findBlockById,
+	flattenImageRuns,
 	flattenParagraphs,
 	paragraphText,
 	paragraphTextAccepted,

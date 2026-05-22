@@ -20,6 +20,7 @@ const CORE_FIXTURES = [
 	"multi-column.docx", // <w:sectPr> + columns
 	"comments-with-replies.docx", // comments + commentsExtended
 	"tables-mutations.docx", // tables + merges + tracked-table revisions (richest)
+	"images.docx", // inserted media parts + inline <w:drawing> picture
 ] as const;
 
 const EXTRA_FIXTURES = [

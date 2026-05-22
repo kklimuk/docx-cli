@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { type Block, enrichImageHashes, type ImageRun } from "@core";
+import { enrichImageHashes, flattenImageRuns } from "@core";
+import { extensionForImageMime } from "@core/image";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -23,20 +24,6 @@ Examples:
   docx images extract doc.docx --to ./media
   docx images extract doc.docx --to ./media --id img2
 `;
-
-const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
-	"image/png": "png",
-	"image/jpeg": "jpg",
-	"image/jpg": "jpg",
-	"image/gif": "gif",
-	"image/svg+xml": "svg",
-	"image/webp": "webp",
-	"image/tiff": "tif",
-	"image/bmp": "bmp",
-	"image/x-emf": "emf",
-	"image/x-wmf": "wmf",
-	"image/vnd.microsoft.icon": "ico",
-};
 
 export async function run(args: string[]): Promise<number> {
 	let parsed: ReturnType<typeof parseArgs>;
@@ -74,8 +61,7 @@ export async function run(args: string[]): Promise<number> {
 
 	await enrichImageHashes(view);
 
-	const allImages: ImageRun[] = [];
-	collectImages(view.doc.blocks, allImages);
+	const allImages = flattenImageRuns(view.doc.blocks);
 
 	const targets = targetId
 		? allImages.filter((image) => image.id === targetId)
@@ -110,26 +96,8 @@ export async function run(args: string[]): Promise<number> {
 	return EXIT.OK;
 }
 
-function collectImages(blocks: Block[], out: ImageRun[]): void {
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			for (const run of block.runs) {
-				if (run.type === "image") out.push(run);
-			}
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					collectImages(cell.blocks, out);
-				}
-			}
-		}
-	}
-}
-
 function extensionFor(contentType: string, partName: string): string {
-	const fromType = EXTENSION_BY_CONTENT_TYPE[contentType.toLowerCase()];
+	const fromType = extensionForImageMime(contentType);
 	if (fromType) return fromType;
 	const fromName = partName.split(".").pop()?.toLowerCase();
 	return fromName ?? "bin";

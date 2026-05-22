@@ -16,6 +16,15 @@ import {
 	type TrackedMeta,
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
+import {
+	addImagePart,
+	computeExtentEmu,
+	Image,
+	type ImageSource,
+	ImageSourceError,
+	loadImageSource,
+	nextDrawingId,
+} from "@core/image";
 import { w } from "@core/jsx";
 import { XmlNode } from "@core/parser";
 import { ensureReferencedStyle } from "@core/styles";
@@ -48,6 +57,7 @@ Content (one required):
   --column-break    Insert an empty paragraph containing a column break
   --section         Insert a section boundary (sentinel paragraph w/ inline sectPr)
   --table           Insert an empty rows×cols table (requires --rows and --cols)
+  --image SRC       Insert an image (SRC is a file path, data: URI, or http(s) URL)
 
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
@@ -72,6 +82,11 @@ Table options (only with --table):
   --layout L        autofit (default; columns size to content) | fixed (honor
                     --widths exactly). Passing --widths implies fixed.
 
+Image options (only with --image):
+  --alt TEXT        Alt text / description for the image
+  --width INCHES    Display width in inches (default: native pixel size at 96dpi)
+  --height INCHES   Display height in inches (default: scales to preserve aspect)
+
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -88,6 +103,8 @@ Examples:
   docx insert doc.docx --after p9 --section --columns 2 --type continuous
   docx insert doc.docx --after p3 --table --rows 3 --cols 2
   docx insert doc.docx --after p3 --table --rows 2 --cols 3 --widths 1440,2880,4320
+  docx insert doc.docx --after p3 --image ./diagram.png --alt "System diagram"
+  docx insert doc.docx --after p3 --image https://example.com/logo.png --width 2
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -100,11 +117,12 @@ export async function run(args: string[]): Promise<number> {
 	const blockRef = await resolveBlockOrFail(view, opts.placement.locator);
 	if (typeof blockRef === "number") return blockRef;
 
-	const paragraph = buildInsertedParagraph(
+	const paragraph = await buildInsertedParagraph(
 		view,
 		opts.spec,
 		opts.paragraphOptions,
 	);
+	if (typeof paragraph === "number") return paragraph;
 	ensureReferencedStyle(view, opts.paragraphOptions.style);
 	return commitInsertedParagraph(view, blockRef, paragraph, opts);
 }
@@ -172,6 +190,10 @@ const OPTION_SPEC = {
 	"table-width": { type: "string" },
 	borders: { type: "string" },
 	layout: { type: "string" },
+	image: { type: "string" },
+	alt: { type: "string" },
+	width: { type: "string" },
+	height: { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -213,6 +235,13 @@ type InsertSpec =
 			tableWidth?: { value: number; unit: "dxa" | "pct" };
 			borders?: TableBorders;
 			layout?: TableLayout;
+	  }
+	| {
+			kind: "image";
+			src: string;
+			alt?: string;
+			widthInches?: number;
+			heightInches?: number;
 	  };
 
 type TextFormatting = {
@@ -252,6 +281,7 @@ const CONTENT_KINDS = [
 		flag: "table",
 		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
 	},
+	{ flag: "image", subFlags: ["alt", "width", "height"] },
 ] as const;
 
 const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
@@ -301,7 +331,60 @@ async function chooseContentSpec(
 			const flags = await parseTableFlags(values);
 			return typeof flags === "number" ? flags : { kind: "table", ...flags };
 		}
+		case "image": {
+			const flags = await parseImageFlags(values);
+			return typeof flags === "number" ? flags : { kind: "image", ...flags };
+		}
 	}
+}
+
+async function parseImageFlags(values: RawValues): Promise<
+	| {
+			src: string;
+			alt?: string;
+			widthInches?: number;
+			heightInches?: number;
+	  }
+	| number
+> {
+	const src = values.image as string | undefined;
+	if (!src) return fail("USAGE", "--image requires a SRC argument", HELP);
+
+	const out: {
+		src: string;
+		alt?: string;
+		widthInches?: number;
+		heightInches?: number;
+	} = { src };
+
+	const alt = values.alt as string | undefined;
+	if (alt !== undefined) out.alt = alt;
+
+	const widthRaw = values.width as string | undefined;
+	if (widthRaw !== undefined) {
+		const width = Number.parseFloat(widthRaw);
+		if (!Number.isFinite(width) || width <= 0) {
+			return fail(
+				"USAGE",
+				`--width must be a positive number of inches, got "${widthRaw}"`,
+			);
+		}
+		out.widthInches = width;
+	}
+
+	const heightRaw = values.height as string | undefined;
+	if (heightRaw !== undefined) {
+		const height = Number.parseFloat(heightRaw);
+		if (!Number.isFinite(height) || height <= 0) {
+			return fail(
+				"USAGE",
+				`--height must be a positive number of inches, got "${heightRaw}"`,
+			);
+		}
+		out.heightInches = height;
+	}
+
+	return out;
 }
 
 function buildTextSpec(
@@ -510,11 +593,11 @@ async function parseParagraphOptions(
 	return out;
 }
 
-function buildInsertedParagraph(
+async function buildInsertedParagraph(
 	view: DocView,
 	spec: InsertSpec,
 	paragraphOptions: ParagraphOptions,
-): XmlNode {
+): Promise<XmlNode | number> {
 	switch (spec.kind) {
 		case "text":
 			return buildTextParagraph(view, spec, paragraphOptions);
@@ -545,7 +628,61 @@ function buildInsertedParagraph(
 					layout={spec.layout}
 				/>
 			);
+		case "image":
+			return buildImageParagraph(view, spec, paragraphOptions);
 	}
+}
+
+async function buildImageParagraph(
+	view: DocView,
+	spec: Extract<InsertSpec, { kind: "image" }>,
+	paragraphOptions: ParagraphOptions,
+): Promise<XmlNode | number> {
+	let source: ImageSource;
+	try {
+		source = await loadImageSource(spec.src);
+	} catch (error) {
+		if (error instanceof ImageSourceError) {
+			return fail("IMAGE_SOURCE", error.message);
+		}
+		throw error;
+	}
+
+	const extent = computeExtentEmu(source, {
+		widthInches: spec.widthInches,
+		heightInches: spec.heightInches,
+	});
+	if (!extent) {
+		return fail(
+			"USAGE",
+			`Could not read pixel dimensions from ${spec.src}`,
+			"Pass --width INCHES (and optionally --height INCHES) to size it explicitly.",
+		);
+	}
+
+	const { relationshipId } = addImagePart(view, source);
+	const imageRun = (
+		<Image
+			relationshipId={relationshipId}
+			drawingId={nextDrawingId(view.documentTree)}
+			widthEmu={extent.widthEmu}
+			heightEmu={extent.heightEmu}
+			alt={spec.alt}
+		/>
+	);
+
+	const { style, alignment } = paragraphOptions;
+	return (
+		<w.p>
+			{style || alignment ? (
+				<w.pPr>
+					{style ? <w.pStyle w-val={style} /> : null}
+					{alignment ? <w.jc w-val={alignment} /> : null}
+				</w.pPr>
+			) : null}
+			{imageRun}
+		</w.p>
+	);
 }
 
 function buildTextParagraph(

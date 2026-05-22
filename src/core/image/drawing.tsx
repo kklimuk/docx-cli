@@ -1,0 +1,183 @@
+import type { DocView } from "../ast/doc-view";
+import { a, pic, w, wp } from "../jsx";
+import { ensureContentTypeDefault, nextRelationshipId } from "../package/parts";
+import { XmlNode } from "../parser";
+import type { ImageSource } from "./source";
+
+/** Write image bytes into `word/media/imageN.ext`, mint an image relationship,
+ * and register the extension's content-type default. Returns the new rId for
+ * the `<Image>` blip to reference. An *operation*, not a component — it mutates
+ * package state (writes a part, pushes a Relationship, edits content-types). */
+export function addImagePart(
+	view: DocView,
+	source: ImageSource,
+): { relationshipId: string; partName: string } {
+	const partName = nextMediaPartName(view.pkg.listParts(), source.extension);
+	view.pkg.writeBytes(partName, source.bytes);
+
+	const relationships = XmlNode.findRoot(
+		view.relationshipsTree,
+		"Relationships",
+	);
+	if (!relationships) {
+		throw new Error("Missing <Relationships> root in document rels");
+	}
+	const relationshipId = nextRelationshipId(relationships);
+	relationships.children.push(
+		new XmlNode("Relationship", {
+			Id: relationshipId,
+			Type: IMAGE_RELATIONSHIP_TYPE,
+			Target: partName.slice("word/".length),
+		}),
+	);
+
+	ensureContentTypeDefault(
+		view.contentTypesTree,
+		source.extension,
+		source.mimeType,
+	);
+	view.imagesByRelationshipId.set(relationshipId, {
+		partName,
+		contentType: source.mimeType,
+	});
+	return { relationshipId, partName };
+}
+
+function nextMediaPartName(parts: string[], extension: string): string {
+	let highest = 0;
+	for (const part of parts) {
+		const match = part.match(/^word\/media\/image(\d+)\./);
+		if (!match) continue;
+		const index = Number(match[1]);
+		if (Number.isFinite(index) && index > highest) highest = index;
+	}
+	return `word/media/image${highest + 1}.${extension}`;
+}
+
+/** A run wrapping a single inline picture. `a:`/`pic:` namespaces are declared
+ * inline on `a:graphic`/`pic:pic` (matching Word) so the subtree is valid even
+ * in documents whose root doesn't declare them. */
+export function Image({
+	relationshipId,
+	drawingId,
+	widthEmu,
+	heightEmu,
+	alt,
+}: {
+	relationshipId: string;
+	drawingId: number;
+	widthEmu: number;
+	heightEmu: number;
+	alt?: string;
+}): XmlNode {
+	const name = `Picture ${drawingId}`;
+	const description = alt ?? "";
+	return (
+		<w.r>
+			<w.drawing>
+				<wp.inline distT="0" distB="0" distL="0" distR="0">
+					<wp.extent cx={widthEmu} cy={heightEmu} />
+					<wp.effectExtent l="0" t="0" r="0" b="0" />
+					<wp.docPr id={drawingId} name={name} descr={description} />
+					<wp.cNvGraphicFramePr>
+						<a.graphicFrameLocks
+							{...{ "xmlns:a": A_NAMESPACE }}
+							noChangeAspect="1"
+						/>
+					</wp.cNvGraphicFramePr>
+					<a.graphic {...{ "xmlns:a": A_NAMESPACE }}>
+						<a.graphicData uri={DRAWINGML_PICTURE_URI}>
+							<pic.pic {...{ "xmlns:pic": PIC_NAMESPACE }}>
+								<pic.nvPicPr>
+									<pic.cNvPr id={drawingId} name={name} descr={description} />
+									<pic.cNvPicPr />
+								</pic.nvPicPr>
+								<pic.blipFill>
+									<a.blip {...{ "r:embed": relationshipId }} />
+									<a.stretch>
+										<a.fillRect />
+									</a.stretch>
+								</pic.blipFill>
+								<pic.spPr>
+									<a.xfrm>
+										<a.off x="0" y="0" />
+										<a.ext cx={widthEmu} cy={heightEmu} />
+									</a.xfrm>
+									<a.prstGeom prst="rect">
+										<a.avLst />
+									</a.prstGeom>
+								</pic.spPr>
+							</pic.pic>
+						</a.graphicData>
+					</a.graphic>
+				</wp.inline>
+			</w.drawing>
+		</w.r>
+	);
+}
+
+/** Drawing object ids (`wp:docPr`/`pic:cNvPr` @id) must be unique per document
+ * or Word flags corruption. Scan existing ids and return max + 1. */
+export function nextDrawingId(documentTree: XmlNode[]): number {
+	let highest = 0;
+	function walk(node: XmlNode): void {
+		if (node.tag === "wp:docPr" || node.tag === "pic:cNvPr") {
+			const id = Number(node.getAttribute("id") ?? "0");
+			if (Number.isFinite(id) && id > highest) highest = id;
+		}
+		for (const child of node.children) walk(child);
+	}
+	for (const root of documentTree) walk(root);
+	return highest + 1;
+}
+
+/** A drawing run located in the document tree: the `<w:r>`, the array it lives
+ * in (for splicing), and the image relationship its blip references. */
+export type ImageRunHit = {
+	run: XmlNode;
+	parent: XmlNode[];
+	relationshipId: string;
+};
+
+/** Every inline-picture run in document order — the same order `read` assigns
+ * `imgN` ids (only drawings whose blip resolves to a known image relationship
+ * count, matching `readImageFromDrawing`). Callers index by ordinal (`imgN`),
+ * filter by `relationshipId`, or splice via `parent`. */
+export function collectImageRuns(view: DocView): ImageRunHit[] {
+	const hits: ImageRunHit[] = [];
+	function walk(nodes: XmlNode[]): void {
+		for (const node of nodes) {
+			if (node.tag === "w:r") {
+				for (const child of node.children) {
+					if (child.tag !== "w:drawing") continue;
+					const relationshipId = drawingRelationshipId(child);
+					if (
+						relationshipId &&
+						view.imagesByRelationshipId.has(relationshipId)
+					) {
+						hits.push({ run: node, parent: nodes, relationshipId });
+					}
+				}
+			}
+			if (node.children.length > 0) walk(node.children);
+		}
+	}
+	walk(view.documentTree);
+	return hits;
+}
+
+function drawingRelationshipId(drawing: XmlNode): string | undefined {
+	const blip = drawing.findDescendant("a:blip");
+	if (!blip) return undefined;
+	return (
+		blip.getAttribute("r:embed") ?? blip.getAttribute("r:link") ?? undefined
+	);
+}
+
+const IMAGE_RELATIONSHIP_TYPE =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const DRAWINGML_PICTURE_URI =
+	"http://schemas.openxmlformats.org/drawingml/2006/picture";
+const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC_NAMESPACE =
+	"http://schemas.openxmlformats.org/drawingml/2006/picture";

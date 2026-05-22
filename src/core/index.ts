@@ -4,6 +4,7 @@ export {
 	type DocView,
 	enrichImageHashes,
 	findBlockById,
+	flattenImageRuns,
 	flattenParagraphs,
 	type HyperlinkReference,
 	type ImageReference,
@@ -50,11 +51,15 @@ export {
 	resolveBlock,
 } from "./locators";
 export { PkgError } from "./package";
-export { nextRelationshipId } from "./package/parts";
+export { ensureContentTypeDefault, nextRelationshipId } from "./package/parts";
 export { XmlNode } from "./parser";
 export {
 	addHyperlinkRelationship,
 	HYPERLINK_RELATIONSHIP_TYPE,
+	hasRelationshipWithTarget,
+	isRelationshipReferenced,
+	removeRelationship,
+	setRelationshipTarget,
 } from "./relationships";
 export {
 	applyColumns,

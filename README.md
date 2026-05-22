@@ -79,6 +79,7 @@ docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx insert FILE --after p3 --page-break | --column-break
 docx insert FILE --after p3 --section [--columns N] [--type continuous|nextPage|evenPage|oddPage|nextColumn]
 docx insert FILE --after p3 --table --rows N --cols N [--widths "A,B,C"] [--table-width 100%] [--borders single|none|double] [--layout autofit|fixed]
+docx insert FILE --after p3 --image SRC [--alt TEXT] [--width INCHES] [--height INCHES]   # SRC = path, data: URI, or http(s) URL
 docx edit   FILE --at p3 --text "..." [--no-formatting]   # word-level diff preserves bold/italic on unchanged words
 docx edit   FILE --at p3 --runs '[...]'
 docx edit   FILE --at s0 [--columns N] [--type T]   # mutate section properties
@@ -106,6 +107,7 @@ docx comments list    FILE [--include-resolved] [--thread c0]
 docx images list    FILE
 docx images extract FILE --to ./media [--id imgN]
 docx images replace FILE --at imgN --with ./new.png
+docx images delete  FILE --at imgN
 
 docx hyperlinks list    FILE
 docx hyperlinks add     FILE --at pN:S-E --url URL
@@ -131,7 +133,7 @@ docx info locators [--json]
 
 Every command has `--help`. Mutating commands accept `--dry-run`, `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`), and `-v/--verbose` (print the JSON ack — see "Quiet by default" below).
 
-**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace`, `hyperlinks add/replace/delete`, `tables *`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
+**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace/delete`, `hyperlinks add/replace/delete`, `tables *`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
 
 ### Markdown rendering
 
@@ -193,6 +195,10 @@ Run `docx info locators` for the full reference.
 
 **Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
 
+**Image insertion.** `insert --image SRC` resolves SRC from a file path, a `data:` URI, or an `http(s)` URL (bounded fetch: 10s timeout, 25 MB cap streamed per-chunk so the limit holds even if `Content-Length` lies), writes the bytes to `word/media/imageN.ext`, mints an `image` relationship, and registers the extension's content-type `<Default>`. Pixel dimensions are read from the PNG/JPEG/GIF header and converted to EMU (1px = 9525 EMU at 96 dpi) for `<wp:extent>`; `--width`/`--height` override in inches, and supplying one alone scales the other to preserve aspect. The drawing is a standard inline `<w:drawing><wp:inline>` picture (`a:`/`pic:` namespaces declared on the subtree). Under track-changes the inserted run is wrapped in `<w:ins>` like any other inserted content. **HEIC/HEIF** input (common from iPhones) is transcoded to JPEG before embedding — Word can't render HEIC — so students can drop a `.heic` straight in; detection is by file header, not just extension. **SVG input is sanitized** before embedding (`<script>`, `on*` handlers, `<foreignObject>`, animation events, external `href`/`xlink:href`, and `data:image/svg+xml` self-references are stripped; XXE is rejected at parse time by `fast-xml-parser`) so an attacker-controlled SVG can't smuggle active content into the doc. **Remote fetches block non-public addresses** — private, loopback, link-local, and cloud-metadata ranges are refused, and HTTP redirects are followed manually with the same check at every hop, so an agent steered into `http://169.254.169.254/...` or `http://10.0.0.1/admin` is short-circuited.
+
+**Image deletion.** `images delete --at imgN` removes the inline drawing and its run, pruning the media part and relationship when nothing else references them. Under track-changes it wraps the run in a real `<w:del>` instead (accept removes, reject restores), keeping the part until the change is accepted.
+
 **Hyperlink CRUD.** `hyperlinks list` enumerates `<w:hyperlink>` elements with positional `linkN` ids; `hyperlinks add --at p3:5-20 --url URL` wraps an existing span (splitting runs at offsets); `hyperlinks replace --at link0 --with URL` updates the rels `Target`, allocating a new rId if the existing one is shared so siblings stay pointed at the original URL; `hyperlinks delete --at link0` unwraps the link (text survives) and prunes the rels entry when no longer referenced.
 
 **Table restructuring.** The `tables` verbs operate on a merge-aware logical grid: `gridSpan` (horizontal) and `vMerge` (vertical) cells map to physical `<w:tc>` elements so row/column locators (`tN:rR`, `tN:cC`, region `tN:rR1cC1-rR2cC2`) resolve correctly. `merge`/`unmerge` reshape `gridSpan`/`vMerge`; `set-widths` rewrites `<w:tblGrid>` plus per-cell `<w:tcW>`; structural edits refuse to bisect or orphan an existing merge (with a hint to `unmerge` first). Under track-changes, the tracked representation was verified against Microsoft Word (accept/reject), since Word — not the ECMA-376 schema — decides what actually round-trips. Row insert/delete emit native `<w:trPr><w:ins>`/`<w:del>`; column insert/delete emit per-cell `<w:tcPr><w:cellIns>`/`<w:cellDel>` (paired with a `<w:tblGridChange>` on insert); `set-widths` emits `<w:tblGridChange>` plus a per-cell `<w:tcPrChange>` (which is what Word's reject actually reverts) — all addressable as `tcN` and resolvable via `track-changes accept`/`reject` (which resyncs the grid). Cell merges and border changes are *not* tracked by Word (it warns "this action won't be marked as a change" and applies them immediately), so `merge`/`unmerge`/`borders` match that — applied in place with a `[docx-cli]` audit comment (mirroring hyperlink/image edits).
@@ -201,6 +207,7 @@ Run `docx info locators` for the full reference.
 
 - **Runtime**: Bun (`node:util` parseArgs, JSX with custom factory, native zlib)
 - **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
+- **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif) transcodes HEIC/HEIF input to JPEG on insert
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile
 
