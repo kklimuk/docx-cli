@@ -190,10 +190,12 @@ const JSON_SCHEMA = {
 		},
 		Table: {
 			type: "object",
-			required: ["id", "type", "rows"],
+			required: ["id", "type", "grid", "rows"],
 			properties: {
 				id: { type: "string" },
 				type: { const: "table" },
+				grid: { type: "array", items: { type: "number" } },
+				width: { $ref: "#/$defs/TableWidth" },
 				rows: {
 					type: "array",
 					items: {
@@ -208,12 +210,23 @@ const JSON_SCHEMA = {
 											type: "array",
 											items: { $ref: "#/$defs/Block" },
 										},
+										gridSpan: { type: "number" },
+										vMerge: { enum: ["restart", "continue"] },
+										width: { $ref: "#/$defs/TableWidth" },
 									},
 								},
 							},
 						},
 					},
 				},
+			},
+		},
+		TableWidth: {
+			type: "object",
+			required: ["value", "unit"],
+			properties: {
+				value: { type: "number" },
+				unit: { enum: ["dxa", "pct", "auto", "nil"] },
 			},
 		},
 		SectionBreak: {

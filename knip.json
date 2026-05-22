@@ -12,10 +12,5 @@
 		"tests/**/*.{ts,tsx}"
 	],
 	"ignoreDependencies": ["@core/jsx"],
-	"ignoreExportsUsedInFile": true,
-	"rules": {
-		"exports": "off",
-		"types": "off",
-		"duplicates": "off"
-	}
+	"ignoreExportsUsedInFile": true
 }

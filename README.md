@@ -78,6 +78,7 @@ docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bol
 docx insert FILE --after p3 --runs '[{"type":"text","text":"X","bold":true}]'
 docx insert FILE --after p3 --page-break | --column-break
 docx insert FILE --after p3 --section [--columns N] [--type continuous|nextPage|evenPage|oddPage|nextColumn]
+docx insert FILE --after p3 --table --rows N --cols N [--widths "A,B,C"] [--table-width 100%] [--borders single|none|double] [--layout autofit|fixed]
 docx edit   FILE --at p3 --text "..." [--no-formatting]   # word-level diff preserves bold/italic on unchanged words
 docx edit   FILE --at p3 --runs '[...]'
 docx edit   FILE --at s0 [--columns N] [--type T]   # mutate section properties

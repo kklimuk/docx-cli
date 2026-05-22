@@ -15,8 +15,11 @@ import {
 	saveDocView,
 	type TrackedMeta,
 } from "@core";
+import { Paragraph, type ParagraphOptions } from "@core/blocks";
 import { w } from "@core/jsx";
 import { XmlNode } from "@core/parser";
+import { ensureReferencedStyle } from "@core/styles";
+import { BlankTable, type TableBorders, type TableLayout } from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -28,7 +31,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { Paragraph, type ParagraphOptions } from "./emit";
 
 const HELP = `docx insert — insert a paragraph at a locator
 
@@ -45,6 +47,7 @@ Content (one required):
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
   --section         Insert a section boundary (sentinel paragraph w/ inline sectPr)
+  --table           Insert an empty rows×cols table (requires --rows and --cols)
 
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
@@ -60,6 +63,15 @@ Section options (only with --section):
   --columns N       Number of columns for the section ending at this boundary
   --type T          continuous | nextPage | evenPage | oddPage | nextColumn
 
+Table options (only with --table):
+  --rows N          Number of rows (required, >= 1)
+  --cols N          Number of columns (required, >= 1)
+  --widths "A,B,C"  Column widths in twips, comma-separated; length must equal --cols
+  --table-width V   Table total width, e.g. "100%" (default), "50%", or "4320" (twips)
+  --borders S       single (default) | none | double
+  --layout L        autofit (default; columns size to content) | fixed (honor
+                    --widths exactly). Passing --widths implies fixed.
+
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -74,6 +86,8 @@ Examples:
   docx insert doc.docx --after p3 --text "click here" --url https://example.com
   docx insert doc.docx --after p3 --page-break
   docx insert doc.docx --after p9 --section --columns 2 --type continuous
+  docx insert doc.docx --after p3 --table --rows 3 --cols 2
+  docx insert doc.docx --after p3 --table --rows 2 --cols 3 --widths 1440,2880,4320
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -91,6 +105,7 @@ export async function run(args: string[]): Promise<number> {
 		opts.spec,
 		opts.paragraphOptions,
 	);
+	ensureReferencedStyle(view, opts.paragraphOptions.style);
 	return commitInsertedParagraph(view, blockRef, paragraph, opts);
 }
 
@@ -150,6 +165,13 @@ const OPTION_SPEC = {
 	section: { type: "boolean" },
 	columns: { type: "string" },
 	type: { type: "string" },
+	table: { type: "boolean" },
+	rows: { type: "string" },
+	cols: { type: "string" },
+	widths: { type: "string" },
+	"table-width": { type: "string" },
+	borders: { type: "string" },
+	layout: { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -182,7 +204,16 @@ type InsertSpec =
 	  }
 	| { kind: "runs"; runs: Run[] }
 	| { kind: "break"; breakKind: "page" | "column" }
-	| { kind: "section"; columns?: number; sectionType?: SectionType };
+	| { kind: "section"; columns?: number; sectionType?: SectionType }
+	| {
+			kind: "table";
+			rows: number;
+			cols: number;
+			widths?: number[];
+			tableWidth?: { value: number; unit: "dxa" | "pct" };
+			borders?: TableBorders;
+			layout?: TableLayout;
+	  };
 
 type TextFormatting = {
 	color?: string;
@@ -207,73 +238,201 @@ async function parseTargetPlacement(
 
 type RawValues = ReturnType<typeof parseArgs>["values"];
 
+/** The mutually-exclusive content flags, each with the sub-flags that only
+ * make sense alongside it. Drives both the "exactly one content flag" check
+ * and the "this sub-flag requires its content flag" check, so those rules
+ * live in one place instead of scattered guards. */
+const CONTENT_KINDS = [
+	{ flag: "text", subFlags: ["color", "bold", "italic", "url"] },
+	{ flag: "runs", subFlags: [] },
+	{ flag: "page-break", subFlags: [] },
+	{ flag: "column-break", subFlags: [] },
+	{ flag: "section", subFlags: ["columns", "type"] },
+	{
+		flag: "table",
+		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
+	},
+] as const;
+
+const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
+	", ",
+);
+
 async function chooseContentSpec(
 	values: RawValues,
 ): Promise<InsertSpec | number> {
-	const text = values.text as string | undefined;
-	const runsJson = values.runs as string | undefined;
+	const present = CONTENT_KINDS.filter(
+		(kind) => values[kind.flag] !== undefined,
+	);
+	if (present.length > 1) {
+		return fail("USAGE", `Pass only one of ${CONTENT_FLAG_LIST}`, HELP);
+	}
+	const chosen = present[0];
+	if (!chosen) {
+		return fail("USAGE", `Missing content: pass ${CONTENT_FLAG_LIST}`, HELP);
+	}
+
+	// Reject sub-flags belonging to a content kind other than the chosen one,
+	// so e.g. `--columns` without `--section` is an error rather than ignored.
+	for (const kind of CONTENT_KINDS) {
+		if (kind.flag === chosen.flag) continue;
+		const orphan = kind.subFlags.find((flag) => values[flag] !== undefined);
+		if (orphan) {
+			return fail("USAGE", `--${orphan} requires --${kind.flag}`, HELP);
+		}
+	}
+
+	switch (chosen.flag) {
+		case "text":
+			return buildTextSpec(values);
+		case "runs": {
+			const runs = await parseRunsArg(values.runs as string);
+			return typeof runs === "number" ? runs : { kind: "runs", runs };
+		}
+		case "page-break":
+			return { kind: "break", breakKind: "page" };
+		case "column-break":
+			return { kind: "break", breakKind: "column" };
+		case "section": {
+			const flags = await parseSectionFlags(values);
+			return typeof flags === "number" ? flags : { kind: "section", ...flags };
+		}
+		case "table": {
+			const flags = await parseTableFlags(values);
+			return typeof flags === "number" ? flags : { kind: "table", ...flags };
+		}
+	}
+}
+
+function buildTextSpec(
+	values: RawValues,
+): Extract<InsertSpec, { kind: "text" }> {
 	const url = values.url as string | undefined;
-	const pageBreak = (values["page-break"] as boolean | undefined) ?? false;
-	const columnBreak = (values["column-break"] as boolean | undefined) ?? false;
-	const sectionFlag = (values.section as boolean | undefined) ?? false;
-	const columnsRaw = values.columns as string | undefined;
-	const sectionTypeRaw = values.type as string | undefined;
+	return {
+		kind: "text",
+		text: values.text as string,
+		format: {
+			color: values.color as string | undefined,
+			bold: values.bold as boolean | undefined,
+			italic: values.italic as boolean | undefined,
+		},
+		...(url ? { hyperlinkUrl: url } : {}),
+	};
+}
 
-	const contentFlagCount =
-		(text !== undefined ? 1 : 0) +
-		(runsJson !== undefined ? 1 : 0) +
-		(pageBreak ? 1 : 0) +
-		(columnBreak ? 1 : 0) +
-		(sectionFlag ? 1 : 0);
-	if (contentFlagCount === 0) {
-		return fail(
-			"USAGE",
-			"Missing content: pass --text, --runs, --page-break, --column-break, or --section",
-			HELP,
-		);
+async function parseTableFlags(values: RawValues): Promise<
+	| {
+			rows: number;
+			cols: number;
+			widths?: number[];
+			tableWidth?: { value: number; unit: "dxa" | "pct" };
+			borders?: TableBorders;
+			layout?: TableLayout;
+	  }
+	| number
+> {
+	const rowsRaw = values.rows as string | undefined;
+	const colsRaw = values.cols as string | undefined;
+	if (rowsRaw === undefined || colsRaw === undefined) {
+		return fail("USAGE", "--table requires --rows and --cols", HELP);
 	}
-	if (contentFlagCount > 1) {
-		return fail(
-			"USAGE",
-			"Pass only one of --text, --runs, --page-break, --column-break, --section",
-			HELP,
-		);
+	const rows = Number.parseInt(rowsRaw, 10);
+	const cols = Number.parseInt(colsRaw, 10);
+	if (!Number.isFinite(rows) || rows < 1) {
+		return fail("USAGE", `--rows must be a positive integer, got "${rowsRaw}"`);
 	}
-	if (url !== undefined && text === undefined) {
-		return fail("USAGE", "--url requires --text", HELP);
-	}
-	if (
-		(columnsRaw !== undefined || sectionTypeRaw !== undefined) &&
-		!sectionFlag
-	) {
-		return fail("USAGE", "--columns and --type require --section", HELP);
-	}
-
-	if (text !== undefined) {
-		return {
-			kind: "text",
-			text,
-			format: {
-				color: values.color as string | undefined,
-				bold: values.bold as boolean | undefined,
-				italic: values.italic as boolean | undefined,
-			},
-			...(url ? { hyperlinkUrl: url } : {}),
-		};
+	if (!Number.isFinite(cols) || cols < 1) {
+		return fail("USAGE", `--cols must be a positive integer, got "${colsRaw}"`);
 	}
 
-	if (runsJson !== undefined) {
-		const runs = await parseRunsArg(runsJson);
-		if (typeof runs === "number") return runs;
-		return { kind: "runs", runs };
+	const out: {
+		rows: number;
+		cols: number;
+		widths?: number[];
+		tableWidth?: { value: number; unit: "dxa" | "pct" };
+		borders?: TableBorders;
+		layout?: TableLayout;
+	} = { rows, cols };
+
+	const layoutRaw = values.layout as string | undefined;
+	const widthsRaw = values.widths as string | undefined;
+	if (widthsRaw !== undefined) {
+		const widths = widthsRaw.split(",").map((part) => part.trim());
+		const numeric: number[] = [];
+		for (const part of widths) {
+			const value = Number.parseInt(part, 10);
+			if (!Number.isFinite(value) || value <= 0) {
+				return fail(
+					"USAGE",
+					`--widths entries must be positive integers (twips), got "${part}"`,
+				);
+			}
+			numeric.push(value);
+		}
+		if (numeric.length !== cols) {
+			return fail(
+				"USAGE",
+				`--widths length (${numeric.length}) must equal --cols (${cols})`,
+			);
+		}
+		out.widths = numeric;
 	}
 
-	if (pageBreak) return { kind: "break", breakKind: "page" };
-	if (columnBreak) return { kind: "break", breakKind: "column" };
+	const tableWidthRaw = values["table-width"] as string | undefined;
+	if (tableWidthRaw !== undefined) {
+		if (tableWidthRaw.endsWith("%")) {
+			const pct = Number.parseFloat(tableWidthRaw.slice(0, -1));
+			if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+				return fail(
+					"USAGE",
+					`--table-width percentage must be in (0, 100], got "${tableWidthRaw}"`,
+				);
+			}
+			// OOXML pct units are fiftieths of a percent (5000 = 100%).
+			out.tableWidth = { value: Math.round(pct * 50), unit: "pct" };
+		} else {
+			const twips = Number.parseInt(tableWidthRaw, 10);
+			if (!Number.isFinite(twips) || twips <= 0) {
+				return fail(
+					"USAGE",
+					`--table-width must be a positive integer (twips) or a percentage like "100%", got "${tableWidthRaw}"`,
+				);
+			}
+			out.tableWidth = { value: twips, unit: "dxa" };
+		}
+	}
 
-	const sectionFlags = await parseSectionFlags(values);
-	if (typeof sectionFlags === "number") return sectionFlags;
-	return { kind: "section", ...sectionFlags };
+	const bordersRaw = values.borders as string | undefined;
+	if (bordersRaw !== undefined) {
+		if (
+			bordersRaw !== "single" &&
+			bordersRaw !== "double" &&
+			bordersRaw !== "none"
+		) {
+			return fail(
+				"USAGE",
+				`--borders must be single, double, or none, got "${bordersRaw}"`,
+			);
+		}
+		out.borders = bordersRaw === "single" ? "default" : { style: bordersRaw };
+	}
+
+	if (layoutRaw !== undefined) {
+		if (layoutRaw !== "autofit" && layoutRaw !== "fixed") {
+			return fail(
+				"USAGE",
+				`--layout must be autofit or fixed, got "${layoutRaw}"`,
+			);
+		}
+		out.layout = layoutRaw;
+	} else if (out.widths) {
+		// Custom column widths are only honored under fixed layout — autofit
+		// recomputes them from content. Default to fixed when --widths is given
+		// so the widths actually take effect; an explicit --layout overrides.
+		out.layout = "fixed";
+	}
+
+	return out;
 }
 
 async function parseRunsArg(json: string): Promise<Run[] | number> {
@@ -375,6 +534,17 @@ function buildInsertedParagraph(
 					{...(spec.sectionType ? { sectionType: spec.sectionType } : {})}
 				/>
 			);
+		case "table":
+			return (
+				<BlankTable
+					rows={spec.rows}
+					cols={spec.cols}
+					widths={spec.widths}
+					width={spec.tableWidth}
+					borders={spec.borders}
+					layout={spec.layout}
+				/>
+			);
 	}
 }
 
@@ -387,9 +557,9 @@ function buildTextParagraph(
 		<Paragraph
 			text={spec.text}
 			{...paragraphOptions}
-			{...(spec.format.color ? { color: spec.format.color } : {})}
-			{...(spec.format.bold ? { bold: true as const } : {})}
-			{...(spec.format.italic ? { italic: true as const } : {})}
+			color={spec.format.color}
+			bold={spec.format.bold}
+			italic={spec.format.italic}
 		/>
 	);
 	if (spec.hyperlinkUrl) {
@@ -415,6 +585,16 @@ async function commitInsertedParagraph(
 		opts.placement.mode === "after" ? targetIndex + 1 : targetIndex;
 
 	if (isTrackChangesEnabled(view)) {
+		// Tables under tracking would require per-row <w:trPr><w:ins/> wrappers
+		// (ECMA-376 §17.13.5) — defer to S4b. Reject cleanly so the agent
+		// knows to toggle tracking off, insert, then back on.
+		if (paragraph.tag === "w:tbl") {
+			return fail(
+				"TRACKED_CHANGE_CONFLICT",
+				"Inserting a table while track-changes is on is not supported",
+				"Run `docx track-changes FILE off`, insert the table, then `track-changes on`.",
+			);
+		}
 		applyTrackedInsertion(paragraph, view, opts.authorFlag);
 	}
 

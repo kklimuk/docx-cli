@@ -17,9 +17,10 @@ import {
 	type TrackedMeta,
 	wrapSectPrChange,
 } from "@core";
+import { Paragraph, type ParagraphOptions } from "@core/blocks";
 import { isRunBearingWrapper, XmlNode } from "@core/parser";
+import { ensureReferencedStyle } from "@core/styles";
 import { parseArgs } from "util";
-import { Paragraph, type ParagraphOptions } from "../insert/emit";
 import {
 	EXIT,
 	fail,
@@ -99,6 +100,7 @@ export async function run(args: string[]): Promise<number> {
 	if (opts.spec.kind === "section") {
 		return commitSectionPropertyEdit(view, blockRef, opts.spec, opts);
 	}
+	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
 	return commitParagraphReplacement(view, blockRef, opts.spec, opts);
 }
 

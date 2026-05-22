@@ -34,6 +34,7 @@ export type {
 	Table,
 	TableCell,
 	TableRow,
+	TableWidth,
 	TabRun,
 	TextRun,
 	TrackedChange,
@@ -47,10 +48,6 @@ export {
 	locatorToBlockTarget,
 	parseLocator,
 	resolveBlock,
-	resolveComment,
-	resolveHyperlink,
-	resolveImage,
-	resolveTrackedChange,
 } from "./locators";
 export { PkgError } from "./package";
 export { nextRelationshipId } from "./package/parts";

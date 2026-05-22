@@ -29,6 +29,13 @@ export type Paragraph = {
 export type Table = {
 	id: string;
 	type: "table";
+	/** Column widths in twips, extracted from <w:tblGrid><w:gridCol w:w="…"/>.
+	 * Length matches the number of grid columns. May be empty if the source
+	 * doc omits the tblGrid (rare but legal). */
+	grid: number[];
+	/** Table-level width from <w:tblPr><w:tblW/>. Optional — absent means
+	 * "auto" (sum of grid). `unit` matches OOXML's w:type attribute. */
+	width?: TableWidth;
 	rows: TableRow[];
 };
 
@@ -38,6 +45,24 @@ export type TableRow = {
 
 export type TableCell = {
 	blocks: Block[];
+	/** Horizontal merge: this cell spans N grid columns (default 1). From
+	 * <w:tcPr><w:gridSpan w:val="N"/>. */
+	gridSpan?: number;
+	/** Vertical merge marker. From <w:tcPr><w:vMerge w:val="restart"/> or
+	 * a bare <w:vMerge/> (interpreted as "continue"). Together with the cell
+	 * directly above's "restart" marker, this binds adjacent rows into a
+	 * single visual cell. */
+	vMerge?: "restart" | "continue";
+	/** Cell-level width override from <w:tcPr><w:tcW/>. Falls back to the
+	 * grid column's width if absent. */
+	width?: TableWidth;
+};
+
+export type TableWidth = {
+	value: number;
+	/** Mirrors OOXML's w:type: dxa = twips (1/20 pt), pct = fiftieths of a
+	 * percent (so 5000 = 100%), auto = compute from content, nil = no width. */
+	unit: "dxa" | "pct" | "auto" | "nil";
 };
 
 export type SectionBreak = {

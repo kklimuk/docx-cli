@@ -4,8 +4,4 @@ export {
 	LocatorResolveError,
 	locatorToBlockTarget,
 	resolveBlock,
-	resolveComment,
-	resolveHyperlink,
-	resolveImage,
-	resolveTrackedChange,
 } from "./resolve";

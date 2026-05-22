@@ -25,6 +25,7 @@ const FIXTURES = [
 	"multi-tracked.docx",
 	"styles-injection.docx",
 	"lists.docx",
+	"tables.docx",
 ] as const;
 
 let workspace: string;

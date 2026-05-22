@@ -1,6 +1,5 @@
 import {
 	type Block,
-	type Doc,
 	type Paragraph,
 	paragraphText,
 	paragraphTextAccepted,
@@ -20,10 +19,6 @@ function textFor(options: CountOptions): (paragraph: Paragraph) => string {
 export function countWords(text: string): number {
 	const matches = text.match(/\S+/g);
 	return matches?.length ?? 0;
-}
-
-export function countWordsInDoc(doc: Doc, options: CountOptions = {}): number {
-	return countWordsInBlocks(doc.blocks, options);
 }
 
 /** Count words in the content range belonging to one section. The section's

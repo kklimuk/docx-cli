@@ -21,16 +21,6 @@ export const Fragment: FragmentFn = (props) => {
 	return wrapper;
 };
 
-// Classic runtime entrypoint — bundles variadic children into props.children
-// so components can read them the standard way.
-export function h(
-	type: TagFn,
-	props: JsxProps,
-	...children: JsxChild[]
-): XmlNode {
-	return type({ ...(props ?? {}), children });
-}
-
 export function normalizeChildren(children: unknown): JsxChild[] {
 	if (children === undefined || children === null) return [];
 	if (Array.isArray(children)) return children as JsxChild[];
@@ -48,10 +38,6 @@ export function namespace<TagName extends string>(
 		result[tagName] = makeTag(`${prefix}:${tagName}`);
 	}
 	return result as Namespace<TagName>;
-}
-
-export function tag(qualifiedName: string): TagFn {
-	return makeTag(qualifiedName);
 }
 
 const W_TAGS = [
@@ -115,6 +101,18 @@ const W_TAGS = [
 	"vertAlign",
 	"pBdr",
 	"bottom",
+	"top",
+	"left",
+	"right",
+	"insideH",
+	"insideV",
+	"tblBorders",
+	"tcBorders",
+	"tblW",
+	"tcW",
+	"tblLayout",
+	"vMerge",
+	"gridSpan",
 	"numbering",
 	"num",
 	"abstractNum",
@@ -128,8 +126,17 @@ const W_TAGS = [
 	"contextualSpacing",
 ] as const;
 
-const R_TAGS = ["embed", "link", "id"] as const;
+const CP_TAGS = ["coreProperties", "lastModifiedBy"] as const;
+const DC_TAGS = ["title", "creator", "subject", "description"] as const;
+const DCTERMS_TAGS = ["created", "modified"] as const;
+const W15_TAGS = ["commentsEx", "commentEx"] as const;
 
+// Relationship + DrawingML + picture namespaces. Emit-side only, with no
+// internal caller today — r/a/wp/pic get wired by S5 (image insertion: an
+// inline drawing references its blip via r:embed and the a:/wp:/pic: graphic
+// tree); w14 (paraId/textId) is reserved for paragraph-mark identity. `@public`
+// keeps knip from flagging them as dead until those consumers land.
+const R_TAGS = ["embed", "link", "id"] as const;
 const A_TAGS = [
 	"graphic",
 	"graphicData",
@@ -140,7 +147,6 @@ const A_TAGS = [
 	"prstGeom",
 	"avLst",
 ] as const;
-
 const WP_TAGS = [
 	"inline",
 	"anchor",
@@ -149,7 +155,6 @@ const WP_TAGS = [
 	"docPr",
 	"cNvGraphicFramePr",
 ] as const;
-
 const PIC_TAGS = [
 	"pic",
 	"nvPicPr",
@@ -158,23 +163,23 @@ const PIC_TAGS = [
 	"blipFill",
 	"spPr",
 ] as const;
-
-const CP_TAGS = ["coreProperties", "lastModifiedBy"] as const;
-const DC_TAGS = ["title", "creator", "subject", "description"] as const;
-const DCTERMS_TAGS = ["created", "modified"] as const;
 const W14_TAGS = ["paraId", "textId"] as const;
-const W15_TAGS = ["commentsEx", "commentEx"] as const;
 
 export const w = namespace("w", W_TAGS);
-export const r = namespace("r", R_TAGS);
-export const a = namespace("a", A_TAGS);
-export const wp = namespace("wp", WP_TAGS);
-export const pic = namespace("pic", PIC_TAGS);
 export const cp = namespace("cp", CP_TAGS);
 export const dc = namespace("dc", DC_TAGS);
 export const dcterms = namespace("dcterms", DCTERMS_TAGS);
-export const w14 = namespace("w14", W14_TAGS);
 export const w15 = namespace("w15", W15_TAGS);
+/** @public Emit-side image/drawing namespaces — wired by S5 (image insertion). */
+export const r = namespace("r", R_TAGS);
+/** @public */
+export const a = namespace("a", A_TAGS);
+/** @public */
+export const wp = namespace("wp", WP_TAGS);
+/** @public */
+export const pic = namespace("pic", PIC_TAGS);
+/** @public Emit-side paragraph-mark identity namespace (paraId/textId). */
+export const w14 = namespace("w14", W14_TAGS);
 
 function makeTag(qualifiedName: string): TagFn {
 	return (props) => {

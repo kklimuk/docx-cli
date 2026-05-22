@@ -30,7 +30,8 @@
       "Bash(bun test*)",
       "Bash(bun run test*)",
       "Bash(bunx biome *)",
-      "Bash(bun src/index.ts *)"
+      "Bash(bun src/index.ts *)",
+      "Bash(unzip -p *)"
     ],
     "deny": [
       "Bash(git push --force:*)",

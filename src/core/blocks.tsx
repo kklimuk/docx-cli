@@ -1,6 +1,34 @@
-import type { Run, TextRun } from "@core";
-import { w } from "@core/jsx";
-import type { NullableXmlNode, XmlNode } from "@core/parser";
+import type { Run, TextRun } from "./ast/types";
+import { w } from "./jsx";
+import type { NullableXmlNode, XmlNode } from "./parser";
+
+/** A `<w:p>`. Pass `runs` for full control, or `text` (+ optional run-level
+ * formatting) for a single-run paragraph. `runs` wins if both are given; with
+ * neither, an empty paragraph is emitted. */
+export function Paragraph({
+	style,
+	alignment,
+	list,
+	text,
+	runs,
+	...formatting
+}: ParagraphOptions &
+	Partial<EmittableTextFormatting> & {
+		text?: string;
+		runs?: Run[];
+	}): XmlNode {
+	const resolvedRuns: Run[] = runs ?? [
+		{ type: "text", text: text ?? "", ...formatting },
+	];
+	return (
+		<w.p>
+			<ParagraphProperties options={{ style, alignment, list }} />
+			{resolvedRuns.map((run) => (
+				<RunElement run={run} />
+			))}
+		</w.p>
+	);
+}
 
 export type ParagraphOptions = {
 	style?: string;
@@ -20,64 +48,33 @@ type EmittableTextFormatting = Pick<
 	| "sizeHalfPoints"
 >;
 
-export type ParagraphProps = ParagraphOptions &
-	(
-		| ({ text: string; runs?: never } & Partial<EmittableTextFormatting>)
-		| { runs: Run[]; text?: never }
-	);
-
-/** A paragraph rendered as a horizontal rule — empty body with a bottom border.
- * Word renders this as a thin line spanning the page width. Intended for the
- * S8 markdown walker's `---` rules; not yet wired into any CLI verb. */
-export function HorizontalRule(): XmlNode {
-	return (
-		<w.p>
-			<w.pPr>
-				<w.pBdr>
-					<w.bottom w-val="single" w-sz="6" w-space="1" w-color="auto" />
-				</w.pBdr>
-			</w.pPr>
-		</w.p>
-	);
-}
-
-export function Paragraph(props: ParagraphProps): XmlNode {
-	const { style, alignment, list } = props;
-	const runs: Run[] =
-		"runs" in props && props.runs
-			? props.runs
-			: [textRunFromProps(props as ParagraphProps & { text: string })];
-	return (
-		<w.p>
-			<ParagraphProperties options={{ style, alignment, list }} />
-			{runs.map((run) => (
-				<RunElement run={run} />
-			))}
-		</w.p>
-	);
-}
-
-export type ListParagraphProps = {
-	numId: number;
-	level: number;
-	alignment?: "left" | "center" | "right" | "justify";
-} & ({ text: string } | { runs: Run[] });
-
 /** A paragraph that belongs to a numbered or bulleted list. Sets pStyle to
  * "ListParagraph" (the canonical Word style for list items — caller is
  * responsible for ensuring it via `ensureStyle(view, "ListParagraph")`) and
- * emits the `<w:numPr>` reference. The numId must come from
+ * emits the `<w:numPr>` reference. `numId` must come from
  * `allocateNum(view, kind)` in [src/core/numbering.tsx]. */
-export function ListParagraph(props: ListParagraphProps): XmlNode {
-	const baseProps = {
-		style: "ListParagraph",
-		alignment: props.alignment,
-		list: { level: props.level, numId: props.numId },
-	} as const;
-	if ("runs" in props) {
-		return <Paragraph {...baseProps} runs={props.runs} />;
-	}
-	return <Paragraph {...baseProps} text={props.text} />;
+export function ListParagraph({
+	numId,
+	level,
+	alignment,
+	text,
+	runs,
+}: {
+	numId: number;
+	level: number;
+	alignment?: "left" | "center" | "right" | "justify";
+	text?: string;
+	runs?: Run[];
+}): XmlNode {
+	return (
+		<Paragraph
+			style="ListParagraph"
+			alignment={alignment}
+			list={{ level, numId }}
+			text={text}
+			runs={runs}
+		/>
+	);
 }
 
 /** Emits a run as fresh OOXML. The fresh-emission path supports text/break/tab
@@ -103,6 +100,23 @@ export function RunElement({ run }: { run: Run }): NullableXmlNode {
 		);
 	}
 	return null;
+}
+
+/** A paragraph rendered as a horizontal rule — empty body with a bottom border.
+ * Word renders this as a thin line spanning the page width.
+ *
+ * @public Staged for the S8 markdown walker's `---` thematic breaks; not yet
+ * wired into a CLI verb, so it has no internal caller today. */
+export function HorizontalRule(): XmlNode {
+	return (
+		<w.p>
+			<w.pPr>
+				<w.pBdr>
+					<w.bottom w-val="single" w-sz="6" w-space="1" w-color="auto" />
+				</w.pBdr>
+			</w.pPr>
+		</w.p>
+	);
 }
 
 function TextRunElement({ run }: { run: TextRun }): XmlNode {
@@ -163,16 +177,4 @@ function ParagraphProperties({
 			{options.alignment && <w.jc w-val={options.alignment} />}
 		</w.pPr>
 	);
-}
-
-function textRunFromProps(props: ParagraphProps & { text: string }): TextRun {
-	const {
-		style: _style,
-		alignment: _alignment,
-		list: _list,
-		text,
-		runs: _runs,
-		...formatting
-	} = props;
-	return { type: "text", text, ...formatting };
 }

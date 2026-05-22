@@ -146,5 +146,3 @@ export const CANONICAL_PARTS = {
 		scope: "package",
 	},
 } as const;
-
-export type CanonicalPartKey = keyof typeof CANONICAL_PARTS;

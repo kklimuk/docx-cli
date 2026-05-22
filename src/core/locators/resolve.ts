@@ -1,11 +1,4 @@
-import type {
-	BlockReference,
-	CommentReference,
-	DocView,
-	HyperlinkReference,
-	ImageReference,
-	TrackedChangeReference,
-} from "../ast";
+import type { BlockReference, DocView } from "../ast";
 import type { Locator } from "./parse";
 
 export class LocatorResolveError extends Error {
@@ -54,59 +47,6 @@ export function resolveBlock(view: DocView, blockId: string): BlockReference {
 		throw new LocatorResolveError(
 			{ kind: "block", blockId },
 			`Block not found: ${blockId}`,
-		);
-	}
-	return reference;
-}
-
-export function resolveComment(
-	view: DocView,
-	commentId: string,
-): CommentReference {
-	const reference = view.commentReferences.get(commentId);
-	if (!reference) {
-		throw new LocatorResolveError(
-			{ kind: "comment", commentId },
-			`Comment not found: ${commentId}`,
-		);
-	}
-	return reference;
-}
-
-export function resolveImage(view: DocView, imageId: string): ImageReference {
-	const reference = view.imageById.get(imageId);
-	if (!reference) {
-		throw new LocatorResolveError(
-			{ kind: "image", imageId },
-			`Image not found: ${imageId}`,
-		);
-	}
-	return reference;
-}
-
-export function resolveHyperlink(
-	view: DocView,
-	hyperlinkId: string,
-): HyperlinkReference {
-	const reference = view.hyperlinkById.get(hyperlinkId);
-	if (!reference) {
-		throw new LocatorResolveError(
-			{ kind: "hyperlink", hyperlinkId },
-			`Hyperlink not found: ${hyperlinkId}`,
-		);
-	}
-	return reference;
-}
-
-export function resolveTrackedChange(
-	view: DocView,
-	trackedChangeId: string,
-): TrackedChangeReference {
-	const reference = view.trackedChangeReferences.get(trackedChangeId);
-	if (!reference) {
-		throw new LocatorResolveError(
-			{ kind: "trackedChange", trackedChangeId },
-			`Tracked change not found: ${trackedChangeId}`,
 		);
 	}
 	return reference;

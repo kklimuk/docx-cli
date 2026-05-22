@@ -22,6 +22,24 @@ export function jsx<P>(
 	return result ?? new XmlNode("#fragment");
 }
 
-export const jsxs = jsx;
-export const jsxDEV = jsx;
+// The automatic runtime calls `jsxs` for elements with statically-known
+// children and `jsxDEV` in development; our builder treats all three
+// identically. They delegate to `jsx` as distinct functions (rather than
+// `= jsx` aliases) so each is a single unambiguous export.
+export function jsxs<P>(
+	type: (props: P) => NullableXmlNode,
+	props: P,
+	key?: unknown,
+): XmlNode {
+	return jsx(type, props, key);
+}
+
+export function jsxDEV<P>(
+	type: (props: P) => NullableXmlNode,
+	props: P,
+	key?: unknown,
+): XmlNode {
+	return jsx(type, props, key);
+}
+
 export { Fragment };

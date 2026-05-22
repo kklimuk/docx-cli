@@ -19,6 +19,7 @@ import type {
 	Table,
 	TableCell,
 	TableRow,
+	TableWidth,
 	TextRun,
 	TrackedChange,
 } from "./types";
@@ -651,6 +652,8 @@ function readTable(
 	id: string,
 	state: WalkState,
 ): Table {
+	const grid = readTableGrid(node);
+	const width = readTableWidth(node);
 	const rows: TableRow[] = [];
 	let rowIndex = 0;
 	for (const child of node.children) {
@@ -659,22 +662,90 @@ function readTable(
 		let columnIndex = 0;
 		for (const cellNode of child.children) {
 			if (cellNode.tag !== "w:tc") continue;
-			cells.push({
-				blocks: readCellBlocks(
-					view,
-					cellNode,
-					id,
-					rowIndex,
-					columnIndex,
-					state,
-				),
-			});
+			cells.push(
+				readTableCell(view, cellNode, id, rowIndex, columnIndex, state),
+			);
 			columnIndex++;
 		}
 		rows.push({ cells });
 		rowIndex++;
 	}
-	return { id, type: "table", rows };
+	const table: Table = { id, type: "table", grid, rows };
+	if (width) table.width = width;
+	return table;
+}
+
+function readTableGrid(table: XmlNode): number[] {
+	const tblGrid = table.findChild("w:tblGrid");
+	if (!tblGrid) return [];
+	const widths: number[] = [];
+	for (const col of tblGrid.findChildren("w:gridCol")) {
+		const raw = col.getAttribute("w:w");
+		const value = raw ? Number(raw) : NaN;
+		widths.push(Number.isFinite(value) ? value : 0);
+	}
+	return widths;
+}
+
+function readTableWidth(table: XmlNode): TableWidth | undefined {
+	const tblPr = table.findChild("w:tblPr");
+	const tblW = tblPr?.findChild("w:tblW");
+	if (!tblW) return undefined;
+	return readWidth(tblW);
+}
+
+function readWidth(node: XmlNode): TableWidth | undefined {
+	const raw = node.getAttribute("w:w");
+	const unit = node.getAttribute("w:type");
+	const value = raw ? Number(raw) : NaN;
+	const resolvedUnit =
+		unit === "dxa" || unit === "pct" || unit === "auto" || unit === "nil"
+			? unit
+			: "dxa";
+	if (!Number.isFinite(value)) return undefined;
+	return { value, unit: resolvedUnit };
+}
+
+function readTableCell(
+	view: DocView,
+	cellNode: XmlNode,
+	tableId: string,
+	rowIndex: number,
+	columnIndex: number,
+	state: WalkState,
+): TableCell {
+	const cell: TableCell = {
+		blocks: readCellBlocks(
+			view,
+			cellNode,
+			tableId,
+			rowIndex,
+			columnIndex,
+			state,
+		),
+	};
+	const tcPr = cellNode.findChild("w:tcPr");
+	if (!tcPr) return cell;
+	const gridSpanNode = tcPr.findChild("w:gridSpan");
+	if (gridSpanNode) {
+		const raw = gridSpanNode.getAttribute("w:val");
+		const value = raw ? Number(raw) : NaN;
+		if (Number.isFinite(value) && value > 1) cell.gridSpan = value;
+	}
+	const vMergeNode = tcPr.findChild("w:vMerge");
+	if (vMergeNode) {
+		// Per ECMA-376 §17.4.84: w:val="restart" begins a new vertical merge;
+		// a bare <w:vMerge/> (or w:val="continue") continues the merge from
+		// the cell above.
+		const raw = vMergeNode.getAttribute("w:val");
+		cell.vMerge = raw === "restart" ? "restart" : "continue";
+	}
+	const tcW = tcPr.findChild("w:tcW");
+	if (tcW) {
+		const width = readWidth(tcW);
+		if (width) cell.width = width;
+	}
+	return cell;
 }
 
 function readCellBlocks(

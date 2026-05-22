@@ -38,14 +38,33 @@ const EMPTY_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?
  * Normal is also seeded so basedOn references resolve. Subsequent calls for
  * the same id are no-ops.
  *
- * Exposed for upcoming features (S6 footnotes, S8 markdown walker) — not
- * currently wired into any CLI verb. */
+ * Used by `insert --style` / `edit --style` (via `isBaselineStyle`) so a
+ * referenced baseline style is also defined, and by the S8 markdown walker. */
 export function ensureStyle(view: DocView, styleId: BaselineStyleId): void {
 	const tree = ensureStylesPart(view);
 	const root = XmlNode.findRoot(tree, "w:styles");
 	if (!root) throw new Error("expected <w:styles> root in stylesTree");
 	if (styleId !== "Normal") ensureStyleNode(root, "Normal");
 	ensureStyleNode(root, styleId);
+}
+
+/** Whether `styleId` is one of the baseline styles `ensureStyle` can define.
+ * Lets callers provision a `--style` reference only when we have a definition
+ * for it (custom/unknown styles are referenced but left for the doc to define). */
+export function isBaselineStyle(styleId: string): styleId is BaselineStyleId {
+	return Object.hasOwn(BASELINE, styleId);
+}
+
+/** Define a referenced paragraph/character style if it's a baseline we know
+ * how to provision; no-op for undefined or custom styles. The convenience
+ * `insert --style` / `edit --style` call so a `--style Heading2` reference
+ * also lands a Heading2 definition in styles.xml (otherwise Word renders it
+ * as Normal). */
+export function ensureReferencedStyle(
+	view: DocView,
+	styleId: string | undefined,
+): void {
+	if (styleId && isBaselineStyle(styleId)) ensureStyle(view, styleId);
 }
 
 function ensureStylesPart(view: DocView): XmlNode[] {
@@ -63,20 +82,109 @@ function ensureStyleNode(stylesRoot: XmlNode, styleId: BaselineStyleId): void {
 	stylesRoot.children.push(BASELINE[styleId]());
 }
 
+/** The baseline style catalog: id → a builder that emits the `<w:style>`
+ * definition. Each builder renders one of the style components below. */
 const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
-	Normal: () => (
+	Normal: () => <NormalStyle />,
+	Heading1: () => (
+		<HeadingStyle
+			styleId="Heading1"
+			displayName="heading 1"
+			outlineLevel={0}
+			sizeHalfPoints={32}
+		/>
+	),
+	Heading2: () => (
+		<HeadingStyle
+			styleId="Heading2"
+			displayName="heading 2"
+			outlineLevel={1}
+			sizeHalfPoints={28}
+		/>
+	),
+	Heading3: () => (
+		<HeadingStyle
+			styleId="Heading3"
+			displayName="heading 3"
+			outlineLevel={2}
+			sizeHalfPoints={26}
+		/>
+	),
+	Heading4: () => (
+		<HeadingStyle
+			styleId="Heading4"
+			displayName="heading 4"
+			outlineLevel={3}
+			sizeHalfPoints={24}
+		/>
+	),
+	Heading5: () => (
+		<HeadingStyle
+			styleId="Heading5"
+			displayName="heading 5"
+			outlineLevel={4}
+			sizeHalfPoints={22}
+		/>
+	),
+	Heading6: () => (
+		<HeadingStyle
+			styleId="Heading6"
+			displayName="heading 6"
+			outlineLevel={5}
+			sizeHalfPoints={20}
+		/>
+	),
+	Quote: () => <QuoteStyle />,
+	IntenseQuote: () => <IntenseQuoteStyle />,
+	Code: () => <CodeStyle />,
+	CodeBlock: () => <CodeBlockStyle />,
+	ListParagraph: () => <ListParagraphStyle />,
+	FootnoteReference: () => <FootnoteReferenceStyle />,
+	FootnoteText: () => <FootnoteTextStyle />,
+};
+
+function NormalStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-default="1" w-styleId="Normal">
 			<w.name w-val="Normal" />
 			<w.qFormat />
 		</w.style>
-	),
-	Heading1: () => heading("Heading1", "heading 1", 0, 32),
-	Heading2: () => heading("Heading2", "heading 2", 1, 28),
-	Heading3: () => heading("Heading3", "heading 3", 2, 26),
-	Heading4: () => heading("Heading4", "heading 4", 3, 24),
-	Heading5: () => heading("Heading5", "heading 5", 4, 22),
-	Heading6: () => heading("Heading6", "heading 6", 5, 20),
-	Quote: () => (
+	);
+}
+
+function HeadingStyle({
+	styleId,
+	displayName,
+	outlineLevel,
+	sizeHalfPoints,
+}: {
+	styleId: BaselineStyleId;
+	displayName: string;
+	outlineLevel: number;
+	sizeHalfPoints: number;
+}): XmlNode {
+	return (
+		<w.style w-type="paragraph" w-styleId={styleId}>
+			<w.name w-val={displayName} />
+			<w.basedOn w-val="Normal" />
+			<w.next w-val="Normal" />
+			<w.qFormat />
+			<w.pPr>
+				<w.keepNext />
+				<w.keepLines />
+				<w.spacing w-before="240" w-after="60" />
+				<w.outlineLvl w-val={String(outlineLevel)} />
+			</w.pPr>
+			<w.rPr>
+				<w.b />
+				<w.sz w-val={String(sizeHalfPoints)} />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function QuoteStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-styleId="Quote">
 			<w.name w-val="Quote" />
 			<w.basedOn w-val="Normal" />
@@ -90,8 +198,11 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 				<w.i />
 			</w.rPr>
 		</w.style>
-	),
-	IntenseQuote: () => (
+	);
+}
+
+function IntenseQuoteStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-styleId="IntenseQuote">
 			<w.name w-val="Intense Quote" />
 			<w.basedOn w-val="Normal" />
@@ -110,8 +221,11 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 				<w.i />
 			</w.rPr>
 		</w.style>
-	),
-	Code: () => (
+	);
+}
+
+function CodeStyle(): XmlNode {
+	return (
 		<w.style w-type="character" w-styleId="Code">
 			<w.name w-val="Code" />
 			<w.qFormat />
@@ -119,8 +233,11 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 				<w.rFonts w-ascii="Courier New" w-hAnsi="Courier New" />
 			</w.rPr>
 		</w.style>
-	),
-	CodeBlock: () => (
+	);
+}
+
+function CodeBlockStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-styleId="CodeBlock">
 			<w.name w-val="Code Block" />
 			<w.basedOn w-val="Normal" />
@@ -135,8 +252,11 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 				<w.sz w-val="20" />
 			</w.rPr>
 		</w.style>
-	),
-	ListParagraph: () => (
+	);
+}
+
+function ListParagraphStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-styleId="ListParagraph">
 			<w.name w-val="List Paragraph" />
 			<w.basedOn w-val="Normal" />
@@ -148,47 +268,27 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 				<w.contextualSpacing />
 			</w.pPr>
 		</w.style>
-	),
-	FootnoteReference: () => (
+	);
+}
+
+function FootnoteReferenceStyle(): XmlNode {
+	return (
 		<w.style w-type="character" w-styleId="FootnoteReference">
 			<w.name w-val="footnote reference" />
 			<w.rPr>
 				<w.vertAlign w-val="superscript" />
 			</w.rPr>
 		</w.style>
-	),
-	FootnoteText: () => (
+	);
+}
+
+function FootnoteTextStyle(): XmlNode {
+	return (
 		<w.style w-type="paragraph" w-styleId="FootnoteText">
 			<w.name w-val="footnote text" />
 			<w.basedOn w-val="Normal" />
 			<w.rPr>
 				<w.sz w-val="20" />
-			</w.rPr>
-		</w.style>
-	),
-};
-
-function heading(
-	styleId: BaselineStyleId,
-	displayName: string,
-	outlineLevel: number,
-	sizeHalfPoints: number,
-): XmlNode {
-	return (
-		<w.style w-type="paragraph" w-styleId={styleId}>
-			<w.name w-val={displayName} />
-			<w.basedOn w-val="Normal" />
-			<w.next w-val="Normal" />
-			<w.qFormat />
-			<w.pPr>
-				<w.keepNext />
-				<w.keepLines />
-				<w.spacing w-before="240" w-after="60" />
-				<w.outlineLvl w-val={String(outlineLevel)} />
-			</w.pPr>
-			<w.rPr>
-				<w.b />
-				<w.sz w-val={String(sizeHalfPoints)} />
 			</w.rPr>
 		</w.style>
 	);
