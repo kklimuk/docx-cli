@@ -41,6 +41,12 @@ Entity locators:
                   (a self-closing element inside <w:pPr><w:rPr>).
   tN:rRcC         Cell at row R, column C of table tN
 
+Table structure locators (for the "docx tables" verbs):
+  tN:rR           Row R of table tN (e.g. delete-row)
+  tN:cC           Column C of table tN (e.g. delete-column)
+  tN:rR1cC1-rR2cC2   Rectangular cell region, top-left to bottom-right by
+                  logical row/column (e.g. merge)
+
 Examples:
   p3              -> the entire paragraph p3
   p3:5-20         -> characters 5..20 of p3
@@ -91,6 +97,11 @@ const JSON_REFERENCE = {
 		},
 		cell: { syntax: "tN:rRcC", example: "t0:r1c2" },
 		nestedCell: { syntax: "tN:rRcC:pK", example: "t0:r1c2:p0" },
+	},
+	tableStructureLocators: {
+		row: { syntax: "tN:rR", example: "t0:r1" },
+		column: { syntax: "tN:cC", example: "t0:c2" },
+		cellRange: { syntax: "tN:rR1cC1-rR2cC2", example: "t0:r0c0-r1c1" },
 	},
 	notes: [
 		"Block ids are positional and shift after structural edits.",

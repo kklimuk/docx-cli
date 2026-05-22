@@ -24,8 +24,12 @@ apart.
 
 Output: JSON array of { id, kind, author, date, revisionId, blockId, text }
 sorted by id (document order). kind is one of: "ins", "del", "moveFrom",
-"moveTo", "sectPrChange". Paragraph-mark entries have kind "ins"/"del" with
-text "" — their blockId is the owning paragraph's pN.
+"moveTo", "sectPrChange", "rowIns", "rowDel", "cellIns", "cellDel",
+"tblGridChange", "tblPrChange", "tcPrChange". Paragraph-mark entries have kind
+"ins"/"del" with text "" — their blockId is the owning paragraph's pN.
+Table-structural entries (rowIns/rowDel/cellIns/cellDel and the property
+revisions tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to
+the owning table's tN.
 
 Section-property revisions (kind="sectPrChange") additionally include
 { prior, current } objects with the section's columns/sectionType from
@@ -96,7 +100,9 @@ export async function run(args: string[]): Promise<number> {
 	// inventory stays in sync with what `resolveTrackedChange` can address.
 	for (const [id, reference] of view.trackedChangeReferences) {
 		if (byId.has(id)) continue;
-		const kind = trackedChangeKindForTag(reference.node.tag);
+		// Table-structural markers carry an explicit kind (their tag is
+		// ambiguous: a row revision is a <w:ins>/<w:del> like a run-level one).
+		const kind = reference.kind ?? trackedChangeKindForTag(reference.node.tag);
 		if (!kind) continue;
 		const record: TrackedChangeRecord = {
 			id,

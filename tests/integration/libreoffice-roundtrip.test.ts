@@ -26,6 +26,7 @@ const FIXTURES = [
 	"styles-injection.docx",
 	"lists.docx",
 	"tables.docx",
+	"tables-mutations.docx",
 ] as const;
 
 let workspace: string;

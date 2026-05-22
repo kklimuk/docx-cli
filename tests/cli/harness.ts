@@ -29,6 +29,16 @@ const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	comments: new Set(["add", "reply", "resolve", "delete"]),
 	images: new Set(["replace"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
+	tables: new Set([
+		"insert-row",
+		"delete-row",
+		"insert-column",
+		"delete-column",
+		"set-widths",
+		"merge",
+		"unmerge",
+		"borders",
+	]),
 	"track-changes": new Set(["on", "off", "accept", "reject"]),
 };
 

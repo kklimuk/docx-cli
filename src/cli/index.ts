@@ -16,6 +16,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	outline: () => import("./outline"),
 	read: () => import("./read"),
 	replace: () => import("./replace"),
+	tables: () => import("./tables"),
 	"track-changes": () => import("./track-changes"),
 	wc: () => import("./wc"),
 };

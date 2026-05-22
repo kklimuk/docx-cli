@@ -213,12 +213,33 @@ const JSON_SCHEMA = {
 										gridSpan: { type: "number" },
 										vMerge: { enum: ["restart", "continue"] },
 										width: { $ref: "#/$defs/TableWidth" },
+										trackedChange: {
+											$ref: "#/$defs/TableRevision",
+											description: "cellIns / cellDel (tracked column change)",
+										},
 									},
 								},
+							},
+							trackedChange: {
+								$ref: "#/$defs/TableRevision",
+								description: "rowIns / rowDel (tracked row change)",
 							},
 						},
 					},
 				},
+			},
+		},
+		TableRevision: {
+			type: "object",
+			required: ["id", "kind", "author", "date", "revisionId"],
+			properties: {
+				id: { type: "string" },
+				kind: {
+					enum: ["rowIns", "rowDel", "cellIns", "cellDel", "tcPrChange"],
+				},
+				author: { type: "string" },
+				date: { type: "string" },
+				revisionId: { type: "string" },
 			},
 		},
 		TableWidth: {

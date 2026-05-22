@@ -39,6 +39,7 @@ src/
     comments/                 # add | reply | resolve | delete | list (helpers.tsx: paraId, run-splitting)
     images/                   # list | extract | replace
     hyperlinks/               # add | list | replace | delete (wrap.tsx: run-splitting)
+    tables/                   # row/column insert+delete | set-widths | merge | unmerge | borders (grid.ts: merge-aware model)
     track-changes/            # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
     info/                     # schema | locators (reference output)
   core/

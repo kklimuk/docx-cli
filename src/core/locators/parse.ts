@@ -16,6 +16,14 @@ export type Locator =
 			row: number;
 			col: number;
 			inner?: Locator;
+	  }
+	| { kind: "tableRow"; tableId: string; row: number }
+	| { kind: "tableColumn"; tableId: string; col: number }
+	| {
+			kind: "cellRange";
+			tableId: string;
+			start: { row: number; col: number };
+			end: { row: number; col: number };
 	  };
 
 export class LocatorParseError extends Error {
@@ -35,7 +43,10 @@ const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
 const LINK_RE = /^link(\d+)$/;
 const TRACKED_CHANGE_RE = /^tc(\d+)$/;
+const CELL_RANGE_RE = /^t(\d+):r(\d+)c(\d+)-r(\d+)c(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
+const TABLE_ROW_RE = /^t(\d+):r(\d+)$/;
+const TABLE_COLUMN_RE = /^t(\d+):c(\d+)$/;
 
 export function parseLocator(input: string): Locator {
 	const trimmed = input.trim();
@@ -62,6 +73,17 @@ export function parseLocator(input: string): Locator {
 		};
 	}
 
+	const cellRangeMatch = trimmed.match(CELL_RANGE_RE);
+	if (cellRangeMatch) {
+		const [, tableIndex, startRow, startCol, endRow, endCol] = cellRangeMatch;
+		return {
+			kind: "cellRange",
+			tableId: `t${tableIndex}`,
+			start: { row: Number(startRow), col: Number(startCol) },
+			end: { row: Number(endRow), col: Number(endCol) },
+		};
+	}
+
 	const cellMatch = trimmed.match(CELL_RE);
 	if (cellMatch) {
 		const [, tableIndex, rowIndex, columnIndex, rest] = cellMatch;
@@ -73,6 +95,26 @@ export function parseLocator(input: string): Locator {
 		};
 		if (rest) result.inner = parseLocator(rest);
 		return result;
+	}
+
+	const tableRowMatch = trimmed.match(TABLE_ROW_RE);
+	if (tableRowMatch) {
+		const [, tableIndex, rowIndex] = tableRowMatch;
+		return {
+			kind: "tableRow",
+			tableId: `t${tableIndex}`,
+			row: Number(rowIndex),
+		};
+	}
+
+	const tableColumnMatch = trimmed.match(TABLE_COLUMN_RE);
+	if (tableColumnMatch) {
+		const [, tableIndex, columnIndex] = tableColumnMatch;
+		return {
+			kind: "tableColumn",
+			tableId: `t${tableIndex}`,
+			col: Number(columnIndex),
+		};
 	}
 
 	const rangeMatch = trimmed.match(RANGE_RE);

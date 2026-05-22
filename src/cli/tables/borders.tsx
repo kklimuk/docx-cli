@@ -1,0 +1,196 @@
+import { saveDocView } from "@core";
+import { w } from "@core/jsx";
+import { LocatorParseError, parseLocator } from "@core/locators";
+import type { XmlNode } from "@core/parser";
+import { parseArgs } from "util";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	respondAck,
+	setVerboseAck,
+	writeStdout,
+} from "../respond";
+import { noteStructuralChange, resolveTableNode } from "./common";
+import { buildGrid } from "./grid";
+import { setTablePropertiesChild } from "./mutate";
+
+const STYLES = new Set(["single", "double", "none"]);
+
+const HELP = `docx tables borders — set table borders
+
+Usage:
+  docx tables borders FILE --at tN [options]
+
+Required:
+  --at tN            Target table (e.g. t0)
+
+Optional:
+  --style STYLE      single | double | none (default: single)
+  --size EIGHTHS     Border thickness in eighths of a point (default: 4 = 0.5pt)
+  --color HEX        Hex color without '#', or "auto" (default: auto)
+  --author NAME      Author for the tracked change (default: $DOCX_AUTHOR)
+  -o, --output PATH  Write to PATH instead of overwriting FILE
+  --dry-run          Print what would change; do not write
+  -v, --verbose      Print the success ack JSON
+  -h, --help         Show this help
+
+Applies to all six table border edges (<w:tblBorders>). Under track-changes the
+change is recorded as a real table-property revision (<w:tblPrChange> snapshots
+the prior <w:tblPr>), so it can be accepted or rejected.
+
+Examples:
+  docx tables borders doc.docx --at t0 --style double --size 8 --color 444444
+  docx tables borders doc.docx --at t0 --style none
+`;
+
+export async function run(args: string[]): Promise<number> {
+	let parsed: ReturnType<typeof parseArgs>;
+	try {
+		parsed = parseArgs({
+			args,
+			allowPositionals: true,
+			options: {
+				at: { type: "string" },
+				style: { type: "string" },
+				size: { type: "string" },
+				color: { type: "string" },
+				author: { type: "string" },
+				output: { type: "string", short: "o" },
+				"dry-run": { type: "boolean" },
+				verbose: { type: "boolean", short: "v" },
+				help: { type: "boolean", short: "h" },
+			},
+		});
+	} catch (parseError) {
+		const message =
+			parseError instanceof Error ? parseError.message : String(parseError);
+		return fail("USAGE", message, HELP);
+	}
+
+	if (parsed.values.help) {
+		await writeStdout(HELP);
+		return EXIT.OK;
+	}
+
+	setVerboseAck(Boolean(parsed.values.verbose));
+
+	const path = parsed.positionals[0];
+	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
+
+	const at = parsed.values.at as string | undefined;
+	if (!at) return fail("USAGE", "Missing --at tN", HELP);
+	const tableId = tableIdFromArg(at);
+	if (!tableId) {
+		return fail(
+			"INVALID_LOCATOR",
+			`--at must be a table id like t0 (got ${at})`,
+		);
+	}
+
+	const style = (parsed.values.style as string | undefined) ?? "single";
+	if (!STYLES.has(style)) {
+		return fail("USAGE", "--style must be single, double, or none");
+	}
+	const size = parsed.values.size as string | undefined;
+	if (
+		size !== undefined &&
+		(!Number.isInteger(Number(size)) || Number(size) <= 0)
+	) {
+		return fail(
+			"USAGE",
+			"--size must be a positive integer (eighths of a point)",
+		);
+	}
+	const sizeEighths = size ? Number(size) : 4;
+	const color = (parsed.values.color as string | undefined) ?? "auto";
+
+	const view = await openOrFail(path);
+	if (typeof view === "number") return view;
+
+	const tableNode = resolveTableNode(view, tableId);
+	if (!tableNode) return fail("BLOCK_NOT_FOUND", `Table not found: ${tableId}`);
+
+	const outputPath = parsed.values.output as string | undefined;
+
+	if (parsed.values["dry-run"]) {
+		await respond({
+			ok: true,
+			operation: "tables.borders",
+			dryRun: true,
+			path,
+			table: tableId,
+			style,
+			...(style !== "none" ? { size: sizeEighths, color } : {}),
+			...(outputPath ? { output: outputPath } : {}),
+		});
+		return EXIT.OK;
+	}
+
+	setTablePropertiesChild(
+		tableNode,
+		"w:tblBorders",
+		buildBorders(style, sizeEighths, color),
+	);
+
+	// Word does not record a table border change as a tracked revision that it
+	// will revert on reject (verified: a tblPrChange we author isn't reverted by
+	// Word's reject), so we apply it in place and note it with an audit comment.
+	noteStructuralChange(
+		view,
+		buildGrid(tableNode).rows[0]?.cells[0]?.node,
+		`table borders set (${style})`,
+		parsed.values.author as string | undefined,
+	);
+
+	await saveDocView(view, outputPath);
+
+	await respondAck({
+		ok: true,
+		operation: "tables.borders",
+		path: outputPath ?? path,
+		table: tableId,
+		style,
+		...(style !== "none" ? { size: sizeEighths, color } : {}),
+	});
+	return EXIT.OK;
+}
+
+function tableIdFromArg(at: string): string | null {
+	try {
+		const locator = parseLocator(at);
+		if (locator.kind === "block" && /^t\d+$/.test(locator.blockId)) {
+			return locator.blockId;
+		}
+	} catch (error) {
+		if (!(error instanceof LocatorParseError)) throw error;
+	}
+	return null;
+}
+
+function buildBorders(
+	style: string,
+	sizeEighths: number,
+	color: string,
+): XmlNode {
+	const attrs =
+		style === "none"
+			? { "w-val": "none" }
+			: {
+					"w-val": style,
+					"w-sz": String(sizeEighths),
+					"w-space": "0",
+					"w-color": color,
+				};
+	return (
+		<w.tblBorders>
+			<w.top {...attrs} />
+			<w.left {...attrs} />
+			<w.bottom {...attrs} />
+			<w.right {...attrs} />
+			<w.insideH {...attrs} />
+			<w.insideV {...attrs} />
+		</w.tblBorders>
+	);
+}

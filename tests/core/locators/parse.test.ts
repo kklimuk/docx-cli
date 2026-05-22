@@ -75,6 +75,28 @@ describe("parseLocator", () => {
 		});
 	});
 
+	test("parses table row and column locators", () => {
+		expect(parseLocator("t0:r1")).toEqual({
+			kind: "tableRow",
+			tableId: "t0",
+			row: 1,
+		});
+		expect(parseLocator("t2:c3")).toEqual({
+			kind: "tableColumn",
+			tableId: "t2",
+			col: 3,
+		});
+	});
+
+	test("parses rectangular cell range", () => {
+		expect(parseLocator("t0:r0c0-r1c2")).toEqual({
+			kind: "cellRange",
+			tableId: "t0",
+			start: { row: 0, col: 0 },
+			end: { row: 1, col: 2 },
+		});
+	});
+
 	test("rejects malformed input", () => {
 		expect(() => parseLocator("")).toThrow(LocatorParseError);
 		expect(() => parseLocator("abc")).toThrow(LocatorParseError);

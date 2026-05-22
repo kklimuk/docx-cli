@@ -56,6 +56,8 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+# Word owner-lock files (appear when a fixture is opened in Word for verification)
+~$*
 
 # Local sample / scratch docs
 scripts/data/

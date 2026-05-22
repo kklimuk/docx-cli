@@ -654,10 +654,17 @@ function readTable(
 ): Table {
 	const grid = readTableGrid(node);
 	const width = readTableWidth(node);
+	// Register table-level revisions first, in tree order (tblPr before tblGrid,
+	// both before the rows), so tcN ids match the apply.ts walk order.
+	readTablePropertyRevision(view, node, id, state);
+	readGridRevision(view, node, id, state);
 	const rows: TableRow[] = [];
 	let rowIndex = 0;
 	for (const child of node.children) {
 		if (child.tag !== "w:tr") continue;
+		// Register the row-level revision before its cells so tcN ids match the
+		// apply.ts walk order (row marker → per cell: cell marker → content).
+		const rowChange = readRowRevision(view, child, id, state);
 		const cells: TableCell[] = [];
 		let columnIndex = 0;
 		for (const cellNode of child.children) {
@@ -667,12 +674,119 @@ function readTable(
 			);
 			columnIndex++;
 		}
-		rows.push({ cells });
+		const row: TableRow = { cells };
+		if (rowChange) row.trackedChange = rowChange;
+		rows.push(row);
 		rowIndex++;
 	}
 	const table: Table = { id, type: "table", grid, rows };
 	if (width) table.width = width;
 	return table;
+}
+
+function readTablePropertyRevision(
+	view: DocView,
+	table: XmlNode,
+	tableId: string,
+	state: WalkState,
+): void {
+	const tblPr = table.findChild("w:tblPr");
+	const change = tblPr?.findChild("w:tblPrChange");
+	if (!tblPr || !change) return;
+	registerTableRevision(
+		view,
+		change,
+		tblPr.children,
+		"tblPrChange",
+		tableId,
+		state,
+	);
+}
+
+function readGridRevision(
+	view: DocView,
+	table: XmlNode,
+	tableId: string,
+	state: WalkState,
+): void {
+	const tblGrid = table.findChild("w:tblGrid");
+	const change = tblGrid?.findChild("w:tblGridChange");
+	if (!tblGrid || !change) return;
+	registerTableRevision(
+		view,
+		change,
+		tblGrid.children,
+		"tblGridChange",
+		tableId,
+		state,
+	);
+}
+
+function readRowRevision(
+	view: DocView,
+	row: XmlNode,
+	tableId: string,
+	state: WalkState,
+): TrackedChange | undefined {
+	const trPr = row.findChild("w:trPr");
+	const marker = trPr?.children.find(
+		(child) => child.tag === "w:ins" || child.tag === "w:del",
+	);
+	if (!trPr || !marker) return undefined;
+	return registerTableRevision(
+		view,
+		marker,
+		trPr.children,
+		marker.tag === "w:ins" ? "rowIns" : "rowDel",
+		tableId,
+		state,
+	);
+}
+
+function readCellRevision(
+	view: DocView,
+	cell: XmlNode,
+	tableId: string,
+	state: WalkState,
+): TrackedChange | undefined {
+	const tcPr = cell.findChild("w:tcPr");
+	const marker = tcPr?.children.find(
+		(child) => child.tag === "w:cellIns" || child.tag === "w:cellDel",
+	);
+	if (!tcPr || !marker) return undefined;
+	return registerTableRevision(
+		view,
+		marker,
+		tcPr.children,
+		marker.tag === "w:cellIns" ? "cellIns" : "cellDel",
+		tableId,
+		state,
+	);
+}
+
+function registerTableRevision(
+	view: DocView,
+	marker: XmlNode,
+	parent: XmlNode[],
+	kind: TrackedChange["kind"],
+	tableId: string,
+	state: WalkState,
+): TrackedChange {
+	const trackedChangeId = `tc${state.trackedChangeIndex++}`;
+	const change: TrackedChange = {
+		id: trackedChangeId,
+		kind,
+		author: marker.getAttribute("w:author") ?? "",
+		date: marker.getAttribute("w:date") ?? "",
+		revisionId: marker.getAttribute("w:id") ?? "",
+	};
+	view.trackedChangeReferences.set(trackedChangeId, {
+		node: marker,
+		parent,
+		blockId: tableId,
+		kind,
+	});
+	return change;
 }
 
 function readTableGrid(table: XmlNode): number[] {
@@ -714,6 +828,15 @@ function readTableCell(
 	columnIndex: number,
 	state: WalkState,
 ): TableCell {
+	// Register cell-level revisions before content so tcN ids match the apply.ts
+	// walk order: the cellIns/cellDel marker first, then the tcPrChange.
+	const cellChange = readCellRevision(view, cellNode, tableId, state);
+	const cellPropertyChange = readCellPropertyRevision(
+		view,
+		cellNode,
+		tableId,
+		state,
+	);
 	const cell: TableCell = {
 		blocks: readCellBlocks(
 			view,
@@ -724,6 +847,8 @@ function readTableCell(
 			state,
 		),
 	};
+	if (cellChange) cell.trackedChange = cellChange;
+	else if (cellPropertyChange) cell.trackedChange = cellPropertyChange;
 	const tcPr = cellNode.findChild("w:tcPr");
 	if (!tcPr) return cell;
 	const gridSpanNode = tcPr.findChild("w:gridSpan");
@@ -746,6 +871,25 @@ function readTableCell(
 		if (width) cell.width = width;
 	}
 	return cell;
+}
+
+function readCellPropertyRevision(
+	view: DocView,
+	cell: XmlNode,
+	tableId: string,
+	state: WalkState,
+): TrackedChange | undefined {
+	const tcPr = cell.findChild("w:tcPr");
+	const change = tcPr?.findChild("w:tcPrChange");
+	if (!tcPr || !change) return undefined;
+	return registerTableRevision(
+		view,
+		change,
+		tcPr.children,
+		"tcPrChange",
+		tableId,
+		state,
+	);
 }
 
 function readCellBlocks(

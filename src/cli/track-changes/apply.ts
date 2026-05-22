@@ -132,6 +132,10 @@ export async function runApply(
 		else applyReject(target);
 	}
 
+	// Cell removals (accept-cellDel / reject-cellIns) shrink rows without
+	// touching <w:tblGrid>; bring the grid back in line with the widest row.
+	resyncTableGrids(view.documentTree);
+
 	await saveDocView(view, outputPath);
 
 	await respondAck({
@@ -169,15 +173,95 @@ function visitBlocks(
 			continue;
 		}
 		if (block.tag === "w:tbl") {
-			for (const row of block.findChildren("w:tr")) {
-				for (const cell of row.findChildren("w:tc")) {
-					visitBlocks(cell.children, out, counter);
-				}
-			}
+			visitTable(block, out, counter);
 			continue;
 		}
 		if (block.tag === "w:sectPr") {
 			visitSectPrChange(block, out, counter);
+		}
+	}
+}
+
+/** Visit a table's structural revisions in the same order as the AST reader:
+ * the grid revision (in <w:tblGrid>) first, then per row the row marker
+ * (<w:trPr><w:ins>/<w:del>), then per cell the cell marker
+ * (<w:tcPr><w:cellIns>/<w:cellDel>) followed by the cell's run-level content. */
+function visitTable(
+	table: XmlNode,
+	out: ChangeFound[],
+	counter: { value: number },
+): void {
+	// tblPr revision first (tblPr precedes tblGrid in the tree), then tblGrid.
+	const tblPr = table.findChild("w:tblPr");
+	const tblPrChange = tblPr?.findChild("w:tblPrChange");
+	if (tblPr && tblPrChange) {
+		out.push({
+			node: tblPrChange,
+			parent: tblPr.children,
+			kind: "tblPrChange",
+			id: `tc${counter.value++}`,
+			author: tblPrChange.getAttribute("w:author") ?? "",
+			date: tblPrChange.getAttribute("w:date") ?? "",
+		});
+	}
+	const tblGrid = table.findChild("w:tblGrid");
+	const gridChange = tblGrid?.findChild("w:tblGridChange");
+	if (tblGrid && gridChange) {
+		out.push({
+			node: gridChange,
+			parent: tblGrid.children,
+			kind: "tblGridChange",
+			id: `tc${counter.value++}`,
+			author: gridChange.getAttribute("w:author") ?? "",
+			date: gridChange.getAttribute("w:date") ?? "",
+		});
+	}
+	for (const row of table.findChildren("w:tr")) {
+		const trPr = row.findChild("w:trPr");
+		const rowMarker = trPr?.children.find(
+			(child) => child.tag === "w:ins" || child.tag === "w:del",
+		);
+		if (trPr && rowMarker) {
+			out.push({
+				node: rowMarker,
+				parent: trPr.children,
+				kind: rowMarker.tag === "w:ins" ? "rowIns" : "rowDel",
+				id: `tc${counter.value++}`,
+				author: rowMarker.getAttribute("w:author") ?? "",
+				date: rowMarker.getAttribute("w:date") ?? "",
+				tableRow: row,
+				tableRowParent: table.children,
+			});
+		}
+		for (const cell of row.findChildren("w:tc")) {
+			const tcPr = cell.findChild("w:tcPr");
+			const cellMarker = tcPr?.children.find(
+				(child) => child.tag === "w:cellIns" || child.tag === "w:cellDel",
+			);
+			if (tcPr && cellMarker) {
+				out.push({
+					node: cellMarker,
+					parent: tcPr.children,
+					kind: cellMarker.tag === "w:cellIns" ? "cellIns" : "cellDel",
+					id: `tc${counter.value++}`,
+					author: cellMarker.getAttribute("w:author") ?? "",
+					date: cellMarker.getAttribute("w:date") ?? "",
+					tableCell: cell,
+					tableCellParent: row.children,
+				});
+			}
+			const tcPrChange = tcPr?.findChild("w:tcPrChange");
+			if (tcPr && tcPrChange) {
+				out.push({
+					node: tcPrChange,
+					parent: tcPr.children,
+					kind: "tcPrChange",
+					id: `tc${counter.value++}`,
+					author: tcPrChange.getAttribute("w:author") ?? "",
+					date: tcPrChange.getAttribute("w:date") ?? "",
+				});
+			}
+			visitBlocks(cell.children, out, counter);
 		}
 	}
 }
@@ -288,8 +372,18 @@ function actionFor(target: ChangeFound, verb: ApplyVerb): ChangeAction {
 			return verb === "accept" ? "merge" : "delete";
 		}
 	}
-	if (target.kind === "sectPrChange") {
+	if (target.kind === "sectPrChange" || target.kind === "tblGridChange") {
 		return verb === "accept" ? "delete" : "restore";
+	}
+	if (target.kind === "rowIns")
+		return verb === "accept" ? "stripMarker" : "deleteRow";
+	if (target.kind === "rowDel")
+		return verb === "accept" ? "deleteRow" : "stripMarker";
+	if (target.kind === "cellIns") {
+		return verb === "accept" ? "stripMarker" : "deleteCell";
+	}
+	if (target.kind === "cellDel") {
+		return verb === "accept" ? "deleteCell" : "stripMarker";
 	}
 	const isAdditive = target.kind === "ins" || target.kind === "moveTo";
 	if (verb === "accept") return isAdditive ? "unwrap" : "delete";
@@ -297,6 +391,7 @@ function actionFor(target: ChangeFound, verb: ApplyVerb): ChangeAction {
 }
 
 function applyAccept(target: ChangeFound): void {
+	if (applyTableChange(target, "accept")) return;
 	if (target.paragraph && target.paragraphParent) {
 		if (target.kind === "ins") {
 			deleteNode(target.node, target.parent);
@@ -320,6 +415,7 @@ function applyAccept(target: ChangeFound): void {
 }
 
 function applyReject(target: ChangeFound): void {
+	if (applyTableChange(target, "reject")) return;
 	if (target.paragraph && target.paragraphParent) {
 		if (target.kind === "ins") {
 			const idx = target.paragraphParent.indexOf(target.paragraph);
@@ -342,6 +438,128 @@ function applyReject(target: ChangeFound): void {
 	// del / moveFrom: contents stored as <w:delText>; restore to <w:t> and unwrap.
 	renameDelTextToText(target.node);
 	unwrapNode(target.node, target.parent);
+}
+
+/** Apply the table revision kinds (rowIns/rowDel/cellIns/cellDel/tblGridChange/
+ * tblPrChange/tcPrChange). Returns true when it handled the target. The
+ * `…PrChange` kinds are prior-state snapshots: accept drops the snapshot,
+ * reject restores it (same mechanism as sectPrChange). Grid-column counts left
+ * inconsistent by cell removals are reconciled afterwards by `resyncTableGrids`. */
+function applyTableChange(target: ChangeFound, verb: ApplyVerb): boolean {
+	switch (target.kind) {
+		case "rowIns":
+			// accept: keep row, drop the marker; reject: drop the inserted row.
+			if (verb === "accept") deleteNode(target.node, target.parent);
+			else removeContainer(target.tableRow, target.tableRowParent);
+			return true;
+		case "rowDel":
+			// accept: drop the row; reject: keep it, drop the marker.
+			if (verb === "accept")
+				removeContainer(target.tableRow, target.tableRowParent);
+			else deleteNode(target.node, target.parent);
+			return true;
+		case "cellIns":
+			if (verb === "accept") deleteNode(target.node, target.parent);
+			else removeContainer(target.tableCell, target.tableCellParent);
+			return true;
+		case "cellDel":
+			if (verb === "accept")
+				removeContainer(target.tableCell, target.tableCellParent);
+			else deleteNode(target.node, target.parent);
+			return true;
+		case "tblGridChange":
+			// accept: keep current grid, drop the snapshot; reject: restore prior.
+			if (verb === "accept") deleteNode(target.node, target.parent);
+			else restorePropertySnapshot(target.node, target.parent, "w:tblGrid");
+			return true;
+		case "tblPrChange":
+			if (verb === "accept") deleteNode(target.node, target.parent);
+			else restorePropertySnapshot(target.node, target.parent, "w:tblPr");
+			return true;
+		case "tcPrChange":
+			if (verb === "accept") deleteNode(target.node, target.parent);
+			else restorePropertySnapshot(target.node, target.parent, "w:tcPr");
+			return true;
+		default:
+			return false;
+	}
+}
+
+function removeContainer(
+	node: XmlNode | undefined,
+	parent: XmlNode[] | undefined,
+): void {
+	if (!node || !parent) return;
+	const index = parent.indexOf(node);
+	if (index !== -1) parent.splice(index, 1);
+}
+
+/** Reject a `…PrChange` / `tblGridChange`: replace the live properties element's
+ * children with the snapshot's prior children (and drop the change marker,
+ * which lived among them). `parent` is the owning tblPr/tblGrid/tcPr children
+ * array; `innerTag` is the snapshot wrapper (`w:tblPr`/`w:tblGrid`/`w:tcPr`).
+ * Mirrors `restoreSectPrSnapshot`. */
+function restorePropertySnapshot(
+	node: XmlNode,
+	parent: XmlNode[],
+	innerTag: string,
+): void {
+	const snapshot = node.findChild(innerTag);
+	parent.length = 0;
+	if (snapshot) {
+		for (const child of snapshot.children) parent.push(child);
+	}
+}
+
+/** Reconcile each table's `<w:tblGrid>` column count with its widest row after
+ * cell removals (accept-cellDel / reject-cellIns shrink rows but don't touch
+ * the grid). Trailing `<w:gridCol>` entries are dropped to match; a short grid
+ * is padded by repeating the last column's width. */
+function resyncTableGrids(tree: XmlNode[]): void {
+	walkTables(tree, (table) => {
+		const tblGrid = table.findChild("w:tblGrid");
+		if (!tblGrid) return;
+		const cols = tblGrid.findChildren("w:gridCol");
+		let widest = 0;
+		for (const row of table.findChildren("w:tr")) {
+			let width = 0;
+			for (const cell of row.findChildren("w:tc")) width += cellGridSpan(cell);
+			widest = Math.max(widest, width);
+		}
+		if (widest === 0 || cols.length === widest) return;
+		if (cols.length > widest) {
+			for (const col of cols.slice(widest)) {
+				const index = tblGrid.children.indexOf(col);
+				if (index !== -1) tblGrid.children.splice(index, 1);
+			}
+			return;
+		}
+		const fillWidth = cols[cols.length - 1]?.getAttribute("w:w") ?? "1440";
+		const lastCol = cols[cols.length - 1];
+		const insertAt = lastCol
+			? tblGrid.children.indexOf(lastCol) + 1
+			: tblGrid.children.length;
+		const additions = Array.from({ length: widest - cols.length }, () =>
+			XmlNode.element("w:gridCol", { "w:w": fillWidth }),
+		);
+		tblGrid.children.splice(insertAt, 0, ...additions);
+	});
+}
+
+function walkTables(tree: XmlNode[], visit: (table: XmlNode) => void): void {
+	for (const node of tree) {
+		if (node.tag === "w:tbl") visit(node);
+		if (node.children.length > 0) walkTables(node.children, visit);
+	}
+}
+
+function cellGridSpan(cell: XmlNode): number {
+	const raw = cell
+		.findChild("w:tcPr")
+		?.findChild("w:gridSpan")
+		?.getAttribute("w:val");
+	const value = raw ? Number(raw) : Number.NaN;
+	return Number.isFinite(value) && value > 1 ? value : 1;
 }
 
 /** Accept-del-paragraph-mark: the paragraph break is being deleted, so this
@@ -408,6 +626,13 @@ type ChangeFound = {
 	 * whole owning paragraph) can act on the right scope. */
 	paragraph?: XmlNode;
 	paragraphParent?: XmlNode[];
+	/** Set for rowIns/rowDel: the owning `<w:tr>` and the table's children, so
+	 * removing the row acts on the right scope. */
+	tableRow?: XmlNode;
+	tableRowParent?: XmlNode[];
+	/** Set for cellIns/cellDel: the owning `<w:tc>` and the row's children. */
+	tableCell?: XmlNode;
+	tableCellParent?: XmlNode[];
 };
 
 type ChangeAction =
@@ -415,7 +640,10 @@ type ChangeAction =
 	| "delete"
 	| "restore"
 	| "merge"
-	| "deleteParagraph";
+	| "deleteParagraph"
+	| "stripMarker"
+	| "deleteRow"
+	| "deleteCell";
 
 type ChangeRecord = {
 	id: string;

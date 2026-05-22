@@ -11,6 +11,7 @@ import {
 	type Run,
 	type Table,
 	type TableCell,
+	type TableRow,
 	type TextRun,
 	type TrackedChange,
 } from "@core";
@@ -353,10 +354,15 @@ function highlightCssFor(value: string | undefined): string | null {
 }
 
 function renderTable(table: Table, ctx: RenderContext): string | null {
-	if (table.rows.length === 0) return null;
-	const colCount = Math.max(...table.rows.map((row) => row.cells.length));
+	// Whole-row tracked changes are filtered by view: accepted drops deleted
+	// rows, baseline drops inserted ones. Cell-level (column) tracked changes
+	// can't be represented in a GFM table, so they're left in place.
+	const view = ctx.options.view ?? "accepted";
+	const rows = table.rows.filter((row) => isRowVisible(row, view));
+	if (rows.length === 0) return null;
+	const colCount = Math.max(...rows.map((row) => row.cells.length));
 	if (colCount === 0) return null;
-	const renderedRows = table.rows.map((row) => {
+	const renderedRows = rows.map((row) => {
 		const cells: string[] = [];
 		for (let columnIndex = 0; columnIndex < colCount; columnIndex++) {
 			const cell = row.cells[columnIndex];
@@ -374,6 +380,13 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 		if (row) lines.push(rowToLine(row));
 	}
 	return lines.join("\n");
+}
+
+function isRowVisible(row: TableRow, view: MarkdownView): boolean {
+	const kind = row.trackedChange?.kind;
+	if (view === "accepted" && kind === "rowDel") return false;
+	if (view === "baseline" && kind === "rowIns") return false;
+	return true;
 }
 
 function rowToLine(cells: string[]): string {
@@ -558,6 +571,9 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "image":
 		case "hyperlink":
 		case "trackedChange":
+		case "tableRow":
+		case "tableColumn":
+		case "cellRange":
 			throw new MarkdownLocatorError(
 				input,
 				`--${position} does not accept a ${parsed.kind} locator — use a paragraph or table locator`,

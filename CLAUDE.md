@@ -13,9 +13,9 @@ These conventions are NOT SUGGESTIONS. These are rules.
 - **All stdout goes through `respond()` (JSON ack) or `writeStdout()` (text)** from `src/cli/respond.ts` — never `process.stdout.write`. Both use `Bun.write(Bun.stdout, ...)`; the 64 KB truncation that bites on early exit is real and silent, and these helpers are the only safe path.
 - **File naming**: kebab-case, named after the primary export (`xml-node.ts` → `XmlNode`).
 - **JSX is for emitters only.** Files that construct fresh XML can be `.tsx`; readers/locators/analysis stay `.ts`. Components are PascalCase, accept props, may return `XmlNode | null` (null skipped by flatten). Attribute names with colons use the hyphen shortcut (`w-val="x"` → `w:val="x"`) or JSX spread.
-- **Component vs function**: a pure `props → XmlNode` builder is a PascalCase component — destructure its props in the signature (no `props.x` access). Anything that takes a `DocView` or mutates package state (minting relationships, provisioning styles/numbering, splicing into the tree) is an *operation*, not a component — keep it a plain `function`. Same test decides what belongs in the `src/core` emitters (`blocks`/`table`/`sections`/`styles`/`numbering`) vs a CLI command's glue (e.g. `buildTextParagraph`/`wrapFirstRunInHyperlink` stay functions because they thread `view`).
+- **Component vs function**: a pure `props → XmlNode` builder is a PascalCase component — destructure its props in the signature (no `props.x` access). Anything that takes a `DocView` or mutates package state (minting relationships, provisioning styles/numbering, splicing into the tree) is an _operation_, not a component — keep it a plain `function`. Same test decides what belongs in the `src/core` emitters (`blocks`/`table`/`sections`/`styles`/`numbering`) vs a CLI command's glue (e.g. `buildTextParagraph`/`wrapFirstRunInHyperlink` stay functions because they thread `view`).
 - **JSX.Element = XmlNode** (single, not nullable). `Fragment` returns a `#fragment` sentinel unwrapped in `flatten()` and `serialize()`. Components return `null` to render nothing; `jsx()` converts that to an empty fragment. The `jsx`/`jsxs`/`jsxDEV` runtime exports are distinct functions, not `= jsx` aliases (knip flags aliased re-exports as duplicates) — don't collapse them.
-- **Path aliases**: `@core` → `src/core/index.ts`, `@core/*` → `src/core/*`. Use these in `src/cli/*`; `src/core` itself uses relative sibling imports. Import the body emitters from the `@core/blocks` and `@core/table` subpaths, not the `@core` barrel — `ast/types` already exports `Paragraph`/`Table`/`TableCell`/`TableRow` as *types*, and barrel-merging the same-named value emitters is confusing.
+- **Path aliases**: `@core` → `src/core/index.ts`, `@core/*` → `src/core/*`. Use these in `src/cli/*`; `src/core` itself uses relative sibling imports. Import the body emitters from the `@core/blocks` and `@core/table` subpaths, not the `@core` barrel — `ast/types` already exports `Paragraph`/`Table`/`TableCell`/`TableRow` as _types_, and barrel-merging the same-named value emitters is confusing.
 - **Variable names**: descriptive, no single/two-letter (`paragraph` not `p`). Exception: regex-match destructuring (`const [, prefix, idx] = match`).
 - **Newspaper ordering.** The entry point (primary export) goes at the top; its dependencies follow in the order it uses them, then _their_ dependencies, and so on — a file reads top-to-bottom like a newspaper. Use hoisted `function` declarations for internal helpers so this works at runtime; arrow functions only for inline callbacks and short utilities. When a file accumulates too many dependencies to read this way, split them into a separate folder/file named after the feature they're working on. [src/core/styles.tsx](src/core/styles.tsx) is the canonical example (`ensureStyle` → its helpers → the `BASELINE` catalog → the individual style components).
 - **Inline props in the signature.** When a component's props type is used only by that component, write it inline (`function HeadingStyle({ styleId }: { styleId: BaselineStyleId; … })`) rather than declaring a separate named `Props` type. Extract a named type only when it's shared.
@@ -33,20 +33,22 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 - **paraId is required for resolve/reply** — auto-injected via `ensureCommentParaId()` rather than failing.
 - **Track-changes is doc-level** — see [src/cli/track-changes](src/cli/track-changes/CLAUDE.md).
 - **Sections are blocks; CRUD goes through the standard verbs** — see [src/core](src/core/CLAUDE.md).
+- **Table structure is a merge-aware logical grid** — `gridSpan`/`vMerge` map logical (row,col) onto physical `<w:tc>`. The `docx tables` verbs reshape rows/columns/merges/widths/borders through that model — see [src/cli/tables](src/cli/tables/CLAUDE.md).
 - **No undo, no journal.** Mutating commands overwrite `FILE` in place; git is the history. `-o/--output PATH` writes a parallel file; `--dry-run` previews (wins over `--output`).
 
 ## Commands
 
 `docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH`. JSON by default; `{ok: false, code, error, hint}` on failure. Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (defined in `src/cli/respond.ts`).
 
-| Surface         | Verbs                                                                            |
-| --------------- | -------------------------------------------------------------------------------- |
-| top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline`         |
-| `comments`      | `add` `reply` `resolve` `delete` `list`                                          |
-| `images`        | `list` `extract` `replace`                                                       |
-| `hyperlinks`    | `add` `list` `replace` `delete`                                                  |
-| `track-changes` | `FILE on\|off` (toggle), `list FILE`, `accept`/`reject FILE (--at tcN \| --all)` |
-| `info`          | `schema` `locators`                                                              |
+| Surface         | Verbs                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline`                           |
+| `comments`      | `add` `reply` `resolve` `delete` `list`                                                            |
+| `images`        | `list` `extract` `replace`                                                                         |
+| `hyperlinks`    | `add` `list` `replace` `delete`                                                                    |
+| `tables`        | `insert-row` `delete-row` `insert-column` `delete-column` `set-widths` `merge` `unmerge` `borders` |
+| `track-changes` | `FILE on\|off` (toggle), `list FILE`, `accept`/`reject FILE (--at tcN \| --all)`                   |
+| `info`          | `schema` `locators`                                                                                |
 
 `docx read FILE` renders GFM by default (`--ast` for JSON-AST). Tracked changes have three views: default `current` (CriticMarkup `{++ins++}` / `{--del--}` with `[^tcN]` footnotes), `--accepted` (drops subtractive, inlines additive), `--baseline` (drops additive, inlines subtractive). `--comments` appends `[^cN]` footnotes. `wc` accepts the same `--accepted`/`--baseline` flags. Render/locator logic in `cli/read/markdown.ts`; feature detection in `core/ast/read.ts`.
 
@@ -56,6 +58,7 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 pN              paragraph N        pN:S-E          chars S..E within paragraph N
 pN:S-pM:E       cross-paragraph    tN / tN:rRcC    table N / cell at row R col C (chainable :pK)
 sN              section break N    cN imgN linkN tcN   comment / image / hyperlink / tracked-change ids
+tN:rR tN:cC     table row R / column C (the `tables` verbs) tN:rR1cC1-rR2cC2   rectangular cell region (merge)
 ```
 
 Span comments and `hyperlinks add` split runs at offsets, preserving `<w:rPr>` on both halves (`cli/comments/helpers.tsx`, `cli/hyperlinks/wrap.tsx`).

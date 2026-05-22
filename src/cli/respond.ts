@@ -27,6 +27,7 @@ export type ErrorCode =
 	| "TRACKED_CHANGE_NOT_FOUND"
 	| "MATCH_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT"
+	| "TABLE_STRUCTURE"
 	| "UNHANDLED";
 
 export async function respond(payload: unknown): Promise<void> {
@@ -86,6 +87,7 @@ function exitCodeFor(code: ErrorCode): number {
 			return EXIT.NOT_FOUND;
 		case "NOT_A_ZIP":
 		case "TRACKED_CHANGE_CONFLICT":
+		case "TABLE_STRUCTURE":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
 	}

@@ -41,10 +41,17 @@ export type Table = {
 
 export type TableRow = {
 	cells: TableCell[];
+	/** Tracked row insertion/deletion from <w:trPr><w:ins/> or <w:del/>
+	 * (kind "rowIns" / "rowDel"). Present only under track-changes. */
+	trackedChange?: TrackedChange;
 };
 
 export type TableCell = {
 	blocks: Block[];
+	/** Tracked cell insertion/deletion from <w:tcPr><w:cellIns/> or
+	 * <w:cellDel/> (kind "cellIns" / "cellDel") — how column insert/delete is
+	 * recorded under track-changes (one marker per cell of the column). */
+	trackedChange?: TrackedChange;
 	/** Horizontal merge: this cell spans N grid columns (default 1). From
 	 * <w:tcPr><w:gridSpan w:val="N"/>. */
 	gridSpan?: number;
@@ -179,13 +186,37 @@ export type TrackedChange = {
  *    embedded inside a <w:sectPr>. Carries a snapshot of the prior section
  *    properties (e.g. columns / type) so accept/reject can drop or restore
  *    them. Has no run text.
+ *  - `rowIns` / `rowDel`: <w:trPr><w:ins/> / <w:del/> — a whole table row
+ *    inserted / deleted under tracking. Accept/reject acts on the entire
+ *    <w:tr>. Has no run text of its own.
+ *  - `cellIns` / `cellDel`: <w:tcPr><w:cellIns/> / <w:cellDel/> — a single
+ *    cell inserted / deleted; how column insert/delete is tracked (one marker
+ *    per cell of the column). Has no run text of its own.
+ *  - `tblGridChange`: <w:tblGrid><w:tblGridChange> — a revision to the table
+ *    grid (column widths/count), carrying a snapshot of the prior <w:tblGrid>.
+ *    Emitted alongside the per-cell markers on a tracked column insertion so
+ *    the width change is reversible. Mirrors `sectPrChange`. No run text.
+ *  - `tblPrChange`: <w:tblPr><w:tblPrChange> — a revision to table-level
+ *    properties (borders, layout…), carrying a snapshot of the prior
+ *    <w:tblPr>. Mirrors `sectPrChange`. No run text.
+ *  - `tcPrChange`: <w:tcPr><w:tcPrChange> — a revision to a cell's properties
+ *    (gridSpan / hMerge / vMerge / width…), carrying a snapshot of the prior
+ *    <w:tcPr>. How merge / unmerge is tracked: the cell-preserving merge
+ *    markers stay, and reject restores the pre-merge <w:tcPr>. No run text.
  */
 export type TrackedChangeKind =
 	| "ins"
 	| "del"
 	| "moveFrom"
 	| "moveTo"
-	| "sectPrChange";
+	| "sectPrChange"
+	| "rowIns"
+	| "rowDel"
+	| "cellIns"
+	| "cellDel"
+	| "tblGridChange"
+	| "tblPrChange"
+	| "tcPrChange";
 
 export type Comment = {
 	id: string;

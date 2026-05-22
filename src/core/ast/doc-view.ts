@@ -1,7 +1,7 @@
 import { Pkg } from "../package";
 import { XmlNode } from "../parser";
 import { buildDoc } from "./read";
-import type { Block, Doc } from "./types";
+import type { Block, Doc, TrackedChangeKind } from "./types";
 
 export type BlockReference = { node: XmlNode; parent: XmlNode[] };
 export type CommentReference = { node: XmlNode; parent: XmlNode[] };
@@ -19,6 +19,11 @@ export type TrackedChangeReference = {
 	node: XmlNode;
 	parent: XmlNode[];
 	blockId: string;
+	/** Explicit kind for markers whose tag is ambiguous out of context — a
+	 * row revision is a `<w:ins>`/`<w:del>` inside `<w:trPr>`, sharing its tag
+	 * with run-level changes. Set for rowIns/rowDel/cellIns/cellDel; absent for
+	 * run-level changes (kind derived from tag). */
+	kind?: TrackedChangeKind;
 };
 
 export type DocView = {

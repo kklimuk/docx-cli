@@ -112,6 +112,15 @@ docx hyperlinks add     FILE --at pN:S-E --url URL
 docx hyperlinks replace FILE --at linkN --with URL
 docx hyperlinks delete  FILE --at linkN
 
+docx tables insert-row    FILE --at tN [--position INDEX] [--cells "a,b,c"]
+docx tables delete-row    FILE --at tN:rR
+docx tables insert-column FILE --at tN [--position INDEX] [--width TWIPS]
+docx tables delete-column FILE --at tN:cC
+docx tables set-widths    FILE --at tN --widths "25%,25%,50%" | "1440,..." | auto
+docx tables merge         FILE --at tN:rR1cC1-rR2cC2
+docx tables unmerge       FILE --at tN:rRcC
+docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
+
 docx track-changes FILE on|off
 docx track-changes list   FILE
 docx track-changes accept FILE (--at tcN [--at tcM ...] | --all)
@@ -122,7 +131,7 @@ docx info locators [--json]
 
 Every command has `--help`. Mutating commands accept `--dry-run`, `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`), and `-v/--verbose` (print the JSON ack — see "Quiet by default" below).
 
-**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace`, `hyperlinks add/replace/delete`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
+**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace`, `hyperlinks add/replace/delete`, `tables *`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
 
 ### Markdown rendering
 
@@ -185,6 +194,8 @@ Run `docx info locators` for the full reference.
 **Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
 
 **Hyperlink CRUD.** `hyperlinks list` enumerates `<w:hyperlink>` elements with positional `linkN` ids; `hyperlinks add --at p3:5-20 --url URL` wraps an existing span (splitting runs at offsets); `hyperlinks replace --at link0 --with URL` updates the rels `Target`, allocating a new rId if the existing one is shared so siblings stay pointed at the original URL; `hyperlinks delete --at link0` unwraps the link (text survives) and prunes the rels entry when no longer referenced.
+
+**Table restructuring.** The `tables` verbs operate on a merge-aware logical grid: `gridSpan` (horizontal) and `vMerge` (vertical) cells map to physical `<w:tc>` elements so row/column locators (`tN:rR`, `tN:cC`, region `tN:rR1cC1-rR2cC2`) resolve correctly. `merge`/`unmerge` reshape `gridSpan`/`vMerge`; `set-widths` rewrites `<w:tblGrid>` plus per-cell `<w:tcW>`; structural edits refuse to bisect or orphan an existing merge (with a hint to `unmerge` first). Under track-changes, the tracked representation was verified against Microsoft Word (accept/reject), since Word — not the ECMA-376 schema — decides what actually round-trips. Row insert/delete emit native `<w:trPr><w:ins>`/`<w:del>`; column insert/delete emit per-cell `<w:tcPr><w:cellIns>`/`<w:cellDel>` (paired with a `<w:tblGridChange>` on insert); `set-widths` emits `<w:tblGridChange>` plus a per-cell `<w:tcPrChange>` (which is what Word's reject actually reverts) — all addressable as `tcN` and resolvable via `track-changes accept`/`reject` (which resyncs the grid). Cell merges and border changes are *not* tracked by Word (it warns "this action won't be marked as a change" and applies them immediately), so `merge`/`unmerge`/`borders` match that — applied in place with a `[docx-cli]` audit comment (mirroring hyperlink/image edits).
 
 ## Stack
 
