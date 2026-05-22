@@ -5,29 +5,42 @@ import { join } from "node:path";
 import { runCli } from "../cli/harness";
 
 const SOFFICE = await detectSoffice();
-const FIXTURES = [
-	"minimal.docx",
+
+// Each soffice convert is ~1s, so by default we round-trip only a curated CORE
+// subset — one fixture per distinct surface we emit or must preserve — rather
+// than every fixture (many overlap: 3 comments fixtures, 4 tracked fixtures,
+// several Word-authored docs). Set DOCX_LO_ALL=1 for the full sweep; CI does
+// that so coverage isn't lost there.
+const CORE_FIXTURES = [
+	"minimal.docx", // canonical parts baseline (what `create` emits)
+	"styles-injection.docx", // styles.xml provisioned from scratch
+	"lists.docx", // numbering.xml
+	"notes.docx", // footnotes / endnotes write-back
+	"multi-tracked.docx", // run-level <w:ins>/<w:del>/move emit
+	"multi-column.docx", // <w:sectPr> + columns
+	"comments-with-replies.docx", // comments + commentsExtended
+	"tables-mutations.docx", // tables + merges + tracked-table revisions (richest)
+] as const;
+
+const EXTRA_FIXTURES = [
 	"comments-simple.docx",
-	"comments-with-replies.docx",
+	"comments-batch.docx",
 	"academic-paper.docx",
 	"large-mixed.docx",
 	"resume-styling.docx",
 	"tracked-changes.docx",
 	"tracked-moves.docx",
-	"transparent-wrappers.docx",
-	"multi-column.docx",
-	"notes.docx",
-	"sections.docx",
 	"chained-tracked-edits.docx",
+	"transparent-wrappers.docx",
+	"sections.docx",
 	"normalize-query.docx",
-	"comments-batch.docx",
 	"word-formatted.docx",
-	"multi-tracked.docx",
-	"styles-injection.docx",
-	"lists.docx",
 	"tables.docx",
-	"tables-mutations.docx",
 ] as const;
+
+const FIXTURES = Bun.env.DOCX_LO_ALL
+	? [...CORE_FIXTURES, ...EXTRA_FIXTURES]
+	: CORE_FIXTURES;
 
 let workspace: string;
 let sofficeProfile: string;

@@ -60,7 +60,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer
       - run: bun install --frozen-lockfile
-      - run: bun run test:integration
+      - run: DOCX_LO_ALL=1 bun run test:integration # full fixture sweep in CI
 
   build-binary:
     name: Smoke-build compiled binary

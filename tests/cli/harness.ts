@@ -1,6 +1,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { main } from "../../src/cli/index";
+import { captureOutput, setVerboseAck } from "../../src/cli/respond";
 
 const BINARY = join(import.meta.dir, "..", "..", "src", "index.ts");
 
@@ -60,30 +62,63 @@ function shouldInjectVerbose(args: string[]): boolean {
 	return false;
 }
 
-export async function runCli(...args: string[]): Promise<CliResult> {
-	const injected =
-		shouldInjectVerbose(args) &&
+function withInjectedVerbose(args: string[]): string[] {
+	return shouldInjectVerbose(args) &&
 		!args.includes("--verbose") &&
 		!args.includes("-v")
-			? [...args, "--verbose"]
-			: args;
-	const proc = Bun.spawn(["bun", BINARY, ...injected], {
+		? [...args, "--verbose"]
+		: args;
+}
+
+function parseAck(stdout: string): unknown {
+	const trimmed = stdout.trim();
+	if (trimmed.length === 0) return undefined;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return undefined; // not JSON (e.g. markdown / help text)
+	}
+}
+
+/** Run the CLI in-process — the fast path used by the bulk of the suite. All
+ * output funnels through respond.ts's sinks, which we capture here instead of
+ * spawning `bun src/index.ts` per call (which dominated suite time). Still
+ * exercises the real arg-parse → dispatch → command → respond path; the actual
+ * process boundary (spawn, exit propagation, 64 KB stdout truncation) is
+ * covered by tests/cli/binary-smoke.test.ts via {@link spawnCli}. */
+export async function runCli(...args: string[]): Promise<CliResult> {
+	let stdout = "";
+	let stderr = "";
+	captureOutput(
+		(text) => {
+			stdout += text;
+		},
+		(text) => {
+			stderr += text;
+		},
+	);
+	setVerboseAck(false); // reset the one module-global between calls
+	let exitCode: number;
+	try {
+		exitCode = await main(["bun", "docx", ...withInjectedVerbose(args)]);
+	} finally {
+		captureOutput(null, null);
+	}
+	return { stdout, stderr, exitCode, parsed: parseAck(stdout) };
+}
+
+/** Spawn the real binary as a subprocess (`bun src/index.ts …`). Slow; use
+ * only where the process boundary itself is under test (binary smoke tests).
+ * Everything else should use the in-process {@link runCli}. */
+export async function spawnCli(...args: string[]): Promise<CliResult> {
+	const proc = Bun.spawn(["bun", BINARY, ...args], {
 		stdout: "pipe",
 		stderr: "pipe",
 	});
 	const stdout = await new Response(proc.stdout).text();
 	const stderr = await new Response(proc.stderr).text();
 	const exitCode = await proc.exited;
-	const trimmed = stdout.trim();
-	let parsed: unknown;
-	if (trimmed.length > 0) {
-		try {
-			parsed = JSON.parse(trimmed);
-		} catch {
-			// not JSON — leave parsed undefined
-		}
-	}
-	return { stdout, stderr, exitCode, parsed };
+	return { stdout, stderr, exitCode, parsed: parseAck(stdout) };
 }
 
 export function tempWorkspace(label: string): string {

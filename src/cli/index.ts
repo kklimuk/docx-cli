@@ -1,5 +1,5 @@
 import { printTopHelp, VERSION } from "./help";
-import { fail, writeStdout } from "./respond";
+import { fail, writeStderr, writeStdout } from "./respond";
 
 type CommandFn = (args: string[]) => Promise<number>;
 
@@ -26,7 +26,7 @@ export async function main(argv: string[]): Promise<number> {
 	const cmd = args[0];
 
 	if (!cmd) {
-		Bun.stderr.write(
+		await writeStderr(
 			'Usage: docx <command> [options]\nRun "docx --help" for available commands.\n',
 		);
 		return 2;

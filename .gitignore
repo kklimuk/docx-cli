@@ -61,3 +61,5 @@ temp/
 
 # Local sample / scratch docs
 scripts/data/
+# Scratch repro script (kept local, never committed)
+/repro.ts

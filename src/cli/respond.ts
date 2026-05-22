@@ -30,8 +30,41 @@ export type ErrorCode =
 	| "TABLE_STRUCTURE"
 	| "UNHANDLED";
 
+// Output sinks. Production leaves these null and writes straight to the real
+// streams; the test harness redirects them to run the CLI in-process (no
+// subprocess spawn). All CLI output funnels through here, so capturing these
+// two captures everything.
+let stdoutSink: ((text: string) => void) | null = null;
+let stderrSink: ((text: string) => void) | null = null;
+
+/** Redirect CLI stdout/stderr (for in-process testing). Pass `null` to restore
+ * the real streams. */
+export function captureOutput(
+	stdout: ((text: string) => void) | null,
+	stderr: ((text: string) => void) | null = null,
+): void {
+	stdoutSink = stdout;
+	stderrSink = stderr;
+}
+
+async function emitStdout(text: string): Promise<void> {
+	if (stdoutSink) {
+		stdoutSink(text);
+		return;
+	}
+	await Bun.write(Bun.stdout, text);
+}
+
+export async function writeStderr(text: string): Promise<void> {
+	if (stderrSink) {
+		stderrSink(text);
+		return;
+	}
+	await Bun.stderr.write(text);
+}
+
 export async function respond(payload: unknown): Promise<void> {
-	await Bun.write(Bun.stdout, `${JSON.stringify(payload)}\n`);
+	await emitStdout(`${JSON.stringify(payload)}\n`);
 }
 
 let verboseAck = false;
@@ -52,7 +85,7 @@ export async function respondAck(payload: unknown): Promise<void> {
 }
 
 export async function writeStdout(text: string): Promise<void> {
-	await Bun.write(Bun.stdout, text);
+	await emitStdout(text);
 }
 
 export async function fail(

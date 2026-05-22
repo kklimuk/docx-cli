@@ -1,28 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { tempWorkspace } from "./harness";
+import { spawnCli as rawCli, tempWorkspace } from "./harness";
 
-// Dedicated tests for B4 — mutators are silent on success unless --verbose
-// is passed. The shared harness auto-injects --verbose for mutators (so the
-// rest of the suite keeps asserting on JSON acks); these tests bypass it
-// by spawning the binary directly.
-
-const BINARY = join(import.meta.dir, "..", "..", "src", "index.ts");
-
-async function rawCli(...args: string[]): Promise<{
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-}> {
-	const proc = Bun.spawn(["bun", BINARY, ...args], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const stdout = await new Response(proc.stdout).text();
-	const stderr = await new Response(proc.stderr).text();
-	const exitCode = await proc.exited;
-	return { stdout, stderr, exitCode };
-}
+// Mutators are silent on success unless --verbose is passed. The shared harness
+// auto-injects --verbose for mutators (so the rest of the suite keeps asserting
+// on JSON acks); these tests bypass it by spawning the REAL binary via
+// spawnCli. They double as the binary smoke layer (real process boundary +
+// exit codes) now that the bulk of the suite runs in-process — see
+// binary-smoke.test.ts for the remaining process-level cases.
 
 describe("docx mutators — quiet by default", () => {
 	test("create succeeds with empty stdout when --verbose is omitted", async () => {
