@@ -58,7 +58,15 @@ jobs:
       - name: Install LibreOffice
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer
+          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer fontconfig
+      - name: Pre-warm fontconfig cache
+        # Parallel soffice workers race to populate ~/.cache/fontconfig and the
+        # losers print "Fontconfig error: No writable cache directories" to
+        # stderr, failing the round-trip test's empty-stderr assertion. One
+        # serial fc-cache populates the cache so workers just read it.
+        run: |
+          mkdir -p "$HOME/.cache/fontconfig"
+          fc-cache -f
       - run: bun install --frozen-lockfile
       - run: DOCX_LO_ALL=1 bun run test:integration # full fixture sweep in CI
 

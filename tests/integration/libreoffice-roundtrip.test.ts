@@ -143,13 +143,21 @@ describe("LibreOffice round-trip", () => {
 			expect(result).toBeDefined();
 			if (!result) return;
 			expect(result.exitCode).toBe(0);
-			// LibreOffice prints macOS-only "Task policy" noise on stderr; ignore it.
+			// LibreOffice emits known-harmless noise depending on the host:
+			// - macOS: "Task policy" lines
+			// - Linux/CI: "Fontconfig error: No writable cache directories" when
+			//   parallel soffice workers race to populate ~/.cache/fontconfig.
+			//   We pre-warm in CI (fc-cache -f), but a tighter race or a stale
+			//   profile can still print one line — ignore it. The conversion
+			//   succeeds either way (font cache only matters for glyph rendering;
+			//   docx-to-docx is a format transform).
 			const meaningfulStderr = result.stderr
 				.split("\n")
 				.filter(
 					(line) =>
 						!line.includes("Task policy") &&
 						!line.includes("Warning") &&
+						!line.includes("Fontconfig error") &&
 						line.trim().length > 0,
 				)
 				.join("\n");
