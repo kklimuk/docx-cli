@@ -1,5 +1,11 @@
-import { isTrackChangesEnabled, saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { parseRowAt } from "@core/locators";
+import {
+	buildGrid,
+	cellAt,
+	markRowTracked,
+	resolveTableNode,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -10,9 +16,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { mintRevisionMeta, resolveTableNode } from "./common";
-import { buildGrid, cellAt } from "./grid";
-import { markRowTracked } from "./mutate";
 
 const HELP = `docx tables delete-row — delete a table row
 
@@ -72,7 +75,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN:rR", HELP);
-	const target = parseRowArg(at);
+	const target = parseRowAt(at);
 	if (!target) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -148,18 +151,6 @@ export async function run(args: string[]): Promise<number> {
 		tracked: tracking,
 	});
 	return EXIT.OK;
-}
-
-function parseRowArg(at: string): { tableId: string; row: number } | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "tableRow") {
-			return { tableId: locator.tableId, row: locator.row };
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 /** Return the logical column whose vertical merge would be orphaned by deleting

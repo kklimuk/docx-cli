@@ -924,10 +924,22 @@ function readCellBlocks(
 ): Block[] {
 	const blocks: Block[] = [];
 	let paragraphIndex = 0;
+	let nestedTableIndex = 0;
+	const cellPrefix = `${tableId}:r${rowIndex}c${columnIndex}`;
 	for (const child of cell.children) {
 		if (child.tag === "w:p") {
-			const id = `${tableId}:r${rowIndex}c${columnIndex}:p${paragraphIndex++}`;
+			const id = `${cellPrefix}:p${paragraphIndex++}`;
 			blocks.push(readParagraph(view, child, id, state));
+			view.blockReferences.set(id, { node: child, parent: cell.children });
+			continue;
+		}
+		// Nested tables are legal inside a cell (Word emits them for compound
+		// rubric layouts, etc.). Recurse with a chained id so locators like
+		// `t0:r2c1:t0:r0c0:p0` resolve via the existing locator parser's
+		// recursive `cell.inner`.
+		if (child.tag === "w:tbl") {
+			const id = `${cellPrefix}:t${nestedTableIndex++}`;
+			blocks.push(readTable(view, child, id, state));
 			view.blockReferences.set(id, { node: child, parent: cell.children });
 		}
 	}

@@ -1,7 +1,12 @@
 import { saveDocView } from "@core";
 import { w } from "@core/jsx";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
+import {
+	buildGrid,
+	resolveTableNode,
+	setTablePropertiesChild,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -12,9 +17,7 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { noteStructuralChange, resolveTableNode } from "./common";
-import { buildGrid } from "./grid";
-import { setTablePropertiesChild } from "./mutate";
+import { noteStructuralChange } from "./common";
 
 const STYLES = new Set(["single", "double", "none"]);
 
@@ -81,7 +84,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN", HELP);
-	const tableId = tableIdFromArg(at);
+	const tableId = parseTableAt(at);
 	if (!tableId) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -155,18 +158,6 @@ export async function run(args: string[]): Promise<number> {
 		...(style !== "none" ? { size: sizeEighths, color } : {}),
 	});
 	return EXIT.OK;
-}
-
-function tableIdFromArg(at: string): string | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "block" && /^t\d+$/.test(locator.blockId)) {
-			return locator.blockId;
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 function buildBorders(

@@ -66,6 +66,8 @@ sN              section break N    cN imgN linkN tcN   comment / image / hyperli
 tN:rR tN:cC     table row R / column C (the `tables` verbs) tN:rR1cC1-rR2cC2   rectangular cell region (merge)
 ```
 
+Nested tables chain the same syntax (Word emits them for compound rubric/layout cells). A cell prefix can be followed by another `tN:…` to address a table inside that cell, with `:rR`, `:cC`, `:rRcC`, `:rRcC:pK`, etc. composing arbitrarily deep — e.g. `t0:r2c1:t0:r0c0:p0` is the first paragraph of the (0,0) cell of the first table nested inside the (2,1) cell of the document's first table. Every surface that takes a locator (`read`, `wc`, `find`, `insert`, `edit`, the `tables` and `comments` verbs) accepts the chained form.
+
 Span comments and `hyperlinks add` split runs at offsets, preserving `<w:rPr>` on both halves (`cli/comments/helpers.tsx`, `cli/hyperlinks/wrap.tsx`).
 
 ## Testing

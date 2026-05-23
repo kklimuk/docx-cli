@@ -1,5 +1,15 @@
 import { saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { parseCellRangeAt } from "@core/locators";
+import {
+	buildGrid,
+	cellAt,
+	clearCellContent,
+	type Grid,
+	type GridRow,
+	resolveTableNode,
+	setGridSpan,
+	setVMerge,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -10,9 +20,7 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { noteStructuralChange, resolveTableNode } from "./common";
-import { buildGrid, cellAt, type Grid, type GridRow } from "./grid";
-import { clearCellContent, setGridSpan, setVMerge } from "./mutate";
+import { noteStructuralChange } from "./common";
 
 const HELP = `docx tables merge — merge a rectangular cell region
 
@@ -75,7 +83,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN:rR1cC1-rR2cC2", HELP);
-	const region = parseRegionArg(at);
+	const region = parseCellRangeAt(at);
 	if (!region) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -156,18 +164,6 @@ export async function run(args: string[]): Promise<number> {
 		region: { r1, c1, r2, c2 },
 	});
 	return EXIT.OK;
-}
-
-function parseRegionArg(
-	at: string,
-): Extract<ReturnType<typeof parseLocator>, { kind: "cellRange" }> | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "cellRange") return locator;
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 /** The first row in [r1..r2] whose cells don't start exactly at c1 and end

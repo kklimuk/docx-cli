@@ -40,7 +40,7 @@ CRUD: `insert --after pN --section` emits a sentinel paragraph carrying an inlin
 
 ## Tables
 
-`<BlankTable>` / `<Table>` / `<TableRow>` / `<TableCell>` emitters in [table.tsx](table.tsx). **Adding a cell property:** extend `TableCell` in `ast/types.ts`, populate it in `readTableCell` in `ast/read.ts`, widen the cell block in `cli/info/schema.ts`, and emit it in `TableCellProperties` — that component drives `<w:tcPr>` order, so respect ECMA-376 §17.4.42 (CT_TcPr). Row/column structural mutations (insert-row, delete-col, merge, unmerge) belong to the `docx tables` verbs in `src/cli/tables/`, not `insert/edit`.
+Tables are their own package — see [table/CLAUDE.md](table/CLAUDE.md).
 
 ## Images
 

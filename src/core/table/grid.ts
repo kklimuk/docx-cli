@@ -1,10 +1,23 @@
-import type { XmlNode } from "@core/parser";
+import type { DocView } from "../ast/doc-view";
+import type { XmlNode } from "../parser";
 
 /** A logical view of a `<w:tbl>` that resolves `gridSpan` / `vMerge` into a
  * coordinate system. Each physical `<w:tc>` occupies `colSpan` consecutive
  * logical columns starting at `colStart`; a `vMerge="continue"` cell is still
- * a real `<w:tc>` in its row. The verbs in this folder query the model to map
+ * a real `<w:tc>` in its row. The `tables` CLI verbs query the model to map
  * logical (row, col) coordinates onto the physical cells they mutate. */
+
+/** Resolve a `tN` (or chained `tN:rRcC:tK…`) locator to its `<w:tbl>` element,
+ * or null when the id is absent from `view.blockReferences` or points at a
+ * non-table node. */
+export function resolveTableNode(
+	view: DocView,
+	tableId: string,
+): XmlNode | null {
+	const reference = view.blockReferences.get(tableId);
+	if (!reference || reference.node.tag !== "w:tbl") return null;
+	return reference.node;
+}
 
 export type GridCell = {
 	/** The physical `<w:tc>` element. */

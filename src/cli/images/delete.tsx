@@ -1,15 +1,12 @@
 import {
 	convertTextToDelText,
-	createRevisionAllocator,
 	Del,
 	type DocView,
 	isRelationshipReferenced,
 	isTrackChangesEnabled,
+	mintRevisionMeta,
 	removeRelationship,
-	resolveAuthor,
-	resolveDate,
 	saveDocView,
-	type TrackedMeta,
 } from "@core";
 import { collectImageRuns } from "@core/image";
 import { parseArgs } from "util";
@@ -135,12 +132,10 @@ export async function run(args: string[]): Promise<number> {
 	if (isTrackChangesEnabled(view)) {
 		// Real tracked deletion: wrap the run in <w:del>. Keep the media part —
 		// rejecting the change restores the image, so pruning now would orphan it.
-		const allocator = createRevisionAllocator(view);
-		const meta: TrackedMeta = {
-			author: resolveAuthor(parsed.values.author as string | undefined),
-			date: resolveDate(),
-			revisionId: allocator.next(),
-		};
+		const meta = mintRevisionMeta(
+			view,
+			parsed.values.author as string | undefined,
+		);
 		const deleted = (
 			<Del meta={meta}>{convertTextToDelText(occurrence.run)}</Del>
 		);

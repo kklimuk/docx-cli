@@ -3,20 +3,17 @@ import {
 	applySectionType,
 	type BlockRangeReference,
 	type BlockReference,
-	createRevisionAllocator,
 	type DocView,
 	isSectionType,
 	isTrackChangesEnabled,
 	LocatorParseError,
 	LocatorResolveError,
+	mintRevisionMeta,
 	parseLocator,
 	type Run,
-	resolveAuthor,
 	resolveBlockRange,
-	resolveDate,
 	type SectionType,
 	saveDocView,
-	type TrackedMeta,
 	wrapSectPrChange,
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
@@ -525,13 +522,7 @@ async function commitSectionPropertyEdit(
 	if (opts.dryRun) return respondDryRun(opts);
 
 	if (isTrackChangesEnabled(view)) {
-		const allocator = createRevisionAllocator(view);
-		const meta: TrackedMeta = {
-			author: resolveAuthor(opts.authorFlag),
-			date: resolveDate(),
-			revisionId: allocator.next(),
-		};
-		wrapSectPrChange(blockRef.node, meta);
+		wrapSectPrChange(blockRef.node, mintRevisionMeta(view, opts.authorFlag));
 	}
 	applyColumns(blockRef.node, spec.columns);
 	applySectionType(blockRef.node, spec.sectionType);

@@ -1,5 +1,14 @@
 import { saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { parseCellAt } from "@core/locators";
+import {
+	buildGrid,
+	cellAt,
+	emptyCell,
+	type Grid,
+	resolveTableNode,
+	setGridSpan,
+	setVMerge,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -10,9 +19,7 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { noteStructuralChange, resolveTableNode } from "./common";
-import { buildGrid, cellAt, type Grid } from "./grid";
-import { emptyCell, setGridSpan, setVMerge } from "./mutate";
+import { noteStructuralChange } from "./common";
 
 const HELP = `docx tables unmerge — split a merged cell back into individual cells
 
@@ -72,7 +79,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN:rRcC", HELP);
-	const target = parseCellArg(at);
+	const target = parseCellAt(at);
 	if (!target) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -160,20 +167,6 @@ export async function run(args: string[]): Promise<number> {
 		cell: { row: target.row, col: target.col },
 	});
 	return EXIT.OK;
-}
-
-function parseCellArg(
-	at: string,
-): { tableId: string; row: number; col: number } | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "cell") {
-			return { tableId: locator.tableId, row: locator.row, col: locator.col };
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 /** Rows covered by a vertical merge starting at (row, col): the anchor row plus

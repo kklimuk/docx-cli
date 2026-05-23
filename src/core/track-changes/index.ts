@@ -37,6 +37,21 @@ export function resolveDate(): string {
 	return Bun.env.DOCX_CLI_NOW ?? new Date().toISOString();
 }
 
+/** Mint a fresh `TrackedMeta` (author + date + revisionId) for a tracked
+ * change about to be emitted. Convenience over the `resolveAuthor + resolveDate
+ * + createRevisionAllocator(view).next()` triple that every mutating CLI verb
+ * needs once per call. */
+export function mintRevisionMeta(
+	view: DocView,
+	authorFlag?: string,
+): TrackedMeta {
+	return {
+		author: resolveAuthor(authorFlag),
+		date: resolveDate(),
+		revisionId: createRevisionAllocator(view).next(),
+	};
+}
+
 export function convertTextToDelText(node: XmlNode): XmlNode {
 	const cloned = node.clone();
 	mutateTextToDelText([cloned]);

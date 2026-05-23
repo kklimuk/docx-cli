@@ -1,7 +1,33 @@
-import type { TableWidth } from "./ast/types";
-import { Paragraph } from "./blocks";
-import { type JsxChild, w } from "./jsx";
-import type { NullableXmlNode, XmlNode } from "./parser";
+import type { TableWidth } from "../ast/types";
+import { Paragraph } from "../blocks";
+import { type JsxChild, w } from "../jsx";
+import type { NullableXmlNode, XmlNode } from "../parser";
+
+export {
+	buildGrid,
+	cellAt,
+	type Grid,
+	type GridCell,
+	type GridRow,
+	readGridSpan,
+	readVMerge,
+	resolveTableNode,
+} from "./grid";
+export {
+	appendTblGridChange,
+	appendTcPrChange,
+	clearCellContent,
+	emptyCell,
+	ensureTblPr,
+	gridColElement,
+	markCellTracked,
+	markRowTracked,
+	setCellWidth,
+	setGridSpan,
+	setTableLayout,
+	setTablePropertiesChild,
+	setVMerge,
+} from "./mutate";
 
 /** Table emitters for `<w:tbl>` / `<w:tr>` / `<w:tc>`.
  *

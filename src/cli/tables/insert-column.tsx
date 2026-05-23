@@ -1,6 +1,16 @@
-import { isTrackChangesEnabled, saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
+import {
+	appendTblGridChange,
+	buildGrid,
+	emptyCell,
+	type Grid,
+	type GridRow,
+	gridColElement,
+	markCellTracked,
+	resolveTableNode,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -11,14 +21,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { mintRevisionMeta, resolveTableNode } from "./common";
-import { buildGrid, type Grid, type GridRow } from "./grid";
-import {
-	appendTblGridChange,
-	emptyCell,
-	gridColElement,
-	markCellTracked,
-} from "./mutate";
 
 const HELP = `docx tables insert-column — insert a table column
 
@@ -82,7 +84,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN", HELP);
-	const tableId = tableIdFromArg(at);
+	const tableId = parseTableAt(at);
 	if (!tableId) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -176,18 +178,6 @@ export async function run(args: string[]): Promise<number> {
 		tracked: tracking,
 	});
 	return EXIT.OK;
-}
-
-function tableIdFromArg(at: string): string | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "block" && /^t\d+$/.test(locator.blockId)) {
-			return locator.blockId;
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 function resolveColumnPosition(raw: unknown, colCount: number): number | null {

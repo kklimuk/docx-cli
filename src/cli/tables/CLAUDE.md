@@ -5,14 +5,17 @@
 `borders`. There is no `list` verb — `docx read --ast` already returns the full
 table structure (grid widths, `gridSpan`, `vMerge`, and tracked-change markers).
 
-## The merge-aware grid model is the foundation
-
-[grid.ts](grid.ts) (`buildGrid`) resolves a `<w:tbl>` into logical coordinates:
-each physical `<w:tc>` occupies `colSpan` logical columns from `colStart`, and a
-`vMerge="continue"` cell is still a real `<w:tc>`. Every verb queries the model
-(`cellAt`, `colCount`) to map a `tN:rR` / `tN:cC` / `tN:rR1cC1-rR2cC2` locator
-onto the physical cells it mutates. Don't index `<w:tc>` positionally — a
-spanned column has fewer physical cells than logical ones.
+The model and mutation primitives these verbs build on live in
+[`@core/table`](../../core/table/): the merge-aware grid (`buildGrid`,
+`cellAt`), the `<w:tcPr>`/`<w:tblPr>` surgery (`setGridSpan`, `setVMerge`,
+`emptyCell`, `appendTblGridChange`, …), and the `resolveTableNode` /
+`parseTableAt` / `parseRowAt` / `parseColumnAt` / `parseCellRangeAt` /
+`parseCellAt` locator helpers. Every locator helper accepts the chained nested
+form (`t0:r0c1:t0`, `t0:r0c1:t0:r1`, …) so every verb addresses nested tables
+with the same syntax. This folder owns only the CLI surface: arg-parse, the
+merge-correctness gates ("don't corrupt a merge", below), `--dry-run`/`--output`
+glue, and `noteStructuralChange` (the audit-comment policy for changes Word
+won't round-trip).
 
 ## Structural edits never corrupt a merge
 
@@ -31,16 +34,6 @@ a normal row. This matches Word's UI behavior exactly (verified empirically: a
 Word UI row-insert inside a vmerge extends it, and our output round-trips
 through Word unchanged), and is why `insert-row` builds its row via `buildRow`
 (consulting the row now below) rather than a flat band of empty cells.
-
-## Fresh XML and `<w:tcPr>`/`<w:tblPr>` surgery live in mutate.tsx
-
-[mutate.tsx](mutate.tsx) holds the constructors (`emptyCell`, `gridColElement`)
-and the in-place setters (`setGridSpan`, `setVMerge`, `setCellWidth`,
-`setTableLayout`, `setTablePropertiesChild`). The setters splice individual
-children into existing `<w:tcPr>`/`<w:tblPr>` **in CT_TcPr/CT_TblPr schema order**
-(§17.4.42 / §17.4.60) without disturbing siblings — so unmodeled cell/table
-properties survive (the in-place-mutation invariant). `grid.ts` stays pure
-read-model (`.ts`, no JSX); construction happens in the `.tsx` files.
 
 ## Track-changes: native where a construct exists, audit comment otherwise
 

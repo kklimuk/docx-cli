@@ -4,6 +4,11 @@ export {
 	type BlockTarget,
 	LocatorResolveError,
 	locatorToBlockTarget,
+	parseCellAt,
+	parseCellRangeAt,
+	parseColumnAt,
+	parseRowAt,
+	parseTableAt,
 	resolveBlock,
 	resolveBlockRange,
 } from "./resolve";

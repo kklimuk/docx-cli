@@ -1,9 +1,10 @@
-import { Del, Ins, type TrackedMeta } from "@core";
-import type { TableWidth } from "@core/ast/types";
-import { Paragraph } from "@core/blocks";
-import { w } from "@core/jsx";
-import type { XmlNode } from "@core/parser";
-import { TableCell } from "@core/table";
+import type { TableWidth } from "../ast/types";
+import { Paragraph } from "../blocks";
+import { w } from "../jsx";
+import type { XmlNode } from "../parser";
+import type { TrackedMeta } from "../track-changes";
+import { Del, Ins } from "../track-changes/emit";
+import { TableCell } from ".";
 
 /** Fresh-XML constructors and `<w:tcPr>` surgery shared by the table verbs.
  * The setters mutate an existing cell in place — they add/remove the

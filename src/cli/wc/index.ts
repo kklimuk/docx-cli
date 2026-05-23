@@ -36,6 +36,9 @@ Locators (optional; default: whole document):
   tN:rRcC         whole cell
   tN:rRcC:pK      paragraph K inside that cell
   tN:rRcC:pK:S-E  span within a cell paragraph
+  tN:rRcC:tK[…]   nested table inside a cell — chain further (\`:rRcC\`,
+                  \`:pK\`, \`:pK:S-E\`) to address rows/cells/paragraphs/spans
+                  at any depth
   sN              section N — every paragraph and table from the prior section
                   boundary up to and including the paragraph that holds sN's
                   inline sectPr (or to end of body for the trailing section)
@@ -284,12 +287,11 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (locator.kind === "cell") {
-		const cellPath = `${locator.tableId}:r${locator.row}c${locator.col}`;
-		if (!locator.inner) {
-			const cellBlocks = findCellBlocks(blocks, locator);
-			if (!cellBlocks) {
-				return fail("BLOCK_NOT_FOUND", `Cell not found: ${cellPath}`);
-			}
+		const resolved = resolveCellChain(blocks, locator);
+		if (!resolved) {
+			return fail("BLOCK_NOT_FOUND", `Not found: ${locatorInput}`);
+		}
+		if (resolved.kind === "wholeCell") {
 			await respond({
 				ok: true,
 				operation: "wc",
@@ -297,45 +299,36 @@ export async function run(args: string[]): Promise<number> {
 				locator: locatorInput,
 				scope: "cell",
 				view,
-				words: countWordsInBlocks(cellBlocks, { view }),
+				words: countWordsInBlocks(resolved.blocks, { view }),
 			});
 			return EXIT.OK;
 		}
-		// inner addresses a paragraph or paragraph span inside the cell;
-		// the AST gives those a flattened id like "t0:r1c0:p0", so resolve via that.
-		const innerBlockId =
-			locator.inner.kind === "block"
-				? locator.inner.blockId
-				: locator.inner.kind === "blockSpan"
-					? locator.inner.blockId
-					: null;
-		if (!innerBlockId) {
-			return fail(
-				"USAGE",
-				`Unsupported inner locator for cell: ${locatorInput}`,
-				"Inside a cell, wc accepts pK or pK:S-E only.",
-			);
+		if (resolved.kind === "wholeTable") {
+			await respond({
+				ok: true,
+				operation: "wc",
+				path,
+				locator: locatorInput,
+				scope: "table",
+				view,
+				words: countWordsInBlocks([resolved.block], { view }),
+			});
+			return EXIT.OK;
 		}
-		const composedId = `${cellPath}:${innerBlockId}`;
-		const block = findBlockById(blocks, composedId);
-		if (!block || block.type !== "paragraph") {
-			return fail("BLOCK_NOT_FOUND", `Paragraph not found: ${composedId}`);
-		}
-		const words =
-			locator.inner.kind === "blockSpan"
-				? countWordsInParagraphSpan(
-						block,
-						locator.inner.start,
-						locator.inner.end,
-						{ view },
-					)
-				: countWords(pickText(block));
+		const words = resolved.span
+			? countWordsInParagraphSpan(
+					resolved.paragraph,
+					resolved.span.start,
+					resolved.span.end,
+					{ view },
+				)
+			: countWords(pickText(resolved.paragraph));
 		await respond({
 			ok: true,
 			operation: "wc",
 			path,
 			locator: locatorInput,
-			scope: locator.inner.kind === "blockSpan" ? "paragraphSpan" : "paragraph",
+			scope: resolved.span ? "paragraphSpan" : "paragraph",
 			view,
 			words,
 		});
@@ -345,17 +338,81 @@ export async function run(args: string[]): Promise<number> {
 	return fail("USAGE", `Unsupported locator: ${locatorInput}`);
 }
 
-function findCellBlocks(
+/** Walk a (possibly nested) cell locator chain against `blocks`, the block list
+ * at the current depth. At each level, the locator's `tableId` / `blockId`
+ * (e.g. "t0", "p3") is a *local* index over blocks of that type at this depth,
+ * not a globally-qualified id — that matches what `parseLocator` produces for
+ * the inner segments. Returns the leaf the locator addresses: a whole cell, a
+ * whole (possibly nested) table, or a single paragraph with optional span. */
+type ResolvedCellTarget =
+	| { kind: "wholeCell"; blocks: Block[] }
+	| { kind: "wholeTable"; block: Block }
+	| {
+			kind: "paragraph";
+			paragraph: Paragraph;
+			span?: { start: number; end: number };
+	  };
+
+function resolveCellChain(
 	blocks: Block[],
-	locator: Extract<Locator, { kind: "cell" }>,
-): Block[] | null {
-	const block = findBlockById(blocks, locator.tableId);
-	if (!block || block.type !== "table") return null;
-	const row = block.rows[locator.row];
-	if (!row) return null;
-	const cell = row.cells[locator.col];
-	if (!cell) return null;
-	return cell.blocks;
+	locator: Locator,
+): ResolvedCellTarget | null {
+	if (locator.kind === "cell") {
+		const table = findNthBlockOfKind(blocks, "table", locator.tableId);
+		if (!table || table.type !== "table") return null;
+		const row = table.rows[locator.row];
+		if (!row) return null;
+		const cell = row.cells[locator.col];
+		if (!cell) return null;
+		if (!locator.inner) return { kind: "wholeCell", blocks: cell.blocks };
+		return resolveCellChain(cell.blocks, locator.inner);
+	}
+	if (locator.kind === "block") {
+		if (locator.blockId.startsWith("p")) {
+			const paragraph = findNthBlockOfKind(
+				blocks,
+				"paragraph",
+				locator.blockId,
+			);
+			if (!paragraph || paragraph.type !== "paragraph") return null;
+			return { kind: "paragraph", paragraph };
+		}
+		if (locator.blockId.startsWith("t")) {
+			const table = findNthBlockOfKind(blocks, "table", locator.blockId);
+			if (!table) return null;
+			return { kind: "wholeTable", block: table };
+		}
+		return null;
+	}
+	if (locator.kind === "blockSpan") {
+		const paragraph = findNthBlockOfKind(blocks, "paragraph", locator.blockId);
+		if (!paragraph || paragraph.type !== "paragraph") return null;
+		return {
+			kind: "paragraph",
+			paragraph,
+			span: { start: locator.start, end: locator.end },
+		};
+	}
+	return null;
+}
+
+/** Find the Nth block of `kind` in `blocks`, where the id's numeric suffix is
+ * the 0-based position among blocks of that type at this depth — e.g. "t0" =
+ * first table, "p2" = third paragraph. Returns null if out of range. */
+function findNthBlockOfKind(
+	blocks: Block[],
+	kind: "paragraph" | "table",
+	idWithPrefix: string,
+): Block | null {
+	const index = Number.parseInt(idWithPrefix.slice(1), 10);
+	if (!Number.isInteger(index) || index < 0) return null;
+	let seen = 0;
+	for (const block of blocks) {
+		if (block.type !== kind) continue;
+		if (seen === index) return block;
+		seen++;
+	}
+	return null;
 }
 
 function paragraphTextFor(view: CountView): (p: Paragraph) => string {

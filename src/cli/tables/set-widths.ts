@@ -1,6 +1,21 @@
-import { type DocView, isTrackChangesEnabled, saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import {
+	type DocView,
+	isTrackChangesEnabled,
+	mintRevisionMeta,
+	saveDocView,
+} from "@core";
+import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
+import {
+	appendTblGridChange,
+	appendTcPrChange,
+	buildGrid,
+	type Grid,
+	type GridCell,
+	resolveTableNode,
+	setCellWidth,
+	setTableLayout,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -11,14 +26,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { mintRevisionMeta, resolveTableNode } from "./common";
-import { buildGrid, type Grid, type GridCell } from "./grid";
-import {
-	appendTblGridChange,
-	appendTcPrChange,
-	setCellWidth,
-	setTableLayout,
-} from "./mutate";
 
 const HELP = `docx tables set-widths — set column widths
 
@@ -84,7 +91,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN", HELP);
-	const tableId = tableIdFromArg(at);
+	const tableId = parseTableAt(at);
 	if (!tableId) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -172,18 +179,6 @@ export async function run(args: string[]): Promise<number> {
 		widths: auto ? "auto" : twips,
 	});
 	return EXIT.OK;
-}
-
-function tableIdFromArg(at: string): string | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "block" && /^t\d+$/.test(locator.blockId)) {
-			return locator.blockId;
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 /** Resolve a `--widths` spec to per-column twips, or an error message. */

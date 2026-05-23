@@ -1,6 +1,13 @@
-import { isTrackChangesEnabled, saveDocView } from "@core";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { parseColumnAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
+import {
+	buildGrid,
+	cellAt,
+	type Grid,
+	markCellTracked,
+	resolveTableNode,
+} from "@core/table";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -11,9 +18,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { mintRevisionMeta, resolveTableNode } from "./common";
-import { buildGrid, cellAt, type Grid } from "./grid";
-import { markCellTracked } from "./mutate";
 
 const HELP = `docx tables delete-column — delete a table column
 
@@ -72,7 +76,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const at = parsed.values.at as string | undefined;
 	if (!at) return fail("USAGE", "Missing --at tN:cC", HELP);
-	const target = parseColumnArg(at);
+	const target = parseColumnAt(at);
 	if (!target) {
 		return fail(
 			"INVALID_LOCATOR",
@@ -154,18 +158,6 @@ export async function run(args: string[]): Promise<number> {
 		tracked: tracking,
 	});
 	return EXIT.OK;
-}
-
-function parseColumnArg(at: string): { tableId: string; col: number } | null {
-	try {
-		const locator = parseLocator(at);
-		if (locator.kind === "tableColumn") {
-			return { tableId: locator.tableId, col: locator.col };
-		}
-	} catch (error) {
-		if (!(error instanceof LocatorParseError)) throw error;
-	}
-	return null;
 }
 
 /** The first row whose cell at logical `col` spans more than one column (so
