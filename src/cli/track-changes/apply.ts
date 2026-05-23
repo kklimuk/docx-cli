@@ -1,4 +1,4 @@
-import type { TrackedChangeKind } from "@core";
+import type { DocView, TrackedChangeKind } from "@core";
 import { saveDocView } from "@core";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
@@ -63,8 +63,9 @@ export async function runApply(
 	// stale as we mutate the tree. The walk order mirrors the AST reader's
 	// (run-level trackings first per paragraph, then pPr-level extras —
 	// sectPrChange then paragraph-mark) so tcN ids agree with `track-changes
-	// list`.
-	const allChanges = collectTrackedChanges(view.documentTree);
+	// list`. Note bodies come AFTER the document body so body-only revisions
+	// (footnote edits) get tcN ids that don't shift document-body ids.
+	const allChanges = collectTrackedChanges(view);
 
 	let targets: ChangeFound[];
 	if (all) {
@@ -125,6 +126,14 @@ export async function runApply(
 		return EXIT.OK;
 	}
 
+	// Snapshot which (kind, noteId) each target touches BEFORE we mutate the
+	// tree — once a tracked-delete is applied, its `<w:del>` wrapper is gone
+	// and the post-pass can't trace back which notes were affected. The body-
+	// side pairing then walks footnotesTree/endnotesTree, GCs orphans, and
+	// normalizes any body-side wrappers whose paired reference-side
+	// revision was processed.
+	const affectedNotes = collectAffectedNotes(targets);
+
 	// Reverse pre-order so a nested ins/del is processed before its parent —
 	// keeps stored parent refs valid for the outer node when we get to it.
 	for (const target of [...targets].reverse()) {
@@ -135,6 +144,14 @@ export async function runApply(
 	// Cell removals (accept-cellDel / reject-cellIns) shrink rows without
 	// touching <w:tblGrid>; bring the grid back in line with the widest row.
 	resyncTableGrids(view.documentTree);
+
+	// Pair body-side note revisions with the reference-side targets we just
+	// applied. For each affected (kind, noteId): if no live reference to it
+	// remains in document.xml, GC the entire `<w:footnote>`/`<w:endnote>`;
+	// otherwise normalize the body's tracking wrappers (unwrap `<w:ins>`,
+	// unwrap `<w:del>` with delText→t, drop paragraph-mark del marker).
+	// Empirically matches Word — see `/tmp/fn-probe/{add,delete,edit}-*.docx`.
+	applyNotePairing(view, affectedNotes);
 
 	await saveDocView(view, outputPath);
 
@@ -149,17 +166,75 @@ export async function runApply(
 
 export type ApplyVerb = "accept" | "reject";
 
-function collectTrackedChanges(tree: XmlNode[]): ChangeFound[] {
+export function collectTrackedChanges(view: DocView): ChangeFound[] {
 	const out: ChangeFound[] = [];
 	const counter = { value: 0 };
 
-	const documentNode = XmlNode.findRoot(tree, "w:document");
-	if (!documentNode) return out;
-	const body = documentNode.findChild("w:body");
-	if (!body) return out;
+	const documentNode = XmlNode.findRoot(view.documentTree, "w:document");
+	const body = documentNode?.findChild("w:body");
+	if (body) visitBlocks(body.children, out, counter);
 
-	visitBlocks(body.children, out, counter);
+	// A footnote that's been added or deleted under tracking has revisions on
+	// BOTH sides: the doc-body reference run (already collected above) AND the
+	// note body. The two are paired logically; we hide the body-side from
+	// `list`/`apply` so each footnote add/delete surfaces as ONE tcN — the
+	// reference-side one. `applyNotePairing` (post-pass) processes the hidden
+	// body-side via the footnote id linkage. Body-only revisions (footnote
+	// edits — no reference-side wrapper) stay visible: they're standalone
+	// `<w:ins>`/`<w:del>` pairs inside the body, and there's no ambiguity.
+	const pairedNotes = pairedNoteIdsFromDocBody(out);
+	if (view.footnotesTree)
+		visitNotePart(
+			view.footnotesTree,
+			"w:footnotes",
+			"w:footnote",
+			pairedNotes,
+			"footnote",
+			out,
+			counter,
+		);
+	if (view.endnotesTree)
+		visitNotePart(
+			view.endnotesTree,
+			"w:endnotes",
+			"w:endnote",
+			pairedNotes,
+			"endnote",
+			out,
+			counter,
+		);
+
 	return out;
+}
+
+function pairedNoteIdsFromDocBody(docTargets: ChangeFound[]): Set<string> {
+	const out = new Set<string>();
+	for (const target of docTargets) {
+		collectNoteRefs(target.node, out);
+	}
+	return out;
+}
+
+function visitNotePart(
+	tree: XmlNode[],
+	rootTag: string,
+	itemTag: string,
+	pairedNotes: Set<string>,
+	kind: "footnote" | "endnote",
+	out: ChangeFound[],
+	counter: { value: number },
+): void {
+	const root = XmlNode.findRoot(tree, rootTag);
+	if (!root) return;
+	for (const note of root.children) {
+		if (note.tag !== itemTag) continue;
+		// Skip Word's reserved boilerplate (separator / continuationSeparator)
+		// — they're never tracked.
+		if (note.getAttribute("w:type")) continue;
+		const noteId = note.getAttribute("w:id");
+		if (noteId && pairedNotes.has(`${kind}:${noteId}`)) continue;
+		visitBlocks(note.children, out, counter);
+	}
 }
 
 function visitBlocks(
@@ -611,6 +686,123 @@ function deleteNode(node: XmlNode, parent: XmlNode[]): void {
 function renameDelTextToText(node: XmlNode): void {
 	if (node.tag === "w:delText") node.tag = "w:t";
 	for (const child of node.children) renameDelTextToText(child);
+}
+
+/** Snapshot every (kind, noteId) pair that `targets` touches via a
+ *  `<w:footnoteReference>` / `<w:endnoteReference>` descendant. Collected
+ *  before applying so the post-pass can locate affected notes even after
+ *  their reference-side wrappers are gone. */
+function collectAffectedNotes(targets: ChangeFound[]): Set<string> {
+	const out = new Set<string>();
+	for (const target of targets) {
+		collectNoteRefs(target.node, out);
+	}
+	return out;
+}
+
+function collectNoteRefs(node: XmlNode, out: Set<string>): void {
+	if (node.tag === "w:footnoteReference") {
+		const id = node.getAttribute("w:id");
+		if (id) out.add(`footnote:${id}`);
+		return;
+	}
+	if (node.tag === "w:endnoteReference") {
+		const id = node.getAttribute("w:id");
+		if (id) out.add(`endnote:${id}`);
+		return;
+	}
+	for (const child of node.children) collectNoteRefs(child, out);
+}
+
+/** For each affected note: count live references in document.xml; if zero,
+ *  GC the body from footnotes.xml/endnotes.xml (matches Word — see
+ *  `/tmp/fn-probe/{add-rejected,delete-accepted}.docx`). If any remain,
+ *  normalize the body's tracking wrappers — unwrap any `<w:ins>`/`<w:del>`
+ *  and drop the paragraph-mark del marker — so the body shape stays consistent
+ *  with how the reference-side revision was applied. */
+function applyNotePairing(view: DocView, affected: Set<string>): void {
+	if (affected.size === 0) return;
+	for (const key of affected) {
+		const colon = key.indexOf(":");
+		const kind = key.slice(0, colon) as "footnote" | "endnote";
+		const noteId = key.slice(colon + 1);
+		const tree = kind === "footnote" ? view.footnotesTree : view.endnotesTree;
+		if (!tree) continue;
+		const rootTag = kind === "footnote" ? "w:footnotes" : "w:endnotes";
+		const itemTag = kind === "footnote" ? "w:footnote" : "w:endnote";
+		const refTag =
+			kind === "footnote" ? "w:footnoteReference" : "w:endnoteReference";
+		const root = XmlNode.findRoot(tree, rootTag);
+		if (!root) continue;
+		const noteIndex = root.children.findIndex(
+			(child) => child.tag === itemTag && child.getAttribute("w:id") === noteId,
+		);
+		if (noteIndex === -1) continue;
+		const note = root.children[noteIndex];
+		if (!note) continue;
+		const liveRefs = countLiveReferences(view.documentTree, refTag, noteId);
+		if (liveRefs === 0) {
+			root.children.splice(noteIndex, 1);
+			continue;
+		}
+		normalizeNoteBody(note);
+	}
+}
+
+function countLiveReferences(
+	tree: XmlNode[],
+	refTag: string,
+	noteId: string,
+): number {
+	let count = 0;
+	const visit = (node: XmlNode): void => {
+		if (node.tag === refTag && node.getAttribute("w:id") === noteId) {
+			count += 1;
+			return;
+		}
+		for (const child of node.children) visit(child);
+	};
+	for (const root of tree) visit(root);
+	return count;
+}
+
+/** Unwrap any remaining `<w:ins>`/`<w:del>` body wrappers in the note's
+ *  paragraph, with `<w:delText>` → `<w:t>` rename on the del side. Also drop
+ *  any paragraph-mark del marker that crept into `<w:pPr><w:rPr>`. Result:
+ *  the body looks like an untracked note, ready for accept-side semantics. */
+function normalizeNoteBody(note: XmlNode): void {
+	for (const paragraph of note.children) {
+		if (paragraph.tag !== "w:p") continue;
+		paragraph.children = unwrapNoteWrappers(paragraph.children);
+		stripParagraphMarkTracking(paragraph);
+	}
+}
+
+function unwrapNoteWrappers(children: XmlNode[]): XmlNode[] {
+	const out: XmlNode[] = [];
+	for (const child of children) {
+		if (child.tag === "w:ins") {
+			out.push(...unwrapNoteWrappers(child.children));
+			continue;
+		}
+		if (child.tag === "w:del") {
+			renameDelTextToText(child);
+			out.push(...unwrapNoteWrappers(child.children));
+			continue;
+		}
+		out.push(child);
+	}
+	return out;
+}
+
+function stripParagraphMarkTracking(paragraph: XmlNode): void {
+	const pPr = paragraph.findChild("w:pPr");
+	if (!pPr) return;
+	const rPr = pPr.findChild("w:rPr");
+	if (!rPr) return;
+	rPr.children = rPr.children.filter(
+		(child) => child.tag !== "w:ins" && child.tag !== "w:del",
+	);
 }
 
 type ChangeFound = {

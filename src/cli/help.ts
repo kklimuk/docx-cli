@@ -19,6 +19,8 @@ Commands:
   wc        FILE [LOCATOR]  Count words in the doc or a slice
   outline   FILE  List headings as a hierarchical tree
   comments  …     Add, reply, resolve, delete, list comments
+  footnotes …     Add, edit, delete, list footnotes
+  endnotes  …     Add, edit, delete, list endnotes
   images    …     Extract, replace, list images
   hyperlinks …    Add, list, replace, delete hyperlinks
   track-changes …  Toggle (FILE on|off), list / accept / reject changes

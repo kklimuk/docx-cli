@@ -17,7 +17,9 @@ export type BaselineStyleId =
 	| "CodeBlock"
 	| "ListParagraph"
 	| "FootnoteReference"
-	| "FootnoteText";
+	| "FootnoteText"
+	| "EndnoteReference"
+	| "EndnoteText";
 
 const STYLES_PART = {
 	partName: "word/styles.xml",
@@ -141,6 +143,8 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 	ListParagraph: () => <ListParagraphStyle />,
 	FootnoteReference: () => <FootnoteReferenceStyle />,
 	FootnoteText: () => <FootnoteTextStyle />,
+	EndnoteReference: () => <EndnoteReferenceStyle />,
+	EndnoteText: () => <EndnoteTextStyle />,
 };
 
 function NormalStyle(): XmlNode {
@@ -286,6 +290,29 @@ function FootnoteTextStyle(): XmlNode {
 	return (
 		<w.style w-type="paragraph" w-styleId="FootnoteText">
 			<w.name w-val="footnote text" />
+			<w.basedOn w-val="Normal" />
+			<w.rPr>
+				<w.sz w-val="20" />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function EndnoteReferenceStyle(): XmlNode {
+	return (
+		<w.style w-type="character" w-styleId="EndnoteReference">
+			<w.name w-val="endnote reference" />
+			<w.rPr>
+				<w.vertAlign w-val="superscript" />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function EndnoteTextStyle(): XmlNode {
+	return (
+		<w.style w-type="paragraph" w-styleId="EndnoteText">
+			<w.name w-val="endnote text" />
 			<w.basedOn w-val="Normal" />
 			<w.rPr>
 				<w.sz w-val="20" />

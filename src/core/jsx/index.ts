@@ -130,6 +130,16 @@ const W_TAGS = [
 	"lvlText",
 	"lvlJc",
 	"contextualSpacing",
+	"footnotes",
+	"footnote",
+	"footnoteReference",
+	"footnoteRef",
+	"endnotes",
+	"endnote",
+	"endnoteReference",
+	"endnoteRef",
+	"separator",
+	"continuationSeparator",
 ] as const;
 
 const CP_TAGS = ["coreProperties", "lastModifiedBy"] as const;

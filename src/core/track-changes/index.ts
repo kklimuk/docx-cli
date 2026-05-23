@@ -45,7 +45,7 @@ export function convertTextToDelText(node: XmlNode): XmlNode {
 
 function computeMaxRevisionId(view: DocView): number {
 	let max = -1;
-	walkXml(view.documentTree, (node) => {
+	const visit = (node: XmlNode): void => {
 		// All revision-tracking wrappers share the same `w:id` namespace —
 		// scan moves alongside ins/del so newly minted ids don't collide.
 		if (
@@ -59,7 +59,15 @@ function computeMaxRevisionId(view: DocView): number {
 		if (!idAttr) return;
 		const value = Number(idAttr);
 		if (Number.isFinite(value) && value > max) max = value;
-	});
+	};
+	// Tracked changes can live in document.xml, footnotes.xml, AND endnotes.xml
+	// — Word emits body-side <w:ins>/<w:del> inside <w:footnote>/<w:endnote>
+	// when a footnote is added/deleted under tracking (see `TrackedNoteBody`
+	// in `cli/footnotes/helpers.tsx`). Allocate across all three parts so a
+	// new revision never collides with one that's already in a note body.
+	walkXml(view.documentTree, visit);
+	if (view.footnotesTree) walkXml(view.footnotesTree, visit);
+	if (view.endnotesTree) walkXml(view.endnotesTree, visit);
 	return max;
 }
 

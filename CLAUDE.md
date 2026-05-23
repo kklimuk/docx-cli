@@ -45,7 +45,9 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 | --------------- | -------------------------------------------------------------------------------------------------- |
 | top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline`                           |
 | `comments`      | `add` `reply` `resolve` `delete` `list`                                                            |
-| `images`        | `list` `extract` `replace`                                                                         |
+| `footnotes`     | `add` `edit` `delete` `list`                                                                       |
+| `endnotes`      | `add` `edit` `delete` `list`                                                                       |
+| `images`        | `list` `extract` `replace` `delete`                                                                |
 | `hyperlinks`    | `add` `list` `replace` `delete`                                                                    |
 | `tables`        | `insert-row` `delete-row` `insert-column` `delete-column` `set-widths` `merge` `unmerge` `borders` |
 | `track-changes` | `FILE on\|off` (toggle), `list FILE`, `accept`/`reject FILE (--at tcN \| --all)`                   |
@@ -59,6 +61,7 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 pN              paragraph N        pN:S-E          chars S..E within paragraph N
 pN:S-pM:E       cross-paragraph    tN / tN:rRcC    table N / cell at row R col C (chainable :pK)
 sN              section break N    cN imgN linkN tcN   comment / image / hyperlink / tracked-change ids
+                                   fnN enN          footnote / endnote ids (`footnotes`/`endnotes` verbs)
 tN:rR tN:cC     table row R / column C (the `tables` verbs) tN:rR1cC1-rR2cC2   rectangular cell region (merge)
 ```
 

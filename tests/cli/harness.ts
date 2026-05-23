@@ -29,6 +29,8 @@ const TOP_LEVEL_MUTATORS = new Set([
  *  list`, `track-changes list`, `images extract`) is a read. */
 const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	comments: new Set(["add", "reply", "resolve", "delete"]),
+	endnotes: new Set(["add", "edit", "delete"]),
+	footnotes: new Set(["add", "edit", "delete"]),
 	images: new Set(["replace", "delete"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
 	tables: new Set([

@@ -104,6 +104,15 @@ docx comments delete  FILE --id c1 --id c3                    # repeatable
 docx comments delete  FILE --batch removals.jsonl
 docx comments list    FILE [--include-resolved] [--thread c0]
 
+docx footnotes add    FILE --at pN[:offset] --text "..."
+docx footnotes edit   FILE --id fnN --text "..."
+docx footnotes delete FILE --id fnN
+docx footnotes list   FILE
+docx endnotes  add    FILE --at pN[:offset] --text "..."
+docx endnotes  edit   FILE --id enN --text "..."
+docx endnotes  delete FILE --id enN
+docx endnotes  list   FILE
+
 docx images list    FILE
 docx images extract FILE --to ./media [--id imgN]
 docx images replace FILE --at imgN --with ./new.png
@@ -133,7 +142,7 @@ docx info locators [--json]
 
 Every command has `--help`. Mutating commands accept `--dry-run`, `-o/--output PATH` (write to a parallel file instead of overwriting `FILE`), and `-v/--verbose` (print the JSON ack — see "Quiet by default" below).
 
-**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `images replace/delete`, `hyperlinks add/replace/delete`, `tables *`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
+**Quiet by default.** Mutators (`create`, `insert`, `edit`, `delete`, `replace`, `comments add/reply/resolve/delete`, `footnotes add/edit/delete`, `endnotes add/edit/delete`, `images replace/delete`, `hyperlinks add/replace/delete`, `tables *`, `track-changes` toggle/accept/reject) print nothing on success and exit 0. Errors always print as `{ok: false, code, error, hint}`. Pass `-v`/`--verbose` to get the full JSON ack. Read commands (`read`, `find`, `wc`, `outline`, `info *`, `*-list`) print their data unconditionally. Batch operations that mint new ids — `comments add --batch`, `comments delete --batch`, `comments resolve --batch`, and `comments delete/resolve` with multiple `--id` — always print the affected ids since the agent can't reconstruct them otherwise.
 
 ### Markdown rendering
 

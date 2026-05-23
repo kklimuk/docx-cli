@@ -6,6 +6,7 @@ import type {
 import { flattenParagraphs, readSectionProperties } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import { collectTrackedChanges } from "./apply";
 
 const HELP = `docx track-changes list — inventory every revision wrapper
 
@@ -124,6 +125,24 @@ export async function run(args: string[]): Promise<number> {
 			record.prior = snapshot ? readSectionProperties(snapshot.children) : {};
 		}
 		byId.set(id, record);
+	}
+
+	// Body-only note revisions (footnote/endnote edits) aren't reachable from
+	// the AST or the reference map (both walk document.xml only). Pull them
+	// from the apply walker so `list` and `apply --at tcN` agree. Body-side
+	// revisions paired to a doc-body reference are hidden by that walker, so
+	// only standalone body-only edits show up here.
+	for (const change of collectTrackedChanges(view)) {
+		if (byId.has(change.id)) continue;
+		byId.set(change.id, {
+			id: change.id,
+			kind: change.kind,
+			author: change.author,
+			date: change.date,
+			revisionId: change.node.getAttribute("w:id") ?? "",
+			blockId: "",
+			text: "",
+		});
 	}
 
 	const sorted = [...byId.values()].sort(
