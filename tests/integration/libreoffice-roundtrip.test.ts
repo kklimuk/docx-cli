@@ -22,6 +22,7 @@ const CORE_FIXTURES = [
 	"tables-mutations.docx", // tables + merges + tracked-table revisions (richest)
 	"images.docx", // inserted media parts + inline <w:drawing> picture
 	"footnotes-mutations.docx", // footnotes/endnotes parts authored from scratch
+	"code-blocks.docx", // CodeBlock paragraphs + Code rStyle + lowlight colors
 ] as const;
 
 const EXTRA_FIXTURES = [

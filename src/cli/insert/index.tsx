@@ -17,6 +17,10 @@ import {
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
 import {
+	buildCodeBlockParagraphs,
+	ensureCodeBlockStyles,
+} from "@core/code-block";
+import {
 	addImagePart,
 	computeExtentEmu,
 	Image,
@@ -27,7 +31,7 @@ import {
 } from "@core/image";
 import { w } from "@core/jsx";
 import { XmlNode } from "@core/parser";
-import { ensureReferencedStyle } from "@core/styles";
+import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
 import { BlankTable, type TableBorders, type TableLayout } from "@core/table";
 import { parseArgs } from "util";
 import {
@@ -58,6 +62,9 @@ Content (one required):
   --section         Insert a section boundary (sentinel paragraph w/ inline sectPr)
   --table           Insert an empty rows×cols table (requires --rows and --cols)
   --image SRC       Insert an image (SRC is a file path, data: URI, or http(s) URL)
+  --code TEXT       Insert a multi-line code block. Newlines split into one
+                    CodeBlock-styled paragraph per source line.
+  --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin).
 
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
@@ -87,6 +94,15 @@ Image options (only with --image):
   --width INCHES    Display width in inches (default: native pixel size at 96dpi)
   --height INCHES   Display height in inches (default: scales to preserve aspect)
 
+Code options (only with --code / --code-file):
+  --language LANG   Syntax-highlight using lowlight (highlight.js). One of the
+                    37 common languages: bash, c, cpp, csharp, css, diff, go,
+                    graphql, ini, java, javascript, json, kotlin, less, lua,
+                    makefile, markdown, objectivec, perl, php, php-template,
+                    plaintext, python, python-repl, r, ruby, rust, scss, shell,
+                    sql, swift, typescript, vbnet, wasm, xml, yaml. Unknown
+                    languages degrade to uncolored (block still inserts).
+
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -105,6 +121,9 @@ Examples:
   docx insert doc.docx --after p3 --table --rows 2 --cols 3 --widths 1440,2880,4320
   docx insert doc.docx --after p3 --image ./diagram.png --alt "System diagram"
   docx insert doc.docx --after p3 --image https://example.com/logo.png --width 2
+  docx insert doc.docx --after p3 --code $'function foo() {\\n  return 42;\\n}' --language typescript
+  docx insert doc.docx --after p3 --code-file snippet.go --language go
+  cat snippet.py | docx insert doc.docx --after p3 --code-file - --language python
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -117,14 +136,25 @@ export async function run(args: string[]): Promise<number> {
 	const blockRef = await resolveBlockOrFail(view, opts.placement.locator);
 	if (typeof blockRef === "number") return blockRef;
 
-	const paragraph = await buildInsertedParagraph(
+	const built = await buildInsertedParagraph(
 		view,
 		opts.spec,
 		opts.paragraphOptions,
 	);
-	if (typeof paragraph === "number") return paragraph;
+	if (typeof built === "number") return built;
 	ensureReferencedStyle(view, opts.paragraphOptions.style);
-	return commitInsertedParagraph(view, blockRef, paragraph, opts);
+	if (opts.spec.kind === "runs") {
+		ensureReferencedRunStyles(view, opts.spec.runs);
+	}
+	if (opts.spec.kind === "code") {
+		// Provisions `Code` (character) + `CodeBlock` (paragraph), and when a
+		// language was given, the `CodeBlock-LANG` derived paragraph style so
+		// the language survives round-trip (recovered by the reader's
+		// `codeBlockLanguageFromStyleId`).
+		ensureCodeBlockStyles(view, opts.spec.language);
+	}
+	const blocks = Array.isArray(built) ? built : [built];
+	return commitInsertedParagraphs(view, blockRef, blocks, opts);
 }
 
 async function parseAndValidateOptions(
@@ -194,6 +224,9 @@ const OPTION_SPEC = {
 	alt: { type: "string" },
 	width: { type: "string" },
 	height: { type: "string" },
+	code: { type: "string" },
+	"code-file": { type: "string" },
+	language: { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -242,6 +275,11 @@ type InsertSpec =
 			alt?: string;
 			widthInches?: number;
 			heightInches?: number;
+	  }
+	| {
+			kind: "code";
+			content: string;
+			language?: string;
 	  };
 
 type TextFormatting = {
@@ -282,6 +320,8 @@ const CONTENT_KINDS = [
 		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
 	},
 	{ flag: "image", subFlags: ["alt", "width", "height"] },
+	{ flag: "code", subFlags: ["language"] },
+	{ flag: "code-file", subFlags: ["language"] },
 ] as const;
 
 const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
@@ -304,9 +344,15 @@ async function chooseContentSpec(
 
 	// Reject sub-flags belonging to a content kind other than the chosen one,
 	// so e.g. `--columns` without `--section` is an error rather than ignored.
+	// A subFlag listed under MULTIPLE kinds (e.g. `--language` shared by both
+	// `--code` and `--code-file`) is permitted if the chosen kind is one of
+	// them — only orphans wholly unrelated to the chosen kind error.
+	const chosenSubFlags = new Set<string>(chosen.subFlags);
 	for (const kind of CONTENT_KINDS) {
 		if (kind.flag === chosen.flag) continue;
-		const orphan = kind.subFlags.find((flag) => values[flag] !== undefined);
+		const orphan = kind.subFlags.find(
+			(flag) => values[flag] !== undefined && !chosenSubFlags.has(flag),
+		);
 		if (orphan) {
 			return fail("USAGE", `--${orphan} requires --${kind.flag}`, HELP);
 		}
@@ -335,6 +381,37 @@ async function chooseContentSpec(
 			const flags = await parseImageFlags(values);
 			return typeof flags === "number" ? flags : { kind: "image", ...flags };
 		}
+		case "code":
+		case "code-file":
+			return resolveCodeSpec(values, chosen.flag);
+	}
+}
+
+/** Resolve `--code TEXT` (inline) or `--code-file PATH` (file / stdin) into
+ *  a uniform `code` spec. Stdin path: `--code-file -` reads from process
+ *  stdin so `cat snippet.py | docx insert ... --code-file -` works. */
+async function resolveCodeSpec(
+	values: RawValues,
+	flag: "code" | "code-file",
+): Promise<Extract<InsertSpec, { kind: "code" }> | number> {
+	const language = values.language as string | undefined;
+	if (flag === "code") {
+		const content = values.code as string;
+		return { kind: "code", content, ...(language ? { language } : {}) };
+	}
+	const path = values["code-file"] as string;
+	try {
+		const content =
+			path === "-"
+				? await new Response(Bun.stdin.stream()).text()
+				: await Bun.file(path).text();
+		return { kind: "code", content, ...(language ? { language } : {}) };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --code-file ${path}: ${message}`,
+		);
 	}
 }
 
@@ -593,11 +670,14 @@ async function parseParagraphOptions(
 	return out;
 }
 
+/** Build the block(s) to insert. Returns either a single `XmlNode` (the common
+ *  case — one paragraph or one table) or an array (multi-line code blocks
+ *  produce one `<w:p>` per source line). The commit path handles both. */
 async function buildInsertedParagraph(
 	view: DocView,
 	spec: InsertSpec,
 	paragraphOptions: ParagraphOptions,
-): Promise<XmlNode | number> {
+): Promise<XmlNode | XmlNode[] | number> {
 	switch (spec.kind) {
 		case "text":
 			return buildTextParagraph(view, spec, paragraphOptions);
@@ -630,6 +710,8 @@ async function buildInsertedParagraph(
 			);
 		case "image":
 			return buildImageParagraph(view, spec, paragraphOptions);
+		case "code":
+			return buildCodeBlockParagraphs(spec.content, spec.language);
 	}
 }
 
@@ -705,10 +787,10 @@ function buildTextParagraph(
 	return paragraphNode;
 }
 
-async function commitInsertedParagraph(
+async function commitInsertedParagraphs(
 	view: DocView,
 	blockRef: BlockReference,
-	paragraph: XmlNode,
+	blocks: XmlNode[],
 	opts: ValidatedOptions,
 ): Promise<number> {
 	const targetIndex = blockRef.parent.indexOf(blockRef.node);
@@ -725,14 +807,18 @@ async function commitInsertedParagraph(
 		// Tables under tracking would require per-row <w:trPr><w:ins/> wrappers
 		// (ECMA-376 §17.13.5) — defer to S4b. Reject cleanly so the agent
 		// knows to toggle tracking off, insert, then back on.
-		if (paragraph.tag === "w:tbl") {
-			return fail(
-				"TRACKED_CHANGE_CONFLICT",
-				"Inserting a table while track-changes is on is not supported",
-				"Run `docx track-changes FILE off`, insert the table, then `track-changes on`.",
-			);
+		for (const block of blocks) {
+			if (block.tag === "w:tbl") {
+				return fail(
+					"TRACKED_CHANGE_CONFLICT",
+					"Inserting a table while track-changes is on is not supported",
+					"Run `docx track-changes FILE off`, insert the table, then `track-changes on`.",
+				);
+			}
 		}
-		applyTrackedInsertion(paragraph, view, opts.authorFlag);
+		for (const block of blocks) {
+			applyTrackedInsertion(block, view, opts.authorFlag);
+		}
 	}
 
 	if (opts.dryRun) {
@@ -748,7 +834,8 @@ async function commitInsertedParagraph(
 		return EXIT.OK;
 	}
 
-	blockRef.parent.splice(insertIndex, 0, paragraph);
+	// Splice all blocks in at insertIndex, preserving their relative order.
+	blockRef.parent.splice(insertIndex, 0, ...blocks);
 	await saveDocView(view, opts.outputPath);
 
 	await respondAck({

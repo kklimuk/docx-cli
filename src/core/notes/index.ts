@@ -1,0 +1,17 @@
+export {
+	ensureNoteStyles,
+	ensureNotesPart,
+	findNoteByNumericId,
+	insertNoteReferenceAtOffset,
+	NoteBody,
+	type NoteConfig,
+	type NoteKind,
+	NoteOffsetOutOfRangeError,
+	NoteReferenceRun,
+	nextNoteId,
+	noteConfig,
+	removeNoteReferences,
+	TrackedNoteBody,
+	wrapNoteBodyAsDeleted,
+	wrapNoteBodyAsEdited,
+} from "./helpers";

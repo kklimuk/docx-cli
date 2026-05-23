@@ -123,3 +123,44 @@ export function sumRunBearingTextLength(children: XmlNode[]): number {
 	}
 	return total;
 }
+
+/** Split a paragraph's children into the runs that carry visible content
+ *  and everything else (`<w:pPr>`, bookmark markers, comment markers, …).
+ *  Run-bearing wrappers (`<w:ins>`, `<w:del>`, `<w:hyperlink>`, etc.) are
+ *  flattened — their inner `<w:r>` children surface in the `runs` list and
+ *  the wrappers themselves are discarded. This is what every tracked-edit
+ *  path needs to do before re-wrapping in fresh `<w:del>`/`<w:ins>`:
+ *  without flattening, prior tracked-change wrappers leak alongside the new
+ *  ones (the bug from agent feedback: chained edits + hyperlinked paragraphs
+ *  duplicating text). */
+export function partitionParagraphRuns(paragraph: XmlNode): {
+	runs: XmlNode[];
+	nonRuns: XmlNode[];
+} {
+	const runs: XmlNode[] = [];
+	const nonRuns: XmlNode[] = [];
+	for (const child of paragraph.children) {
+		if (child.tag === "w:r") {
+			runs.push(child);
+			continue;
+		}
+		if (isRunBearingWrapper(child.tag)) {
+			collectInnerRuns(child, runs);
+			continue;
+		}
+		nonRuns.push(child);
+	}
+	return { runs, nonRuns };
+}
+
+function collectInnerRuns(wrapper: XmlNode, out: XmlNode[]): void {
+	for (const child of wrapper.children) {
+		if (child.tag === "w:r") {
+			out.push(child);
+			continue;
+		}
+		if (isRunBearingWrapper(child.tag)) {
+			collectInnerRuns(child, out);
+		}
+	}
+}

@@ -43,7 +43,7 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 
 | Surface         | Verbs                                                                                              |
 | --------------- | -------------------------------------------------------------------------------------------------- |
-| top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline`                           |
+| top-level       | `create` `read` `insert` `edit` `delete` `find` `replace` `wc` `outline` (insert: `--code [--language LANG]` / `--code-file PATH`) |
 | `comments`      | `add` `reply` `resolve` `delete` `list`                                                            |
 | `footnotes`     | `add` `edit` `delete` `list`                                                                       |
 | `endnotes`      | `add` `edit` `delete` `list`                                                                       |
@@ -59,7 +59,8 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 
 ```
 pN              paragraph N        pN:S-E          chars S..E within paragraph N
-pN:S-pM:E       cross-paragraph    tN / tN:rRcC    table N / cell at row R col C (chainable :pK)
+pN-pM           paragraph range    pN:S-pM:E       cross-paragraph (chars)
+                                   tN / tN:rRcC    table N / cell at row R col C (chainable :pK)
 sN              section break N    cN imgN linkN tcN   comment / image / hyperlink / tracked-change ids
                                    fnN enN          footnote / endnote ids (`footnotes`/`endnotes` verbs)
 tN:rR tN:cC     table row R / column C (the `tables` verbs) tN:rR1cC1-rR2cC2   rectangular cell region (merge)

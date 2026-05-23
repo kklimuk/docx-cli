@@ -8,7 +8,7 @@ type CommandFn = (args: string[]) => Promise<number>;
 
 // Footnotes and endnotes share the same mechanics — the only difference is
 // the part name and a handful of tag/style names, all parameterized in
-// `cli/footnotes/helpers.tsx` as `NoteKind`. So this dispatcher re-uses the
+// `core/notes/helpers.tsx` as `NoteKind`. So this dispatcher re-uses the
 // footnote command implementations and just passes kind="endnote".
 const SUBCOMMANDS: Record<string, CommandFn> = {
 	add: (args) => runAddNote(args, "endnote"),

@@ -27,6 +27,10 @@ Options:
 Examples:
   docx create out.docx
   docx create out.docx --title "Spec" --author "Claude" --text "First paragraph."
+
+For a doc that opens with a code block, chain create with insert:
+  docx create out.docx
+  docx insert out.docx --after p0 --code-file snippet.py --language python
 `;
 
 export async function run(args: string[]): Promise<number> {

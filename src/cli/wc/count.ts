@@ -151,3 +151,26 @@ export function countWordsInRange(
 	if (last) total += countWordsInParagraphSpan(last, 0, endOffset, options);
 	return total;
 }
+
+/** Word-count a contiguous paragraph range `pN-pM` (whole paragraphs, no
+ *  offsets). Sums every paragraph from `startBlockId` through `endBlockId`
+ *  inclusive in document order. Returns 0 if either endpoint isn't in
+ *  `paragraphsInOrder` or if the range runs backwards. */
+export function countWordsInBlockRange(
+	paragraphsInOrder: Paragraph[],
+	startBlockId: string,
+	endBlockId: string,
+	options: CountOptions = {},
+): number {
+	const startIndex = paragraphsInOrder.findIndex((p) => p.id === startBlockId);
+	const endIndex = paragraphsInOrder.findIndex((p) => p.id === endBlockId);
+	if (startIndex === -1 || endIndex === -1) return 0;
+	if (endIndex < startIndex) return 0;
+	const text = textFor(options);
+	let total = 0;
+	for (let index = startIndex; index <= endIndex; index++) {
+		const paragraph = paragraphsInOrder[index];
+		if (paragraph) total += countWords(text(paragraph));
+	}
+	return total;
+}

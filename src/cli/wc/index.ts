@@ -16,6 +16,7 @@ import {
 	type CountView,
 	countSectionsInBlocks,
 	countWords,
+	countWordsInBlockRange,
 	countWordsInBlocks,
 	countWordsInParagraphSpan,
 	countWordsInRange,
@@ -210,6 +211,39 @@ export async function run(args: string[]): Promise<number> {
 			words: countWordsInParagraphSpan(block, locator.start, locator.end, {
 				view,
 			}),
+		});
+		return EXIT.OK;
+	}
+
+	if (locator.kind === "blockRange") {
+		const paragraphs = flattenParagraphs(blocks);
+		const startExists = paragraphs.some((p) => p.id === locator.startBlockId);
+		const endExists = paragraphs.some((p) => p.id === locator.endBlockId);
+		if (!startExists) {
+			return fail(
+				"BLOCK_NOT_FOUND",
+				`Paragraph not found: ${locator.startBlockId}`,
+			);
+		}
+		if (!endExists) {
+			return fail(
+				"BLOCK_NOT_FOUND",
+				`Paragraph not found: ${locator.endBlockId}`,
+			);
+		}
+		await respond({
+			ok: true,
+			operation: "wc",
+			path,
+			locator: locatorInput,
+			scope: "blockRange",
+			view,
+			words: countWordsInBlockRange(
+				paragraphs,
+				locator.startBlockId,
+				locator.endBlockId,
+				{ view },
+			),
 		});
 		return EXIT.OK;
 	}

@@ -1,91 +1,16 @@
-import type { DocView, TrackedMeta } from "@core";
-import { convertTextToDelText } from "@core";
-import { w } from "@core/jsx";
-import { registerPart } from "@core/package";
+import type { DocView } from "../ast/doc-view";
+import { w } from "../jsx";
+import { registerPart } from "../package";
 import {
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
 	XmlNode,
-} from "@core/parser";
-import { ensureStyle } from "@core/styles";
-import { Del, Ins, markParagraphMarkAs } from "@core/track-changes/emit";
-
-/** Footnotes and endnotes share their entire mechanics — separate parts, but
- *  identical XML shape, same id-allocation rules (Word reserves -1/0 for the
- *  separator/continuationSeparator boilerplate), same reference-run pattern,
- *  same body-paragraph shape. We parameterize on this kind everywhere instead
- *  of duplicating two near-identical modules. */
-export type NoteKind = "footnote" | "endnote";
-
-const FOOTNOTES_REL_TYPE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
-const ENDNOTES_REL_TYPE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
-const FOOTNOTES_CONTENT_TYPE =
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
-const ENDNOTES_CONTENT_TYPE =
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml";
-const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-
-export type NoteConfig = {
-	kind: NoteKind;
-	idPrefix: "fn" | "en";
-	rootTag: "w:footnotes" | "w:endnotes";
-	itemTag: "w:footnote" | "w:endnote";
-	referenceTag: "w:footnoteReference" | "w:endnoteReference";
-	bodyRefTag: "w:footnoteRef" | "w:endnoteRef";
-	textStyle: "FootnoteText" | "EndnoteText";
-	referenceStyle: "FootnoteReference" | "EndnoteReference";
-	partName: "word/footnotes.xml" | "word/endnotes.xml";
-	target: "footnotes.xml" | "endnotes.xml";
-	relationshipType: string;
-	contentType: string;
-};
-
-const FOOTNOTE_CONFIG: NoteConfig = {
-	kind: "footnote",
-	idPrefix: "fn",
-	rootTag: "w:footnotes",
-	itemTag: "w:footnote",
-	referenceTag: "w:footnoteReference",
-	bodyRefTag: "w:footnoteRef",
-	textStyle: "FootnoteText",
-	referenceStyle: "FootnoteReference",
-	partName: "word/footnotes.xml",
-	target: "footnotes.xml",
-	relationshipType: FOOTNOTES_REL_TYPE,
-	contentType: FOOTNOTES_CONTENT_TYPE,
-};
-
-const ENDNOTE_CONFIG: NoteConfig = {
-	kind: "endnote",
-	idPrefix: "en",
-	rootTag: "w:endnotes",
-	itemTag: "w:endnote",
-	referenceTag: "w:endnoteReference",
-	bodyRefTag: "w:endnoteRef",
-	textStyle: "EndnoteText",
-	referenceStyle: "EndnoteReference",
-	partName: "word/endnotes.xml",
-	target: "endnotes.xml",
-	relationshipType: ENDNOTES_REL_TYPE,
-	contentType: ENDNOTES_CONTENT_TYPE,
-};
-
-export function noteConfig(kind: NoteKind): NoteConfig {
-	return kind === "footnote" ? FOOTNOTE_CONFIG : ENDNOTE_CONFIG;
-}
-
-function getTree(view: DocView, kind: NoteKind): XmlNode[] | undefined {
-	return kind === "footnote" ? view.footnotesTree : view.endnotesTree;
-}
-
-function setTree(view: DocView, kind: NoteKind, tree: XmlNode[]): void {
-	if (kind === "footnote") view.footnotesTree = tree;
-	else view.endnotesTree = tree;
-}
+} from "../parser";
+import { ensureStyle } from "../styles";
+import { convertTextToDelText, type TrackedMeta } from "../track-changes";
+import { Del, Ins, markParagraphMarkAs } from "../track-changes/emit";
 
 /** Provision footnotes.xml/endnotes.xml if absent. Word writes two reserved
  *  entries before any user notes — id=-1 separator (the rule above the note
@@ -140,6 +65,25 @@ function NoteBoilerplate({
 			</w.p>
 		</Note>
 	);
+}
+
+function getTree(view: DocView, kind: NoteKind): XmlNode[] | undefined {
+	return kind === "footnote" ? view.footnotesTree : view.endnotesTree;
+}
+
+function setTree(view: DocView, kind: NoteKind, tree: XmlNode[]): void {
+	if (kind === "footnote") view.footnotesTree = tree;
+	else view.endnotesTree = tree;
+}
+
+/** Lazily provision the two character/paragraph styles a note relies on. The
+ *  baseline catalog defines both — these calls just register the style nodes
+ *  in `styles.xml` if not already present, which avoids Word's fall-back to
+ *  Normal (no superscript on the marker, default font on the body). */
+export function ensureNoteStyles(view: DocView, kind: NoteKind): void {
+	const config = noteConfig(kind);
+	ensureStyle(view, config.referenceStyle);
+	ensureStyle(view, config.textStyle);
 }
 
 /** Word reserves -1 (separator) and 0 (continuationSeparator) as the boilerplate
@@ -240,6 +184,47 @@ export function NoteBody({
 	);
 }
 
+/** Body of a footnote that's being added under tracking: the entire run
+ *  content (back-reference marker + text) is wrapped in `<w:ins>` so accept
+ *  unwraps the runs (footnote becomes normal) and reject lets the post-pass
+ *  GC the now-orphan `<w:footnote>` wrapper. Matches Word's empirical shape
+ *  from `/tmp/fn-probe/add.docx` — the `<w:footnote>` wrapper itself is NOT
+ *  wrapped, only the inner runs. The paragraph mark stays bare too. */
+export function TrackedNoteBody({
+	config,
+	id,
+	text,
+	meta,
+}: {
+	config: NoteConfig;
+	id: string;
+	text: string;
+	meta: TrackedMeta;
+}): XmlNode {
+	const Note = config.kind === "footnote" ? w.footnote : w.endnote;
+	const BodyRef = config.kind === "footnote" ? w.footnoteRef : w.endnoteRef;
+	return (
+		<Note w-id={id}>
+			<w.p>
+				<w.pPr>
+					<w.pStyle w-val={config.textStyle} />
+				</w.pPr>
+				<Ins meta={meta}>
+					<w.r>
+						<w.rPr>
+							<w.rStyle w-val={config.referenceStyle} />
+						</w.rPr>
+						<BodyRef />
+					</w.r>
+					<w.r>
+						<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
+					</w.r>
+				</Ins>
+			</w.p>
+		</Note>
+	);
+}
+
 /** Splice `noteRun` into `paragraph` at the given character offset. Mirrors
  *  the run-splitting machinery in `cli/comments/helpers.tsx`: walks the
  *  paragraph in document order, descends into run-bearing wrappers
@@ -267,15 +252,6 @@ export function insertNoteReferenceAtOffset(
 		state.placed = true;
 	}
 }
-
-export class NoteOffsetOutOfRangeError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "NoteOffsetOutOfRangeError";
-	}
-}
-
-type PlacementState = { offset: number; placed: boolean };
 
 function walkAndPlace(
 	children: XmlNode[],
@@ -353,6 +329,13 @@ function walkAndPlace(
 	return out;
 }
 
+export class NoteOffsetOutOfRangeError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "NoteOffsetOutOfRangeError";
+	}
+}
+
 /** Strip every `<w:r>` wrapping a reference to `numericId` from the document
  *  tree. Used by `delete` so the body no longer points at a footnote/endnote
  *  whose `<w:footnote>` / `<w:endnote>` body we've removed. Walks recursively
@@ -402,57 +385,6 @@ function containsReference(
 		}
 	}
 	return false;
-}
-
-/** Lazily provision the two character/paragraph styles a note relies on. The
- *  baseline catalog defines both — these calls just register the style nodes
- *  in `styles.xml` if not already present, which avoids Word's fall-back to
- *  Normal (no superscript on the marker, default font on the body). */
-export function ensureNoteStyles(view: DocView, kind: NoteKind): void {
-	const config = noteConfig(kind);
-	ensureStyle(view, config.referenceStyle);
-	ensureStyle(view, config.textStyle);
-}
-
-/** Body of a footnote that's being added under tracking: the entire run
- *  content (back-reference marker + text) is wrapped in `<w:ins>` so accept
- *  unwraps the runs (footnote becomes normal) and reject lets the post-pass
- *  GC the now-orphan `<w:footnote>` wrapper. Matches Word's empirical shape
- *  from `/tmp/fn-probe/add.docx` — the `<w:footnote>` wrapper itself is NOT
- *  wrapped, only the inner runs. The paragraph mark stays bare too. */
-export function TrackedNoteBody({
-	config,
-	id,
-	text,
-	meta,
-}: {
-	config: NoteConfig;
-	id: string;
-	text: string;
-	meta: TrackedMeta;
-}): XmlNode {
-	const Note = config.kind === "footnote" ? w.footnote : w.endnote;
-	const BodyRef = config.kind === "footnote" ? w.footnoteRef : w.endnoteRef;
-	return (
-		<Note w-id={id}>
-			<w.p>
-				<w.pPr>
-					<w.pStyle w-val={config.textStyle} />
-				</w.pPr>
-				<Ins meta={meta}>
-					<w.r>
-						<w.rPr>
-							<w.rStyle w-val={config.referenceStyle} />
-						</w.rPr>
-						<BodyRef />
-					</w.r>
-					<w.r>
-						<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
-					</w.r>
-				</Ins>
-			</w.p>
-		</Note>
-	);
 }
 
 /** Wrap an existing note's body content in `<w:del>` (with `<w:t>` →
@@ -556,3 +488,71 @@ function isBareWhitespaceRun(run: XmlNode): boolean {
 	}
 	return saw;
 }
+
+/** Footnotes and endnotes share their entire mechanics — separate parts, but
+ *  identical XML shape, same id-allocation rules (Word reserves -1/0 for the
+ *  separator/continuationSeparator boilerplate), same reference-run pattern,
+ *  same body-paragraph shape. We parameterize on this kind everywhere instead
+ *  of duplicating two near-identical modules. */
+export function noteConfig(kind: NoteKind): NoteConfig {
+	return kind === "footnote" ? FOOTNOTE_CONFIG : ENDNOTE_CONFIG;
+}
+
+export type NoteKind = "footnote" | "endnote";
+
+export type NoteConfig = {
+	kind: NoteKind;
+	idPrefix: "fn" | "en";
+	rootTag: "w:footnotes" | "w:endnotes";
+	itemTag: "w:footnote" | "w:endnote";
+	referenceTag: "w:footnoteReference" | "w:endnoteReference";
+	bodyRefTag: "w:footnoteRef" | "w:endnoteRef";
+	textStyle: "FootnoteText" | "EndnoteText";
+	referenceStyle: "FootnoteReference" | "EndnoteReference";
+	partName: "word/footnotes.xml" | "word/endnotes.xml";
+	target: "footnotes.xml" | "endnotes.xml";
+	relationshipType: string;
+	contentType: string;
+};
+
+type PlacementState = { offset: number; placed: boolean };
+
+const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const FOOTNOTES_REL_TYPE =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
+const ENDNOTES_REL_TYPE =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
+const FOOTNOTES_CONTENT_TYPE =
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+const ENDNOTES_CONTENT_TYPE =
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml";
+
+const FOOTNOTE_CONFIG: NoteConfig = {
+	kind: "footnote",
+	idPrefix: "fn",
+	rootTag: "w:footnotes",
+	itemTag: "w:footnote",
+	referenceTag: "w:footnoteReference",
+	bodyRefTag: "w:footnoteRef",
+	textStyle: "FootnoteText",
+	referenceStyle: "FootnoteReference",
+	partName: "word/footnotes.xml",
+	target: "footnotes.xml",
+	relationshipType: FOOTNOTES_REL_TYPE,
+	contentType: FOOTNOTES_CONTENT_TYPE,
+};
+
+const ENDNOTE_CONFIG: NoteConfig = {
+	kind: "endnote",
+	idPrefix: "en",
+	rootTag: "w:endnotes",
+	itemTag: "w:endnote",
+	referenceTag: "w:endnoteReference",
+	bodyRefTag: "w:endnoteRef",
+	textStyle: "EndnoteText",
+	referenceStyle: "EndnoteReference",
+	partName: "word/endnotes.xml",
+	target: "endnotes.xml",
+	relationshipType: ENDNOTES_REL_TYPE,
+	contentType: ENDNOTES_CONTENT_TYPE,
+};

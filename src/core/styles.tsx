@@ -69,6 +69,50 @@ export function ensureReferencedStyle(
 	if (styleId && isBaselineStyle(styleId)) ensureStyle(view, styleId);
 }
 
+/** Provision the baseline character styles referenced by any run's `runStyle`.
+ * Mirrors `ensureReferencedStyle` for paragraphs but walks a list of runs.
+ * Called by insert/edit (and the code-block helper) so a `--runs` payload that
+ * sets `runStyle: "Code"` lands the Code definition in styles.xml. Accepts a
+ * heterogeneous `Run[]`-like iterable — only TextRun carries `runStyle`, but
+ * the duck-type read here keeps the caller from having to filter first. */
+export function ensureReferencedRunStyles(
+	view: DocView,
+	runs: Iterable<unknown>,
+): void {
+	const seen = new Set<string>();
+	for (const run of runs) {
+		const styleId =
+			typeof run === "object" && run !== null && "runStyle" in run
+				? (run as { runStyle?: unknown }).runStyle
+				: undefined;
+		if (typeof styleId !== "string" || seen.has(styleId)) continue;
+		seen.add(styleId);
+		ensureReferencedStyle(view, styleId);
+	}
+}
+
+/** Provision a custom (non-baseline) `<w:style>` whose definition the caller
+ * supplies via `build`. No-op if a style with `styleId` already exists. Seeds
+ * Normal first so any basedOn references in `build()` resolve. Used by the
+ * code-block package to provision `CodeBlock-LANG` styles on demand — the
+ * language is metadata stored in the styleId itself, so the catalog can't be
+ * a static BASELINE entry. */
+export function ensureCustomStyle(
+	view: DocView,
+	styleId: string,
+	build: () => XmlNode,
+): void {
+	const tree = ensureStylesPart(view);
+	const root = XmlNode.findRoot(tree, "w:styles");
+	if (!root) throw new Error("expected <w:styles> root in stylesTree");
+	ensureStyleNode(root, "Normal");
+	const exists = root
+		.findChildren("w:style")
+		.some((child) => child.getAttribute("w:styleId") === styleId);
+	if (exists) return;
+	root.children.push(build());
+}
+
 function ensureStylesPart(view: DocView): XmlNode[] {
 	if (view.stylesTree) return view.stylesTree;
 	view.stylesTree = XmlNode.parse(EMPTY_STYLES_XML);

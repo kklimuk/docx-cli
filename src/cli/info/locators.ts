@@ -28,6 +28,8 @@ Span locators (within a single paragraph):
   tT:rRcC:pK:S-E  Characters S..E of a cell paragraph
 
 Range locators (across blocks):
+  pN-pM           Whole-paragraph range pN..pM (inclusive) — used by
+                  edit, delete, wc to operate on a contiguous span as a unit
   pN:S-pM:E       From char S of paragraph N to char E of paragraph M
 
 Entity locators:
@@ -50,6 +52,7 @@ Table structure locators (for the "docx tables" verbs):
 Examples:
   p3              -> the entire paragraph p3
   p3:5-20         -> characters 5..20 of p3
+  p3-p7           -> paragraphs p3..p7 inclusive (as a unit)
   p3:5-p5:10      -> from char 5 of p3 to char 10 of p5
   s0              -> first section break (typically the front-matter section)
   c1              -> comment c1
@@ -79,6 +82,12 @@ const JSON_REFERENCE = {
 		semantics:
 			"Characters S..E within paragraph N (start inclusive, end exclusive)",
 		cellSyntax: "tT:rRcC:pK:S-E",
+	},
+	blockRangeLocator: {
+		syntax: "pN-pM",
+		example: "p3-p7",
+		semantics:
+			"Whole paragraphs pN..pM inclusive, as a unit. Accepted by edit, delete, and wc; endpoints must share a parent (no cross-cell ranges).",
 	},
 	rangeLocator: {
 		syntax: "pN:S-pM:E",

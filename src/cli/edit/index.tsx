@@ -1,16 +1,18 @@
 import {
 	applyColumns,
 	applySectionType,
+	type BlockRangeReference,
 	type BlockReference,
-	convertTextToDelText,
 	createRevisionAllocator,
-	Del,
 	type DocView,
-	Ins,
 	isSectionType,
 	isTrackChangesEnabled,
+	LocatorParseError,
+	LocatorResolveError,
+	parseLocator,
 	type Run,
 	resolveAuthor,
+	resolveBlockRange,
 	resolveDate,
 	type SectionType,
 	saveDocView,
@@ -18,9 +20,19 @@ import {
 	wrapSectPrChange,
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
-import { isRunBearingWrapper, XmlNode } from "@core/parser";
-import { ensureReferencedStyle } from "@core/styles";
+import {
+	buildCodeBlockParagraphs,
+	ensureCodeBlockStyles,
+} from "@core/code-block";
+import type { XmlNode } from "@core/parser";
+import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
+import {
+	applyTrackedRangeReplace,
+	applyUntrackedRangeReplace,
+	applyFormattingPreservingEdit as coreApplyFormattingPreservingEdit,
+} from "@core/track-changes/replace";
 import { parseArgs } from "util";
+import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
 	fail,
@@ -31,25 +43,24 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	buildTrackedRuns,
-	buildUntrackedRuns,
-	diffTokens,
-	extractOldTokens,
-	tokenize,
-} from "./preserve-formatting";
 
-const HELP = `docx edit — replace a paragraph or modify a section at a locator
+const HELP = `docx edit — replace a paragraph (or paragraph range) or modify a section
 
 Usage:
   docx edit FILE [options]
 
 Locator (required):
-  --at LOCATOR      Block to edit (paragraph pN or section sN)
+  --at LOCATOR      What to edit. One of:
+                      pN          a single paragraph
+                      pN-pM       a contiguous paragraph range (replace as a unit)
+                      sN          a section break
 
-Paragraph content (one required for paragraph locators):
+Paragraph content (one required for paragraph / range locators):
   --text TEXT       Replace with a single-run paragraph
   --runs JSON       Replace with custom runs (Run[] JSON)
+  --code TEXT       Replace with a code block — newlines split into one
+                    CodeBlock-styled paragraph per source line
+  --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin)
 
 Paragraph options:
   --style NAME       Paragraph style (e.g., Heading1)
@@ -60,17 +71,22 @@ Run options (only with --text):
   --bold            Bold
   --italic          Italic
 
+Code options (only with --code / --code-file):
+  --language LANG   Syntax-highlight via lowlight (37 common languages bundled).
+                    Survives round-trip via a CodeBlock-LANG pStyle suffix.
+
 Section options (for section locators sN):
   --columns N        Number of columns for the targeted section
   --type T           continuous | nextPage | evenPage | oddPage | nextColumn
 
-Formatting (for --text):
+Formatting (single-paragraph --text only):
   By default --text preserves run-level formatting (bold/italic/color/etc.)
   on words shared between the old and new text via a word-level diff. New
   words inherit formatting from the nearest unchanged neighbor. Pass
   --no-formatting to fall back to a single fresh run with no formatting.
   Passing --color/--bold/--italic also bypasses preservation — those flags
-  apply uniformly to the new paragraph.
+  apply uniformly to the new paragraph. Range edits (pN-pM) always rewrite
+  the span wholesale; per-word formatting preservation is not applied.
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
@@ -84,6 +100,8 @@ General options:
 Examples:
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
   docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
+  docx edit doc.docx --at p2-p5 --text "Rewrite this section as one paragraph."
+  docx edit doc.docx --at p3-p7 --code-file new-snippet.go --language go
   docx edit doc.docx --at s0 --columns 2 --type continuous
 `;
 
@@ -94,6 +112,19 @@ export async function run(args: string[]): Promise<number> {
 	const view = await openOrFail(opts.filePath);
 	if (typeof view === "number") return view;
 
+	// Range locator: `pN-pM`. Replaces a span of paragraphs as a unit. Section
+	// edits don't make sense here (sN has its own grammar).
+	if (isBlockRangeLocator(opts.locator)) {
+		if (opts.spec.kind === "section") {
+			return fail(
+				"USAGE",
+				"Range locators (pN-pM) don't accept --columns/--type — use sN for section edits",
+				HELP,
+			);
+		}
+		return commitRangeReplacement(view, opts);
+	}
+
 	const blockRef = await resolveBlockOrFail(view, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
@@ -101,7 +132,88 @@ export async function run(args: string[]): Promise<number> {
 		return commitSectionPropertyEdit(view, blockRef, opts.spec, opts);
 	}
 	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
+	if (opts.spec.kind === "runs") {
+		ensureReferencedRunStyles(view, opts.spec.runs);
+	}
 	return commitParagraphReplacement(view, blockRef, opts.spec, opts);
+}
+
+function isBlockRangeLocator(locator: string): boolean {
+	return /^p\d+-p\d+$/.test(locator);
+}
+
+/** Range replace path: resolve the blockRange, build new paragraphs from the
+ *  spec, splice them in via the tracked or untracked range-replace helper.
+ *  No formatting-preservation here — Word's empirical model for paragraph-
+ *  range replace is "del all old, ins all new" (no cross-paragraph LCS),
+ *  and we match it. */
+async function commitRangeReplacement(
+	view: DocView,
+	opts: ValidatedOptions,
+): Promise<number> {
+	if (opts.spec.kind === "section") {
+		// Type narrowing — caller already rejected this above.
+		return fail("USAGE", "Section edits don't support range locators", HELP);
+	}
+
+	let rangeRef: BlockRangeReference;
+	try {
+		const locator = parseLocator(opts.locator);
+		if (locator.kind !== "blockRange") {
+			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
+		}
+		rangeRef = resolveBlockRange(
+			view,
+			locator.startBlockId,
+			locator.endBlockId,
+		);
+	} catch (err) {
+		if (err instanceof LocatorParseError) {
+			return fail("INVALID_LOCATOR", err.message);
+		}
+		if (err instanceof LocatorResolveError) {
+			return fail("BLOCK_NOT_FOUND", err.message);
+		}
+		throw err;
+	}
+
+	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
+	if (opts.spec.kind === "runs") {
+		ensureReferencedRunStyles(view, opts.spec.runs);
+	}
+	if (opts.spec.kind === "code") {
+		ensureCodeBlockStyles(view, opts.spec.language);
+	}
+
+	const tracked = isTrackChangesEnabled(view);
+	if (tracked) {
+		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
+		if (guard !== null) return guard;
+	}
+
+	if (opts.dryRun) return respondDryRun(opts);
+
+	const newParagraphs = buildNewParagraphs(opts.spec);
+	if (tracked) {
+		applyTrackedRangeReplace(
+			view,
+			rangeRef.parent,
+			rangeRef.startIndex,
+			rangeRef.endIndex,
+			newParagraphs,
+			opts.authorFlag,
+		);
+	} else {
+		applyUntrackedRangeReplace(
+			rangeRef.parent,
+			rangeRef.startIndex,
+			rangeRef.endIndex,
+			newParagraphs,
+		);
+	}
+
+	await saveDocView(view, opts.outputPath);
+	return emitEditAck(opts);
 }
 
 async function parseAndValidateOptions(
@@ -157,6 +269,9 @@ const OPTION_SPEC = {
 	at: { type: "string" },
 	text: { type: "string" },
 	runs: { type: "string" },
+	code: { type: "string" },
+	"code-file": { type: "string" },
+	language: { type: "string" },
 	columns: { type: "string" },
 	type: { type: "string" },
 	style: { type: "string" },
@@ -192,7 +307,13 @@ type EditSpec =
 			format: TextFormatting;
 			paragraphOptions: ParagraphOptions;
 	  }
-	| { kind: "runs"; runs: Run[]; paragraphOptions: ParagraphOptions };
+	| { kind: "runs"; runs: Run[]; paragraphOptions: ParagraphOptions }
+	| {
+			kind: "code";
+			content: string;
+			language?: string;
+			paragraphOptions: ParagraphOptions;
+	  };
 
 type TextFormatting = {
 	color?: string;
@@ -233,11 +354,36 @@ async function validateParagraphEdit(
 	}
 	const text = values.text as string | undefined;
 	const runsJson = values.runs as string | undefined;
-	if (!text && !runsJson) {
-		return fail("USAGE", "Missing content: pass --text or --runs", HELP);
+	const codeInline = values.code as string | undefined;
+	const codeFile = values["code-file"] as string | undefined;
+	const language = values.language as string | undefined;
+
+	const contentFlags = [
+		text !== undefined,
+		runsJson !== undefined,
+		codeInline !== undefined,
+		codeFile !== undefined,
+	].filter(Boolean).length;
+	if (contentFlags === 0) {
+		return fail(
+			"USAGE",
+			"Missing content: pass --text, --runs, --code, or --code-file",
+			HELP,
+		);
 	}
-	if (text && runsJson) {
-		return fail("USAGE", "Pass either --text or --runs, not both", HELP);
+	if (contentFlags > 1) {
+		return fail(
+			"USAGE",
+			"Pass only one of --text, --runs, --code, --code-file",
+			HELP,
+		);
+	}
+	if (
+		language !== undefined &&
+		codeInline === undefined &&
+		codeFile === undefined
+	) {
+		return fail("USAGE", "--language requires --code or --code-file", HELP);
 	}
 
 	if (text !== undefined) {
@@ -253,9 +399,39 @@ async function validateParagraphEdit(
 		};
 	}
 
+	if (codeInline !== undefined || codeFile !== undefined) {
+		const content =
+			codeInline !== undefined
+				? codeInline
+				: await loadCodeFile(codeFile as string);
+		if (typeof content === "number") return content;
+		return {
+			kind: "code",
+			content,
+			...(language ? { language } : {}),
+			paragraphOptions,
+		};
+	}
+
 	const runs = await parseRunsArg(runsJson as string);
 	if (typeof runs === "number") return runs;
 	return { kind: "runs", runs, paragraphOptions };
+}
+
+/** Read content for `--code-file PATH`. `-` means stdin (handled the same as
+ *  `insert --code-file -`). Mirrors `cli/insert/index.tsx::resolveCodeSpec`. */
+async function loadCodeFile(path: string): Promise<string | number> {
+	try {
+		return path === "-"
+			? await new Response(Bun.stdin.stream()).text()
+			: await Bun.file(path).text();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --code-file ${path}: ${message}`,
+		);
+	}
 }
 
 async function parseSectionFlags(
@@ -367,7 +543,7 @@ async function commitSectionPropertyEdit(
 async function commitParagraphReplacement(
 	view: DocView,
 	blockRef: BlockReference,
-	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }>,
+	spec: ParagraphContentSpec,
 	opts: ValidatedOptions,
 ): Promise<number> {
 	const targetIndex = blockRef.parent.indexOf(blockRef.node);
@@ -383,10 +559,11 @@ async function commitParagraphReplacement(
 	const tracked = isTrackChangesEnabled(view);
 
 	if (canPreserveFormatting(spec, opts)) {
-		applyFormattingPreservingEdit(
+		coreApplyFormattingPreservingEdit(
 			view,
 			blockRef.node,
-			spec,
+			spec.text,
+			spec.paragraphOptions,
 			opts.authorFlag,
 			tracked,
 		);
@@ -394,17 +571,38 @@ async function commitParagraphReplacement(
 		return emitEditAck(opts);
 	}
 
-	const newParagraph = buildReplacementParagraph(spec);
+	if (spec.kind === "code") {
+		ensureCodeBlockStyles(view, spec.language);
+	}
+	const newParagraphs = buildNewParagraphs(spec);
 
 	if (tracked) {
-		applyTrackedEdit(view, blockRef.node, newParagraph, opts.authorFlag);
+		applyTrackedRangeReplace(
+			view,
+			blockRef.parent,
+			targetIndex,
+			targetIndex,
+			newParagraphs,
+			opts.authorFlag,
+		);
 	} else {
-		blockRef.parent.splice(targetIndex, 1, newParagraph);
+		applyUntrackedRangeReplace(
+			blockRef.parent,
+			targetIndex,
+			targetIndex,
+			newParagraphs,
+		);
 	}
 
 	await saveDocView(view, opts.outputPath);
 	return emitEditAck(opts);
 }
+
+/** The paragraph-content specs that produce one or more new paragraphs. */
+type ParagraphContentSpec = Extract<
+	EditSpec,
+	{ kind: "text" } | { kind: "runs" } | { kind: "code" }
+>;
 
 /** The formatting-preservation path applies only to `--text` (not `--runs`,
  *  which already lets the agent specify per-run formatting). It also bows
@@ -412,7 +610,7 @@ async function commitParagraphReplacement(
  *  apply uniformly to the new paragraph, which conflicts with per-token
  *  inheritance. `--no-formatting` is the explicit opt-out. */
 function canPreserveFormatting(
-	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }>,
+	spec: ParagraphContentSpec,
 	opts: ValidatedOptions,
 ): spec is Extract<EditSpec, { kind: "text" }> {
 	if (opts.noFormatting) return false;
@@ -422,100 +620,31 @@ function canPreserveFormatting(
 	return true;
 }
 
-function applyFormattingPreservingEdit(
-	view: DocView,
-	existingParagraph: XmlNode,
-	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }> & {
-		kind: "text";
-	},
-	authorFlag: string | undefined,
-	tracked: boolean,
-): void {
-	const oldTokens = extractOldTokens(existingParagraph);
-	const newTokens = tokenize(spec.text);
-	const ops = diffTokens(oldTokens, newTokens);
-
-	let runChildren: XmlNode[];
-	if (tracked) {
-		const allocator = createRevisionAllocator(view);
-		const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
-		const mintMeta = (): TrackedMeta => ({
-			...baseMeta,
-			revisionId: allocator.next(),
-		});
-		runChildren = buildTrackedRuns(ops, mintMeta);
-	} else {
-		runChildren = buildUntrackedRuns(ops);
+/** Build the new paragraph(s) for a paragraph-content spec. Text/runs produce
+ *  a single paragraph; code produces one paragraph per source line via
+ *  `buildCodeBlockParagraphs`. The single-anchor edit path routes a multi-
+ *  paragraph result through `applyTrackedRangeReplace` / `applyUntrackedRangeReplace`
+ *  with `startIndex === endIndex` (M=1, N=K), so multi-line code lands cleanly. */
+function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
+	if (spec.kind === "code") {
+		return buildCodeBlockParagraphs(spec.content, spec.language);
 	}
-
-	// Preserve <w:pPr>, bookmarks, comment markers, and other non-run-
-	// bearing children. Strip top-level <w:r> AND every run-bearing
-	// wrapper (`<w:ins>`, `<w:del>`, `<w:moveFrom>`, `<w:moveTo>`,
-	// `<w:hyperlink>`, `<w:fldSimple>`, `<w:smartTag>`) — `extractOldTokens`
-	// already flattened the visible-in-accepted-view wrappers into the
-	// diff input, and the new diff runs replace them. Without this strip
-	// the wrappers' inner text would leak into the output alongside the
-	// diff runs (the bug from agent feedback: chained edits + hyperlinked
-	// paragraphs duplicating text).
-	// Optional --style / --alignment tweaks the existing pPr in place.
-	const rebuilt: XmlNode[] = [];
-	for (const child of existingParagraph.children) {
-		if (child.tag === "w:r") continue;
-		if (isRunBearingWrapper(child.tag)) continue;
-		rebuilt.push(child);
-	}
-	applyParagraphOptionsInPlace(rebuilt, spec.paragraphOptions);
-	rebuilt.push(...runChildren);
-	existingParagraph.children = rebuilt;
-}
-
-/** Apply `--style` / `--alignment` to the paragraph's existing `<w:pPr>`,
- *  creating one if needed. Mirrors the simple-emit path's behavior without
- *  building a fresh paragraph. */
-function applyParagraphOptionsInPlace(
-	rebuilt: XmlNode[],
-	options: ParagraphOptions,
-): void {
-	if (!options.style && !options.alignment) return;
-	let pPr = rebuilt.find((child) => child.tag === "w:pPr");
-	if (!pPr) {
-		pPr = new XmlNode("w:pPr");
-		rebuilt.unshift(pPr);
-	}
-	if (options.style) {
-		const existingStyle = pPr.findChild("w:pStyle");
-		if (existingStyle) {
-			existingStyle.setAttribute("w:val", options.style);
-		} else {
-			const styleNode = new XmlNode("w:pStyle", { "w:val": options.style });
-			pPr.children.unshift(styleNode);
-		}
-	}
-	if (options.alignment) {
-		const existingJc = pPr.findChild("w:jc");
-		if (existingJc) {
-			existingJc.setAttribute("w:val", options.alignment);
-		} else {
-			pPr.children.push(new XmlNode("w:jc", { "w:val": options.alignment }));
-		}
-	}
-}
-
-function buildReplacementParagraph(
-	spec: Extract<EditSpec, { kind: "text" } | { kind: "runs" }>,
-): XmlNode {
 	if (spec.kind === "text") {
-		return (
-			<Paragraph
-				text={spec.text}
-				{...spec.paragraphOptions}
-				{...(spec.format.color ? { color: spec.format.color } : {})}
-				{...(spec.format.bold ? { bold: true as const } : {})}
-				{...(spec.format.italic ? { italic: true as const } : {})}
-			/>
-		);
+		return [
+			(
+				<Paragraph
+					text={spec.text}
+					{...spec.paragraphOptions}
+					{...(spec.format.color ? { color: spec.format.color } : {})}
+					{...(spec.format.bold ? { bold: true as const } : {})}
+					{...(spec.format.italic ? { italic: true as const } : {})}
+				/>
+			) as XmlNode,
+		];
 	}
-	return <Paragraph runs={spec.runs} {...spec.paragraphOptions} />;
+	return [
+		(<Paragraph runs={spec.runs} {...spec.paragraphOptions} />) as XmlNode,
+	];
 }
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {
@@ -538,79 +667,4 @@ async function emitEditAck(opts: ValidatedOptions): Promise<number> {
 		locator: opts.locator,
 	});
 	return EXIT.OK;
-}
-
-function applyTrackedEdit(
-	view: DocView,
-	existingParagraph: XmlNode,
-	newParagraph: XmlNode,
-	authorFlag: string | undefined,
-): void {
-	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
-	const mintMeta = (): TrackedMeta => ({
-		...baseMeta,
-		revisionId: allocator.next(),
-	});
-
-	// Treat run-bearing wrappers as part of the deletable old content:
-	// flatten their `<w:r>` children into oldRuns. Without this, prior
-	// `<w:ins>`/`<w:del>`/`<w:hyperlink>`/etc. wrappers would persist in
-	// `oldNonRuns` and leak alongside the new del+ins blocks (the bug
-	// from agent feedback: chained edits + hyperlinked paragraphs
-	// duplicating text).
-	const oldRuns: XmlNode[] = [];
-	const oldNonRuns: XmlNode[] = [];
-	for (const child of existingParagraph.children) {
-		if (child.tag === "w:r") {
-			oldRuns.push(child);
-			continue;
-		}
-		if (isRunBearingWrapper(child.tag)) {
-			collectRunsFromWrapper(child, oldRuns);
-			continue;
-		}
-		oldNonRuns.push(child);
-	}
-
-	let newPPr: XmlNode | null = null;
-	const newRuns: XmlNode[] = [];
-	for (const child of newParagraph.children) {
-		if (child.tag === "w:pPr") newPPr = child;
-		else if (child.tag === "w:r") newRuns.push(child);
-	}
-
-	const rebuilt: XmlNode[] = [];
-	if (newPPr) {
-		rebuilt.push(newPPr);
-		for (const child of oldNonRuns) {
-			if (child.tag !== "w:pPr") rebuilt.push(child);
-		}
-	} else {
-		rebuilt.push(...oldNonRuns);
-	}
-	if (oldRuns.length > 0) {
-		const deletedRuns = oldRuns.map((run) => convertTextToDelText(run));
-		rebuilt.push(<Del meta={mintMeta()}>{deletedRuns}</Del>);
-	}
-	if (newRuns.length > 0) {
-		rebuilt.push(<Ins meta={mintMeta()}>{newRuns}</Ins>);
-	}
-	existingParagraph.children = rebuilt;
-}
-
-/** Recursively collect every `<w:r>` from inside a run-bearing wrapper.
- *  Used by the legacy whole-paragraph tracked edit path so that prior
- *  tracked-change wrappers don't leak into the rebuilt paragraph
- *  alongside the new del+ins blocks. */
-function collectRunsFromWrapper(wrapper: XmlNode, out: XmlNode[]): void {
-	for (const child of wrapper.children) {
-		if (child.tag === "w:r") {
-			out.push(child);
-			continue;
-		}
-		if (isRunBearingWrapper(child.tag)) {
-			collectRunsFromWrapper(child, out);
-		}
-	}
 }

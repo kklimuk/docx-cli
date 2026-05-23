@@ -1,5 +1,6 @@
 import type { DocView, TrackedChangeKind } from "@core";
 import { saveDocView } from "@core";
+import { type NoteKind, noteConfig } from "@core/notes";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
@@ -184,25 +185,9 @@ export function collectTrackedChanges(view: DocView): ChangeFound[] {
 	// `<w:ins>`/`<w:del>` pairs inside the body, and there's no ambiguity.
 	const pairedNotes = pairedNoteIdsFromDocBody(out);
 	if (view.footnotesTree)
-		visitNotePart(
-			view.footnotesTree,
-			"w:footnotes",
-			"w:footnote",
-			pairedNotes,
-			"footnote",
-			out,
-			counter,
-		);
+		visitNotePart(view.footnotesTree, "footnote", pairedNotes, out, counter);
 	if (view.endnotesTree)
-		visitNotePart(
-			view.endnotesTree,
-			"w:endnotes",
-			"w:endnote",
-			pairedNotes,
-			"endnote",
-			out,
-			counter,
-		);
+		visitNotePart(view.endnotesTree, "endnote", pairedNotes, out, counter);
 
 	return out;
 }
@@ -217,17 +202,16 @@ function pairedNoteIdsFromDocBody(docTargets: ChangeFound[]): Set<string> {
 
 function visitNotePart(
 	tree: XmlNode[],
-	rootTag: string,
-	itemTag: string,
+	kind: NoteKind,
 	pairedNotes: Set<string>,
-	kind: "footnote" | "endnote",
 	out: ChangeFound[],
 	counter: { value: number },
 ): void {
-	const root = XmlNode.findRoot(tree, rootTag);
+	const config = noteConfig(kind);
+	const root = XmlNode.findRoot(tree, config.rootTag);
 	if (!root) return;
 	for (const note of root.children) {
-		if (note.tag !== itemTag) continue;
+		if (note.tag !== config.itemTag) continue;
 		// Skip Word's reserved boilerplate (separator / continuationSeparator)
 		// — they're never tracked.
 		if (note.getAttribute("w:type")) continue;
@@ -640,7 +624,12 @@ function cellGridSpan(cell: XmlNode): number {
 /** Accept-del-paragraph-mark: the paragraph break is being deleted, so this
  * paragraph absorbs the next paragraph's runs and the next paragraph
  * vanishes. Per ECMA-376 §17.13.5.4. The current paragraph's pPr is
- * preserved; the next paragraph's pPr is dropped. */
+ * preserved; the next paragraph's pPr is dropped — EXCEPT for `<w:sectPr>`,
+ * which represents the section ending at that paragraph break. The merged
+ * paragraph is the new end of that section, so its sectPr is lifted onto
+ * the current paragraph's pPr (creating one if needed). Without this,
+ * range edits that span a section boundary would silently lose the section
+ * break on accept. */
 function mergeParagraphWithNext(
 	paragraph: XmlNode,
 	paragraphParent: XmlNode[],
@@ -649,12 +638,27 @@ function mergeParagraphWithNext(
 	if (idx === -1) return;
 	const next = paragraphParent[idx + 1];
 	if (!next || next.tag !== "w:p") return;
+	const nextSectPr = next.findChild("w:pPr")?.findChild("w:sectPr");
 	const toMove: XmlNode[] = [];
 	for (const child of next.children) {
 		if (child.tag === "w:pPr") continue;
 		toMove.push(child);
 	}
 	paragraph.children.push(...toMove);
+	if (nextSectPr) {
+		let pPr = paragraph.findChild("w:pPr");
+		if (!pPr) {
+			pPr = new XmlNode("w:pPr");
+			paragraph.children.unshift(pPr);
+		}
+		const existing = pPr.findChild("w:sectPr");
+		if (existing) {
+			const existingIdx = pPr.children.indexOf(existing);
+			pPr.children.splice(existingIdx, 1, nextSectPr);
+		} else {
+			pPr.children.push(nextSectPr);
+		}
+	}
 	paragraphParent.splice(idx + 1, 1);
 }
 
@@ -701,12 +705,12 @@ function collectAffectedNotes(targets: ChangeFound[]): Set<string> {
 }
 
 function collectNoteRefs(node: XmlNode, out: Set<string>): void {
-	if (node.tag === "w:footnoteReference") {
+	if (node.tag === noteConfig("footnote").referenceTag) {
 		const id = node.getAttribute("w:id");
 		if (id) out.add(`footnote:${id}`);
 		return;
 	}
-	if (node.tag === "w:endnoteReference") {
+	if (node.tag === noteConfig("endnote").referenceTag) {
 		const id = node.getAttribute("w:id");
 		if (id) out.add(`endnote:${id}`);
 		return;
@@ -724,23 +728,25 @@ function applyNotePairing(view: DocView, affected: Set<string>): void {
 	if (affected.size === 0) return;
 	for (const key of affected) {
 		const colon = key.indexOf(":");
-		const kind = key.slice(0, colon) as "footnote" | "endnote";
+		const kind = key.slice(0, colon) as NoteKind;
 		const noteId = key.slice(colon + 1);
 		const tree = kind === "footnote" ? view.footnotesTree : view.endnotesTree;
 		if (!tree) continue;
-		const rootTag = kind === "footnote" ? "w:footnotes" : "w:endnotes";
-		const itemTag = kind === "footnote" ? "w:footnote" : "w:endnote";
-		const refTag =
-			kind === "footnote" ? "w:footnoteReference" : "w:endnoteReference";
-		const root = XmlNode.findRoot(tree, rootTag);
+		const config = noteConfig(kind);
+		const root = XmlNode.findRoot(tree, config.rootTag);
 		if (!root) continue;
 		const noteIndex = root.children.findIndex(
-			(child) => child.tag === itemTag && child.getAttribute("w:id") === noteId,
+			(child) =>
+				child.tag === config.itemTag && child.getAttribute("w:id") === noteId,
 		);
 		if (noteIndex === -1) continue;
 		const note = root.children[noteIndex];
 		if (!note) continue;
-		const liveRefs = countLiveReferences(view.documentTree, refTag, noteId);
+		const liveRefs = countLiveReferences(
+			view.documentTree,
+			config.referenceTag,
+			noteId,
+		);
 		if (liveRefs === 0) {
 			root.children.splice(noteIndex, 1);
 			continue;

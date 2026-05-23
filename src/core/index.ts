@@ -42,6 +42,7 @@ export type {
 	TrackedChangeKind,
 } from "./ast/types";
 export {
+	type BlockRangeReference,
 	type BlockTarget,
 	type Locator,
 	LocatorParseError,
@@ -49,6 +50,7 @@ export {
 	locatorToBlockTarget,
 	parseLocator,
 	resolveBlock,
+	resolveBlockRange,
 } from "./locators";
 export { PkgError } from "./package";
 export { ensureContentTypeDefault, nextRelationshipId } from "./package/parts";

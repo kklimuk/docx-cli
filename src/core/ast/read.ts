@@ -605,6 +605,23 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		const value = sizeNode.getAttribute("w:val");
 		if (value) run.sizeHalfPoints = Number(value);
 	}
+
+	const styleNode = runProperties.findChild("w:rStyle");
+	if (styleNode) {
+		const value = styleNode.getAttribute("w:val");
+		// Skip FootnoteReference/EndnoteReference/CommentReference — those style
+		// markers are part of the (foot|end)note/comment infrastructure and are
+		// surfaced via the dedicated AST run types (footnoteRef, commentReference);
+		// preserving them on the underlying TextRun would double-tag.
+		if (
+			value &&
+			value !== "FootnoteReference" &&
+			value !== "EndnoteReference" &&
+			value !== "CommentReference"
+		) {
+			run.runStyle = value;
+		}
+	}
 }
 
 function readImageFromDrawing(

@@ -1,6 +1,7 @@
 export {
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
+	partitionParagraphRuns,
 	RUN_BEARING_WRAPPER_TAGS,
 	runTextLength,
 	sliceRun,

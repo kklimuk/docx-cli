@@ -15,6 +15,10 @@ import {
 	type TextRun,
 	type TrackedChange,
 } from "@core";
+import {
+	codeBlockLanguageFromStyleId,
+	isCodeBlockStyleId,
+} from "@core/code-block";
 
 export type MarkdownView = "current" | "accepted" | "baseline";
 
@@ -66,9 +70,32 @@ export function renderMarkdown(
 	};
 
 	const parts: string[] = [];
-	for (const block of blocks) {
+	let cursor = 0;
+	while (cursor < blocks.length) {
+		const block = blocks[cursor];
+		if (!block) {
+			cursor++;
+			continue;
+		}
+		// Collapse a run of CodeBlock paragraphs into one fenced GFM block.
+		// Walk forward as long as adjacent blocks are CodeBlock paragraphs;
+		// emit one ```...``` for the group. Locator comments live on the fence
+		// (start/end) rather than per-line, so the block reads cleanly.
+		if (isCodeBlockParagraph(block)) {
+			let lookahead = cursor + 1;
+			while (lookahead < blocks.length) {
+				const next = blocks[lookahead];
+				if (!next || !isCodeBlockParagraph(next)) break;
+				lookahead++;
+			}
+			const group = blocks.slice(cursor, lookahead) as Paragraph[];
+			parts.push(renderCodeBlockGroup(group, ctx));
+			cursor = lookahead;
+			continue;
+		}
 		const rendered = renderBlock(block, ctx);
 		if (rendered !== null) parts.push(rendered);
+		cursor++;
 	}
 	const definitions: string[] = [];
 	if (options.showComments) {
@@ -154,6 +181,61 @@ function renderBlock(block: Block, ctx: RenderContext): string | null {
 	if (block.type === "table") return renderTable(block, ctx);
 	if (block.type === "sectionBreak") return `--- <!-- ${block.id} -->`;
 	return null;
+}
+
+function isCodeBlockParagraph(block: Block): block is Paragraph {
+	return block.type === "paragraph" && isCodeBlockStyleId(block.style);
+}
+
+/** Collapse a run of CodeBlock paragraphs into a GFM fenced block. Token
+ *  formatting (the colors lowlight applied on insert) gets stripped — the
+ *  fenced rendering loses syntax-highlighting fidelity but stays a faithful
+ *  source code representation, which is the right trade-off for a markdown
+ *  view. Locator comments mark the fence start/end rather than each line.
+ *  The language tag on the opening fence comes from the first paragraph's
+ *  `CodeBlock-LANG` pStyle suffix (or empty for the bare `CodeBlock`).
+ *
+ *  Tracked-change references inside the group's runs (someone edited a line
+ *  under tracking) are collected into `ctx.referencedTrackedChanges` so the
+ *  current-view footnote appendix still surfaces them — even though their
+ *  CriticMarkup wrappers are stripped from the fenced rendering itself. */
+function renderCodeBlockGroup(
+	paragraphs: Paragraph[],
+	ctx: RenderContext,
+): string {
+	if (ctx.options.view !== "baseline" && ctx.options.view !== "accepted") {
+		// `current` view: collect tracked-change refs so [^tcN] definitions
+		// still render in the footnote appendix.
+		for (const paragraph of paragraphs) {
+			for (const run of paragraph.runs) {
+				if (run.type === "text" && run.trackedChange) {
+					ctx.referencedTrackedChanges.set(
+						run.trackedChange.id,
+						run.trackedChange,
+					);
+				}
+			}
+		}
+	}
+	const lines = paragraphs.map((paragraph) =>
+		paragraph.runs
+			.filter(
+				(run): run is TextRun =>
+					run.type === "text" && typeof run.text === "string",
+			)
+			.map((run) => run.text)
+			.join(""),
+	);
+	const firstId = paragraphs[0]?.id ?? "";
+	const lastId = paragraphs[paragraphs.length - 1]?.id ?? firstId;
+	const language = codeBlockLanguageFromStyleId(paragraphs[0]?.style) ?? "";
+	const openComment = `<!-- ${firstId} -->`;
+	const closeComment = firstId === lastId ? "" : ` <!-- ${lastId} -->`;
+	return [
+		`\`\`\`${language}${openComment}`,
+		...lines,
+		`\`\`\`${closeComment}`,
+	].join("\n");
 }
 
 function renderParagraph(
@@ -282,6 +364,7 @@ function sameDecoration(a: TextRun, b: TextRun): boolean {
 		(a.underline ?? "") === (b.underline ?? "") &&
 		(a.color ?? "") === (b.color ?? "") &&
 		(a.highlight ?? "") === (b.highlight ?? "") &&
+		(a.runStyle ?? "") === (b.runStyle ?? "") &&
 		a.hyperlink?.id === b.hyperlink?.id &&
 		a.trackedChange?.id === b.trackedChange?.id &&
 		sameCommentSet(a.comments, b.comments)
@@ -307,6 +390,12 @@ function renderTextSegment(runs: TextRun[], view: MarkdownView): string {
 	const first = runs[0];
 	if (!first) return "";
 	let out = text;
+	// Backticks INSIDE other formatting per GFM precedence — `**`x`**` is bold
+	// code; `**x**` inside backticks would be literal asterisks. Skip Code runs
+	// inside a fenced code block (callers strip runStyle on those — see
+	// `renderCodeBlockGroup`); this branch handles `runStyle: "Code"` only when
+	// it's still meaningful (inline code spans in a normal paragraph).
+	if (first.runStyle === "Code") out = `\`${out}\``;
 	if (first.bold) out = `**${out}**`;
 	if (first.italic) out = `*${out}*`;
 	if (first.strike) out = `~~${out}~~`;
@@ -565,6 +654,8 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 			return parsed.blockId;
 		case "range":
 			return position === "from" ? parsed.start.blockId : parsed.end.blockId;
+		case "blockRange":
+			return position === "from" ? parsed.startBlockId : parsed.endBlockId;
 		case "cell":
 			return parsed.tableId;
 		case "comment":

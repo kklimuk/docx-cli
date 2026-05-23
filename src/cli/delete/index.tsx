@@ -1,4 +1,5 @@
 import {
+	type BlockRangeReference,
 	type BlockReference,
 	convertTextToDelText,
 	createRevisionAllocator,
@@ -6,16 +7,25 @@ import {
 	type DocView,
 	isTrackChangesEnabled,
 	isTrailingSectPr,
+	LocatorParseError,
+	LocatorResolveError,
 	markParagraphMarkAs,
+	parseLocator,
 	removeInlineSectPr,
 	resolveAuthor,
+	resolveBlockRange,
 	resolveDate,
 	saveDocView,
 	type TrackedMeta,
 } from "@core";
 import { XmlNode } from "@core/parser";
+import {
+	applyTrackedRangeDelete,
+	applyUntrackedRangeDelete,
+} from "@core/track-changes/replace";
 import { parseArgs } from "util";
 import { emitAuditComment, findContainingParagraph } from "../comments/helpers";
+import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
 	fail,
@@ -34,11 +44,12 @@ Usage:
 
 Locator (required):
   --at LOCATOR      Block to remove
-                    pN  paragraph (whole block, with all its runs)
-                    tN  table (entire table)
-                    sN  inline section break — strips the <w:sectPr> from
-                        its owning paragraph (the paragraph itself stays);
-                        rejects the trailing section break (mandatory in OOXML)
+                    pN     paragraph (whole block, with all its runs)
+                    pN-pM  contiguous paragraph range (delete as a unit)
+                    tN     table (entire table)
+                    sN     inline section break — strips the <w:sectPr> from
+                           its owning paragraph (the paragraph itself stays);
+                           rejects the trailing section break (mandatory in OOXML)
 
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -68,6 +79,13 @@ export async function run(args: string[]): Promise<number> {
 	const view = await openOrFail(opts.filePath);
 	if (typeof view === "number") return view;
 
+	// `pN-pM` range delete. Resolves both endpoints, validates same-parent,
+	// then either splices (untracked) or wraps content+marks for the canonical
+	// Word-shaped tracked-delete (per `/tmp/range-probe/delete-4.docx`).
+	if (isBlockRangeLocator(opts.locator)) {
+		return commitRangeDelete(view, opts);
+	}
+
 	const blockRef = await resolveBlockOrFail(view, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
@@ -75,6 +93,63 @@ export async function run(args: string[]): Promise<number> {
 		return commitSectionDelete(view, blockRef, opts);
 	}
 	return commitBlockDelete(view, blockRef, opts);
+}
+
+function isBlockRangeLocator(locator: string): boolean {
+	return /^p\d+-p\d+$/.test(locator);
+}
+
+async function commitRangeDelete(
+	view: DocView,
+	opts: ValidatedOptions,
+): Promise<number> {
+	let rangeRef: BlockRangeReference;
+	try {
+		const locator = parseLocator(opts.locator);
+		if (locator.kind !== "blockRange") {
+			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
+		}
+		rangeRef = resolveBlockRange(
+			view,
+			locator.startBlockId,
+			locator.endBlockId,
+		);
+	} catch (err) {
+		if (err instanceof LocatorParseError) {
+			return fail("INVALID_LOCATOR", err.message);
+		}
+		if (err instanceof LocatorResolveError) {
+			return fail("BLOCK_NOT_FOUND", err.message);
+		}
+		throw err;
+	}
+
+	const tracked = isTrackChangesEnabled(view);
+	if (tracked) {
+		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
+		if (guard !== null) return guard;
+	}
+
+	if (opts.dryRun) return respondDryRun(opts);
+
+	if (tracked) {
+		applyTrackedRangeDelete(
+			view,
+			rangeRef.parent,
+			rangeRef.startIndex,
+			rangeRef.endIndex,
+			opts.authorFlag,
+		);
+	} else {
+		applyUntrackedRangeDelete(
+			rangeRef.parent,
+			rangeRef.startIndex,
+			rangeRef.endIndex,
+		);
+	}
+
+	await saveDocView(view, opts.outputPath);
+	return emitDeleteAck(opts);
 }
 
 async function parseAndValidateOptions(

@@ -1,4 +1,16 @@
 import { saveDocView } from "@core";
+import {
+	ensureNoteStyles,
+	ensureNotesPart,
+	insertNoteReferenceAtOffset,
+	NoteBody,
+	type NoteKind,
+	NoteOffsetOutOfRangeError,
+	NoteReferenceRun,
+	nextNoteId,
+	noteConfig,
+	TrackedNoteBody,
+} from "@core/notes";
 import { sumRunBearingTextLength } from "@core/parser";
 import {
 	createRevisionAllocator,
@@ -19,18 +31,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	ensureNoteStyles,
-	ensureNotesPart,
-	insertNoteReferenceAtOffset,
-	NoteBody,
-	type NoteKind,
-	NoteOffsetOutOfRangeError,
-	NoteReferenceRun,
-	nextNoteId,
-	noteConfig,
-	TrackedNoteBody,
-} from "./helpers";
 
 function helpFor(kind: NoteKind): string {
 	const verb = kind === "footnote" ? "footnotes" : "endnotes";

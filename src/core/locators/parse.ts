@@ -1,6 +1,7 @@
 export type Locator =
 	| { kind: "block"; blockId: string }
 	| { kind: "blockSpan"; blockId: string; start: number; end: number }
+	| { kind: "blockRange"; startBlockId: string; endBlockId: string }
 	| {
 			kind: "range";
 			start: { blockId: string; offset: number };
@@ -39,6 +40,7 @@ export class LocatorParseError extends Error {
 const BLOCK_RE = /^(p|t|s)(\d+)$/;
 const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
 const RANGE_RE = /^p(\d+):(\d+)-p(\d+):(\d+)$/;
+const BLOCK_RANGE_RE = /^p(\d+)-p(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
 const LINK_RE = /^link(\d+)$/;
@@ -127,6 +129,21 @@ export function parseLocator(input: string): Locator {
 			kind: "range",
 			start: { blockId: `p${startBlock}`, offset: startOffset },
 			end: { blockId: `p${endBlock}`, offset: endOffset },
+		};
+	}
+
+	const blockRangeMatch = trimmed.match(BLOCK_RANGE_RE);
+	if (blockRangeMatch) {
+		const [, startIndex, endIndex] = blockRangeMatch;
+		const startNum = Number(startIndex);
+		const endNum = Number(endIndex);
+		if (endNum < startNum) {
+			throw new LocatorParseError(input, "end paragraph precedes start");
+		}
+		return {
+			kind: "blockRange",
+			startBlockId: `p${startIndex}`,
+			endBlockId: `p${endIndex}`,
 		};
 	}
 

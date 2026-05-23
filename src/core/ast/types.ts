@@ -106,6 +106,11 @@ export type TextRun = {
 	strike?: boolean;
 	font?: string;
 	sizeHalfPoints?: number;
+	/** Character style applied via <w:rStyle> (e.g., "Code" for inline code,
+	 *  "Hyperlink", or any user-defined style). Distinct from direct formatting
+	 *  (bold/italic/color/…): a character style is a reference into styles.xml
+	 *  and gets provisioned via `ensureStyle` when emitted. */
+	runStyle?: string;
 	comments?: string[];
 	trackedChange?: TrackedChange;
 	hyperlink?: Hyperlink;

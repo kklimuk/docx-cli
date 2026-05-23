@@ -63,7 +63,7 @@ function computeMaxRevisionId(view: DocView): number {
 	// Tracked changes can live in document.xml, footnotes.xml, AND endnotes.xml
 	// — Word emits body-side <w:ins>/<w:del> inside <w:footnote>/<w:endnote>
 	// when a footnote is added/deleted under tracking (see `TrackedNoteBody`
-	// in `cli/footnotes/helpers.tsx`). Allocate across all three parts so a
+	// in `core/notes/helpers.tsx`). Allocate across all three parts so a
 	// new revision never collides with one that's already in a note body.
 	walkXml(view.documentTree, visit);
 	if (view.footnotesTree) walkXml(view.footnotesTree, visit);

@@ -1,4 +1,11 @@
 import { saveDocView } from "@core";
+import {
+	findNoteByNumericId,
+	type NoteKind,
+	noteConfig,
+	removeNoteReferences,
+	wrapNoteBodyAsDeleted,
+} from "@core/notes";
 import { XmlNode } from "@core/parser";
 import {
 	createRevisionAllocator,
@@ -18,13 +25,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	findNoteByNumericId,
-	type NoteKind,
-	noteConfig,
-	removeNoteReferences,
-	wrapNoteBodyAsDeleted,
-} from "./helpers";
 
 function helpFor(kind: NoteKind): string {
 	const verb = kind === "footnote" ? "footnotes" : "endnotes";

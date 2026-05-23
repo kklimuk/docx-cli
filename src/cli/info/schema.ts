@@ -101,6 +101,7 @@ const JSON_SCHEMA = {
 				strike: { type: "boolean" },
 				font: { type: "string" },
 				sizeHalfPoints: { type: "number" },
+				runStyle: { type: "string" },
 				comments: { type: "array", items: { type: "string" } },
 				trackedChange: {
 					type: "object",

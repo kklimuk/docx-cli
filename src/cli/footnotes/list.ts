@@ -1,6 +1,6 @@
+import type { NoteKind } from "@core/notes";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
-import type { NoteKind } from "./helpers";
 
 function helpFor(kind: NoteKind): string {
 	const verb = kind === "footnote" ? "footnotes" : "endnotes";

@@ -80,11 +80,18 @@ docx insert FILE --after p3 --page-break | --column-break
 docx insert FILE --after p3 --section [--columns N] [--type continuous|nextPage|evenPage|oddPage|nextColumn]
 docx insert FILE --after p3 --table --rows N --cols N [--widths "A,B,C"] [--table-width 100%] [--borders single|none|double] [--layout autofit|fixed]
 docx insert FILE --after p3 --image SRC [--alt TEXT] [--width INCHES] [--height INCHES]   # SRC = path, data: URI, or http(s) URL
+docx insert FILE --after p3 --code "..." [--language LANG]    # one CodeBlock paragraph per \n; --language → syntax highlight
+docx insert FILE --after p3 --code-file PATH [--language LANG] | --code-file -    # same, from file or stdin
 docx edit   FILE --at p3 --text "..." [--no-formatting]   # word-level diff preserves bold/italic on unchanged words
 docx edit   FILE --at p3 --runs '[...]'
-docx edit   FILE --at s0 [--columns N] [--type T]   # mutate section properties
+docx edit   FILE --at p3 --code "..." [--language LANG]   # replace paragraph with a code block (expands to N lines)
+docx edit   FILE --at p3 --code-file PATH [--language LANG]
+docx edit   FILE --at p2-p5 --text "..."                  # range replace: collapse paragraph range to one paragraph
+docx edit   FILE --at p2-p5 --code-file new.go --language go  # range replace with a fresh code block
+docx edit   FILE --at s0 [--columns N] [--type T]         # mutate section properties
 docx delete FILE --at p3
-docx delete FILE --at s0                              # strip an inline sectPr
+docx delete FILE --at p2-p5                               # range delete: drop a contiguous paragraph span
+docx delete FILE --at s0                                  # strip an inline sectPr
 
 docx find FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current | --baseline] [--exact]
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--dry-run]
@@ -182,8 +189,9 @@ The same `--current`/`--baseline` flags apply to `find`, `replace`, `wc`, and `c
 
 ```
 pN                   paragraph N (e.g., p3)
+pN-pM                paragraph range (whole paragraphs pN..pM as a unit)
 pN:S-E               characters S..E within paragraph N
-pN:S-pM:E            cross-paragraph range
+pN:S-pM:E            cross-paragraph character range
 tN                   table N; tN:rRcC for cell at row R, col C
 sN                   section break N — column count, type (continuous /
                      nextPage / nextColumn / evenPage / oddPage)
@@ -203,6 +211,8 @@ Run `docx info locators` for the full reference.
 **ParaId auto-injection.** Comments authored by tools like mammoth or older Word versions lack `w14:paraId`, which `commentsExtended.xml` requires for resolve/reply. We detect this on resolve/reply and inject a fresh paraId, also adding the `xmlns:w14` namespace declaration to the `<w:comments>` root if missing.
 
 **Cross-format image replacement.** `images replace --at img0 --with new.png` detects the new MIME type via `Bun.file().type`, renames the part (`word/media/image1.jpeg` → `word/media/image1.png`), rewrites the relationship `Target`, and ensures `[Content_Types].xml` has a `<Default>` for the new extension.
+
+**Code blocks + inline code.** `insert --code TEXT` (or `--code-file PATH`, `-` for stdin) splits content on `\n` and emits one `<w:p>` per source line, all styled `CodeBlock` (Courier New, indent, adjacent-paragraph spacing collapse) with runs styled `Code` (monospace character style — defensive in case Word doesn't cascade the paragraph font). Both styles get provisioned in `styles.xml` automatically. `--language LANG` syntax-highlights via [lowlight](https://github.com/wooorm/lowlight) (highlight.js); 37 common languages are bundled — `bash`, `c`, `cpp`, `csharp`, `css`, `diff`, `go`, `graphql`, `ini`, `java`, `javascript`, `json`, `kotlin`, `less`, `lua`, `makefile`, `markdown`, `objectivec`, `perl`, `php`, `php-template`, `plaintext`, `python`, `python-repl`, `r`, `ruby`, `rust`, `scss`, `shell`, `sql`, `swift`, `typescript`, `vbnet`, `wasm`, `xml`, `yaml`. Unknown languages degrade silently to uncolored runs. The palette is GitHub-light inspired (keywords red, strings dark-blue, comments gray, …) and unmapped highlight.js classes fall through with no color. For an inline ``code`` span inside a normal paragraph, use `--runs` JSON with `runStyle: "Code"` (the S8 markdown walker will make this ergonomic via the `\`code\`` shorthand). On `docx read`, consecutive `CodeBlock` paragraphs collapse into one GFM fenced block (`` ``` `` … `` ``` ``); inline `runStyle: "Code"` runs render with backticks.
 
 **Image insertion.** `insert --image SRC` resolves SRC from a file path, a `data:` URI, or an `http(s)` URL (bounded fetch: 10s timeout, 25 MB cap streamed per-chunk so the limit holds even if `Content-Length` lies), writes the bytes to `word/media/imageN.ext`, mints an `image` relationship, and registers the extension's content-type `<Default>`. Pixel dimensions are read from the PNG/JPEG/GIF header and converted to EMU (1px = 9525 EMU at 96 dpi) for `<wp:extent>`; `--width`/`--height` override in inches, and supplying one alone scales the other to preserve aspect. The drawing is a standard inline `<w:drawing><wp:inline>` picture (`a:`/`pic:` namespaces declared on the subtree). Under track-changes the inserted run is wrapped in `<w:ins>` like any other inserted content. **HEIC/HEIF** input (common from iPhones) is transcoded to JPEG before embedding — Word can't render HEIC — so students can drop a `.heic` straight in; detection is by file header, not just extension. **SVG input is sanitized** before embedding (`<script>`, `on*` handlers, `<foreignObject>`, animation events, external `href`/`xlink:href`, and `data:image/svg+xml` self-references are stripped; XXE is rejected at parse time by `fast-xml-parser`) so an attacker-controlled SVG can't smuggle active content into the doc. **Remote fetches block non-public addresses** — private, loopback, link-local, and cloud-metadata ranges are refused, and HTTP redirects are followed manually with the same check at every hop, so an agent steered into `http://169.254.169.254/...` or `http://10.0.0.1/admin` is short-circuited.
 

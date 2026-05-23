@@ -1,4 +1,5 @@
 import type { BlockReference, DocView } from "../ast";
+import type { XmlNode } from "../parser";
 import type { Locator } from "./parse";
 
 export class LocatorResolveError extends Error {
@@ -50,4 +51,46 @@ export function resolveBlock(view: DocView, blockId: string): BlockReference {
 		);
 	}
 	return reference;
+}
+
+/** A contiguous span of blocks resolved from a `pN-pM` locator. The two
+ * endpoints MUST share a parent (both top-level body children, or both
+ * inside the same cell) — cross-parent ranges aren't meaningful. */
+export type BlockRangeReference = {
+	parent: XmlNode[];
+	startIndex: number;
+	endIndex: number;
+};
+
+/** Resolve a `pN-pM` block-range locator. Validates that the two endpoints
+ * live under the same parent array (so they can be spliced as a unit) and
+ * that the start index is ≤ the end index in document order. */
+export function resolveBlockRange(
+	view: DocView,
+	startBlockId: string,
+	endBlockId: string,
+): BlockRangeReference {
+	const start = resolveBlock(view, startBlockId);
+	const end = resolveBlock(view, endBlockId);
+	if (start.parent !== end.parent) {
+		throw new LocatorResolveError(
+			{ kind: "blockRange", startBlockId, endBlockId },
+			`Range endpoints ${startBlockId} and ${endBlockId} live in different containers — they must be siblings`,
+		);
+	}
+	const startIndex = start.parent.indexOf(start.node);
+	const endIndex = end.parent.indexOf(end.node);
+	if (startIndex === -1 || endIndex === -1) {
+		throw new LocatorResolveError(
+			{ kind: "blockRange", startBlockId, endBlockId },
+			"Range endpoint became detached from its parent (stale block reference)",
+		);
+	}
+	if (endIndex < startIndex) {
+		throw new LocatorResolveError(
+			{ kind: "blockRange", startBlockId, endBlockId },
+			`Range ${startBlockId}-${endBlockId} runs backwards — ${endBlockId} appears before ${startBlockId} in document order`,
+		);
+	}
+	return { parent: start.parent, startIndex, endIndex };
 }

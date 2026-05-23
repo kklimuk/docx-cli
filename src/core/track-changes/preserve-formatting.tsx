@@ -1,6 +1,7 @@
-import { Del, Ins, type TrackedMeta } from "@core";
-import { w } from "@core/jsx";
-import { isRunBearingWrapper, XmlNode } from "@core/parser";
+import { w } from "../jsx";
+import { isRunBearingWrapper, XmlNode } from "../parser";
+import { Del, Ins } from "./emit";
+import type { TrackedMeta } from "./index";
 
 /**
  * Word-level diff for `edit --text` formatting preservation.

@@ -1,6 +1,6 @@
 import type { Run, TextRun } from "./ast/types";
 import { w } from "./jsx";
-import type { NullableXmlNode, XmlNode } from "./parser";
+import { type NullableXmlNode, XmlNode } from "./parser";
 
 /** A `<w:p>`. Pass `runs` for full control, or `text` (+ optional run-level
  * formatting) for a single-run paragraph. `runs` wins if both are given; with
@@ -102,6 +102,41 @@ export function RunElement({ run }: { run: Run }): NullableXmlNode {
 	return null;
 }
 
+/** Mutate a paragraph's children list in place to apply `--style` /
+ *  `--alignment` to its `<w:pPr>`. Creates a pPr if absent. Used by the
+ *  tracked-edit helpers in `core/track-changes/` and any caller that wants to
+ *  swap paragraph properties without rebuilding the whole paragraph. The
+ *  `rebuilt` list is the paragraph's `children` array — usually already
+ *  filtered to non-run nodes by the caller. */
+export function applyParagraphOptionsInPlace(
+	rebuilt: XmlNode[],
+	options: ParagraphOptions,
+): void {
+	if (!options.style && !options.alignment) return;
+	let pPr = rebuilt.find((child) => child.tag === "w:pPr");
+	if (!pPr) {
+		pPr = new XmlNode("w:pPr");
+		rebuilt.unshift(pPr);
+	}
+	if (options.style) {
+		const existingStyle = pPr.findChild("w:pStyle");
+		if (existingStyle) {
+			existingStyle.setAttribute("w:val", options.style);
+		} else {
+			const styleNode = new XmlNode("w:pStyle", { "w:val": options.style });
+			pPr.children.unshift(styleNode);
+		}
+	}
+	if (options.alignment) {
+		const existingJc = pPr.findChild("w:jc");
+		if (existingJc) {
+			existingJc.setAttribute("w:val", options.alignment);
+		} else {
+			pPr.children.push(new XmlNode("w:jc", { "w:val": options.alignment }));
+		}
+	}
+}
+
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.
  * Word renders this as a thin line spanning the page width.
  *
@@ -137,13 +172,19 @@ const FORMATTING_KEYS = [
 	"strike",
 	"font",
 	"sizeHalfPoints",
+	"runStyle",
 ] as const satisfies readonly (keyof TextRun)[];
 
 function RunProperties({ run }: { run: TextRun }): NullableXmlNode {
 	const isEmpty = FORMATTING_KEYS.every((key) => run[key] == null);
 	if (isEmpty) return null;
+	// `<w:rStyle>` comes FIRST in <w:rPr> per ECMA-376 §17.3.2.28 (CT_RPr child
+	// order: rStyle → rFonts → b → i → strike → color → sz → highlight → u → …).
+	// Word and LibreOffice both tolerate other orderings, but matching the
+	// schema keeps validators happy and round-trips minimal-diff against Word.
 	return (
 		<w.rPr>
+			{run.runStyle && <w.rStyle w-val={run.runStyle} />}
 			{run.color && <w.color w-val={run.color} />}
 			{run.highlight && <w.highlight w-val={run.highlight} />}
 			{run.bold && <w.b />}
