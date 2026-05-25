@@ -3,6 +3,7 @@ import {
 	applySectionType,
 	type BlockRangeReference,
 	type BlockReference,
+	createRevisionAllocator,
 	type DocView,
 	isSectionType,
 	isTrackChangesEnabled,
@@ -11,9 +12,12 @@ import {
 	mintRevisionMeta,
 	parseLocator,
 	type Run,
+	resolveAuthor,
 	resolveBlockRange,
+	resolveDate,
 	type SectionType,
 	saveDocView,
+	type TrackedMeta,
 	wrapSectPrChange,
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
@@ -23,6 +27,7 @@ import {
 } from "@core/code-block";
 import type { XmlNode } from "@core/parser";
 import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
+import { flipCheckboxTracked, flipCheckboxUntracked } from "@core/task-list";
 import {
 	applyTrackedRangeReplace,
 	applyUntrackedRangeReplace,
@@ -58,6 +63,12 @@ Paragraph content (one required for paragraph / range locators):
   --code TEXT       Replace with a code block — newlines split into one
                     CodeBlock-styled paragraph per source line
   --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin)
+  --task STATE      Flip a task-list item's checkbox state in place ("checked" or
+                    "unchecked"). Requires a single paragraph locator that is
+                    already a GFM task list item (has a leading <w14:checkbox/>
+                    SDT). Under track-changes, emits Word's canonical toggle
+                    shape (ins/del pair inside sdtContent + w14:checked flip);
+                    "track-changes list" surfaces it as a checkboxToggle revision.
 
 Paragraph options:
   --style NAME       Paragraph style (e.g., Heading1)
@@ -128,6 +139,9 @@ export async function run(args: string[]): Promise<number> {
 	if (opts.spec.kind === "section") {
 		return commitSectionPropertyEdit(view, blockRef, opts.spec, opts);
 	}
+	if (opts.spec.kind === "task") {
+		return commitTaskToggle(view, blockRef, opts.spec, opts);
+	}
 	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
 	if (opts.spec.kind === "runs") {
 		ensureReferencedRunStyles(view, opts.spec.runs);
@@ -151,6 +165,13 @@ async function commitRangeReplacement(
 	if (opts.spec.kind === "section") {
 		// Type narrowing — caller already rejected this above.
 		return fail("USAGE", "Section edits don't support range locators", HELP);
+	}
+	if (opts.spec.kind === "task") {
+		return fail(
+			"USAGE",
+			"--task takes a single paragraph locator (pN), not a range",
+			HELP,
+		);
 	}
 
 	let rangeRef: BlockRangeReference;
@@ -269,6 +290,7 @@ const OPTION_SPEC = {
 	code: { type: "string" },
 	"code-file": { type: "string" },
 	language: { type: "string" },
+	task: { type: "string" },
 	columns: { type: "string" },
 	type: { type: "string" },
 	style: { type: "string" },
@@ -310,7 +332,8 @@ type EditSpec =
 			content: string;
 			language?: string;
 			paragraphOptions: ParagraphOptions;
-	  };
+	  }
+	| { kind: "task"; checked: boolean };
 
 type TextFormatting = {
 	color?: string;
@@ -354,6 +377,34 @@ async function validateParagraphEdit(
 	const codeInline = values.code as string | undefined;
 	const codeFile = values["code-file"] as string | undefined;
 	const language = values.language as string | undefined;
+	const taskFlag = values.task as string | undefined;
+
+	// `--task` is its own content kind — it flips an existing task's state in
+	// place rather than replacing the paragraph.
+	if (taskFlag !== undefined) {
+		const otherFlags = [
+			text !== undefined,
+			runsJson !== undefined,
+			codeInline !== undefined,
+			codeFile !== undefined,
+		].filter(Boolean).length;
+		if (otherFlags > 0) {
+			return fail(
+				"USAGE",
+				"--task cannot be combined with --text, --runs, --code, or --code-file",
+				HELP,
+			);
+		}
+		const checked = parseTaskFlag(taskFlag);
+		if (checked === null) {
+			return fail(
+				"USAGE",
+				`--task must be "checked" or "unchecked", got "${taskFlag}"`,
+				HELP,
+			);
+		}
+		return { kind: "task", checked };
+	}
 
 	const contentFlags = [
 		text !== undefined,
@@ -364,7 +415,7 @@ async function validateParagraphEdit(
 	if (contentFlags === 0) {
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, or --code-file",
+			"Missing content: pass --text, --runs, --code, --code-file, or --task",
 			HELP,
 		);
 	}
@@ -417,6 +468,22 @@ async function validateParagraphEdit(
 
 /** Read content for `--code-file PATH`. `-` means stdin (handled the same as
  *  `insert --code-file -`). Mirrors `cli/insert/index.tsx::resolveCodeSpec`. */
+/** Parse `--task` value into a boolean (checked) or null if unrecognized.
+ *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
+ *  reach for naturally. */
+function parseTaskFlag(value: string): boolean | null {
+	const normalized = value.toLowerCase();
+	if (normalized === "checked" || normalized === "true" || normalized === "1")
+		return true;
+	if (
+		normalized === "unchecked" ||
+		normalized === "false" ||
+		normalized === "0"
+	)
+		return false;
+	return null;
+}
+
 async function loadCodeFile(path: string): Promise<string | number> {
 	try {
 		return path === "-"
@@ -526,6 +593,48 @@ async function commitSectionPropertyEdit(
 	}
 	applyColumns(blockRef.node, spec.columns);
 	applySectionType(blockRef.node, spec.sectionType);
+
+	await saveDocView(view, opts.outputPath);
+	return emitEditAck(opts);
+}
+
+async function commitTaskToggle(
+	view: DocView,
+	blockRef: BlockReference,
+	spec: Extract<EditSpec, { kind: "task" }>,
+	opts: ValidatedOptions,
+): Promise<number> {
+	if (blockRef.node.tag !== "w:p") {
+		return fail(
+			"USAGE",
+			"--task requires a paragraph locator; got a non-paragraph block",
+		);
+	}
+	if (opts.dryRun) return respondDryRun(opts);
+
+	const tracked = isTrackChangesEnabled(view);
+	let ok: boolean;
+	if (tracked) {
+		const allocator = createRevisionAllocator(view);
+		const baseMeta = {
+			author: resolveAuthor(opts.authorFlag),
+			date: resolveDate(),
+		};
+		const mintMeta = (): TrackedMeta => ({
+			...baseMeta,
+			revisionId: allocator.next(),
+		});
+		ok = flipCheckboxTracked(blockRef.node, spec.checked, mintMeta);
+	} else {
+		ok = flipCheckboxUntracked(blockRef.node, spec.checked);
+	}
+	if (!ok) {
+		return fail(
+			"USAGE",
+			"--task requires a task-list paragraph (one with a leading <w:sdt><w14:checkbox/></w:sdt>)",
+			"Use `docx read FILE --ast` to inspect; convert a plain bullet to a task by replacing the paragraph via `--runs`.",
+		);
+	}
 
 	await saveDocView(view, opts.outputPath);
 	return emitEditAck(opts);

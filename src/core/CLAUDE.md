@@ -38,6 +38,10 @@ CRUD: `insert --after pN --section` emits a sentinel paragraph carrying an inlin
 
 `allocateNum(view, "bullet"|"ordered")` in [numbering.tsx](numbering.tsx) lazily provisions numbering.xml. **Adding a format:** extend `AbstractNumKind` and add an abstractNum builder; `ensureAbstractNum` reuse keys on `lvl[0]/numFmt/w:val`, so give each kind a distinct level-0 numFmt. Cover it in `tests/core/numbering.test.ts`.
 
+## Task lists (GFM checkboxes)
+
+Task lists are their own package — see [task-list/CLAUDE.md](task-list/CLAUDE.md). The reader recognizes two shapes (SDT content control + Word-for-Web's Wingdings-bullet + strike model); we emit only the SDT shape. The `taskState` prop is plumbed through `Paragraph` in [blocks.tsx](blocks.tsx) which prepends the `<TaskCheckbox>` primitive from `@core/task-list`. Tracked toggles surface as the `checkboxToggle` `TrackedChangeKind` and have accept/reject machinery that infers the prior `w14:checked` value from the deleted glyph.
+
 ## Tables
 
 Tables are their own package — see [table/CLAUDE.md](table/CLAUDE.md).

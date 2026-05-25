@@ -1,6 +1,7 @@
 import { getListFormat } from "../numbering";
 import { XmlNode } from "../parser";
 import { readSectionProperties } from "../sections";
+import { detectTaskListState } from "../task-list";
 import type { DocView } from "./doc-view";
 import { decodeSym } from "./sym";
 import type {
@@ -198,6 +199,25 @@ function readParagraph(
 		applyParagraphProperties(view, paragraph, paragraphProperties);
 	}
 
+	const skipNodes = detectTaskListState(
+		view,
+		paragraph,
+		node,
+		(sdt, parent) => {
+			// Register a checkboxToggle reference at the current walk position so
+			// `tcN` ids agree with the apply walker in `cli/track-changes/apply.ts`.
+			// The apply walker sees the SDT as the first non-pPr child and treats
+			// the toggle as the first tcN of this paragraph; we mirror that here.
+			const tcId = `tc${state.trackedChangeIndex++}`;
+			view.trackedChangeReferences.set(tcId, {
+				node: sdt,
+				parent,
+				blockId: id,
+				kind: "checkboxToggle",
+			});
+		},
+	);
+
 	const context: WalkContext = {
 		view,
 		blockId: id,
@@ -205,6 +225,7 @@ function readParagraph(
 		activeComments: new Set<string>(),
 		state,
 		offsetRef: { value: 0 },
+		skipNodes,
 	};
 	walkRunContainer(context, node, undefined, undefined);
 
@@ -218,6 +239,7 @@ type WalkContext = {
 	activeComments: Set<string>;
 	state: WalkState;
 	offsetRef: { value: number };
+	skipNodes: Set<XmlNode>;
 };
 
 function walkRunContainer(
@@ -228,6 +250,17 @@ function walkRunContainer(
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
+		if (context.skipNodes.has(child)) continue;
+		// Skip ALL `<w:sdt>` content control bodies, not just leading checkbox
+		// SDTs (which `detectTaskListState` already pushed into `skipNodes`).
+		// The apply walker in `cli/track-changes/apply.ts::visitRunContainer`
+		// does the same, and the alignment invariant in the track-changes
+		// CLAUDE.md requires both walkers to register `tcN` ids in matching
+		// order. Recursing into a Plain Text / Dropdown / Rich Text content
+		// control here would surface its nested `<w:ins>`/`<w:del>` as run-
+		// level tcNs that apply.ts ignores — drift. The structural-ins/del
+		// gap for SDTs is documented in `core/task-list/CLAUDE.md`.
+		if (child.tag === "w:sdt") continue;
 
 		if (child.tag === "w:commentRangeStart") {
 			const commentId = child.getAttribute("w:id");

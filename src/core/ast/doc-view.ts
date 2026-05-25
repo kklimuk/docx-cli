@@ -19,9 +19,15 @@ export type TrackedChangeReference = {
 	node: XmlNode;
 	parent: XmlNode[];
 	blockId: string;
-	/** Explicit kind for markers whose tag is ambiguous out of context — a
-	 * row revision is a `<w:ins>`/`<w:del>` inside `<w:trPr>`, sharing its tag
-	 * with run-level changes. Set for rowIns/rowDel/cellIns/cellDel; absent for
+	/** Explicit kind for revisions whose kind can't be derived from the wrapper
+	 * tag alone. Two cases:
+	 *  - Ambiguous tag: a row revision is a `<w:ins>`/`<w:del>` inside
+	 *    `<w:trPr>`, sharing its tag with run-level changes — same for
+	 *    cellIns/cellDel inside `<w:tcPr>`.
+	 *  - Structural pattern: `checkboxToggle` points at the SDT itself; the
+	 *    inner `<w:ins>`/`<w:del>` glyph pair is recognized via
+	 *    `findCheckboxToggle` and never surfaces as its own reference.
+	 * Set for rowIns/rowDel/cellIns/cellDel and checkboxToggle; absent for
 	 * run-level changes (kind derived from tag). */
 	kind?: TrackedChangeKind;
 };

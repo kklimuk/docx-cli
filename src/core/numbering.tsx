@@ -138,6 +138,33 @@ function findLevel(abstractNum: XmlNode, ilvl: number): XmlNode | undefined {
 		.find((lvl) => lvl.getAttribute("w:ilvl") === target);
 }
 
+/** Resolve the bullet glyph for a (numId, level) pair: `<w:lvl><w:lvlText w:val>`.
+ *  Used by the GFM task-list reader to detect Word for Web's "Checklist"
+ *  format (lvlText is the Wingdings ☐ glyph U+F0A8). Falls back to level 0 if
+ *  the requested level is missing, mirroring `getListFormat`. */
+export function getListBulletText(
+	view: DocView,
+	numId: string,
+	level: number,
+): string | undefined {
+	const tree = view.numberingTree;
+	if (!tree) return undefined;
+	const root = XmlNode.findRoot(tree, "w:numbering");
+	if (!root) return undefined;
+	const num = root
+		.findChildren("w:num")
+		.find((node) => node.getAttribute("w:numId") === numId);
+	if (!num) return undefined;
+	const abstractNumId = num.findChild("w:abstractNumId")?.getAttribute("w:val");
+	if (!abstractNumId) return undefined;
+	const abstractNum = root
+		.findChildren("w:abstractNum")
+		.find((node) => node.getAttribute("w:abstractNumId") === abstractNumId);
+	if (!abstractNum) return undefined;
+	const lvl = findLevel(abstractNum, level) ?? findLevel(abstractNum, 0);
+	return lvl?.findChild("w:lvlText")?.getAttribute("w:val") ?? undefined;
+}
+
 function bulletAbstractNum(abstractNumId: number): XmlNode {
 	// Use Unicode bullet glyphs that render in any standard text font (Calibri
 	// in our case via docDefaults). Earlier versions used Symbol/Wingdings as

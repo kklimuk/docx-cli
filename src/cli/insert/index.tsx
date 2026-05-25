@@ -30,8 +30,13 @@ import {
 	nextDrawingId,
 } from "@core/image";
 import { w } from "@core/jsx";
+import { allocateNum } from "@core/numbering";
 import { XmlNode } from "@core/parser";
-import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
+import {
+	ensureReferencedRunStyles,
+	ensureReferencedStyle,
+	ensureStyle,
+} from "@core/styles";
 import { BlankTable, type TableBorders, type TableLayout } from "@core/table";
 import { parseArgs } from "util";
 import {
@@ -69,6 +74,11 @@ Content (one required):
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
+  --task STATE       Make the new paragraph a GFM task list item with state
+                     "checked" (☒) or "unchecked" (☐). Requires --text or --runs.
+                     If the anchor is itself a list paragraph, inherits its numId
+                     (so consecutive --task inserts build a contiguous list);
+                     otherwise allocates a fresh bullet list.
 
 Run options (only with --text):
   --color HEX       Run color, hex (e.g., 800080 for purple)
@@ -135,6 +145,26 @@ export async function run(args: string[]): Promise<number> {
 
 	const blockRef = await resolveBlockOrFail(view, opts.placement.locator);
 	if (typeof blockRef === "number") return blockRef;
+
+	// `--task` / `--list` paragraph: validate spec compatibility and resolve
+	// the list numId (inherit from the anchor if it's already a list, else
+	// allocate a fresh num of the requested kind). Done here (post-view-open)
+	// because allocateNum needs the package, and the anchor inherit needs the
+	// resolved blockRef.
+	const opts2 = opts.paragraphOptions as ParagraphOptions & {
+		listKind?: "bullet" | "ordered";
+		explicitLevel?: number;
+	};
+	if (opts2.taskState !== undefined || opts2.list !== undefined) {
+		const listGuard = await resolveListContext(
+			view,
+			blockRef,
+			opts.spec,
+			opts2,
+		);
+		if (typeof listGuard === "number") return listGuard;
+		ensureStyle(view, "ListParagraph");
+	}
 
 	const built = await buildInsertedParagraph(
 		view,
@@ -227,6 +257,9 @@ const OPTION_SPEC = {
 	code: { type: "string" },
 	"code-file": { type: "string" },
 	language: { type: "string" },
+	task: { type: "string" },
+	list: { type: "string" },
+	"list-level": { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -667,7 +700,146 @@ async function parseParagraphOptions(
 		out.alignment = alignmentValue;
 	}
 
+	const taskValue = values.task as string | undefined;
+	const listValue = values.list as string | undefined;
+	const listLevelValue = values["list-level"] as string | undefined;
+
+	if (taskValue !== undefined && listValue !== undefined) {
+		return fail(
+			"USAGE",
+			"--task and --list are mutually exclusive (--task already implies a bullet list)",
+			HELP,
+		);
+	}
+
+	if (taskValue !== undefined) {
+		const checked = parseTaskFlag(taskValue);
+		if (checked === null) {
+			return fail(
+				"USAGE",
+				`--task must be "checked" or "unchecked", got "${taskValue}"`,
+				HELP,
+			);
+		}
+		out.taskState = checked ? "checked" : "unchecked";
+	}
+
+	if (listValue !== undefined) {
+		if (listValue !== "bullet" && listValue !== "ordered") {
+			return fail(
+				"USAGE",
+				`--list must be "bullet" or "ordered", got "${listValue}"`,
+				HELP,
+			);
+		}
+		// Mark the intent to allocate a list; the numId is resolved later in
+		// `resolveListContext` (post-view-open) using the same anchor-inherit
+		// logic as --task. We stash the kind on a side channel so the resolver
+		// knows which abstractNum to use.
+		out.list = { level: 0, numId: -1 };
+		(out as ParagraphOptions & { listKind?: "bullet" | "ordered" }).listKind =
+			listValue;
+	}
+
+	if (listLevelValue !== undefined) {
+		const level = Number(listLevelValue);
+		if (!Number.isInteger(level) || level < 0 || level > 8) {
+			return fail(
+				"USAGE",
+				`--list-level must be an integer 0-8, got "${listLevelValue}"`,
+				HELP,
+			);
+		}
+		if (out.list) out.list.level = level;
+		// If neither --task nor --list is set, we still record the level — it
+		// applies once the resolver attaches a list (e.g., via inheritance).
+		(out as ParagraphOptions & { explicitLevel?: number }).explicitLevel =
+			level;
+	}
+
 	return out;
+}
+
+/** Resolve the list numId for a `--task` or `--list` insert. Inherits from
+ *  the anchor's numPr if the anchor is itself a list paragraph (so consecutive
+ *  inserts build a contiguous list); otherwise allocates a fresh num matching
+ *  the requested kind (`bullet` by default; `--list ordered` uses ordered).
+ *  Mutates `paragraphOptions.list` in place. Rejects on spec kinds that can't
+ *  carry list metadata. */
+async function resolveListContext(
+	view: DocView,
+	blockRef: BlockReference,
+	spec: InsertSpec,
+	paragraphOptions: ParagraphOptions & {
+		listKind?: "bullet" | "ordered";
+		explicitLevel?: number;
+	},
+): Promise<number | undefined> {
+	if (spec.kind !== "text" && spec.kind !== "runs") {
+		return fail(
+			"USAGE",
+			"--task / --list requires --text or --runs (not --code, --image, --table, --section, or break flags)",
+			HELP,
+		);
+	}
+	const explicitLevel = paragraphOptions.explicitLevel;
+	const kind: "bullet" | "ordered" = paragraphOptions.listKind ?? "bullet";
+	// If --list was specified, the sentinel `numId: -1` means "resolve me";
+	// otherwise (--task only) the list field is absent at this point.
+	const needsResolve =
+		!paragraphOptions.list || paragraphOptions.list.numId === -1;
+	if (!needsResolve) {
+		if (explicitLevel !== undefined && paragraphOptions.list) {
+			paragraphOptions.list.level = explicitLevel;
+		}
+		return undefined;
+	}
+	const inherited = readListContext(blockRef.node);
+	if (inherited) {
+		paragraphOptions.list = {
+			level: explicitLevel ?? inherited.level,
+			numId: inherited.numId,
+		};
+	} else {
+		paragraphOptions.list = {
+			level: explicitLevel ?? 0,
+			numId: allocateNum(view, kind),
+		};
+	}
+	return undefined;
+}
+
+function readListContext(
+	anchor: XmlNode,
+): { level: number; numId: number } | null {
+	if (anchor.tag !== "w:p") return null;
+	const numPr = anchor.findChild("w:pPr")?.findChild("w:numPr");
+	if (!numPr) return null;
+	// `numId="0"` is the OOXML sentinel for "remove this paragraph from any
+	// numbered list" (ECMA-376 §17.9.18) — it's NOT a valid list to inherit.
+	// `Number("")` is `0`, so guard explicitly against missing val too.
+	const numIdRaw = numPr.findChild("w:numId")?.getAttribute("w:val");
+	if (!numIdRaw) return null;
+	const numId = Number(numIdRaw);
+	if (!Number.isFinite(numId) || numId <= 0) return null;
+	const level = Number(numPr.findChild("w:ilvl")?.getAttribute("w:val") ?? "0");
+	return { level, numId };
+}
+
+/** Parse `--task` value into a boolean (checked) or null if unrecognized.
+ *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
+ *  reach for naturally. Mirrors the parser in `cli/edit/index.tsx`. */
+function parseTaskFlag(value: string): boolean | null {
+	const normalized = value.toLowerCase();
+	if (normalized === "checked" || normalized === "true" || normalized === "1")
+		return true;
+	if (
+		normalized === "unchecked" ||
+		normalized === "false" ||
+		normalized === "0"
+	)
+		return false;
+	return null;
 }
 
 /** Build the block(s) to insert. Returns either a single `XmlNode` (the common

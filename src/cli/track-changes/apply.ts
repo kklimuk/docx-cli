@@ -2,6 +2,11 @@ import type { DocView, TrackedChangeKind } from "@core";
 import { saveDocView } from "@core";
 import { type NoteKind, noteConfig } from "@core/notes";
 import { XmlNode } from "@core/parser";
+import {
+	acceptCheckboxToggle,
+	findCheckboxToggle,
+	rejectCheckboxToggle,
+} from "@core/task-list";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -361,6 +366,34 @@ function visitRunContainer(
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
+		// Checkbox-toggle SDT: ins+del pair inside <w:sdtContent> surfaces as a
+		// single "checkboxToggle" tcN — must match the reader's order in
+		// `detectTaskListState` so `list` and `apply --at tcN` agree.
+		if (child.tag === "w:sdt") {
+			const toggle = findCheckboxToggle(child);
+			if (toggle) {
+				out.push({
+					node: child,
+					parent: container.children,
+					kind: "checkboxToggle",
+					id: `tc${counter.value++}`,
+					author: toggle.ins.getAttribute("w:author") ?? "",
+					date: toggle.ins.getAttribute("w:date") ?? "",
+				});
+				continue;
+			}
+			// SDT with no live toggle (untouched checkbox, or a checkbox being
+			// structurally deleted/inserted via `<w:customXmlDelRange*>` markers
+			// — which we don't yet enumerate as a single tracked-change kind).
+			// Skip the body so we stay aligned with the reader's walker (which
+			// also skips SDTs via `skipNodes`). Without this skip, an SDT-
+			// internal `<w:del>` (e.g. the deleted glyph of a structural delete)
+			// would surface as a phantom tcN with no blockId and break
+			// `list`/`apply --at tcN` agreement. The structural delete itself is
+			// preserved in the XmlNode tree; `track-changes accept --all` won't
+			// honor it yet — see Phase B-2 in src/core/CLAUDE.md.
+			continue;
+		}
 		const kind = trackedChangeKindForTag(child.tag);
 		if (
 			kind === "ins" ||
@@ -444,6 +477,9 @@ function actionFor(target: ChangeFound, verb: ApplyVerb): ChangeAction {
 	if (target.kind === "cellDel") {
 		return verb === "accept" ? "deleteCell" : "stripMarker";
 	}
+	if (target.kind === "checkboxToggle") {
+		return verb === "accept" ? "applyToggle" : "revertToggle";
+	}
 	const isAdditive = target.kind === "ins" || target.kind === "moveTo";
 	if (verb === "accept") return isAdditive ? "unwrap" : "delete";
 	return isAdditive ? "delete" : "unwrap";
@@ -451,6 +487,10 @@ function actionFor(target: ChangeFound, verb: ApplyVerb): ChangeAction {
 
 function applyAccept(target: ChangeFound): void {
 	if (applyTableChange(target, "accept")) return;
+	if (target.kind === "checkboxToggle") {
+		acceptCheckboxToggle(target.node);
+		return;
+	}
 	if (target.paragraph && target.paragraphParent) {
 		if (target.kind === "ins") {
 			deleteNode(target.node, target.parent);
@@ -475,6 +515,10 @@ function applyAccept(target: ChangeFound): void {
 
 function applyReject(target: ChangeFound): void {
 	if (applyTableChange(target, "reject")) return;
+	if (target.kind === "checkboxToggle") {
+		rejectCheckboxToggle(target.node);
+		return;
+	}
 	if (target.paragraph && target.paragraphParent) {
 		if (target.kind === "ins") {
 			const idx = target.paragraphParent.indexOf(target.paragraph);
@@ -841,7 +885,9 @@ type ChangeAction =
 	| "deleteParagraph"
 	| "stripMarker"
 	| "deleteRow"
-	| "deleteCell";
+	| "deleteCell"
+	| "applyToggle"
+	| "revertToggle";
 
 type ChangeRecord = {
 	id: string;

@@ -23,6 +23,9 @@ const CORE_FIXTURES = [
 	"images.docx", // inserted media parts + inline <w:drawing> picture
 	"footnotes-mutations.docx", // footnotes/endnotes parts authored from scratch
 	"code-blocks.docx", // CodeBlock paragraphs + Code rStyle + lowlight colors
+	"task-lists.docx", // SDT <w14:checkbox> inside list paragraphs (GFM tasks)
+	"task-lists-web.docx", // Word-for-Web shape: Wingdings ☐ bullet + strike-for-done
+	"task-lists-tracked.docx", // tracked checkbox toggles inside SDT content controls
 ] as const;
 
 const EXTRA_FIXTURES = [

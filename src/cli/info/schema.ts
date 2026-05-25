@@ -73,6 +73,7 @@ const JSON_SCHEMA = {
 						numId: { type: "string" },
 					},
 				},
+				taskState: { enum: ["checked", "unchecked"] },
 				runs: { type: "array", items: { $ref: "#/$defs/Run" } },
 			},
 		},
@@ -108,6 +109,12 @@ const JSON_SCHEMA = {
 					required: ["id", "kind", "author", "date", "revisionId"],
 					properties: {
 						id: { type: "string" },
+						// Only kinds that attach to a TextRun are listed here. Other
+						// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
+						// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
+						// surface via `track-changes list` from
+						// `view.trackedChangeReferences`, not via `Run.trackedChange`
+						// — keep this enum tight to what readers actually see here.
 						kind: {
 							enum: ["ins", "del", "moveFrom", "moveTo"],
 						},

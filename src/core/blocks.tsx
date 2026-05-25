@@ -1,14 +1,22 @@
 import type { Run, TextRun } from "./ast/types";
 import { w } from "./jsx";
 import { type NullableXmlNode, XmlNode } from "./parser";
+import { TaskCheckbox } from "./task-list";
 
 /** A `<w:p>`. Pass `runs` for full control, or `text` (+ optional run-level
  * formatting) for a single-run paragraph. `runs` wins if both are given; with
- * neither, an empty paragraph is emitted. */
+ * neither, an empty paragraph is emitted.
+ *
+ * When `taskState` is set, prepends a `<w:sdt><w14:checkbox/></w:sdt>` content
+ * control plus a space run before the user content — the shape Word, Pandoc,
+ * and LibreOffice all emit for GFM task list items. The detection mirror in
+ * `core/ast/read.ts::detectLeadingCheckbox` strips this prefix back out on
+ * read, so a paragraph round-trips losslessly. */
 export function Paragraph({
 	style,
 	alignment,
 	list,
+	taskState,
 	text,
 	runs,
 	...formatting
@@ -23,6 +31,12 @@ export function Paragraph({
 	return (
 		<w.p>
 			<ParagraphProperties options={{ style, alignment, list }} />
+			{taskState && <TaskCheckbox checked={taskState === "checked"} />}
+			{taskState && (
+				<w.r>
+					<w.t {...{ "xml:space": "preserve" }}> </w.t>
+				</w.r>
+			)}
 			{resolvedRuns.map((run) => (
 				<RunElement run={run} />
 			))}
@@ -34,6 +48,7 @@ export type ParagraphOptions = {
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
 	list?: { level: number; numId: number };
+	taskState?: "checked" | "unchecked";
 };
 
 type EmittableTextFormatting = Pick<
@@ -57,12 +72,14 @@ export function ListParagraph({
 	numId,
 	level,
 	alignment,
+	taskState,
 	text,
 	runs,
 }: {
 	numId: number;
 	level: number;
 	alignment?: "left" | "center" | "right" | "justify";
+	taskState?: "checked" | "unchecked";
 	text?: string;
 	runs?: Run[];
 }): XmlNode {
@@ -71,6 +88,38 @@ export function ListParagraph({
 			style="ListParagraph"
 			alignment={alignment}
 			list={{ level, numId }}
+			taskState={taskState}
+			text={text}
+			runs={runs}
+		/>
+	);
+}
+
+/** A GFM task list item — a `<ListParagraph>` whose body is prefixed with a
+ * Word checkbox content control. Sugar over `ListParagraph` with `taskState`
+ * set; the SDT prefix is materialized inside `Paragraph` itself.
+ *
+ * @public Staged for the S8 markdown walker's `- [ ]` / `- [x]` task list
+ * items; CLI authoring today goes through `insert --task` / `edit --task`
+ * which build the paragraph via `Paragraph({ list, taskState })` directly. */
+export function TaskListItem({
+	numId,
+	level,
+	checked,
+	text,
+	runs,
+}: {
+	numId: number;
+	level: number;
+	checked: boolean;
+	text?: string;
+	runs?: Run[];
+}): XmlNode {
+	return (
+		<ListParagraph
+			numId={numId}
+			level={level}
+			taskState={checked ? "checked" : "unchecked"}
 			text={text}
 			runs={runs}
 		/>

@@ -26,11 +26,16 @@ apart.
 Output: JSON array of { id, kind, author, date, revisionId, blockId, text }
 sorted by id (document order). kind is one of: "ins", "del", "moveFrom",
 "moveTo", "sectPrChange", "rowIns", "rowDel", "cellIns", "cellDel",
-"tblGridChange", "tblPrChange", "tcPrChange". Paragraph-mark entries have kind
-"ins"/"del" with text "" — their blockId is the owning paragraph's pN.
-Table-structural entries (rowIns/rowDel/cellIns/cellDel and the property
-revisions tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to
-the owning table's tN.
+"tblGridChange", "tblPrChange", "tcPrChange", "checkboxToggle". Paragraph-mark
+entries have kind "ins"/"del" with text "" — their blockId is the owning
+paragraph's pN. Table-structural entries (rowIns/rowDel/cellIns/cellDel and
+the property revisions tblGridChange/tblPrChange/tcPrChange) have text "" and
+blockId set to the owning table's tN. checkboxToggle entries surface a Word
+checkbox content control's tracked toggle (☐↔☒): metadata comes from the
+inner <w:ins> (the new glyph); reject restores the prior glyph and flips
+the w14:checked attribute back. Structural inserts/deletes of a checkbox
+(Word emits <w:customXmlDel/InsRangeStart/End> around the SDT) round-trip
+through the XmlNode tree but aren't yet enumerated as a dedicated kind.
 
 Section-property revisions (kind="sectPrChange") additionally include
 { prior, current } objects with the section's columns/sectionType from
@@ -105,12 +110,20 @@ export async function run(args: string[]): Promise<number> {
 		// ambiguous: a row revision is a <w:ins>/<w:del> like a run-level one).
 		const kind = reference.kind ?? trackedChangeKindForTag(reference.node.tag);
 		if (!kind) continue;
+		// For `checkboxToggle` the reference.node is the SDT; metadata lives on
+		// the inner `<w:ins>` (the new glyph). For other kinds the node IS the
+		// metadata-carrying element.
+		const metadataNode =
+			kind === "checkboxToggle"
+				? (reference.node.findChild("w:sdtContent")?.findChild("w:ins") ??
+					reference.node)
+				: reference.node;
 		const record: TrackedChangeRecord = {
 			id,
 			kind,
-			author: reference.node.getAttribute("w:author") ?? "",
-			date: reference.node.getAttribute("w:date") ?? "",
-			revisionId: reference.node.getAttribute("w:id") ?? "",
+			author: metadataNode.getAttribute("w:author") ?? "",
+			date: metadataNode.getAttribute("w:date") ?? "",
+			revisionId: metadataNode.getAttribute("w:id") ?? "",
 			blockId: reference.blockId,
 			text: "",
 		};

@@ -170,6 +170,60 @@ describe("preserve unknown elements — invariant tests", () => {
 		expect(xml).toContain("<w:hyperlink");
 	});
 
+	test("non-checkbox SDT bodies are preserved AND their internal tracked changes aren't enumerated", async () => {
+		// Word emits `<w:sdt>` for non-checkbox content controls too — Plain
+		// Text, Rich Text, Dropdown, etc. — and a tracked edit inside one
+		// shows up as `<w:ins>`/`<w:del>` inside `<w:sdtContent>`. The AST
+		// reader and the apply walker MUST agree on whether to descend; if
+		// they disagree, `tcN` ids drift between `track-changes list` and
+		// `accept --at tcN`. Today neither walker descends, so the inner
+		// revision is invisible to track-changes commands AND survives the
+		// underlying XmlNode tree untouched.
+		const docPath = await buildFixture(
+			`<w:p>` +
+				`<w:sdt>` +
+				`<w:sdtPr>` +
+				`<w:id w:val="42"/>` +
+				`<w:placeholder><w:docPart w:val="DefaultPlaceholder_-1854013440"/></w:placeholder>` +
+				`</w:sdtPr>` +
+				`<w:sdtContent>` +
+				`<w:ins w:id="7" w:author="Tester" w:date="2026-05-25T00:00:00Z">` +
+				`<w:r><w:t>secret inside content control</w:t></w:r>` +
+				`</w:ins>` +
+				`</w:sdtContent>` +
+				`</w:sdt>` +
+				`</w:p>`,
+			"sdt-tracked",
+		);
+
+		const list = await runCli("track-changes", "list", docPath);
+		const changes = list.parsed as Array<{ id: string }>;
+		// The inner `<w:ins>` MUST NOT surface — neither walker descends into
+		// non-checkbox SDTs, so `track-changes list` shows zero entries.
+		expect(changes).toEqual([]);
+
+		// Round-trip through a save (via `replace` on text in a sibling, but
+		// there is none here — use `insert` after p0 instead, which is enough
+		// to force `saveDocView`).
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"unrelated paragraph",
+		);
+
+		const xml = await readDocumentXml(docPath);
+		// The whole SDT (including the inner ins) survives intact.
+		expect(xml).toContain("<w:sdt>");
+		expect(xml).toContain('<w:id w:val="42"/>');
+		expect(xml).toContain(
+			'<w:ins w:id="7" w:author="Tester" w:date="2026-05-25T00:00:00Z">',
+		);
+		expect(xml).toContain("secret inside content control");
+	});
+
 	test("find returns offsets that ignore unknown markers (markers don't shift indexing)", async () => {
 		const docPath = await buildFixture(
 			`<w:p>` +

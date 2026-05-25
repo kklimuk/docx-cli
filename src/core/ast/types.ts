@@ -23,6 +23,11 @@ export type Paragraph = {
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
 	list?: { level: number; numId: string; ordered?: boolean };
+	/** GFM task-list marker. Set when the paragraph's first content is a Word
+	 * checkbox content control (`<w:sdt><w14:checkbox/></w:sdt>`); the SDT itself
+	 * plus the leading whitespace run after it are stripped from `runs` so the
+	 * AST carries only the task text. Markdown render emits `- [ ]` / `- [x]`. */
+	taskState?: "checked" | "unchecked";
 	runs: Run[];
 };
 
@@ -209,6 +214,14 @@ export type TrackedChange = {
  *    (gridSpan / hMerge / vMerge / width…), carrying a snapshot of the prior
  *    <w:tcPr>. How merge / unmerge is tracked: the cell-preserving merge
  *    markers stay, and reject restores the pre-merge <w:tcPr>. No run text.
+ *  - `checkboxToggle`: a tracked toggle of a `<w14:checkbox>` content control's
+ *    state. Word/LibreOffice emit this as an `<w:ins>` (new glyph ☒ or ☐) and
+ *    `<w:del>` (old glyph ☐ or ☒) pair INSIDE `<w:sdtContent>`, plus an
+ *    in-place flip of the `w14:checked` attribute (no separate
+ *    `<w14:checkedChange>` element exists in the spec). We surface the pair
+ *    as a single revision so `track-changes accept/reject` can keep the glyph
+ *    and attribute consistent — reject infers the prior attribute value from
+ *    the deleted glyph (☐ → "0", ☒ → "1") and flips the attribute back.
  */
 export type TrackedChangeKind =
 	| "ins"
@@ -222,7 +235,8 @@ export type TrackedChangeKind =
 	| "cellDel"
 	| "tblGridChange"
 	| "tblPrChange"
-	| "tcPrChange";
+	| "tcPrChange"
+	| "checkboxToggle";
 
 export type Comment = {
 	id: string;

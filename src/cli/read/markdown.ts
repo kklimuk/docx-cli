@@ -256,7 +256,13 @@ function paragraphPrefix(paragraph: Paragraph): string {
 		// GFM ordered-list numbering auto-increments client-side; using `1. `
 		// for every item is the idiomatic representation.
 		const marker = paragraph.list.ordered ? "1. " : "- ";
-		return `${indent}${marker}`;
+		const task =
+			paragraph.taskState === "checked"
+				? "[x] "
+				: paragraph.taskState === "unchecked"
+					? "[ ] "
+					: "";
+		return `${indent}${marker}${task}`;
 	}
 	return "";
 }
