@@ -4,6 +4,7 @@
 		"src/core/jsx/jsx-runtime.ts",
 		"src/core/jsx/jsx-dev-runtime.ts",
 		"scripts/*.{ts,tsx}",
+		"tests/fixtures/setup/**/*.{ts,tsx}",
 		"tests/**/*.test.{ts,tsx}"
 	],
 	"project": [

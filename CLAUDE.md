@@ -79,6 +79,8 @@ bun test                  # everything
 bun run check             # biome + knip + tsc
 ```
 
+Fixture authoring (core-emitters-first, CLI-second) and rebuild instructions live in [tests/fixtures/setup/CLAUDE.md](tests/fixtures/setup/CLAUDE.md).
+
 ## Build
 
 - `bun run build` → `dist/index.js` — bundled JS that npm publishes (runs under Bun). **Required**: path aliases (`@core/*`) and JSX runtime resolution don't work when consumed from `node_modules`; the bundle pre-resolves everything. Never ship raw `src/`.

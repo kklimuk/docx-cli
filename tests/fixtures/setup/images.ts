@@ -15,7 +15,7 @@ import { $ } from "bun";
  * them rather than regenerating, so it runs anywhere without an image encoder.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/images.docx");
 const cliEntry = resolve(root, "src/index.ts");
 const assets = resolve(root, "tests/fixtures/assets");

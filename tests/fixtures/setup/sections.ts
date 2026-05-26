@@ -57,7 +57,7 @@ import { $ } from "bun";
  * `track-changes`.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/sections.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

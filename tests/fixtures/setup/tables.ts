@@ -15,7 +15,7 @@ import { $ } from "bun";
  * `insert --style` (ensureReferencedStyle).
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/tables.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

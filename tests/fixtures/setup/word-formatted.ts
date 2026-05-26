@@ -27,7 +27,7 @@ import { $ } from "bun";
  * test for `create` + `insert --runs`.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/word-formatted.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

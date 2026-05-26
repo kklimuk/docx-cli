@@ -1,5 +1,5 @@
 import type JSZip from "jszip";
-import { CANONICAL_PARTS } from "../src/cli/create/canonical-parts";
+import { CANONICAL_PARTS } from "../../../../src/cli/create/canonical-parts";
 
 /**
  * Shared boilerplate for hand-rolled fixture scripts. Centralizes the

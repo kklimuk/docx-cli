@@ -8,7 +8,7 @@ import {
 	buildDocumentRels,
 	buildRootRels,
 	wrapDocument,
-} from "./fixture-helpers";
+} from "./helpers";
 
 /**
  * Build tests/fixtures/transparent-wrappers.docx — a minimal docx exercising
@@ -22,7 +22,7 @@ import {
  *   p1: "Hello " + <w:smartTag w:element="PersonName">"Alice"</w:smartTag> + "."
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/transparent-wrappers.docx");
 
 const body = `

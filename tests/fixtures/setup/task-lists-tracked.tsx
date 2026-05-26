@@ -21,7 +21,7 @@ import { $ } from "bun";
  *      paragraph (not two stray ins/del entries).
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/task-lists-tracked.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

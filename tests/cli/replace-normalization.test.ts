@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 
 const FIXTURE = "tests/fixtures/normalize-query.docx";
-// Layout (built by scripts/make-normalize-query-fixture.ts):
+// Layout (built by tests/fixtures/setup/normalize-query.ts):
 //   p0: 'The plan: "hello" world—ready to ship. The figure: 5 * 3 = 15.'
 //       (smart quotes around hello)
 //   p1: 'plan: "hello" today.' (straight quotes)

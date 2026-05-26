@@ -25,7 +25,7 @@ import { $ } from "bun";
  * `create`, `insert`, and `track-changes on`.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/chained-tracked-edits.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

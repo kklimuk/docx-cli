@@ -1,11 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
-import { openDocView, saveDocView } from "../src/core/ast/doc-view";
-import { ListParagraph, Paragraph } from "../src/core/blocks";
-import { allocateNum } from "../src/core/numbering";
-import { XmlNode } from "../src/core/parser";
-import { ensureStyle } from "../src/core/styles";
+import { openDocView, saveDocView } from "../../../src/core/ast/doc-view";
+import { ListParagraph, Paragraph } from "../../../src/core/blocks";
+import { allocateNum } from "../../../src/core/numbering";
+import { XmlNode } from "../../../src/core/parser";
+import { ensureStyle } from "../../../src/core/styles";
 
 /**
  * Build tests/fixtures/lists.docx — a docx exercising bulleted and ordered
@@ -22,7 +22,7 @@ import { ensureStyle } from "../src/core/styles";
  * exercising the read path and verifying renderer behavior in Word.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/lists.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

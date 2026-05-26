@@ -8,7 +8,7 @@ import { runCli, tempWorkspace } from "./harness";
 // ids out from under the agent.
 
 const FIXTURE = "tests/fixtures/multi-tracked.docx";
-// Layout (built by scripts/make-multi-tracked-fixture.ts):
+// Layout (built by tests/fixtures/setup/multi-tracked.ts):
 //   p0: "Aleph is first."  — tc0 (del "Alpha") + tc1 (ins "Aleph")
 //   p1: "Bet is second."   — tc2 (del "Beta")  + tc3 (ins "Bet")
 //   p2: "Gimel is third."  — tc4 (del "Gamma") + tc5 (ins "Gimel")

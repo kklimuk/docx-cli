@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 
 const FIXTURE = "tests/fixtures/comments-batch.docx";
-// Layout (built by scripts/make-comments-batch-fixture.ts):
+// Layout (built by tests/fixtures/setup/comments-batch.ts):
 //   p0: "Alpha is first."
 //   p1: "Beta is second."
 //   p2: "Gamma is third."

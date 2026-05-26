@@ -24,7 +24,7 @@ import { $ } from "bun";
  * `insert`, `track-changes on`, and `replace` under tracking.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/multi-tracked.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

@@ -18,7 +18,7 @@ import { $ } from "bun";
  * runs, the rStyle references, and the multi-paragraph code block layout.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/code-blocks.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

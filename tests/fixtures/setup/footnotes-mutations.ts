@@ -21,7 +21,7 @@ import { $ } from "bun";
  *   endnotes.xml:  separator, continuationSeparator, en1
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/footnotes-mutations.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

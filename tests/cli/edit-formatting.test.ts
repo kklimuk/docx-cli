@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 
 const FIXTURE = "tests/fixtures/word-formatted.docx";
-// Layout (built by scripts/make-word-formatted-fixture.ts):
+// Layout (built by tests/fixtures/setup/word-formatted.ts):
 //   p0: plain — "The quick brown fox jumps over the lazy dog."
 //   p1: "The " + "MESSENGER" [bold,#800080] + " is " + "fatally flawed" [italic] + "."
 //   p2: "Bold" [bold] + " then " + "italic" [italic] + " then plain."

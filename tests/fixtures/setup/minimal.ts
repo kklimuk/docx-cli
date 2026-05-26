@@ -10,9 +10,9 @@ import {
 	DEFAULT_SECTPR,
 	type ExtraPart,
 	wrapDocument,
-} from "./fixture-helpers";
+} from "./helpers";
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/minimal.docx");
 
 const body = `

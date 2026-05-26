@@ -59,8 +59,9 @@ tests/
   core/                       # XmlNode + locator + numbering unit tests
   cli/                        # one file per command surface (harness.ts wraps Bun.spawn)
   integration/                # LibreOffice round-trip (auto-skips if no soffice)
-  fixtures/                   # .docx files; most built by scripts/make-*-fixture.{ts,tsx}
-scripts/                      # fixture builders + utilities (fixture-helpers.ts, move.ts, inspect-fixtures.ts)
+  fixtures/                   # .docx files
+    setup/                    # builders: setup/<name>.{ts,tsx} writes ../<name>.docx (helpers/ for canonical parts; inspect.ts audit)
+scripts/                      # repo utilities (move.ts, word-redlines.sh, smoke probes)
 ```
 
 See [CLAUDE.md](CLAUDE.md) and the nested `CLAUDE.md` files under `src/` for conventions, architectural invariants, and per-subsystem playbooks.

@@ -11,7 +11,7 @@ import { runCli, tempWorkspace } from "./harness";
 // <w:ins> and existing <w:del> wrappers, so chained edits stay safe.
 
 const FIXTURE = "tests/fixtures/chained-tracked-edits.docx";
-// Layout (built by scripts/make-chained-tracked-edits-fixture.ts):
+// Layout (built by tests/fixtures/setup/chained-tracked-edits.ts):
 //   p0: "Cost of living, anti-price-gouging, and housing reform."
 //   p1: "Old plan: ship Tuesday."
 //   track-changes: ON, no tracked changes recorded yet.

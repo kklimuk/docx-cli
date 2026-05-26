@@ -20,7 +20,7 @@ import { $ } from "bun";
  * `create` and `insert`.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/comments-batch.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

@@ -9,7 +9,7 @@ import {
 	buildRootRels,
 	type ExtraPart,
 	wrapDocument,
-} from "./fixture-helpers";
+} from "./helpers";
 
 /**
  * Build tests/fixtures/notes.docx — a minimal docx exercising footnotes and
@@ -20,7 +20,7 @@ import {
  * (filtered by `readNotes` in core/ast/read.ts).
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/notes.docx");
 
 const body = `

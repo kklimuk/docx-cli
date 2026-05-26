@@ -16,7 +16,7 @@ import { $ } from "bun";
  *  - 1 nested task at level 1
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/task-lists.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

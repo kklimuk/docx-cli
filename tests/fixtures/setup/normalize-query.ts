@@ -23,7 +23,7 @@ import { $ } from "bun";
  * `create` and `insert` with smart-quote / em-dash text.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/normalize-query.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

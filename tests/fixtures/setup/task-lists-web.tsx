@@ -1,12 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
-import { openDocView, saveDocView } from "../src/core/ast/doc-view";
-import { Paragraph } from "../src/core/blocks";
-import { w } from "../src/core/jsx";
-import { allocateNum } from "../src/core/numbering";
-import { type NullableXmlNode, XmlNode } from "../src/core/parser";
-import { ensureStyle } from "../src/core/styles";
+import { openDocView, saveDocView } from "../../../src/core/ast/doc-view";
+import { Paragraph } from "../../../src/core/blocks";
+import { w } from "../../../src/core/jsx";
+import { allocateNum } from "../../../src/core/numbering";
+import { type NullableXmlNode, XmlNode } from "../../../src/core/parser";
+import { ensureStyle } from "../../../src/core/styles";
 
 /**
  * Build tests/fixtures/task-lists-web.docx — exercises the OTHER GFM task-list
@@ -25,7 +25,7 @@ import { ensureStyle } from "../src/core/styles";
  * shape on the write side (SDT is canonical for our own task-list output).
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/task-lists-web.docx");
 const cliEntry = resolve(root, "src/index.ts");
 

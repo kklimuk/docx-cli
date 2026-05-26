@@ -9,7 +9,7 @@ import {
 	buildRootRels,
 	DEFAULT_SECTPR,
 	wrapDocument,
-} from "./fixture-helpers";
+} from "./helpers";
 
 /**
  * Build tests/fixtures/styles-injection.docx — a Word-canonical docx whose
@@ -24,7 +24,7 @@ import {
  * required parts (settings/fontTable/theme/webSettings/app) are missing.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/styles-injection.docx");
 
 const body = `

@@ -8,7 +8,7 @@ import {
 	buildDocumentRels,
 	buildRootRels,
 	wrapDocument,
-} from "./fixture-helpers";
+} from "./helpers";
 
 /**
  * Build tests/fixtures/tracked-moves.docx — a minimal docx exercising
@@ -28,7 +28,7 @@ import {
  * our reject codepath handles both via a no-op-for-<w:t> renameDelTextToText.
  */
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const out = resolve(root, "tests/fixtures/tracked-moves.docx");
 
 const body = `
