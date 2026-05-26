@@ -45,12 +45,12 @@ export function markParagraphMarkAs(
 ): void {
 	let pPr = paragraph.findChild("w:pPr");
 	if (!pPr) {
-		pPr = (<w.pPr />) as XmlNode;
+		pPr = <w.pPr />;
 		paragraph.children.unshift(pPr);
 	}
 	let rPr = pPr.findChild("w:rPr");
 	if (!rPr) {
-		rPr = (<w.rPr />) as XmlNode;
+		rPr = <w.rPr />;
 		pPr.children.push(rPr);
 	}
 	const marker = kind === "ins" ? <Ins meta={meta} /> : <Del meta={meta} />;

@@ -86,7 +86,7 @@ export async function run(args: string[]): Promise<number> {
 	if (!view.settingsTree) view.settingsTree = [];
 	let settingsRoot = XmlNode.findRoot(view.settingsTree, "w:settings");
 	if (!settingsRoot) {
-		settingsRoot = (<w.settings {...{ "xmlns:w": NS_W }} />) as XmlNode;
+		settingsRoot = <w.settings {...{ "xmlns:w": NS_W }} />;
 		view.settingsTree.push(settingsRoot);
 	}
 
@@ -109,7 +109,7 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (mode === "on" && !hasTrackChanges) {
-		settingsRoot.children.unshift((<w.trackChanges />) as XmlNode);
+		settingsRoot.children.unshift(<w.trackChanges />);
 	} else if (mode === "off" && hasTrackChanges) {
 		settingsRoot.children = settingsRoot.children.filter(
 			(child) => child.tag !== "w:trackChanges",

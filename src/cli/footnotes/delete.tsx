@@ -193,7 +193,7 @@ function walkAndWrap(
 			child.tag === "w:r" &&
 			runContainsReference(child, referenceTag, numericId)
 		) {
-			replaced.push((<Del meta={meta}>{child}</Del>) as XmlNode);
+			replaced.push(<Del meta={meta}>{child}</Del>);
 			continue;
 		}
 		walkAndWrap(child, referenceTag, numericId, meta);

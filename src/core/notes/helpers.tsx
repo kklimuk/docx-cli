@@ -411,7 +411,7 @@ export function wrapNoteBodyAsDeleted(
 		// §17.16.5 — text inside `<w:del>` must use `<w:delText>`.
 		wrapped.push(convertTextToDelText(child));
 	}
-	const del = (<Del meta={meta}>{wrapped}</Del>) as XmlNode;
+	const del = <Del meta={meta}>{wrapped}</Del>;
 	paragraph.children = [...head, del];
 	markParagraphMarkAs(paragraph, "del", meta);
 }
@@ -447,13 +447,11 @@ export function wrapNoteBodyAsEdited(
 				<w.r>
 					<w.t {...{ "xml:space": "preserve" }}>{newText}</w.t>
 				</w.r>
-			) as XmlNode;
-			result.push((<Ins meta={insMeta}>{newRun}</Ins>) as XmlNode);
+			);
+			result.push(<Ins meta={insMeta}>{newRun}</Ins>);
 			inserted = true;
 		}
-		result.push(
-			(<Del meta={delMeta}>{convertTextToDelText(child)}</Del>) as XmlNode,
-		);
+		result.push(<Del meta={delMeta}>{convertTextToDelText(child)}</Del>);
 	}
 	// No prior user-text run (e.g. body has only the back-ref + whitespace):
 	// just append a tracked insertion of the new text.
@@ -462,8 +460,8 @@ export function wrapNoteBodyAsEdited(
 			<w.r>
 				<w.t {...{ "xml:space": "preserve" }}>{newText}</w.t>
 			</w.r>
-		) as XmlNode;
-		result.push((<Ins meta={insMeta}>{newRun}</Ins>) as XmlNode);
+		);
+		result.push(<Ins meta={insMeta}>{newRun}</Ins>);
 	}
 	paragraph.children = result;
 }

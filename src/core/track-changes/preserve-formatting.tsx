@@ -470,7 +470,7 @@ function emitPlainRun(text: string, rPr: XmlNode | null): XmlNode {
 			{rPr}
 			<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
 		</w.r>
-	) as XmlNode;
+	);
 }
 
 function emitDeletedRun(text: string, rPr: XmlNode | null): XmlNode {
@@ -479,7 +479,7 @@ function emitDeletedRun(text: string, rPr: XmlNode | null): XmlNode {
 			{rPr}
 			<w.delText {...{ "xml:space": "preserve" }}>{text}</w.delText>
 		</w.r>
-	) as XmlNode;
+	);
 }
 
 function cloneOrNull(node: XmlNode | null): XmlNode | null {

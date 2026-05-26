@@ -356,11 +356,11 @@ export function emitAuditComment(
 }
 
 function commentRangeStartMarker(commentId: string): XmlNode {
-	return (<w.commentRangeStart w-id={commentId} />) as XmlNode;
+	return <w.commentRangeStart w-id={commentId} />;
 }
 
 function commentRangeEndMarker(commentId: string): XmlNode {
-	return (<w.commentRangeEnd w-id={commentId} />) as XmlNode;
+	return <w.commentRangeEnd w-id={commentId} />;
 }
 
 function commentReferenceRun(commentId: string): XmlNode {
@@ -371,7 +371,7 @@ function commentReferenceRun(commentId: string): XmlNode {
 			</w.rPr>
 			<w.commentReference w-id={commentId} />
 		</w.r>
-	) as XmlNode;
+	);
 }
 
 type MarkerSpec = {
