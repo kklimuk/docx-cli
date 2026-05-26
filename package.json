@@ -1,6 +1,6 @@
 {
 	"name": "bun-docx",
-	"version": "0.10.0",
+	"version": "0.11.0",
 	"description": "CLI for AI agents (Claude, Codex) to read, edit, and comment on .docx files with full format fidelity.",
 	"keywords": [
 		"docx",
