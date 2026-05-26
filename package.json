@@ -59,6 +59,7 @@
 		"fast-xml-parser": "^5.7.2",
 		"heic-convert": "^2.1.0",
 		"jszip": "^3.10.1",
-		"lowlight": "^3.3.0"
+		"lowlight": "^3.3.0",
+		"temml": "^0.13.3"
 	}
 }

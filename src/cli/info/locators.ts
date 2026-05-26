@@ -36,6 +36,9 @@ Entity locators:
   cN              Comment id (e.g., c0)
   imgN            Image id (e.g., img2)
   linkN           Hyperlink id (e.g., link0)
+  eqN             Equation id (e.g., eq3) — the Nth <m:oMath> / <m:oMathPara>
+                  in document order. Surfaces with run.latex = the
+                  reconstructed LaTeX (see core/equation).
   tcN             Tracked change id (e.g., tc0) — the Nth revision wrapper
                   in document order. Includes run-level <w:ins>/<w:del>/
                   <w:moveFrom>/<w:moveTo>, section-property revisions
@@ -98,6 +101,12 @@ const JSON_REFERENCE = {
 		comment: { syntax: "cN", example: "c1" },
 		image: { syntax: "imgN", example: "img0" },
 		hyperlink: { syntax: "linkN", example: "link0" },
+		equation: {
+			syntax: "eqN",
+			example: "eq0",
+			notes:
+				"Equation in document order; surfaces with `run.latex` (reconstructed LaTeX) and `run.display` (inline vs $$…$$).",
+		},
 		trackedChange: {
 			syntax: "tcN",
 			example: "tc0",

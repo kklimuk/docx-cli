@@ -49,3 +49,7 @@ Tables are their own package — see [table/CLAUDE.md](table/CLAUDE.md).
 ## Images
 
 Images are their own package — see [image/CLAUDE.md](image/CLAUDE.md).
+
+## Equations
+
+Equations are their own package — see [equation/CLAUDE.md](equation/CLAUDE.md). The reader walks `<m:oMath>` / `<m:oMathPara>` to reconstruct LaTeX (`run.latex` on `EquationRun`); markdown render emits `$…$` / `$$…$$`. The writer (`latexToOmml`, used by `insert --equation` and `edit --at eqN --equation`) goes LaTeX → MathML via temml → OMML via our own adapter. The walker tolerates both Pandoc's lean OMML and Word's verbose `<m:ctrlPr>`-laden output. Tracked equation edits land via the same paragraph-level `<w:ins>` / `<w:del>` wrappers we use for text runs — `applyTrackedInsertion`, `applyTrackedDeletion`, and `commitEquationEdit` all treat `<m:oMath>` / `<m:oMathPara>` as trackable run-level siblings.

@@ -1,3 +1,4 @@
+import { ommlToLatex } from "../equation";
 import { getListFormat } from "../numbering";
 import { XmlNode } from "../parser";
 import { readSectionProperties } from "../sections";
@@ -11,6 +12,7 @@ import type {
 	CommentAnchor,
 	Doc,
 	DocProperties,
+	EquationRun,
 	Footnote,
 	Hyperlink,
 	ImageRun,
@@ -34,6 +36,7 @@ type WalkState = {
 	imageIndex: number;
 	hyperlinkIndex: number;
 	trackedChangeIndex: number;
+	equationIndex: number;
 	commentAnchors: Map<string, CommentAnchor>;
 	openComments: Map<string, { blockId: string; offset: number }>;
 };
@@ -55,6 +58,7 @@ export function buildDoc(view: DocView, path: string): Doc {
 		imageIndex: 0,
 		hyperlinkIndex: 0,
 		trackedChangeIndex: 0,
+		equationIndex: 0,
 		commentAnchors: new Map(),
 		openComments: new Map(),
 	};
@@ -310,25 +314,29 @@ function walkRunContainer(
 			continue;
 		}
 
-		if (child.tag === "m:oMath") {
+		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
 			const text = collectMathText(child);
 			if (text.length > 0) {
-				context.paragraph.runs.push({
+				const display = child.tag === "m:oMathPara";
+				const id = `eq${context.state.equationIndex++}`;
+				const latex = ommlToLatex(child);
+				const run: EquationRun = {
 					type: "equation",
+					id,
+					latex,
 					text,
-					display: false,
-				});
-			}
-			continue;
-		}
-
-		if (child.tag === "m:oMathPara") {
-			const text = collectMathText(child);
-			if (text.length > 0) {
-				context.paragraph.runs.push({
-					type: "equation",
-					text,
-					display: true,
+					display,
+				};
+				if (context.activeComments.size > 0) {
+					run.comments = [...context.activeComments];
+				}
+				context.paragraph.runs.push(run);
+				context.view.equationReferences.set(id, {
+					node: child,
+					parent: container.children,
+					blockId: context.blockId,
+					display,
+					latex,
 				});
 			}
 			continue;

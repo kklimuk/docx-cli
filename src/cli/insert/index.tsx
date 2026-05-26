@@ -20,6 +20,7 @@ import {
 	buildCodeBlockParagraphs,
 	ensureCodeBlockStyles,
 } from "@core/code-block";
+import { EquationParseError, latexToOmml } from "@core/equation";
 import {
 	addImagePart,
 	computeExtentEmu,
@@ -70,6 +71,10 @@ Content (one required):
   --code TEXT       Insert a multi-line code block. Newlines split into one
                     CodeBlock-styled paragraph per source line.
   --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin).
+  --equation LATEX  Insert a math equation from LaTeX. Goes through temml
+                    (KaTeX/MathJax-compatible LaTeX dialect) → MathML → OMML.
+                    Pair with --display for block-mode equations; omit for
+                    inline. Round-trips as $LATEX$ / $$LATEX$$ in markdown.
 
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
@@ -260,6 +265,8 @@ const OPTION_SPEC = {
 	task: { type: "string" },
 	list: { type: "string" },
 	"list-level": { type: "string" },
+	equation: { type: "string" },
+	display: { type: "boolean" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -313,7 +320,8 @@ type InsertSpec =
 			kind: "code";
 			content: string;
 			language?: string;
-	  };
+	  }
+	| { kind: "equation"; latex: string; display: boolean };
 
 type TextFormatting = {
 	color?: string;
@@ -355,6 +363,7 @@ const CONTENT_KINDS = [
 	{ flag: "image", subFlags: ["alt", "width", "height"] },
 	{ flag: "code", subFlags: ["language"] },
 	{ flag: "code-file", subFlags: ["language"] },
+	{ flag: "equation", subFlags: ["display"] },
 ] as const;
 
 const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
@@ -417,6 +426,12 @@ async function chooseContentSpec(
 		case "code":
 		case "code-file":
 			return resolveCodeSpec(values, chosen.flag);
+		case "equation":
+			return {
+				kind: "equation",
+				latex: values.equation as string,
+				display: Boolean(values.display),
+			};
 	}
 }
 
@@ -884,7 +899,54 @@ async function buildInsertedParagraph(
 			return buildImageParagraph(view, spec, paragraphOptions);
 		case "code":
 			return buildCodeBlockParagraphs(spec.content, spec.language);
+		case "equation":
+			return await buildEquationParagraph(spec, paragraphOptions);
 	}
+}
+
+/** Build a paragraph whose only content is an equation. Display equations
+ *  carry the `<m:oMathPara>` wrapper as a direct child of `<w:p>`; inline
+ *  equations would sit alongside text runs (here, alone). Returns the
+ *  failure code if temml can't parse the LaTeX. */
+async function buildEquationParagraph(
+	spec: Extract<InsertSpec, { kind: "equation" }>,
+	paragraphOptions: ParagraphOptions,
+): Promise<XmlNode | number> {
+	let omml: XmlNode;
+	try {
+		omml = latexToOmml(spec.latex, spec.display);
+	} catch (error) {
+		if (error instanceof EquationParseError) {
+			return fail(
+				"USAGE",
+				`Could not parse LaTeX equation: ${error.message}`,
+				"Check the LaTeX syntax. The equation goes through temml — it accepts most KaTeX/MathJax LaTeX, but unknown commands fail.",
+			);
+		}
+		throw error;
+	}
+	return <EquationParagraph omml={omml} {...paragraphOptions} />;
+}
+
+/** Wrap an OMML element (`<m:oMath>` for inline, `<m:oMathPara>` for display)
+ *  in a `<w:p>`. We use a small JSX component rather than `<Paragraph>` so
+ *  the `<m:oMath>` child isn't accidentally promoted into a run. */
+function EquationParagraph({
+	omml,
+	style,
+	alignment,
+}: { omml: XmlNode } & ParagraphOptions): XmlNode {
+	return (
+		<w.p>
+			{(style || alignment) && (
+				<w.pPr>
+					{style && <w.pStyle w-val={style} />}
+					{alignment && <w.jc w-val={alignment} />}
+				</w.pPr>
+			)}
+			{omml}
+		</w.p>
+	);
 }
 
 async function buildImageParagraph(
@@ -1063,8 +1125,12 @@ function applyTrackedInsertion(
 		revisionId: allocator.next(),
 	});
 
-	// Wrap each contiguous run of <w:r> children in a single <w:ins>, preserving
-	// other children (e.g. <w:pPr>) at their existing positions.
+	// Wrap each contiguous span of trackable run-level children in a single
+	// `<w:ins>`, preserving paragraph-property siblings (`<w:pPr>`) at their
+	// existing positions. Trackable children include `<w:r>` text runs AND
+	// `<m:oMath>` / `<m:oMathPara>` equations — both live as direct
+	// `<w:p>` children for inline / display math respectively, and Word
+	// accepts them inside `<w:ins>` per ECMA-376's permissive content model.
 	const newChildren: XmlNode[] = [];
 	let runBuffer: XmlNode[] = [];
 	const flush = (): void => {
@@ -1073,7 +1139,7 @@ function applyTrackedInsertion(
 		runBuffer = [];
 	};
 	for (const child of paragraph.children) {
-		if (child.tag === "w:r") {
+		if (TRACKABLE_PARAGRAPH_CHILDREN.has(child.tag)) {
 			runBuffer.push(child);
 			continue;
 		}
@@ -1087,3 +1153,10 @@ function applyTrackedInsertion(
 	// the new paragraph break.
 	markParagraphMarkAs(paragraph, "ins", mintMeta());
 }
+
+/** Paragraph children that are trackable as inserted/deleted run-level
+ *  content. Text runs are obvious; OMML equations sit at the same nesting
+ *  level (inside `<w:p>`, beside `<w:r>` siblings) and Word's revision
+ *  model wraps them the same way. Hyperlinks and field-codes already
+ *  contain `<w:r>` themselves so they get tracked by their inner runs. */
+const TRACKABLE_PARAGRAPH_CHILDREN = new Set(["w:r", "m:oMath", "m:oMathPara"]);

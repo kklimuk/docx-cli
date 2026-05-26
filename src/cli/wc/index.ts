@@ -147,7 +147,8 @@ export async function run(args: string[]): Promise<number> {
 		locator.kind === "comment" ||
 		locator.kind === "image" ||
 		locator.kind === "hyperlink" ||
-		locator.kind === "trackedChange"
+		locator.kind === "trackedChange" ||
+		locator.kind === "equation"
 	) {
 		return fail(
 			"USAGE",

@@ -31,6 +31,7 @@ function buildSyntheticView(bodyXml: string): Doc {
 		hyperlinksByRelationshipId: new Map(),
 		hyperlinkById: new Map(),
 		trackedChangeReferences: new Map(),
+		equationReferences: new Map(),
 	};
 	view.doc = buildDoc(view, "synthetic.docx");
 	return view.doc;

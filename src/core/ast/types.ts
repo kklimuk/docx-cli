@@ -148,14 +148,28 @@ export type TabRun = {
 	type: "tab";
 };
 
-/** A math equation surfaced as concatenated <m:t> plaintext. The structural
- * OOMath markup (subscripts, fractions, etc.) is collapsed to literal characters,
- * so the rendering is degraded. `display` distinguishes inline equations
- * (<m:oMath>) from block-level display equations (<m:oMathPara>). */
+/** A math equation. `latex` is reconstructed by walking the underlying
+ *  `<m:oMath>` subtree (one handler per OMML element — see `@core/equation`)
+ *  and is the user-facing form rendered as `$…$` / `$$…$$` in markdown.
+ *  `text` is the legacy plaintext concatenation, kept as a defensive fallback
+ *  for OMML constructs the walker doesn't handle cleanly (rare in practice;
+ *  the walker covers the common top-80% and falls back per-subtree). `display`
+ *  distinguishes inline (`<m:oMath>`) from block-level (`<m:oMathPara>`). The
+ *  `id` (`eqN`) addresses the equation in document order — same scheme as
+ *  imgN/linkN — so callers can target one equation via `--at eqN`. The
+ *  original `<m:oMath>` XmlNode isn't on this type (not JSON-serializable);
+ *  the reader stashes it in `DocView.equationReferences` for emit-back paths. */
 export type EquationRun = {
 	type: "equation";
+	id: string;
+	latex: string;
 	text: string;
 	display: boolean;
+	/** Comment IDs whose range covers this equation. Populated when
+	 *  `<w:commentRangeStart>` opens before the `<m:oMath>` and closes after
+	 *  — typically from the audit-comment fallback for tracked equation
+	 *  edits (Word doesn't have a `<w:oMathChange>` element). */
+	comments?: string[];
 };
 
 /** Reference to a footnote or endnote whose body lives in Doc.footnotes or

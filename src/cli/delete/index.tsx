@@ -322,17 +322,24 @@ function applyTrackedDeletion(
 		revisionId: allocator.next(),
 	});
 
-	// Wrap each contiguous run of <w:r> children in <w:del> with <w:t> -> <w:delText>.
+	// Wrap each contiguous span of trackable run-level children in `<w:del>`.
+	// `<w:r>` text runs get their `<w:t>` rewritten as `<w:delText>` (per
+	// ECMA-376 §17.13.5.14). Equation siblings (`<m:oMath>`, `<m:oMathPara>`)
+	// don't have a `<w:t>`/`<w:delText>` distinction — they sit inside the
+	// `<w:del>` wrapper unchanged; Word's revision model treats the whole
+	// element as deleted content.
 	const newChildren: XmlNode[] = [];
 	let runBuffer: XmlNode[] = [];
 	const flush = (): void => {
 		if (runBuffer.length === 0) return;
-		const converted = runBuffer.map((run) => convertTextToDelText(run));
+		const converted = runBuffer.map((child) =>
+			child.tag === "w:r" ? convertTextToDelText(child) : child,
+		);
 		newChildren.push(<Del meta={mintMeta()}>{converted}</Del>);
 		runBuffer = [];
 	};
 	for (const child of paragraph.children) {
-		if (child.tag === "w:r") {
+		if (TRACKABLE_DELETE_CHILDREN.has(child.tag)) {
 			runBuffer.push(child);
 			continue;
 		}
@@ -346,3 +353,8 @@ function applyTrackedDeletion(
 	// the paragraph break, leaving no orphan empty paragraph.
 	markParagraphMarkAs(paragraph, "del", mintMeta());
 }
+
+/** Paragraph children that get wrapped in `<w:del>` when the paragraph
+ *  itself is being tracked-deleted. Mirror of `TRACKABLE_PARAGRAPH_CHILDREN`
+ *  in [insert/index.tsx](../insert/index.tsx). */
+const TRACKABLE_DELETE_CHILDREN = new Set(["w:r", "m:oMath", "m:oMathPara"]);

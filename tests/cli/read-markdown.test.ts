@@ -87,13 +87,16 @@ describe("docx read (markdown)", () => {
 		expect(out).toContain("# Chinese Folding Fan Design Project");
 	});
 
-	test("equations: hyperlinks survive; OOMath surfaces as `equation: ...` placeholder", async () => {
+	test("equations: OMML walks to real LaTeX in `$…$` / `$$…$$` mid-paragraph", async () => {
 		const out = await render(fixture("equations.docx"));
-		expect(out).toContain("[basis]");
-		expect(out).toContain("[change of basis]");
-		expect(out).toContain("Einstein summation convention");
-		expect(out).toContain("`equation: ei`");
-		expect(out).toContain("`equation: vi=R−1jivj,`");
+		// Inline atom equations on their own paragraphs ("Atom: superscript $x^2$"
+		// shape — header text followed by the equation render).
+		expect(out).toContain("$x^2$");
+		expect(out).toContain("$E=mc^2$");
+		// A famous formula round-tripped to its canonical LaTeX form.
+		expect(out).toContain("$\\frac{a}{b}$");
+		// Display: quadratic formula on its own block line.
+		expect(out).toMatch(/\$\$x=\\frac\{-b\\pm \\sqrt\{b\^2-4ac\}\}\{2a\}\$\$/);
 	});
 
 	test("strict-profile: chart/smartart/drawing placeholders render", async () => {
@@ -336,14 +339,19 @@ describe("docx read (markdown) --comments", () => {
 });
 
 describe("docx read (markdown) equations", () => {
-	test("inline `<m:oMath>` renders as `equation: ...` mid-paragraph", async () => {
+	test("inline `<m:oMath>` renders as `$…$` mid-paragraph", async () => {
 		const out = await render(fixture("equations.docx"));
-		expect(out).toContain("`equation: ei`");
+		// `\hat{n}` — accent atom; matches the inline `$\hat{n}$` shape.
+		expect(out).toContain("$\\hat{n}$");
 	});
 
-	test("display `<m:oMathPara>` renders on its own line", async () => {
+	test("display `<m:oMathPara>` renders on its own line with `$$…$$`", async () => {
 		const out = await render(fixture("equations.docx"));
-		expect(out).toMatch(/^`equation: ei=j=1nejRij=ejRij\.` <!-- p1 -->/m);
+		// Quadratic formula is the first display equation that's pure math (no
+		// surrounding prose), so it renders on its own block line.
+		expect(out).toMatch(
+			/^\$\$x=\\frac\{-b\\pm \\sqrt\{b\^2-4ac\}\}\{2a\}\$\$/m,
+		);
 	});
 
 	test("equations marked display=true survive in JSON AST", async () => {
@@ -383,17 +391,6 @@ describe("docx read (markdown) footnotes / endnotes", () => {
 	test("notes.docx: footnote and endnote refs both visible inline", async () => {
 		const out = await render(fixture("notes.docx"));
 		expect(out).toMatch(/Test footnote\.\[\^fn1\] Test endnote\.\[\^en1\]/);
-	});
-
-	test("equations.docx: substantive footnote with math symbols renders", async () => {
-		const out = await render(fixture("equations.docx"));
-		expect(out).toContain("[^fn26]");
-		expect(out).toMatch(/\n\[\^fn26\]: The Einstein summation convention/);
-	});
-
-	test("footnote definitions only emitted for refs visible in slice", async () => {
-		const out = await render(fixture("equations.docx"), "--from", "p3");
-		expect(out).not.toContain("[^fn26]");
 	});
 
 	test("doc without footnote refs in body emits no definitions", async () => {

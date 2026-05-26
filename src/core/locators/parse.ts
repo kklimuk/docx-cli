@@ -11,6 +11,7 @@ export type Locator =
 	| { kind: "image"; imageId: string }
 	| { kind: "hyperlink"; hyperlinkId: string }
 	| { kind: "trackedChange"; trackedChangeId: string }
+	| { kind: "equation"; equationId: string }
 	| {
 			kind: "cell";
 			tableId: string;
@@ -45,6 +46,7 @@ const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
 const LINK_RE = /^link(\d+)$/;
 const TRACKED_CHANGE_RE = /^tc(\d+)$/;
+const EQUATION_RE = /^eq(\d+)$/;
 const CELL_RANGE_RE = /^t(\d+):r(\d+)c(\d+)-r(\d+)c(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
 const TABLE_ROW_RE = /^t(\d+):r(\d+)$/;
@@ -73,6 +75,11 @@ export function parseLocator(input: string): Locator {
 			kind: "trackedChange",
 			trackedChangeId: `tc${trackedChangeMatch[1]}`,
 		};
+	}
+
+	const equationMatch = trimmed.match(EQUATION_RE);
+	if (equationMatch) {
+		return { kind: "equation", equationId: `eq${equationMatch[1]}` };
 	}
 
 	const cellRangeMatch = trimmed.match(CELL_RANGE_RE);

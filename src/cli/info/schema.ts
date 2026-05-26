@@ -175,9 +175,11 @@ const JSON_SCHEMA = {
 		},
 		EquationRun: {
 			type: "object",
-			required: ["type", "text", "display"],
+			required: ["type", "id", "latex", "text", "display"],
 			properties: {
 				type: { const: "equation" },
+				id: { type: "string" },
+				latex: { type: "string" },
 				text: { type: "string" },
 				display: { type: "boolean" },
 			},

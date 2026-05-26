@@ -15,6 +15,19 @@ export type HyperlinkReference = {
 	parent: XmlNode[];
 	relationshipId?: string;
 };
+export type EquationReference = {
+	/** The `<m:oMath>` element (or its `<m:oMathPara>` parent for display
+	 *  equations; the walker handles both — see `core/equation/read.ts`). */
+	node: XmlNode;
+	parent: XmlNode[];
+	blockId: string;
+	display: boolean;
+	/** Reconstructed LaTeX from the reader's `ommlToLatex(node)` pass. Cached
+	 *  here so `edit --at eqN --display`/`--inline` mode-toggles work for
+	 *  equations inside table cells too — walking `view.doc.blocks` to find
+	 *  the run's `latex` field misses cell paragraphs. */
+	latex: string;
+};
 export type TrackedChangeReference = {
 	node: XmlNode;
 	parent: XmlNode[];
@@ -56,6 +69,7 @@ export type DocView = {
 	hyperlinksByRelationshipId: Map<string, { url: string }>;
 	hyperlinkById: Map<string, HyperlinkReference>;
 	trackedChangeReferences: Map<string, TrackedChangeReference>;
+	equationReferences: Map<string, EquationReference>;
 };
 
 export async function openDocView(path: string): Promise<DocView> {
@@ -114,6 +128,7 @@ export async function openDocView(path: string): Promise<DocView> {
 		hyperlinksByRelationshipId: new Map(),
 		hyperlinkById: new Map(),
 		trackedChangeReferences: new Map(),
+		equationReferences: new Map(),
 	};
 
 	view.doc = buildDoc(view, pkg.path);

@@ -150,11 +150,24 @@ function buildCommentIndex(
 
 	for (const paragraph of flattenParagraphs(blocks)) {
 		paragraph.runs.forEach((run, index) => {
-			if (run.type !== "text") return;
-			if (!isRunVisible(run, view)) return;
-			for (const commentId of run.comments ?? []) {
+			// Text runs are the primary carrier; equation runs also need to
+			// pick up comments (audit-comment fallback for tracked equation
+			// edits anchors comment ranges on the `<m:oMath>` itself).
+			const comments = runComments(run);
+			if (!comments) return;
+			if (run.type === "text" && !isRunVisible(run, view)) return;
+			const spanContribution =
+				run.type === "text"
+					? run.text
+					: run.type === "equation"
+						? run.text
+						: "";
+			for (const commentId of comments) {
 				if (!spanText.has(commentId)) orderedIds.push(commentId);
-				spanText.set(commentId, (spanText.get(commentId) ?? "") + run.text);
+				spanText.set(
+					commentId,
+					(spanText.get(commentId) ?? "") + spanContribution,
+				);
 				lastSlot.set(commentId, slotKey(paragraph.id, index));
 			}
 		});
@@ -170,6 +183,15 @@ function buildCommentIndex(
 	}
 
 	return { endingsByRun, spanText, orderedIds };
+}
+
+/** Comment IDs attached to a run, regardless of run type. Today text runs
+ *  and equation runs are the only carriers — extend here if other run types
+ *  start carrying comment anchors. */
+function runComments(run: Run): string[] | undefined {
+	if (run.type === "text") return run.comments;
+	if (run.type === "equation") return run.comments;
+	return undefined;
 }
 
 function slotKey(paragraphId: string, runIndex: number): string {
@@ -245,7 +267,23 @@ function renderParagraph(
 	const body = renderRuns(paragraph.id, paragraph.runs, ctx);
 	if (body.length === 0) return null;
 	const prefix = paragraphPrefix(paragraph);
-	return `${prefix}${body} <!-- ${paragraph.id} -->`;
+	// Display equations need to be on their own line for KaTeX-based renderers
+	// (Obsidian, VS Code preview, etc.) to recognize `$$…$$` as display math.
+	// Putting the locator after a space on the same line confuses the parser
+	// — it sees the trailing `$` as an unmatched math-mode toggle.
+	const separator = isDisplayEquationOnly(body) ? "\n" : " ";
+	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->`;
+}
+
+/** True if the rendered body is a single display-math expression (`$$…$$`)
+ *  with no other content — the case where we put the locator on its own
+ *  line so KaTeX-based markdown renderers process the math correctly. */
+function isDisplayEquationOnly(body: string): boolean {
+	const trimmed = body.trim();
+	if (!trimmed.startsWith("$$") || !trimmed.endsWith("$$")) return false;
+	// Reject `$$X$$Y$$Z$$` (two separate display equations) — only single ones.
+	const inner = trimmed.slice(2, -2);
+	return !inner.includes("$$");
 }
 
 function paragraphPrefix(paragraph: Paragraph): string {
@@ -331,8 +369,20 @@ function renderRuns(
 		} else if (run.type === "tab") {
 			out += "\t";
 		} else if (run.type === "equation") {
-			const escaped = run.text.replace(/`/g, "\\`");
-			out += `\`equation: ${escaped}\``;
+			// `$…$` for inline, `$$…$$` for display. The walker in
+			// `@core/equation` reconstructed `run.latex` from the OMML subtree;
+			// `run.text` is the legacy plaintext fallback for fully-degraded
+			// (unrecognized) equations — use it only when the LaTeX walker
+			// returned empty.
+			const body = run.latex.length > 0 ? run.latex : run.text;
+			out += run.display ? `$$${body}$$` : `$${body}$`;
+			// Append any comment endings that close on this equation run
+			// (audit comments from tracked equation edits anchor here).
+			out += commentEndingsFor(
+				paragraphId,
+				[{ originalIndex: cursor }],
+				ctx.commentIndex,
+			);
 		} else if (run.type === "footnoteRef") {
 			if (run.kind === "footnote") ctx.referencedFootnoteIds.add(run.id);
 			else ctx.referencedEndnoteIds.add(run.id);
@@ -668,6 +718,7 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "image":
 		case "hyperlink":
 		case "trackedChange":
+		case "equation":
 		case "tableRow":
 		case "tableColumn":
 		case "cellRange":

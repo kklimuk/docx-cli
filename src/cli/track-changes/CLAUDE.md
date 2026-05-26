@@ -31,6 +31,16 @@ Still out of scope: `<w:rPrChange>`, `<w:pPrChange>`, and `<w:customXmlDel/InsRa
 
 The `apply.ts` walk and `walkRunContainer` in `core/ast/read.ts` must visit revisions in the same order so `tcN` ids agree between `list` and `accept --at tcN`. Per paragraph: run-level wrappers first, then inline `<w:sectPrChange>`, then paragraph-mark `<w:ins>`/`<w:del>`.
 
+## Equation revisions
+
+`<m:oMath>` (inline) and `<m:oMathPara>` (display) sit at the same paragraph-child level as `<w:r>`, so they ride the same wrappers as text runs:
+
+- **Insert** under tracking: `applyTrackedInsertion` in [cli/insert/index.tsx](../insert/index.tsx) treats `m:oMath` / `m:oMathPara` as trackable run-level siblings via `TRACKABLE_PARAGRAPH_CHILDREN`. Whole-paragraph equations end up with the OMML inside `<w:ins>` and the paragraph mark also marked as inserted (reject removes the paragraph entirely).
+- **Delete** under tracking: `applyTrackedDeletion` in [cli/delete/index.tsx](../delete/index.tsx) mirrors with `TRACKABLE_DELETE_CHILDREN`. Text runs still get `<w:t>` → `<w:delText>` conversion via `convertTextToDelText`; OMML siblings sit inside `<w:del>` unchanged (no `<m:delText>` equivalent — Word treats the whole element as the deleted unit).
+- **Edit** under tracking: `commitEquationEdit` in [cli/edit/index.tsx](../edit/index.tsx) emits a paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same parent. Our own `accept`/`reject` resolves cleanly. Word's accept-all picks the semantically correct equation (NEW on accept, OLD on reject) but leaves a small empty `<m:sSup>` / `<m:f>` skeleton next to the kept one — Word's normalization quirk, cosmetic only.
+
+What's deferred: `<w:rPrChange>` inside math runs (font-property revisions on individual symbols).
+
 ## Adding a tracked-change kind
 
 Extend `TrackedChange["kind"]` (and `TrackedChangeKind`) in `core/ast/types.ts`, widen the JSON schema enum in `cli/info/schema.ts`, update `walkRunContainer` in `core/ast/read.ts`, update `paragraphTextAccepted`/`paragraphTextBaseline` in `core/ast/text.ts` and `isRunVisible`/`criticMarkerFor`/`trackedChangeLabelFor` in `cli/read/markdown.ts`. If the kind takes part in accept/reject, update `actionFor` and `applyAccept`/`applyReject` in [apply.ts](apply.ts) and `trackedChangeKindForTag` in [list.ts](list.ts). Slot it into the same walk order in both the reader and apply.ts.

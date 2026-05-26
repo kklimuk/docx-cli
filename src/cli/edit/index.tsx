@@ -4,7 +4,9 @@ import {
 	type BlockRangeReference,
 	type BlockReference,
 	createRevisionAllocator,
+	Del,
 	type DocView,
+	Ins,
 	isSectionType,
 	isTrackChangesEnabled,
 	LocatorParseError,
@@ -25,6 +27,7 @@ import {
 	buildCodeBlockParagraphs,
 	ensureCodeBlockStyles,
 } from "@core/code-block";
+import { EquationParseError, latexToOmml } from "@core/equation";
 import type { XmlNode } from "@core/parser";
 import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
 import { flipCheckboxTracked, flipCheckboxUntracked } from "@core/task-list";
@@ -69,6 +72,13 @@ Paragraph content (one required for paragraph / range locators):
                     SDT). Under track-changes, emits Word's canonical toggle
                     shape (ins/del pair inside sdtContent + w14:checked flip);
                     "track-changes list" surfaces it as a checkboxToggle revision.
+
+Equation editing (requires --at eqN):
+  --equation LATEX  Replace the equation's content with new LaTeX. Goes through
+                    temml → MathML → OMML.
+  --display         Switch the equation to display mode (block, $$…$$). Can be
+                    combined with --equation, or used alone to toggle mode.
+  --inline          Switch to inline mode ($…$). Mutex with --display.
 
 Paragraph options:
   --style NAME       Paragraph style (e.g., Heading1)
@@ -133,6 +143,13 @@ export async function run(args: string[]): Promise<number> {
 		return commitRangeReplacement(view, opts);
 	}
 
+	// Equation locator (`eqN`) targets an `<m:oMath>` inside a paragraph,
+	// not the paragraph itself — resolve via `equationReferences` instead of
+	// the block resolver.
+	if (opts.spec.kind === "equation") {
+		return commitEquationEdit(view, opts.spec, opts);
+	}
+
 	const blockRef = await resolveBlockOrFail(view, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
@@ -170,6 +187,13 @@ async function commitRangeReplacement(
 		return fail(
 			"USAGE",
 			"--task takes a single paragraph locator (pN), not a range",
+			HELP,
+		);
+	}
+	if (opts.spec.kind === "equation") {
+		return fail(
+			"USAGE",
+			"--equation takes a single equation locator (eqN), not a paragraph range",
 			HELP,
 		);
 	}
@@ -291,6 +315,9 @@ const OPTION_SPEC = {
 	"code-file": { type: "string" },
 	language: { type: "string" },
 	task: { type: "string" },
+	equation: { type: "string" },
+	display: { type: "boolean" },
+	inline: { type: "boolean" },
 	columns: { type: "string" },
 	type: { type: "string" },
 	style: { type: "string" },
@@ -333,7 +360,17 @@ type EditSpec =
 			language?: string;
 			paragraphOptions: ParagraphOptions;
 	  }
-	| { kind: "task"; checked: boolean };
+	| { kind: "task"; checked: boolean }
+	| {
+			kind: "equation";
+			locator: string;
+			/** `undefined` means "keep the existing LaTeX" (a pure display-mode
+			 *  toggle); a string means replace the content. */
+			latex: string | undefined;
+			/** `undefined` means "keep the existing display flag"; a boolean
+			 *  switches to that mode. */
+			display: boolean | undefined;
+	  };
 
 type TextFormatting = {
 	color?: string;
@@ -378,6 +415,49 @@ async function validateParagraphEdit(
 	const codeFile = values["code-file"] as string | undefined;
 	const language = values.language as string | undefined;
 	const taskFlag = values.task as string | undefined;
+	const equationFlag = values.equation as string | undefined;
+	const displayFlag = values.display as boolean | undefined;
+	const inlineFlag = values.inline as boolean | undefined;
+
+	// `--equation` swaps the LaTeX (and optionally display mode) of an
+	// `eqN`-addressed equation. `--display` / `--inline` alone (without
+	// `--equation`) toggle the display mode but keep the existing LaTeX.
+	const equationLike =
+		equationFlag !== undefined || displayFlag === true || inlineFlag === true;
+	if (equationLike) {
+		const otherContent = [
+			text !== undefined,
+			runsJson !== undefined,
+			codeInline !== undefined,
+			codeFile !== undefined,
+			taskFlag !== undefined,
+		].filter(Boolean).length;
+		if (otherContent > 0) {
+			return fail(
+				"USAGE",
+				"--equation / --display / --inline cannot be combined with --text/--runs/--code/--code-file/--task",
+				HELP,
+			);
+		}
+		if (displayFlag && inlineFlag) {
+			return fail(
+				"USAGE",
+				"--display and --inline are mutually exclusive",
+				HELP,
+			);
+		}
+		const displayMode: boolean | undefined = displayFlag
+			? true
+			: inlineFlag
+				? false
+				: undefined;
+		return {
+			kind: "equation",
+			locator: values.at as string,
+			latex: equationFlag,
+			display: displayMode,
+		};
+	}
 
 	// `--task` is its own content kind — it flips an existing task's state in
 	// place rather than replacing the paragraph.
@@ -415,7 +495,7 @@ async function validateParagraphEdit(
 	if (contentFlags === 0) {
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, --code-file, or --task",
+			"Missing content: pass --text, --runs, --code, --code-file, --task, or --equation",
 			HELP,
 		);
 	}
@@ -640,6 +720,85 @@ async function commitTaskToggle(
 	return emitEditAck(opts);
 }
 
+/** Resolve an `eqN` locator, splice in a new OMML subtree, save. The locator
+ *  resolves via `view.equationReferences` (populated by the reader); spec
+ *  carries optional `latex` (content swap) and `display` (mode toggle). At
+ *  least one must change something, else it's a no-op error.
+ *
+ *  Tracking: when `<w:trackChanges/>` is on, the splice is replaced by a
+ *  paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` pattern next to each other
+ *  in the same parent. Our own track-changes accept/reject handles this
+ *  cleanly. Word's accept-all also resolves to the correct equation (NEW
+ *  on accept, OLD on reject) but leaves an empty `<m:sSup>` / `<m:f>`
+ *  structural skeleton next to the kept equation — a Word normalization
+ *  quirk that's cosmetic, not a correctness issue (the kept equation
+ *  renders right; the skeleton is invisible). */
+async function commitEquationEdit(
+	view: DocView,
+	spec: Extract<EditSpec, { kind: "equation" }>,
+	opts: ValidatedOptions,
+): Promise<number> {
+	const reference = view.equationReferences.get(spec.locator);
+	if (!reference) {
+		return fail("BLOCK_NOT_FOUND", `Equation not found: ${spec.locator}`);
+	}
+	if (spec.latex === undefined && spec.display === undefined) {
+		return fail(
+			"USAGE",
+			"--equation requires --equation NEW_LATEX, --display, or --inline",
+		);
+	}
+	// When --display/--inline are passed alone we re-emit from the reader's
+	// cached LaTeX on the reference; cached at read time so this works for
+	// equations inside table cells too (where the AST run lives in a cell
+	// paragraph rather than view.doc.blocks).
+	const latex = spec.latex ?? reference.latex;
+	const display = spec.display ?? reference.display;
+
+	if (opts.dryRun) return respondDryRun(opts);
+
+	let omml: XmlNode;
+	try {
+		omml = latexToOmml(latex, display);
+	} catch (error) {
+		if (error instanceof EquationParseError) {
+			return fail(
+				"USAGE",
+				`Could not parse LaTeX equation: ${error.message}`,
+				"Check the LaTeX syntax — temml accepts most KaTeX/MathJax LaTeX.",
+			);
+		}
+		throw error;
+	}
+
+	const index = reference.parent.indexOf(reference.node);
+	if (index === -1) {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			`Equation ${spec.locator} reference is stale (parent does not contain it)`,
+		);
+	}
+
+	if (isTrackChangesEnabled(view)) {
+		const allocator = createRevisionAllocator(view);
+		const author = resolveAuthor(opts.authorFlag);
+		const date = resolveDate();
+		const delMeta: TrackedMeta = { author, date, revisionId: allocator.next() };
+		const insMeta: TrackedMeta = { author, date, revisionId: allocator.next() };
+		reference.parent.splice(
+			index,
+			1,
+			<Del meta={delMeta}>{[reference.node]}</Del>,
+			<Ins meta={insMeta}>{[omml]}</Ins>,
+		);
+	} else {
+		reference.parent.splice(index, 1, omml);
+	}
+
+	await saveDocView(view, opts.outputPath);
+	return emitEditAck(opts);
+}
+
 async function commitParagraphReplacement(
 	view: DocView,
 	blockRef: BlockReference,
@@ -731,20 +890,16 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 	}
 	if (spec.kind === "text") {
 		return [
-			(
-				<Paragraph
-					text={spec.text}
-					{...spec.paragraphOptions}
-					{...(spec.format.color ? { color: spec.format.color } : {})}
-					{...(spec.format.bold ? { bold: true as const } : {})}
-					{...(spec.format.italic ? { italic: true as const } : {})}
-				/>
-			) as XmlNode,
+			<Paragraph
+				text={spec.text}
+				{...spec.paragraphOptions}
+				{...(spec.format.color ? { color: spec.format.color } : {})}
+				{...(spec.format.bold ? { bold: true as const } : {})}
+				{...(spec.format.italic ? { italic: true as const } : {})}
+			/>,
 		];
 	}
-	return [
-		(<Paragraph runs={spec.runs} {...spec.paragraphOptions} />) as XmlNode,
-	];
+	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
 }
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {

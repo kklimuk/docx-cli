@@ -193,6 +193,88 @@ const W14_TAGS = [
 	"uncheckedState",
 ] as const;
 
+/** OMML (Office Math Markup Language, ECMA-376 §22) element names. Consumed
+ *  by [src/core/equation/](../equation/) for emit-side LaTeX → OMML. The
+ *  reader walks the same elements without using JSX (see equation/handlers.ts). */
+const M_TAGS = [
+	"oMath",
+	"oMathPara",
+	"oMathParaPr",
+	"r",
+	"rPr",
+	"t",
+	"delText",
+	"sty",
+	"e",
+	"sup",
+	"sub",
+	"sSup",
+	"sSupPr",
+	"sSub",
+	"sSubPr",
+	"sSubSup",
+	"sSubSupPr",
+	"sPre",
+	"sPrePr",
+	"sPreSup",
+	"f",
+	"fPr",
+	"num",
+	"den",
+	"type",
+	"rad",
+	"radPr",
+	"deg",
+	"degHide",
+	"nary",
+	"naryPr",
+	"chr",
+	"limLoc",
+	"subHide",
+	"supHide",
+	"grow",
+	"lim",
+	"limLow",
+	"limLowPr",
+	"limUpp",
+	"limUppPr",
+	"func",
+	"funcPr",
+	"fName",
+	"acc",
+	"accPr",
+	"bar",
+	"barPr",
+	"pos",
+	"groupChr",
+	"groupChrPr",
+	"d",
+	"dPr",
+	"begChr",
+	"endChr",
+	"sepChr",
+	"m",
+	"mPr",
+	"mr",
+	"mc",
+	"mcPr",
+	"mcs",
+	"mcJc",
+	"count",
+	"baseJc",
+	"eqArr",
+	"eqArrPr",
+	"phant",
+	"phantPr",
+	"box",
+	"boxPr",
+	"borderBox",
+	"borderBoxPr",
+	"ctrlPr",
+	"nor",
+	"plcHide",
+] as const;
+
 export const w = namespace("w", W_TAGS);
 export const cp = namespace("cp", CP_TAGS);
 export const dc = namespace("dc", DC_TAGS);
@@ -202,6 +284,7 @@ export const a = namespace("a", A_TAGS);
 export const wp = namespace("wp", WP_TAGS);
 export const pic = namespace("pic", PIC_TAGS);
 export const w14 = namespace("w14", W14_TAGS);
+export const m = namespace("m", M_TAGS);
 
 function makeTag(qualifiedName: string): TagFn {
 	return (props) => {
