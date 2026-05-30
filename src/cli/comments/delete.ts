@@ -1,5 +1,6 @@
 import { Comments, CommentsError } from "@core";
 import { parseArgs } from "util";
+import { normalizeAndDedupCommentIds, readJsonlIds } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -35,8 +36,6 @@ Examples:
   docx comments delete doc.docx --id c1 --id c3 --id c7
   docx comments delete doc.docx --batch removals.jsonl
 `;
-
-type RawEntry = { id?: string };
 
 export async function run(args: string[]): Promise<number> {
 	let parsed: ReturnType<typeof parseArgs>;
@@ -94,15 +93,7 @@ export async function run(args: string[]): Promise<number> {
 		rawIds = idsRaw;
 	}
 
-	// Dedupe while preserving the agent's order. Normalize the cN prefix.
-	const seen = new Set<string>();
-	const ordered: string[] = [];
-	for (const raw of rawIds) {
-		const normalized = raw.startsWith("c") ? raw : `c${raw}`;
-		if (seen.has(normalized)) continue;
-		seen.add(normalized);
-		ordered.push(normalized);
-	}
+	const ordered = normalizeAndDedupCommentIds(rawIds);
 
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
@@ -161,39 +152,4 @@ export async function run(args: string[]): Promise<number> {
 		});
 	}
 	return EXIT.OK;
-}
-
-async function readJsonlIds(source: string): Promise<string[]> {
-	const raw =
-		source === "-"
-			? await new Response(Bun.stdin.stream()).text()
-			: await Bun.file(source).text();
-	const ids: string[] = [];
-	const lines = raw.split("\n");
-	for (let index = 0; index < lines.length; index++) {
-		const lineRaw = lines[index];
-		if (lineRaw === undefined) continue;
-		const line = lineRaw.trim();
-		if (line.length === 0) continue;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			throw new Error(`line ${index + 1}: invalid JSON (${message})`);
-		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			Array.isArray(parsed)
-		) {
-			throw new Error(`line ${index + 1}: expected a JSON object`);
-		}
-		const entry = parsed as RawEntry;
-		if (typeof entry.id !== "string" || entry.id.length === 0) {
-			throw new Error(`line ${index + 1}: missing "id"`);
-		}
-		ids.push(entry.id);
-	}
-	return ids;
 }

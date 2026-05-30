@@ -4,14 +4,16 @@ import {
 	Insert,
 	InsertError,
 	type InsertSpec,
-	isSectionType,
-	type Run,
-	type SectionType,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
 import type { TableBorders, TableLayout } from "@core/table";
 import { parseArgs } from "util";
+import {
+	parseRunsArg,
+	parseSectionFlags,
+	parseTaskFlag,
+} from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -597,53 +599,6 @@ async function parseTableFlags(values: RawValues): Promise<
 	return out;
 }
 
-async function parseRunsArg(json: string): Promise<Run[] | number> {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(json);
-	} catch (jsonError) {
-		const message =
-			jsonError instanceof Error ? jsonError.message : String(jsonError);
-		return fail("USAGE", `Invalid --runs JSON: ${message}`);
-	}
-	if (!Array.isArray(parsed)) {
-		return fail("USAGE", "--runs must be a JSON array of Run objects");
-	}
-	return parsed as Run[];
-}
-
-async function parseSectionFlags(
-	values: RawValues,
-): Promise<{ columns?: number; sectionType?: SectionType } | number> {
-	const out: { columns?: number; sectionType?: SectionType } = {};
-
-	const columnsRaw = values.columns as string | undefined;
-	if (columnsRaw !== undefined) {
-		const columns = Number.parseInt(columnsRaw, 10);
-		if (!Number.isFinite(columns) || columns <= 0) {
-			return fail(
-				"USAGE",
-				`--columns must be a positive integer, got "${columnsRaw}"`,
-			);
-		}
-		out.columns = columns;
-	}
-
-	const sectionTypeRaw = values.type as string | undefined;
-	if (sectionTypeRaw !== undefined) {
-		if (!isSectionType(sectionTypeRaw)) {
-			return fail(
-				"USAGE",
-				`Invalid --type: ${sectionTypeRaw}`,
-				"Valid values: continuous, nextPage, evenPage, oddPage, nextColumn",
-			);
-		}
-		out.sectionType = sectionTypeRaw;
-	}
-
-	return out;
-}
-
 async function parseParagraphOptions(
 	values: RawValues,
 ): Promise<ParagraphOptions | number> {
@@ -727,20 +682,4 @@ async function parseParagraphOptions(
 	}
 
 	return out;
-}
-
-/** Parse `--task` value into a boolean (checked) or null if unrecognized.
- *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
- *  reach for naturally. Mirrors the parser in `cli/edit/index.tsx`. */
-function parseTaskFlag(value: string): boolean | null {
-	const normalized = value.toLowerCase();
-	if (normalized === "checked" || normalized === "true" || normalized === "1")
-		return true;
-	if (
-		normalized === "unchecked" ||
-		normalized === "false" ||
-		normalized === "0"
-	)
-		return false;
-	return null;
 }
