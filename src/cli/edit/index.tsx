@@ -1,48 +1,27 @@
 import {
-	applyColumns,
-	applySectionType,
 	type BlockRangeReference,
 	type BlockReference,
 	type Document,
+	Edit,
+	EditError,
 	isSectionType,
-	LocatorParseError,
-	LocatorResolveError,
-	parseLocator,
 	type Run,
-	resolveAuthor,
-	resolveBlockRange,
-	resolveDate,
 	type SectionType,
-	TrackChanges,
-	type TrackedMeta,
-	wrapSectPrChange,
 } from "@core";
-import { Paragraph, type ParagraphOptions } from "@core/blocks";
-import {
-	buildCodeBlockParagraphs,
-	ensureCodeBlockStyles,
-} from "@core/code-block";
+import type { ParagraphOptions } from "@core/blocks";
 import {
 	EquationNotFoundError,
 	EquationParseError,
 	EquationStaleError,
 	Equations,
 } from "@core/equation";
-import type { XmlNode } from "@core/parser";
-
-import { flipCheckboxTracked, flipCheckboxUntracked } from "@core/task-list";
-import {
-	applyTrackedRangeReplace,
-	applyUntrackedRangeReplace,
-	applyFormattingPreservingEdit as coreApplyFormattingPreservingEdit,
-} from "@core/track-changes/replace";
 import { parseArgs } from "util";
-import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
 	fail,
 	openOrFail,
 	resolveBlockOrFail,
+	resolveBlockRangeOrFail,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -130,7 +109,7 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(opts.filePath);
 	if (typeof document === "number") return document;
 
-	// Range locator: `pN-pM`. Replaces a span of paragraphs as a unit. Section
+	// Range locator (`pN-pM`): replaces a span of paragraphs as a unit. Section
 	// edits don't make sense here (sN has its own grammar).
 	if (isBlockRangeLocator(opts.locator)) {
 		if (opts.spec.kind === "section") {
@@ -140,12 +119,12 @@ export async function run(args: string[]): Promise<number> {
 				HELP,
 			);
 		}
-		return commitRangeReplacement(document, opts);
+		return commitRangeEdit(document, opts);
 	}
 
-	// Equation locator (`eqN`) targets an `<m:oMath>` inside a paragraph,
-	// not the paragraph itself — resolve via `equationReferences` instead of
-	// the block resolver.
+	// Equation locator (`eqN`) targets an `<m:oMath>` inside a paragraph, not
+	// the paragraph itself — resolves via the Equations lens, not the block
+	// resolver.
 	if (opts.spec.kind === "equation") {
 		return commitEquationEdit(document, opts.spec, opts);
 	}
@@ -153,31 +132,57 @@ export async function run(args: string[]): Promise<number> {
 	const blockRef = await resolveBlockOrFail(document, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
-	if (opts.spec.kind === "section") {
-		return commitSectionPropertyEdit(document, blockRef, opts.spec, opts);
-	}
-	if (opts.spec.kind === "task") {
-		return commitTaskToggle(document, blockRef, opts.spec, opts);
-	}
-	document
-		.ensureStyles()
-		.ensureReferencedStyle(opts.spec.paragraphOptions.style);
-	if (opts.spec.kind === "runs") {
-		document.ensureStyles().ensureReferencedRunStyles(opts.spec.runs);
-	}
-	return commitParagraphReplacement(document, blockRef, opts.spec, opts);
+	return commitBlockEdit(document, blockRef, opts);
 }
 
 function isBlockRangeLocator(locator: string): boolean {
 	return /^p\d+-p\d+$/.test(locator);
 }
 
-/** Range replace path: resolve the blockRange, build new paragraphs from the
- *  spec, splice them in via the tracked or untracked range-replace helper.
- *  No formatting-preservation here — Word's empirical model for paragraph-
- *  range replace is "del all old, ins all new" (no cross-paragraph LCS),
- *  and we match it. */
-async function commitRangeReplacement(
+/** Single-block edit: section / task / paragraph dispatch through the Edit
+ * lens. The lens handles tracked-vs-untracked, style ensures, and the
+ * formatting-preservation decision. */
+async function commitBlockEdit(
+	document: Document,
+	blockRef: BlockReference,
+	opts: ValidatedOptions,
+): Promise<number> {
+	if (opts.dryRun) return respondDryRun(opts);
+
+	try {
+		const edit = new Edit(document);
+		if (opts.spec.kind === "section") {
+			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag });
+		} else if (opts.spec.kind === "task") {
+			edit.taskToggle(blockRef, opts.spec.checked, {
+				authorFlag: opts.authorFlag,
+			});
+		} else if (
+			opts.spec.kind === "text" ||
+			opts.spec.kind === "runs" ||
+			opts.spec.kind === "code"
+		) {
+			edit.paragraph(blockRef, opts.spec, {
+				authorFlag: opts.authorFlag,
+				noFormatting: opts.noFormatting,
+			});
+		} else {
+			return fail("USAGE", "Unsupported edit spec for single-block locator");
+		}
+	} catch (error) {
+		if (error instanceof EditError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	await document.save(opts.outputPath);
+	return emitEditAck(opts);
+}
+
+/** Range replace path (`pN-pM`): resolve to a block range, hand to the Edit
+ *  lens. The lens rejects tracked ranges that span a non-paragraph block. */
+async function commitRangeEdit(
 	document: Document,
 	opts: ValidatedOptions,
 ): Promise<number> {
@@ -200,62 +205,72 @@ async function commitRangeReplacement(
 		);
 	}
 
-	let rangeRef: BlockRangeReference;
+	const rangeRef: BlockRangeReference | number = await resolveBlockRangeOrFail(
+		document,
+		opts.locator,
+	);
+	if (typeof rangeRef === "number") return rangeRef;
+
+	if (opts.dryRun) return respondDryRun(opts);
+
 	try {
-		const locator = parseLocator(opts.locator);
-		if (locator.kind !== "blockRange") {
-			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
+		new Edit(document).range(rangeRef, opts.spec, {
+			authorFlag: opts.authorFlag,
+		});
+	} catch (error) {
+		if (error instanceof EditError) {
+			return fail(error.code, error.message, error.hint);
 		}
-		rangeRef = resolveBlockRange(
-			document,
-			locator.startBlockId,
-			locator.endBlockId,
+		throw error;
+	}
+
+	await document.save(opts.outputPath);
+	return emitEditAck(opts);
+}
+
+/** Resolve an `eqN` locator, splice in a new OMML subtree, save. The spec
+ *  carries optional `latex` (content swap) and `display` (mode toggle).
+ *  At least one must change something, else it's a no-op error.
+ *
+ *  Tracking: when `<w:trackChanges/>` is on, the splice is replaced by a
+ *  paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>`. Word's accept-all picks
+ *  the right equation but leaves an empty container skeleton next to it —
+ *  a Word normalization quirk that's cosmetic. */
+async function commitEquationEdit(
+	document: Document,
+	spec: Extract<EditSpec, { kind: "equation" }>,
+	opts: ValidatedOptions,
+): Promise<number> {
+	if (spec.latex === undefined && spec.display === undefined) {
+		return fail(
+			"USAGE",
+			"--equation requires --equation NEW_LATEX, --display, or --inline",
 		);
-	} catch (err) {
-		if (err instanceof LocatorParseError) {
-			return fail("INVALID_LOCATOR", err.message);
-		}
-		if (err instanceof LocatorResolveError) {
-			return fail("BLOCK_NOT_FOUND", err.message);
-		}
-		throw err;
-	}
-
-	document
-		.ensureStyles()
-		.ensureReferencedStyle(opts.spec.paragraphOptions.style);
-	if (opts.spec.kind === "runs") {
-		document.ensureStyles().ensureReferencedRunStyles(opts.spec.runs);
-	}
-	if (opts.spec.kind === "code") {
-		ensureCodeBlockStyles(document, opts.spec.language);
-	}
-
-	const tracked = document.isTrackChangesEnabled();
-	if (tracked) {
-		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
-		if (guard !== null) return guard;
 	}
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	const newParagraphs = buildNewParagraphs(opts.spec);
-	if (tracked) {
-		applyTrackedRangeReplace(
-			document,
-			rangeRef.parent,
-			rangeRef.startIndex,
-			rangeRef.endIndex,
-			newParagraphs,
-			opts.authorFlag,
-		);
-	} else {
-		applyUntrackedRangeReplace(
-			rangeRef.parent,
-			rangeRef.startIndex,
-			rangeRef.endIndex,
-			newParagraphs,
-		);
+	try {
+		new Equations(document).edit(spec.locator, {
+			latex: spec.latex,
+			display: spec.display,
+			author: opts.authorFlag,
+		});
+	} catch (error) {
+		if (error instanceof EquationNotFoundError) {
+			return fail("BLOCK_NOT_FOUND", error.message);
+		}
+		if (error instanceof EquationStaleError) {
+			return fail("BLOCK_NOT_FOUND", error.message);
+		}
+		if (error instanceof EquationParseError) {
+			return fail(
+				"USAGE",
+				`Could not parse LaTeX equation: ${error.message}`,
+				"Check the LaTeX syntax — temml accepts most KaTeX/MathJax LaTeX.",
+			);
+		}
+		throw error;
 	}
 
 	await document.save(opts.outputPath);
@@ -550,11 +565,9 @@ async function validateParagraphEdit(
 	return { kind: "runs", runs, paragraphOptions };
 }
 
-/** Read content for `--code-file PATH`. `-` means stdin (handled the same as
- *  `insert --code-file -`). Mirrors `cli/insert/index.tsx::resolveCodeSpec`. */
 /** Parse `--task` value into a boolean (checked) or null if unrecognized.
  *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
- *  reach for naturally. */
+ *  reach for naturally. Mirrors the parser in `cli/insert/index.tsx`. */
 function parseTaskFlag(value: string): boolean | null {
 	const normalized = value.toLowerCase();
 	if (normalized === "checked" || normalized === "true" || normalized === "1")
@@ -568,6 +581,8 @@ function parseTaskFlag(value: string): boolean | null {
 	return null;
 }
 
+/** Read content for `--code-file PATH`. `-` means stdin (handled the same as
+ *  `insert --code-file -`). Mirrors `cli/insert/index.tsx::resolveCodeSpec`. */
 async function loadCodeFile(path: string): Promise<string | number> {
 	try {
 		return path === "-"
@@ -655,233 +670,6 @@ async function parseParagraphOptions(
 	}
 
 	return out;
-}
-
-async function commitSectionPropertyEdit(
-	document: Document,
-	blockRef: BlockReference,
-	spec: Extract<EditSpec, { kind: "section" }>,
-	opts: ValidatedOptions,
-): Promise<number> {
-	if (blockRef.node.tag !== "w:sectPr") {
-		return fail(
-			"BLOCK_NOT_FOUND",
-			`Locator ${opts.locator} did not resolve to a section break`,
-		);
-	}
-
-	if (opts.dryRun) return respondDryRun(opts);
-
-	if (document.isTrackChangesEnabled()) {
-		wrapSectPrChange(
-			blockRef.node,
-			new TrackChanges(document).mintMeta(opts.authorFlag),
-		);
-	}
-	applyColumns(blockRef.node, spec.columns);
-	applySectionType(blockRef.node, spec.sectionType);
-
-	await document.save(opts.outputPath);
-	return emitEditAck(opts);
-}
-
-async function commitTaskToggle(
-	document: Document,
-	blockRef: BlockReference,
-	spec: Extract<EditSpec, { kind: "task" }>,
-	opts: ValidatedOptions,
-): Promise<number> {
-	if (blockRef.node.tag !== "w:p") {
-		return fail(
-			"USAGE",
-			"--task requires a paragraph locator; got a non-paragraph block",
-		);
-	}
-	if (opts.dryRun) return respondDryRun(opts);
-
-	const tracked = document.isTrackChangesEnabled();
-	let ok: boolean;
-	if (tracked) {
-		const allocator = new TrackChanges(document).createAllocator();
-		const baseMeta = {
-			author: resolveAuthor(opts.authorFlag),
-			date: resolveDate(),
-		};
-		const mintMeta = (): TrackedMeta => ({
-			...baseMeta,
-			revisionId: allocator.next(),
-		});
-		ok = flipCheckboxTracked(blockRef.node, spec.checked, mintMeta);
-	} else {
-		ok = flipCheckboxUntracked(blockRef.node, spec.checked);
-	}
-	if (!ok) {
-		return fail(
-			"USAGE",
-			"--task requires a task-list paragraph (one with a leading <w:sdt><w14:checkbox/></w:sdt>)",
-			"Use `docx read FILE --ast` to inspect; convert a plain bullet to a task by replacing the paragraph via `--runs`.",
-		);
-	}
-
-	await document.save(opts.outputPath);
-	return emitEditAck(opts);
-}
-
-/** Resolve an `eqN` locator, splice in a new OMML subtree, save. The locator
- *  resolves via `document.body.equationReferences` (populated by the reader); spec
- *  carries optional `latex` (content swap) and `display` (mode toggle). At
- *  least one must change something, else it's a no-op error.
- *
- *  Tracking: when `<w:trackChanges/>` is on, the splice is replaced by a
- *  paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` pattern next to each other
- *  in the same parent. Our own track-changes accept/reject handles this
- *  cleanly. Word's accept-all also resolves to the correct equation (NEW
- *  on accept, OLD on reject) but leaves an empty `<m:sSup>` / `<m:f>`
- *  structural skeleton next to the kept equation — a Word normalization
- *  quirk that's cosmetic, not a correctness issue (the kept equation
- *  renders right; the skeleton is invisible). */
-async function commitEquationEdit(
-	document: Document,
-	spec: Extract<EditSpec, { kind: "equation" }>,
-	opts: ValidatedOptions,
-): Promise<number> {
-	if (spec.latex === undefined && spec.display === undefined) {
-		return fail(
-			"USAGE",
-			"--equation requires --equation NEW_LATEX, --display, or --inline",
-		);
-	}
-
-	if (opts.dryRun) return respondDryRun(opts);
-
-	try {
-		new Equations(document).edit(spec.locator, {
-			latex: spec.latex,
-			display: spec.display,
-			author: opts.authorFlag,
-		});
-	} catch (error) {
-		if (error instanceof EquationNotFoundError) {
-			return fail("BLOCK_NOT_FOUND", error.message);
-		}
-		if (error instanceof EquationStaleError) {
-			return fail("BLOCK_NOT_FOUND", error.message);
-		}
-		if (error instanceof EquationParseError) {
-			return fail(
-				"USAGE",
-				`Could not parse LaTeX equation: ${error.message}`,
-				"Check the LaTeX syntax — temml accepts most KaTeX/MathJax LaTeX.",
-			);
-		}
-		throw error;
-	}
-
-	await document.save(opts.outputPath);
-	return emitEditAck(opts);
-}
-
-async function commitParagraphReplacement(
-	document: Document,
-	blockRef: BlockReference,
-	spec: ParagraphContentSpec,
-	opts: ValidatedOptions,
-): Promise<number> {
-	const targetIndex = blockRef.parent.indexOf(blockRef.node);
-	if (targetIndex === -1) {
-		return fail(
-			"BLOCK_NOT_FOUND",
-			"Block reference is stale (parent does not contain it)",
-		);
-	}
-
-	if (opts.dryRun) return respondDryRun(opts);
-
-	const tracked = document.isTrackChangesEnabled();
-
-	if (canPreserveFormatting(spec, opts)) {
-		coreApplyFormattingPreservingEdit(
-			document,
-			blockRef.node,
-			spec.text,
-			spec.paragraphOptions,
-			opts.authorFlag,
-			tracked,
-		);
-		await document.save(opts.outputPath);
-		return emitEditAck(opts);
-	}
-
-	if (spec.kind === "code") {
-		ensureCodeBlockStyles(document, spec.language);
-	}
-	const newParagraphs = buildNewParagraphs(spec);
-
-	if (tracked) {
-		applyTrackedRangeReplace(
-			document,
-			blockRef.parent,
-			targetIndex,
-			targetIndex,
-			newParagraphs,
-			opts.authorFlag,
-		);
-	} else {
-		applyUntrackedRangeReplace(
-			blockRef.parent,
-			targetIndex,
-			targetIndex,
-			newParagraphs,
-		);
-	}
-
-	await document.save(opts.outputPath);
-	return emitEditAck(opts);
-}
-
-/** The paragraph-content specs that produce one or more new paragraphs. */
-type ParagraphContentSpec = Extract<
-	EditSpec,
-	{ kind: "text" } | { kind: "runs" } | { kind: "code" }
->;
-
-/** The formatting-preservation path applies only to `--text` (not `--runs`,
- *  which already lets the agent specify per-run formatting). It also bows
- *  out when the agent passed any explicit run-level format flag — those
- *  apply uniformly to the new paragraph, which conflicts with per-token
- *  inheritance. `--no-formatting` is the explicit opt-out. */
-function canPreserveFormatting(
-	spec: ParagraphContentSpec,
-	opts: ValidatedOptions,
-): spec is Extract<EditSpec, { kind: "text" }> {
-	if (opts.noFormatting) return false;
-	if (spec.kind !== "text") return false;
-	const format = spec.format;
-	if (format.color || format.bold || format.italic) return false;
-	return true;
-}
-
-/** Build the new paragraph(s) for a paragraph-content spec. Text/runs produce
- *  a single paragraph; code produces one paragraph per source line via
- *  `buildCodeBlockParagraphs`. The single-anchor edit path routes a multi-
- *  paragraph result through `applyTrackedRangeReplace` / `applyUntrackedRangeReplace`
- *  with `startIndex === endIndex` (M=1, N=K), so multi-line code lands cleanly. */
-function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
-	if (spec.kind === "code") {
-		return buildCodeBlockParagraphs(spec.content, spec.language);
-	}
-	if (spec.kind === "text") {
-		return [
-			<Paragraph
-				text={spec.text}
-				{...spec.paragraphOptions}
-				{...(spec.format.color ? { color: spec.format.color } : {})}
-				{...(spec.format.bold ? { bold: true as const } : {})}
-				{...(spec.format.italic ? { italic: true as const } : {})}
-			/>,
-		];
-	}
-	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
 }
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {

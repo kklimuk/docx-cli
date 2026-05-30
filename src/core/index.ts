@@ -42,6 +42,11 @@ export type {
 	TrackedChangeKind,
 } from "./ast/types";
 export {
+	Edit,
+	EditError,
+	type ParagraphContentSpec,
+} from "./edit";
+export {
 	Insert,
 	InsertError,
 	type InsertSpec,
