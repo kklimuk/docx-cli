@@ -69,7 +69,7 @@ export class Hyperlinks {
 			reference.node.setAttribute("r:id", newId);
 			reference.relationshipId = newId;
 		} else {
-			this.document.relationships.setTarget(existingId, url);
+			this.document.relationships.setHyperlinkTarget(existingId, url);
 		}
 
 		if (this.document.isTrackChangesEnabled()) {

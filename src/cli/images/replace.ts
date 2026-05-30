@@ -132,9 +132,11 @@ export async function run(args: string[]): Promise<number> {
 		document.pkg.writeBytes(originalPartName, bytes);
 	} else {
 		document.pkg.writeBytes(newPartName, bytes);
-		document.relationships.setTarget(
+		document.relationships.setImageTarget(
 			reference.relationshipId,
 			relativeTargetFor(newPartName),
+			newPartName,
+			newMimeType,
 		);
 		// Repoint first, then delete the old part only if no OTHER relationship
 		// still targets it — identical images are often deduped to one shared
@@ -145,6 +147,8 @@ export async function run(args: string[]): Promise<number> {
 			document.pkg.deletePart(originalPartName);
 		}
 		document.contentTypes.registerExtension(newExtension, newMimeType);
+		// Body's `imageById` reference (this `reference` IS the live entry) —
+		// sibling view, so the call above can't sync it; we patch in place.
 		reference.partName = newPartName;
 		reference.contentType = newMimeType;
 	}

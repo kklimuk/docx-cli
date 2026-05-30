@@ -239,24 +239,22 @@ export class Comments {
 				);
 			}
 		}
+		if (!view) return; // `normalized` is empty (no ids → no `view` access yet).
+
+		const root = XmlNode.findRoot(view.tree, "w:comments");
+		if (!root) return;
 
 		for (const commentId of normalized) {
 			const numericId = commentId.slice(1);
-			const commentsView = view;
-			if (!commentsView) continue;
-			const root = XmlNode.findRoot(commentsView.tree, "w:comments");
-			const node = commentsView.findById(numericId);
-			if (!root || !node) continue;
-			const paraId = commentsView.paraIdFor(numericId);
+			const node = view.findById(numericId);
+			if (!node) continue; // pre-validated above
+			const paraId = view.paraIdFor(numericId);
 
 			const index = root.children.indexOf(node);
 			if (index !== -1) root.children.splice(index, 1);
 
-			if (paraId && commentsView.extendedTree) {
-				const extRoot = XmlNode.findRoot(
-					commentsView.extendedTree,
-					"w15:commentsEx",
-				);
+			if (paraId && view.extendedTree) {
+				const extRoot = XmlNode.findRoot(view.extendedTree, "w15:commentsEx");
 				if (extRoot) {
 					extRoot.children = extRoot.children.filter(
 						(child) =>

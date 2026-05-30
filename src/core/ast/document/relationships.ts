@@ -187,17 +187,34 @@ export class RelationshipsView {
 		return id;
 	}
 
-	/** Rewrite the `Target` of the relationship with the given Id (no-op if
-	 * absent). Used by `hyperlinks replace` to point an existing rId at a new
-	 * URL when the relationship is sole-referenced. */
-	setTarget(rId: string, target: string): void {
+	/** Rewrite a hyperlink relationship's `Target` URL. Keeps
+	 * `hyperlinksByRelationshipId` in sync. No-op if `rId` is absent. */
+	setHyperlinkTarget(rId: string, url: string): void {
+		const node = this.findByRid(rId);
+		if (!node) return;
+		node.setAttribute("Target", url);
+		this.hyperlinksByRelationshipId.set(rId, { url });
+	}
+
+	/** Rewrite an image relationship's `Target` (relative part path) and sync
+	 * `imagesByRelationshipId` with the new partName + contentType. No-op if
+	 * `rId` is absent.
+	 *
+	 * The caller is responsible for keeping any `Body.imageById` reference
+	 * pointing at the same rId coherent — Body's map lives on a sibling view,
+	 * so syncing it cross-view is the caller's job. (`cli/images/replace.ts`
+	 * mutates the existing `ImageReference` in place; that updates `imageById`
+	 * via the shared object.) */
+	setImageTarget(
+		rId: string,
+		target: string,
+		partName: string,
+		contentType: string,
+	): void {
 		const node = this.findByRid(rId);
 		if (!node) return;
 		node.setAttribute("Target", target);
-		// Keep the hyperlink map in sync if this is a hyperlink rel.
-		if (this.hyperlinksByRelationshipId.has(rId)) {
-			this.hyperlinksByRelationshipId.set(rId, { url: target });
-		}
+		this.imagesByRelationshipId.set(rId, { partName, contentType });
 	}
 
 	/** Remove the relationship with the given Id (no-op if absent). */
