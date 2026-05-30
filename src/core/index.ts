@@ -70,20 +70,14 @@ export {
 	parseLocator,
 	parseRowAt,
 	parseTableAt,
-	resolveBlock,
-	resolveBlockRange,
 } from "./locators";
 export { XmlNode } from "./parser";
 export {
-	applyColumns,
-	applySectionType,
 	isSectionType,
 	isTrailingSectPr,
 	readSectionProperties,
 	removeInlineSectPr,
 	type SectionProperties,
-	SentinelSectionParagraph,
-	wrapSectPrChange,
 } from "./sections";
 export {
 	convertTextToDelText,

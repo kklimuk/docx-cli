@@ -9,6 +9,4 @@ export {
 	parseColumnAt,
 	parseRowAt,
 	parseTableAt,
-	resolveBlock,
-	resolveBlockRange,
 } from "./resolve";

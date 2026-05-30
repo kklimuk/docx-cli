@@ -8,7 +8,6 @@ import {
 	parseLocator,
 	removeInlineSectPr,
 	resolveAuthor,
-	resolveBlockRange,
 	resolveDate,
 	TrackChanges,
 } from "@core";
@@ -103,8 +102,7 @@ async function commitRangeDelete(
 		if (locator.kind !== "blockRange") {
 			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
 		}
-		rangeRef = resolveBlockRange(
-			document,
+		rangeRef = document.body.resolveBlockRange(
 			locator.startBlockId,
 			locator.endBlockId,
 		);

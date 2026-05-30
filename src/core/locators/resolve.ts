@@ -1,4 +1,3 @@
-import type { BlockReference, Document } from "../ast";
 import {
 	type BlockRangeReference,
 	LocatorResolveError,
@@ -35,24 +34,6 @@ export function locatorToBlockTarget(locator: Locator): BlockTarget | null {
 		};
 	}
 	return null;
-}
-
-export function resolveBlock(
-	document: Document,
-	blockId: string,
-): BlockReference {
-	return document.body.resolveBlock(blockId);
-}
-
-/** Resolve a `pN-pM` block-range locator. Validates that the two endpoints
- * live under the same parent array (so they can be spliced as a unit) and
- * that the start index is ≤ the end index in document order. */
-export function resolveBlockRange(
-	document: Document,
-	startBlockId: string,
-	endBlockId: string,
-): BlockRangeReference {
-	return document.body.resolveBlockRange(startBlockId, endBlockId);
 }
 
 /** Parse an `--at`-shaped string for a table-scoped verb. Returns the fully

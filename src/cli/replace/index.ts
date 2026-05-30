@@ -1,4 +1,4 @@
-import { resolveAuthor, resolveBlock, resolveDate, TrackChanges } from "@core";
+import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
 	type FindView,
 	findTextSpans,
@@ -240,7 +240,7 @@ export async function run(args: string[]): Promise<number> {
 		const concreteReplacement = useRegex
 			? match.text.replace(new RegExp(pattern, regexFlags), replacement)
 			: replacement;
-		const blockRef = resolveBlock(document, match.blockId);
+		const blockRef = document.body.resolveBlock(match.blockId);
 		replaceSpanInParagraph(
 			blockRef.node,
 			{ start: match.start, end: match.end },

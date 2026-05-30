@@ -6,8 +6,6 @@ import {
 	LocatorResolveError,
 	PkgError,
 	parseLocator,
-	resolveBlock,
-	resolveBlockRange,
 } from "@core";
 
 export const EXIT = {
@@ -145,7 +143,7 @@ export async function resolveBlockOrFail(
 	locator: string,
 ): Promise<BlockReference | number> {
 	try {
-		return resolveBlock(document, locator);
+		return document.body.resolveBlock(locator);
 	} catch (err) {
 		if (err instanceof LocatorResolveError) {
 			return await fail("BLOCK_NOT_FOUND", err.message);
@@ -163,7 +161,10 @@ export async function resolveBlockRangeOrFail(
 		if (parsed.kind !== "blockRange") {
 			return await fail("INVALID_LOCATOR", `Expected pN-pM, got ${locator}`);
 		}
-		return resolveBlockRange(document, parsed.startBlockId, parsed.endBlockId);
+		return document.body.resolveBlockRange(
+			parsed.startBlockId,
+			parsed.endBlockId,
+		);
 	} catch (err) {
 		if (err instanceof LocatorParseError) {
 			return await fail("INVALID_LOCATOR", err.message);
