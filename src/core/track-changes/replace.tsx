@@ -1,4 +1,5 @@
 import type { Document } from "../ast/document";
+import type { BlockRangeReference } from "../ast/document/body";
 import { applyParagraphOptionsInPlace, type ParagraphOptions } from "../blocks";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import { Del, Ins, markParagraphMarkAs } from "./emit";
@@ -194,6 +195,41 @@ export function applyTrackedRangeDelete(
 		convertParagraphContentToDeleted(para, mintMeta);
 		if (index < endIndex) {
 			markParagraphMarkAs(para, "del", mintMeta());
+		}
+	}
+}
+
+/** Error thrown by `assertParagraphOnlyTrackedRange` when a tracked
+ *  range-replace or range-delete would touch a non-paragraph block (most
+ *  commonly a table). Both `Edit.range` and `delete --at pN-pM` rely on the
+ *  same guard; this is the shared shape they map into their own error code. */
+export class TrackedRangeConflictError extends Error {
+	constructor(
+		message: string,
+		public hint: string,
+	) {
+		super(message);
+		this.name = "TrackedRangeConflictError";
+	}
+}
+
+/** Validate that every block in `[startIndex, endIndex]` is a `<w:p>` — the
+ *  tracked-range walker (`applyTrackedRangeReplace` / `applyTrackedRangeDelete`)
+ *  injects a `<w:pPr>` into every span block, which would corrupt a `<w:tbl>`
+ *  or other non-paragraph node. Used by `Edit.range` and `delete --at pN-pM`
+ *  before applying. The untracked paths splice cleanly across any block tag,
+ *  so this guard only fires when tracking is on. */
+export function assertParagraphOnlyTrackedRange(
+	rangeRef: BlockRangeReference,
+): void {
+	for (let i = rangeRef.startIndex; i <= rangeRef.endIndex; i++) {
+		const block = rangeRef.parent[i];
+		if (block && block.tag !== "w:p") {
+			const what = block.tag === "w:tbl" ? "a table" : `a ${block.tag} block`;
+			throw new TrackedRangeConflictError(
+				`Tracked range spans ${what} — not supported.`,
+				"Toggle tracking off (`docx track-changes off`), or handle the table separately via `docx delete --at tN`.",
+			);
 		}
 	}
 }

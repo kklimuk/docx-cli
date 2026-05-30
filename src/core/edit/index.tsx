@@ -16,6 +16,8 @@ import {
 	applyFormattingPreservingEdit,
 	applyTrackedRangeReplace,
 	applyUntrackedRangeReplace,
+	assertParagraphOnlyTrackedRange,
+	TrackedRangeConflictError,
 } from "../track-changes/replace";
 
 /** Cross-cutting lens over "edit an existing block." Stateless — each method
@@ -157,17 +159,17 @@ export class Edit {
 
 		const tracked = this.document.isTrackChangesEnabled();
 		if (tracked) {
-			for (let i = rangeRef.startIndex; i <= rangeRef.endIndex; i++) {
-				const block = rangeRef.parent[i];
-				if (block && block.tag !== "w:p") {
-					const what =
-						block.tag === "w:tbl" ? "a table" : `a ${block.tag} block`;
+			try {
+				assertParagraphOnlyTrackedRange(rangeRef);
+			} catch (error) {
+				if (error instanceof TrackedRangeConflictError) {
 					throw new EditError(
 						"TRACKED_CHANGE_CONFLICT",
-						`Tracked range edit spans ${what} — not supported.`,
-						"Toggle tracking off (`docx track-changes off`), or handle the table separately via `docx delete --at tN`.",
+						error.message,
+						error.hint,
 					);
 				}
+				throw error;
 			}
 		}
 

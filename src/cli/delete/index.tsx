@@ -1,11 +1,7 @@
 import {
-	type BlockRangeReference,
 	type BlockReference,
 	type Document,
 	isTrailingSectPr,
-	LocatorParseError,
-	LocatorResolveError,
-	parseLocator,
 	removeInlineSectPr,
 	resolveAuthor,
 	resolveDate,
@@ -16,13 +12,15 @@ import { XmlNode } from "@core/parser";
 import {
 	applyTrackedRangeDelete,
 	applyUntrackedRangeDelete,
+	assertParagraphOnlyTrackedRange,
+	TrackedRangeConflictError,
 } from "@core/track-changes/replace";
-import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
 	fail,
 	openOrFail,
 	resolveBlockOrFail,
+	resolveBlockRangeOrFail,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -96,30 +94,19 @@ async function commitRangeDelete(
 	document: Document,
 	opts: ValidatedOptions,
 ): Promise<number> {
-	let rangeRef: BlockRangeReference;
-	try {
-		const locator = parseLocator(opts.locator);
-		if (locator.kind !== "blockRange") {
-			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
-		}
-		rangeRef = document.body.resolveBlockRange(
-			locator.startBlockId,
-			locator.endBlockId,
-		);
-	} catch (err) {
-		if (err instanceof LocatorParseError) {
-			return fail("INVALID_LOCATOR", err.message);
-		}
-		if (err instanceof LocatorResolveError) {
-			return fail("BLOCK_NOT_FOUND", err.message);
-		}
-		throw err;
-	}
+	const rangeRef = await resolveBlockRangeOrFail(document, opts.locator);
+	if (typeof rangeRef === "number") return rangeRef;
 
 	const tracked = document.isTrackChangesEnabled();
 	if (tracked) {
-		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
-		if (guard !== null) return guard;
+		try {
+			assertParagraphOnlyTrackedRange(rangeRef);
+		} catch (error) {
+			if (error instanceof TrackedRangeConflictError) {
+				return fail("TRACKED_CHANGE_CONFLICT", error.message, error.hint);
+			}
+			throw error;
+		}
 	}
 
 	if (opts.dryRun) return respondDryRun(opts);
