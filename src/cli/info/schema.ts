@@ -1,7 +1,6 @@
 // @ts-expect-error — bun bundles this as a string via the `text` import attribute
 import TS_SOURCE from "@core/ast/types" with { type: "text" };
-import { parseArgs } from "util";
-import { EXIT, fail, respond, writeStdout } from "../respond";
+import { EXIT, respond, tryParseArgs, writeStdout } from "../respond";
 
 const HELP = `docx info schema — print the AST type definitions
 
@@ -310,22 +309,16 @@ const JSON_SCHEMA = {
 };
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				json: { type: "boolean" },
-				ts: { type: "boolean" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			json: { type: "boolean" },
+			ts: { type: "boolean" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

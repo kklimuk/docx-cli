@@ -8,7 +8,6 @@ import {
 	parseLocator,
 } from "@core";
 import { type FindView, findTextSpans } from "@core/find";
-import { parseArgs } from "util";
 import {
 	type ErrorCode,
 	EXIT,
@@ -17,6 +16,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -110,31 +110,25 @@ class EntryError extends Error {
 }
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				range: { type: "string" },
-				anchor: { type: "string" },
-				occurrence: { type: "string" },
-				text: { type: "string" },
-				batch: { type: "string" },
-				author: { type: "string" },
-				current: { type: "boolean" },
-				baseline: { type: "boolean" },
-				output: { type: "string", short: "o" },
-				"dry-run": { type: "boolean" },
-				verbose: { type: "boolean", short: "v" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			range: { type: "string" },
+			anchor: { type: "string" },
+			occurrence: { type: "string" },
+			text: { type: "string" },
+			batch: { type: "string" },
+			author: { type: "string" },
+			current: { type: "boolean" },
+			baseline: { type: "boolean" },
+			output: { type: "string", short: "o" },
+			"dry-run": { type: "boolean" },
+			verbose: { type: "boolean", short: "v" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

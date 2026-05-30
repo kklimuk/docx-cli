@@ -6,7 +6,6 @@ import {
 	type TextMatch,
 	type TrackedReplaceOptions,
 } from "@core/find";
-import { parseArgs } from "util";
 import {
 	EXIT,
 	fail,
@@ -14,6 +13,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -67,31 +67,25 @@ Examples:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				regex: { type: "boolean" },
-				"ignore-case": { type: "boolean" },
-				all: { type: "boolean" },
-				limit: { type: "string" },
-				author: { type: "string" },
-				current: { type: "boolean" },
-				baseline: { type: "boolean" },
-				exact: { type: "boolean" },
-				output: { type: "string", short: "o" },
-				"dry-run": { type: "boolean" },
-				verbose: { type: "boolean", short: "v" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			regex: { type: "boolean" },
+			"ignore-case": { type: "boolean" },
+			all: { type: "boolean" },
+			limit: { type: "string" },
+			author: { type: "string" },
+			current: { type: "boolean" },
+			baseline: { type: "boolean" },
+			exact: { type: "boolean" },
+			output: { type: "string", short: "o" },
+			"dry-run": { type: "boolean" },
+			verbose: { type: "boolean", short: "v" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

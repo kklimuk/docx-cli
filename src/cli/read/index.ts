@@ -1,6 +1,12 @@
 import { Images } from "@core/image";
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 import { MarkdownLocatorError, renderMarkdown } from "./markdown";
 
 const HELP = `docx read — render document body as Markdown, or print AST as JSON
@@ -42,25 +48,21 @@ Examples:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				ast: { type: "boolean" },
-				from: { type: "string" },
-				to: { type: "string" },
-				accepted: { type: "boolean" },
-				baseline: { type: "boolean" },
-				current: { type: "boolean" },
-				comments: { type: "boolean" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (e) {
-		return fail("USAGE", e instanceof Error ? e.message : String(e), HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			ast: { type: "boolean" },
+			from: { type: "string" },
+			to: { type: "string" },
+			accepted: { type: "boolean" },
+			baseline: { type: "boolean" },
+			current: { type: "boolean" },
+			comments: { type: "boolean" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

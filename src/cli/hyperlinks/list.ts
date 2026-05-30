@@ -1,6 +1,12 @@
 import { type Block, type Hyperlink, iterateBlocks } from "@core";
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx hyperlinks list — print hyperlink manifest as JSON
 
@@ -27,20 +33,14 @@ type HyperlinkEntry = {
 };
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

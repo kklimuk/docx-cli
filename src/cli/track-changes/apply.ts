@@ -1,5 +1,4 @@
 import { TrackChanges, TrackedChangeNotFoundError } from "@core/track-changes";
-import { parseArgs } from "util";
 import {
 	EXIT,
 	fail,
@@ -7,6 +6,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -17,25 +17,19 @@ export async function runApply(
 	verb: ApplyVerb,
 	help: string,
 ): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				at: { type: "string", multiple: true },
-				all: { type: "boolean" },
-				output: { type: "string", short: "o" },
-				"dry-run": { type: "boolean" },
-				verbose: { type: "boolean", short: "v" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, help);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			at: { type: "string", multiple: true },
+			all: { type: "boolean" },
+			output: { type: "string", short: "o" },
+			"dry-run": { type: "boolean" },
+			verbose: { type: "boolean", short: "v" },
+			help: { type: "boolean", short: "h" },
+		},
+		help,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(help);

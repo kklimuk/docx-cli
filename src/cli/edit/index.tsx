@@ -14,7 +14,7 @@ import {
 	EquationStaleError,
 	Equations,
 } from "@core/equation";
-import { parseArgs } from "util";
+import type { parseArgs } from "util";
 import {
 	parseRunsArg,
 	parseSectionFlags,
@@ -29,6 +29,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -284,18 +285,8 @@ async function commitEquationEdit(
 async function parseAndValidateOptions(
 	args: string[],
 ): Promise<ValidatedOptions | number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: OPTION_SPEC,
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

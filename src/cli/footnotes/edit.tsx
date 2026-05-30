@@ -6,7 +6,6 @@ import {
 	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
-import { parseArgs } from "util";
 import {
 	EXIT,
 	fail,
@@ -14,6 +13,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -49,26 +49,20 @@ export async function runEditNote(
 	args: string[],
 	kind: NoteKind,
 ): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				id: { type: "string" },
-				text: { type: "string" },
-				author: { type: "string" },
-				output: { type: "string", short: "o" },
-				"dry-run": { type: "boolean" },
-				verbose: { type: "boolean", short: "v" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, helpFor(kind));
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			id: { type: "string" },
+			text: { type: "string" },
+			author: { type: "string" },
+			output: { type: "string", short: "o" },
+			"dry-run": { type: "boolean" },
+			verbose: { type: "boolean", short: "v" },
+			help: { type: "boolean", short: "h" },
+		},
+		helpFor(kind),
+	);
+	if (typeof parsed === "number") return parsed;
 
 	const help = helpFor(kind);
 	if (parsed.values.help) {

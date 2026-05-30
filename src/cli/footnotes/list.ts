@@ -1,6 +1,12 @@
 import type { NoteKind } from "@core/notes";
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 
 function helpFor(kind: NoteKind): string {
 	const verb = kind === "footnote" ? "footnotes" : "endnotes";
@@ -21,20 +27,14 @@ export async function runListNotes(
 	args: string[],
 	kind: NoteKind,
 ): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, helpFor(kind));
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			help: { type: "boolean", short: "h" },
+		},
+		helpFor(kind),
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(helpFor(kind));

@@ -1,6 +1,12 @@
 import { buildBlankPackage } from "@core/create";
-import { parseArgs } from "util";
-import { EXIT, fail, respondAck, setVerboseAck, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	respondAck,
+	setVerboseAck,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx create — create a new minimal .docx
 
@@ -25,23 +31,19 @@ For a doc that opens with a code block, chain create with insert:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				title: { type: "string" },
-				author: { type: "string" },
-				text: { type: "string" },
-				force: { type: "boolean" },
-				verbose: { type: "boolean", short: "v" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (e) {
-		return fail("USAGE", e instanceof Error ? e.message : String(e), HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			title: { type: "string" },
+			author: { type: "string" },
+			text: { type: "string" },
+			force: { type: "boolean" },
+			verbose: { type: "boolean", short: "v" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

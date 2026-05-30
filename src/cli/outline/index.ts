@@ -1,5 +1,11 @@
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 import { buildOutline } from "./build";
 
 const HELP = `docx outline — list headings as a hierarchical tree
@@ -27,21 +33,15 @@ Examples:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				"style-prefix": { type: "string" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			"style-prefix": { type: "string" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

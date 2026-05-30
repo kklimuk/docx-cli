@@ -17,7 +17,6 @@ import {
 	applyTrackedRangeDelete,
 	applyUntrackedRangeDelete,
 } from "@core/track-changes/replace";
-import { parseArgs } from "util";
 import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
@@ -27,6 +26,7 @@ import {
 	respond,
 	respondAck,
 	setVerboseAck,
+	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
@@ -147,18 +147,8 @@ async function commitRangeDelete(
 async function parseAndValidateOptions(
 	args: string[],
 ): Promise<ValidatedOptions | number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: OPTION_SPEC,
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

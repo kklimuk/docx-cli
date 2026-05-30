@@ -1,5 +1,4 @@
-import { parseArgs } from "util";
-import { EXIT, fail, writeStdout } from "../respond";
+import { EXIT, tryParseArgs, writeStdout } from "../respond";
 
 const HELP = `docx info locators — print the locator grammar reference
 
@@ -129,21 +128,15 @@ const JSON_REFERENCE = {
 };
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				json: { type: "boolean" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			json: { type: "boolean" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

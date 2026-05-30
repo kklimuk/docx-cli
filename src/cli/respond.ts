@@ -7,6 +7,7 @@ import {
 	PkgError,
 	parseLocator,
 } from "@core";
+import { parseArgs } from "util";
 
 export const EXIT = {
 	OK: 0,
@@ -149,6 +150,28 @@ export async function resolveBlockOrFail(
 			return await fail("BLOCK_NOT_FOUND", err.message);
 		}
 		throw err;
+	}
+}
+
+type ParseArgsOptions = NonNullable<Parameters<typeof parseArgs>[0]>["options"];
+
+/** Wrap `parseArgs` with the boilerplate every command repeats: fix
+ *  `allowPositionals: true`, catch malformed-flag errors, and translate
+ *  them to `fail("USAGE", ...)`. Saves ~7 lines per command vs the inline
+ *  try/catch. Returns a number (exit code) on parse failure so the caller
+ *  shorts-circuits with `if (typeof parsed === "number") return parsed;`
+ *  — same discriminator pattern as `openOrFail` / `resolveBlockOrFail`. */
+export async function tryParseArgs(
+	args: string[],
+	options: ParseArgsOptions,
+	help: string,
+): Promise<ReturnType<typeof parseArgs> | number> {
+	try {
+		return parseArgs({ args, allowPositionals: true, options });
+	} catch (parseError) {
+		const message =
+			parseError instanceof Error ? parseError.message : String(parseError);
+		return await fail("USAGE", message, help);
 	}
 }
 

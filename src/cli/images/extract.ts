@@ -1,8 +1,14 @@
 import { join } from "node:path";
 import { flattenImageRuns } from "@core";
 import { extensionForImageMime, Images } from "@core/image";
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx images extract — dump image bytes to a directory
 
@@ -26,22 +32,16 @@ Examples:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				to: { type: "string" },
-				id: { type: "string" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			to: { type: "string" },
+			id: { type: "string" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);

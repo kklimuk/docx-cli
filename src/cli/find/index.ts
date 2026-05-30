@@ -1,6 +1,12 @@
 import { type FindView, findTextSpans, type TextMatch } from "@core/find";
-import { parseArgs } from "util";
-import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	openOrFail,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 
 const HELP = `docx find — locate text spans and return their locators
 
@@ -41,27 +47,21 @@ Examples:
 `;
 
 export async function run(args: string[]): Promise<number> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args,
-			allowPositionals: true,
-			options: {
-				regex: { type: "boolean" },
-				"ignore-case": { type: "boolean" },
-				all: { type: "boolean" },
-				nth: { type: "string" },
-				current: { type: "boolean" },
-				baseline: { type: "boolean" },
-				exact: { type: "boolean" },
-				help: { type: "boolean", short: "h" },
-			},
-		});
-	} catch (parseError) {
-		const message =
-			parseError instanceof Error ? parseError.message : String(parseError);
-		return fail("USAGE", message, HELP);
-	}
+	const parsed = await tryParseArgs(
+		args,
+		{
+			regex: { type: "boolean" },
+			"ignore-case": { type: "boolean" },
+			all: { type: "boolean" },
+			nth: { type: "string" },
+			current: { type: "boolean" },
+			baseline: { type: "boolean" },
+			exact: { type: "boolean" },
+			help: { type: "boolean", short: "h" },
+		},
+		HELP,
+	);
+	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
 		await writeStdout(HELP);
