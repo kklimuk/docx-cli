@@ -112,7 +112,7 @@ const JSON_SCHEMA = {
 						// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
 						// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
 						// surface via `track-changes list` from
-						// `view.trackedChangeReferences`, not via `Run.trackedChange`
+						// `document.trackedChangeReferences`, not via `Run.trackedChange`
 						// — keep this enum tight to what readers actually see here.
 						kind: {
 							enum: ["ins", "del", "moveFrom", "moveTo"],

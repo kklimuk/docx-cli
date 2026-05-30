@@ -1,10 +1,13 @@
 # src/core/notes — footnote + endnote emit, lookup, tree ops
 
-One file behind the `@core/notes` barrel ([index.ts](index.ts)): [helpers.tsx](helpers.tsx). Footnotes and endnotes share their entire mechanics — separate parts (`word/footnotes.xml` / `word/endnotes.xml`), same XML shape, same id-allocation rules, same reference-run pattern. The package is parameterized on `NoteKind = "footnote" | "endnote"` via the `noteConfig(kind)` lookup; every public function takes a `NoteKind` and pulls tag names / style ids / part names from the config.
+Four files behind the `@core/notes` barrel ([index.ts](index.ts)):
 
-## Lifecycle, lookup, emit, tree ops
+- [config.ts](config.ts) — `NoteKind = "footnote" | "endnote"`, the `NoteConfig` shape (tag names, style ids, part names, relationship type), and the `FOOTNOTE_CONFIG` / `ENDNOTE_CONFIG` lookup via `noteConfig(kind)`. Leaf data, same shape as the `BASELINE` catalog in `core/styles.tsx`.
+- [empty.tsx](empty.tsx) — `ensureNotesPart` (lazy-provisions `word/footnotes.xml` / `word/endnotes.xml` the first time an agent runs `footnotes add` against a doc that had none — seeds Word's reserved `id=-1 separator` + `id=0 continuationSeparator` entries so LibreOffice and Word render the note area correctly), `ensureNoteStyles`, lookup ops (`nextNoteId`, `findNoteByNumericId`).
+- [emit.tsx](emit.tsx) — the emitter components: `NoteReferenceRun`, `NoteBody`, `TrackedNoteBody`, plus tracked-body mutators `wrapNoteBodyAsDeleted` / `wrapNoteBodyAsEdited`.
+- [splice.tsx](splice.tsx) — tree mutators: `insertNoteReferenceAtOffset`, `removeNoteReferences` and their walker helpers.
 
-The file follows the newspaper convention: `ensureNotesPart` (the entry that everything else builds on) is at the top, its internal helpers follow, then `ensureNoteStyles`, then lookup ops (`nextNoteId`, `findNoteByNumericId`), then emitters (`NoteReferenceRun`, `NoteBody`, `TrackedNoteBody`), then tree mutators (`insertNoteReferenceAtOffset`, `removeNoteReferences`) with their walker helpers, then tracked-body mutators (`wrapNoteBodyAsDeleted`, `wrapNoteBodyAsEdited`), and finally `noteConfig` + types + the `FOOTNOTE_CONFIG` / `ENDNOTE_CONFIG` catalog at the bottom — leaf data, same shape as the `BASELINE` catalog in `core/styles.tsx`.
+Footnotes and endnotes share their entire mechanics — separate parts (`word/footnotes.xml` / `word/endnotes.xml`), same XML shape, same id-allocation rules, same reference-run pattern. The package is parameterized on `NoteKind` everywhere; every public function takes a `NoteKind` and pulls tag names / style ids / part names from `noteConfig`.
 
 `ensureNotesPart` lazy-provisions the part the first time an agent runs `footnotes add` against a doc that had none. Word writes two reserved entries before any user notes — `id=-1 separator` (the rule above the note area) and `id=0 continuationSeparator` (used when notes wrap across pages); both have `w:type` set and are filtered out by the AST reader. We seed both so LibreOffice and Word render the note area correctly from the start.
 
