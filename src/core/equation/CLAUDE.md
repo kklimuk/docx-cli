@@ -65,8 +65,10 @@ The AST's `EquationRun` carries `id` (`eqN`, document order, parallels
 imgN/linkN/tcN), `latex` (the new reconstructed form), `text` (legacy
 plaintext fallback), and `display` (inline `<m:oMath>` vs block
 `<m:oMathPara>`). The original `<m:oMath>` XmlNode lives in
-`Document.equationReferences` for emit-back paths — same pattern as image
-and tracked-change references. Reader registration happens in
+`document.body.equationReferences` for emit-back paths — same pattern as
+`document.body.imageById` / `document.body.hyperlinkById` (body-scoped
+maps on `Body`) and `document.trackedChangeReferences` (cross-part map
+on `Document`). Reader registration happens in
 [core/ast/read.ts](../ast/read.ts) inside the run walker.
 
 ### Operator name promotion

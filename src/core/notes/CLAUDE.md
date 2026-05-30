@@ -13,8 +13,8 @@ Footnotes and endnotes share their entire mechanics — separate parts (`word/fo
 
 ## Tracked footnotes
 
-`TrackedNoteBody` (add side) and `wrapNoteBodyAsDeleted` / `wrapNoteBodyAsEdited` (delete / edit sides) mirror Microsoft Word's empirical XML shape — see `scripts/word-redlines.sh` for the AppleScript oracle. Each operation gets distinct revision ids on each side (`computeMaxRevisionId` walks document/footnotes/endnotes so allocation doesn't collide). The reference-side and body-side revisions are **paired structurally by the footnote id** (the `w:id` on `<w:footnoteReference>` and `<w:footnote>`), not by revision id; the accept/reject coordinator (`cli/track-changes/apply.ts::applyNotePairing`) consumes `noteConfig` from here to walk the pairing and GC orphan bodies.
+`TrackedNoteBody` (add side) and `wrapNoteBodyAsDeleted` / `wrapNoteBodyAsEdited` (delete / edit sides) mirror Microsoft Word's empirical XML shape — see `scripts/word-redlines.sh` for the AppleScript oracle. Each operation gets distinct revision ids on each side (`computeMaxRevisionId` walks document/footnotes/endnotes so allocation doesn't collide). The reference-side and body-side revisions are **paired structurally by the footnote id** (the `w:id` on `<w:footnoteReference>` and `<w:footnote>`), not by revision id; the accept/reject coordinator (`core/track-changes/apply.ts::applyNotePairing`) consumes `noteConfig` from here to walk the pairing and GC orphan bodies.
 
 ## Adding a property to a NoteConfig
 
-Extend the `NoteConfig` shape at the bottom and add the new field to both `FOOTNOTE_CONFIG` and `ENDNOTE_CONFIG`. Public functions pick it up automatically via `noteConfig(kind)` — no other edits needed.
+Extend the `NoteConfig` shape in [config.ts](config.ts) and add the new field to both `FOOTNOTE_CONFIG` and `ENDNOTE_CONFIG`. Public functions pick it up automatically via `noteConfig(kind)` — no other edits needed.

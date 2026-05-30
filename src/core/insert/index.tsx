@@ -37,8 +37,9 @@ export class Insert {
 	): Promise<XmlNode[]> {
 		// `--task` / `--list` paragraph: resolve the list numId (inherit from the
 		// anchor if it's already a list, else allocate fresh of the requested
-		// kind). Done first because allocateNum needs the package, and the
-		// anchor inherit needs the resolved blockRef.
+		// kind via `document.ensureNumbering().allocate(...)`). Done first because
+		// the allocator needs the package, and the anchor inherit needs the
+		// resolved blockRef.
 		const options2 = paragraphOptions as ParagraphOptions & {
 			listKind?: "bullet" | "ordered";
 			explicitLevel?: number;

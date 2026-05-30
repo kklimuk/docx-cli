@@ -1,10 +1,15 @@
 # src/core/code-block — code-block emit + syntax highlighting
 
-Two files, reachable via `@core/code-block` ([index.ts](index.ts)): [syntax-highlight.ts](syntax-highlight.ts) (a pure `(language, code) → CodeToken[]` tokenizer) and [paragraphs.tsx](paragraphs.tsx) (an emitter that builds one `<w:p>` per source line). Both are pure — no `Document`, no package state — so the same functions are called by `cli/insert --code` today and will be called by the S8 markdown walker for fenced code blocks.
+Three files, reachable via `@core/code-block` ([index.ts](index.ts)):
+- [syntax-highlight.ts](syntax-highlight.ts) — pure `(language, code) → CodeToken[]` tokenizer
+- [paragraphs.tsx](paragraphs.tsx) — emitter that builds one `<w:p>` per source line
+- [style.tsx](style.tsx) — `ensureCodeBlockStyles(document, language?)` + the language↔pStyle suffix mapping (`codeBlockStyleIdFor`, `codeBlockLanguageFromStyleId`, `isCodeBlockStyleId`)
+
+The paragraph builder and tokenizer are pure (no `Document`, no package state); style provisioning takes a `Document` because it has to touch `styles.xml`. The lenses (`Insert.paragraph`, `Edit.paragraph`, `Edit.range`) call `ensureCodeBlockStyles` before building the paragraphs.
 
 ## Emit shape
 
-`buildCodeBlockParagraphs(content, language?)` returns `XmlNode[]`. Each line of `content` becomes one paragraph with `pStyle="CodeBlock"`; each run inside carries `runStyle="Code"` — both styles are baseline-catalog entries (see `core/styles.tsx`) and get provisioned in styles.xml via `ensureReferencedStyle` at the call site (the emitter itself is package-state-free).
+`buildCodeBlockParagraphs(content, language?)` returns `XmlNode[]`. Each line of `content` becomes one paragraph with `pStyle="CodeBlock"`; each run inside carries `runStyle="Code"` — both styles are baseline-catalog entries (see `core/ast/document/styles.tsx`). `ensureCodeBlockStyles(document, language)` in [style.tsx](style.tsx) provisions `Code` (run) + `CodeBlock` (paragraph), and when a language is given the derived `CodeBlock-LANG` paragraph style so the language survives round-trip.
 
 The `Code` character run-style is defensive: a few Word versions don't reliably cascade the paragraph-style font (Courier New) through to runs, so every run gets the inline rStyle too. Cheap and harmless.
 

@@ -20,7 +20,7 @@ bun tests/fixtures/setup/inspect.ts
 
 When a new feature needs a fixture, follow this order:
 
-1. **Prototype with core emitters** (`src/core/blocks`, `src/core/table`, JSX, `ensureStyle`, `allocateNum`, …). Hand-rolled XML must go through the helpers in `./helpers` so the Word-canonical part set ships with the file.
+1. **Prototype with core emitters** (`src/core/blocks`, `src/core/table`, JSX, `document.ensureStyles().ensureStyle(id)`, `document.ensureNumbering().allocate(kind)`, …). Hand-rolled XML must go through the helpers in `./helpers` so the Word-canonical part set ships with the file.
 2. **Re-author the fixture with the CLI** once the surface verbs exist. This is the real check: if you can't reproduce the same shape with `docx create | insert | edit | …`, the CLI is missing something — fix the CLI, don't paper over it in the fixture script.
 3. **Keep the CLI version as the canonical fixture.** The core-emitters prototype is dev scaffolding; delete it once the CLI version produces an equivalent file.
 
