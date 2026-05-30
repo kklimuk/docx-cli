@@ -2,6 +2,11 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
 
+// Pin core.xml timestamps + tracked-change w:date to a fixed value so
+// rebuilds are byte-deterministic. Honored by `core/create::buildBlankPackage`
+// and by `track-changes::resolveDate`.
+process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
+
 /**
  * Build tests/fixtures/sections.docx — a multi-section doc that exercises
  * every supported section type with the surrounding context required to make

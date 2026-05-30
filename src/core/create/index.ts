@@ -30,7 +30,11 @@ export type BlankDocxOptions = {
  * `pkg.save()`. Lives in core because it's pure OOXML construction; the CLI's
  * `create` verb is a thin wrapper over it. */
 export function buildBlankPackage(options: BlankDocxOptions): Pkg {
-	const now = options.now ?? new Date().toISOString();
+	// Honor `DOCX_CLI_NOW` (same env var the track-changes `resolveDate`
+	// reads) so fixture rebuilds can pin a deterministic timestamp without
+	// every caller threading `options.now` through. Falls back to the
+	// wall-clock for normal CLI usage.
+	const now = options.now ?? Bun.env.DOCX_CLI_NOW ?? new Date().toISOString();
 	const pkg = Pkg.empty(options.path);
 	pkg.writeText("[Content_Types].xml", CONTENT_TYPES);
 	pkg.writeText("_rels/.rels", ROOT_RELS);
