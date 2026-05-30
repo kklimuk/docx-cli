@@ -42,6 +42,12 @@ export type {
 	TrackedChangeKind,
 } from "./ast/types";
 export {
+	Insert,
+	InsertError,
+	type InsertSpec,
+	type TextFormatting,
+} from "./insert";
+export {
 	type BlockRangeReference,
 	type BlockTarget,
 	type Locator,
