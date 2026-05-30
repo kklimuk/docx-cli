@@ -1,19 +1,12 @@
 import {
+	type CommentAnchorSpec,
+	Comments,
+	CommentsError,
 	type Document,
 	type Locator,
 	locatorToBlockTarget,
 	parseLocator,
-	XmlNode,
 } from "@core";
-import {
-	addCommentMarkersToParagraph,
-	addCommentRangeMarkers,
-	authorInitials,
-	CommentBody,
-	type CommentSpan,
-	generateParaId,
-	SpanOutOfRangeError,
-} from "@core/comments";
 import { type FindView, findTextSpans } from "@core/find";
 import { parseArgs } from "util";
 import {
@@ -21,7 +14,6 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
-	resolveBlockOrFail,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -99,25 +91,12 @@ type RawEntry = {
 	author?: string;
 };
 
-type ResolvedEntry =
-	| {
-			kind: "single";
-			blockId: string;
-			span?: CommentSpan;
-			text: string;
-			author: string;
-			locatorString: string;
-	  }
-	| {
-			kind: "range";
-			startBlockId: string;
-			startOffset: number;
-			endBlockId: string;
-			endOffset: number;
-			text: string;
-			author: string;
-			locatorString: string;
-	  };
+type ResolvedEntry = {
+	spec: CommentAnchorSpec;
+	text: string;
+	author: string;
+	locatorString: string;
+};
 
 class EntryError extends Error {
 	constructor(
@@ -281,73 +260,36 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const date = new Date().toISOString();
+	const lens = new Comments(document);
 	const minted: Array<{ commentId: string; locator: string }> = [];
 
-	for (const entry of resolved) {
-		const numericId = document.comments?.nextId() ?? "0";
-		const paraId = generateParaId();
-
+	for (let index = 0; index < resolved.length; index++) {
+		const entry = resolved[index];
+		if (!entry) continue;
 		try {
-			if (entry.kind === "single") {
-				const paragraphRef = await resolveBlockOrFail(document, entry.blockId);
-				if (typeof paragraphRef === "number") {
-					return paragraphRef;
-				}
-				addCommentMarkersToParagraph(
-					paragraphRef.node,
-					numericId,
-					entry.span,
-					findView,
-				);
-			} else {
-				const startRef = await resolveBlockOrFail(document, entry.startBlockId);
-				if (typeof startRef === "number") return startRef;
-				const endRef = await resolveBlockOrFail(document, entry.endBlockId);
-				if (typeof endRef === "number") return endRef;
-				addCommentRangeMarkers(
-					startRef.node,
-					entry.startOffset,
-					endRef.node,
-					entry.endOffset,
-					numericId,
-					findView,
-				);
-			}
+			const numericId = lens.add(entry.spec, {
+				body: entry.text,
+				author: entry.author,
+				findView,
+			});
+			minted.push({
+				commentId: `c${numericId}`,
+				locator: entry.locatorString,
+			});
 		} catch (error) {
-			if (error instanceof SpanOutOfRangeError) {
-				return fail("INVALID_LOCATOR", error.message);
+			if (error instanceof CommentsError) {
+				const prefix = batchInput !== undefined ? `entry ${index}: ` : "";
+				return fail(error.code, `${prefix}${error.message}`, error.hint);
 			}
 			throw error;
 		}
-
-		const commentsView = document.ensureComments();
-		const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
-		if (!commentsRoot) throw new Error("expected <w:comments> root");
-		commentsRoot.children.push(
-			<CommentBody
-				options={{
-					id: numericId,
-					author: entry.author,
-					date,
-					initials: authorInitials(entry.author),
-					paraId,
-					text: entry.text,
-				}}
-			/>,
-		);
-
-		minted.push({
-			commentId: `c${numericId}`,
-			locator: entry.locatorString,
-		});
 	}
 
 	await document.save(outputPath);
 
 	if (batchInput) {
 		// Batch: always print the minted ids — the agent can't reconstruct
-		// them without re-reading. Verbose adds the full envelope.
+		// them without re-reading.
 		await respond({
 			ok: true,
 			operation: "comments.add",
@@ -446,11 +388,13 @@ function resolveLocatorEntry(
 
 	if (locator.kind === "range") {
 		return {
-			kind: "range",
-			startBlockId: locator.start.blockId,
-			startOffset: locator.start.offset,
-			endBlockId: locator.end.blockId,
-			endOffset: locator.end.offset,
+			spec: {
+				kind: "range",
+				startBlockId: locator.start.blockId,
+				startOffset: locator.start.offset,
+				endBlockId: locator.end.blockId,
+				endOffset: locator.end.offset,
+			},
 			text,
 			author,
 			locatorString: rangeInput,
@@ -466,9 +410,11 @@ function resolveLocatorEntry(
 		);
 	}
 	return {
-		kind: "single",
-		blockId: target.blockId,
-		span: target.span,
+		spec: {
+			kind: "single",
+			blockId: target.blockId,
+			...(target.span ? { span: target.span } : {}),
+		},
 		text,
 		author,
 		locatorString: rangeInput,
@@ -517,9 +463,11 @@ function resolveAnchorEntry(
 	}
 	const locatorString = `${match.blockId}:${match.start}-${match.end}`;
 	return {
-		kind: "single",
-		blockId: match.blockId,
-		span: { start: match.start, end: match.end },
+		spec: {
+			kind: "single",
+			blockId: match.blockId,
+			span: { start: match.start, end: match.end },
+		},
 		text,
 		author,
 		locatorString,

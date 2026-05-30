@@ -126,6 +126,39 @@ export class CommentsView {
 		);
 	}
 
+	/** Read a comment's `w14:paraId`, or undefined if the comment is missing
+	 * or has no inner `<w:p>`. Accepts the `cN` or bare-`N` id form. */
+	paraIdFor(commentId: string): string | undefined {
+		const numericId = commentId.startsWith("c")
+			? commentId.slice(1)
+			: commentId;
+		const comment = this.findById(numericId);
+		const paragraph = comment?.findChild("w:p");
+		return paragraph?.getAttribute("w14:paraId");
+	}
+
+	/** Read a comment's `w14:paraId`, minting + persisting one (and the
+	 * `xmlns:w14` declaration on the root) if absent. reply/resolve key off
+	 * paraId, so this guarantees one exists. Returns undefined only when the
+	 * comment itself is missing. Accepts the `cN` or bare-`N` id form. */
+	ensureParaId(commentId: string): string | undefined {
+		const numericId = commentId.startsWith("c")
+			? commentId.slice(1)
+			: commentId;
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		const comment = this.findById(numericId);
+		const paragraph = comment?.findChild("w:p");
+		if (!root || !paragraph) return undefined;
+		const existing = paragraph.getAttribute("w14:paraId");
+		if (existing) return existing;
+		const fresh = generateParaId();
+		paragraph.setAttribute("w14:paraId", fresh);
+		if (!root.attributes["xmlns:w14"]) {
+			root.setAttribute("xmlns:w14", NS_W14);
+		}
+		return fresh;
+	}
+
 	/** Word reserves comment ids starting from 0. We allocate `max(existing
 	 * id) + 1` so we never collide. Returns "0" when the part is empty (or only
 	 * contains the root element with no comments). */
@@ -245,6 +278,17 @@ export class CommentsView {
 
 function CommentsRoot(): XmlNode {
 	return <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
+}
+
+/** Mint a fresh `w14:paraId` value. Word writes 8-char uppercase hex; we
+ * match. Used both by `CommentsView.ensureParaId` and by the comments lens
+ * for replies + audit comments. */
+export function generateParaId(): string {
+	const bytes = new Uint8Array(4);
+	crypto.getRandomValues(bytes);
+	let hex = "";
+	for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+	return hex.toUpperCase();
 }
 
 function CommentsExRoot(): XmlNode {

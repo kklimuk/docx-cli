@@ -1,5 +1,4 @@
-import { Comments, removeCommentMarkers } from "@core/comments";
-import { XmlNode } from "@core/parser";
+import { Comments, CommentsError } from "@core";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -108,20 +107,18 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	const comments = new Comments(document);
-
-	// Validate every id up-front so the batch is atomic — any unknown id
-	// aborts before we mutate.
-	for (const commentId of ordered) {
-		const numericId = commentId.slice(1);
-		if (!comments.findById(numericId)) {
-			return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
-		}
-	}
-
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
+		// Mirror the lens's pre-validation so a stale id reports the failure
+		// even in dry-run mode.
+		const view = document.comments;
+		for (const commentId of ordered) {
+			const numericId = commentId.slice(1);
+			if (!view?.findById(numericId)) {
+				return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
+			}
+		}
 		await respond({
 			ok: true,
 			operation: "comments.delete",
@@ -133,39 +130,18 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	for (const commentId of ordered) {
-		const numericId = commentId.slice(1);
-		const commentReference = comments.findById(numericId);
-		if (!commentReference) continue; // already validated above
-
-		const paraId = comments.paraIdFor(commentId);
-
-		const commentIndex = commentReference.parent.indexOf(commentReference.node);
-		if (commentIndex !== -1) commentReference.parent.splice(commentIndex, 1);
-
-		if (paraId && document.comments?.extendedTree) {
-			const extRoot = XmlNode.findRoot(
-				document.comments?.extendedTree,
-				"w15:commentsEx",
-			);
-			if (extRoot) {
-				extRoot.children = extRoot.children.filter(
-					(child) =>
-						!(
-							child.tag === "w15:commentEx" &&
-							child.getAttribute("w15:paraId") === paraId
-						),
-				);
-			}
+	try {
+		new Comments(document).delete(ordered);
+	} catch (error) {
+		if (error instanceof CommentsError) {
+			return fail(error.code, error.message, error.hint);
 		}
-
-		removeCommentMarkers(document.documentTree, numericId);
+		throw error;
 	}
 
 	await document.save(outputPath);
 
 	if (batchInput || ordered.length > 1) {
-		// Batch (or multiple --id): always print the removed ids.
 		await respond({
 			ok: true,
 			operation: "comments.delete",

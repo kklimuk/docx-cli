@@ -1,4 +1,4 @@
-import type { Document } from "@core";
+import { Comments } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -46,35 +46,11 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	let comments = document.body.comments;
-	if (!parsed.values["include-resolved"]) {
-		comments = comments.filter((comment) => !comment.resolved);
-	}
-	const threadFilter = parsed.values.thread as string | undefined;
-	if (threadFilter) {
-		const allowed = collectThread(comments, threadFilter);
-		comments = comments.filter((comment) => allowed.has(comment.id));
-	}
+	const comments = new Comments(document).list({
+		includeResolved: Boolean(parsed.values["include-resolved"]),
+		thread: parsed.values.thread as string | undefined,
+	});
 
 	await respond(comments);
 	return EXIT.OK;
-}
-
-function collectThread(
-	comments: Document["body"]["comments"],
-	rootId: string,
-): Set<string> {
-	const allowed = new Set<string>([rootId]);
-	let changed = true;
-	while (changed) {
-		changed = false;
-		for (const comment of comments) {
-			if (allowed.has(comment.id)) continue;
-			if (comment.parentId && allowed.has(comment.parentId)) {
-				allowed.add(comment.id);
-				changed = true;
-			}
-		}
-	}
-	return allowed;
 }

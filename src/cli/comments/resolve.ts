@@ -1,5 +1,4 @@
-import { Comments } from "@core/comments";
-import { XmlNode } from "@core/parser";
+import { Comments, CommentsError } from "@core";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -111,32 +110,17 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	// Validate every id up-front so the batch is atomic. We pre-resolve
-	// each paraId here too so we don't get half-mutated in the apply loop
-	// when a malformed comment body lacks an inner <w:p>: the apply loop
-	// would otherwise mutate paraIds for entries 0..N-1 in memory before
-	// failing on N. ensureCommentParaId is idempotent — calling it here
-	// and again below is safe.
-	const comments = new Comments(document);
-	const paraIdByCommentId = new Map<string, string>();
-	for (const commentId of ordered) {
-		const numericId = commentId.slice(1);
-		if (!comments.findById(numericId)) {
-			return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
-		}
-		const paraId = comments.ensureParaId(commentId);
-		if (!paraId) {
-			return fail(
-				"COMMENT_NOT_FOUND",
-				`Comment ${commentId} could not be assigned a w14:paraId.`,
-			);
-		}
-		paraIdByCommentId.set(commentId, paraId);
-	}
-
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
+		// Mirror the lens's pre-validation so a stale id surfaces in dry-run.
+		const view = document.comments;
+		for (const commentId of ordered) {
+			const numericId = commentId.slice(1);
+			if (!view?.findById(numericId)) {
+				return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
+			}
+		}
 		await respond({
 			ok: true,
 			operation: "comments.resolve",
@@ -149,29 +133,13 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const extView = document.ensureCommentsExtended();
-	const extRoot = extView.extendedTree
-		? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
-		: undefined;
-	if (!extRoot) throw new Error("expected <w15:commentsEx> root");
-
-	for (const commentId of ordered) {
-		const paraId = paraIdByCommentId.get(commentId);
-		if (!paraId) {
-			// Unreachable — pre-validation populated the map for every id.
-			throw new Error(`internal: missing paraId for ${commentId}`);
+	try {
+		new Comments(document).resolve(ordered, resolved);
+	} catch (error) {
+		if (error instanceof CommentsError) {
+			return fail(error.code, error.message, error.hint);
 		}
-		let entry = extRoot.children.find(
-			(child) =>
-				child.tag === "w15:commentEx" &&
-				child.getAttribute("w15:paraId") === paraId,
-		);
-		if (!entry) {
-			entry = new XmlNode("w15:commentEx", { "w15:paraId": paraId });
-			extRoot.children.push(entry);
-		}
-		if (resolved) entry.setAttribute("w15:done", "1");
-		else delete entry.attributes["w15:done"];
+		throw error;
 	}
 
 	await document.save(outputPath);

@@ -1,3 +1,4 @@
+import { generateParaId } from "../ast/document/comments";
 import type { FindView } from "../find";
 import { w } from "../jsx";
 import {
@@ -7,6 +8,8 @@ import {
 	sumRunBearingTextLength,
 	XmlNode,
 } from "../parser";
+
+export { generateParaId };
 
 /** Whether a run-bearing wrapper's contents are visible in the chosen
  *  view. Mirrors `isWrapperVisibleInView` in `cli/replace/replace-span.tsx`
@@ -34,14 +37,6 @@ function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
 		}
 	}
 	return total;
-}
-
-export function generateParaId(): string {
-	const bytes = new Uint8Array(4);
-	crypto.getRandomValues(bytes);
-	let hex = "";
-	for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
-	return hex.toUpperCase();
 }
 
 export function authorInitials(author: string): string {

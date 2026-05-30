@@ -42,6 +42,11 @@ export type {
 	TrackedChangeKind,
 } from "./ast/types";
 export {
+	type CommentAnchorSpec,
+	Comments,
+	CommentsError,
+} from "./comments";
+export {
 	Edit,
 	EditError,
 	type ParagraphContentSpec,

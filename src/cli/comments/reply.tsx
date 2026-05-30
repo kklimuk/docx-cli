@@ -1,10 +1,4 @@
-import {
-	authorInitials,
-	CommentBody,
-	Comments,
-	generateParaId,
-} from "@core/comments";
-import { XmlNode } from "@core/parser";
+import { Comments, CommentsError } from "@core";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -73,78 +67,46 @@ export async function run(args: string[]): Promise<number> {
 	if (!parentInput) return fail("USAGE", "Missing --to PARENT_ID", HELP);
 	if (!text) return fail("USAGE", "Missing --text TEXT", HELP);
 
-	const parentNumericId = parentInput.startsWith("c")
-		? parentInput.slice(1)
-		: parentInput;
-
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	const comments = new Comments(document);
-	const parentReference = comments.findById(parentNumericId);
-	if (!parentReference) {
-		return fail(
-			"COMMENT_NOT_FOUND",
-			`Parent comment not found: c${parentNumericId}`,
-		);
-	}
-
-	const parentParaId = comments.ensureParaId(parentInput);
-	if (!parentParaId) {
-		return fail(
-			"COMMENT_NOT_FOUND",
-			`Parent comment c${parentNumericId} could not be assigned a w14:paraId.`,
-		);
-	}
-
+	const parentNumericId = parentInput.startsWith("c")
+		? parentInput.slice(1)
+		: parentInput;
 	const author =
 		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
-	const date = new Date().toISOString();
-	const numericId = document.comments?.nextId() ?? "0";
-	const replyParaId = generateParaId();
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
+		// Pre-validate so a stale parent reports in dry-run too.
+		if (!document.comments?.findById(parentNumericId)) {
+			return fail(
+				"COMMENT_NOT_FOUND",
+				`Parent comment not found: c${parentNumericId}`,
+			);
+		}
+		const nextId = document.comments.nextId();
 		await respond({
 			ok: true,
 			operation: "comments.reply",
 			dryRun: true,
 			path,
-			commentId: `c${numericId}`,
+			commentId: `c${nextId}`,
 			parentId: `c${parentNumericId}`,
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
-	const commentsView = document.ensureComments();
-	const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
-	if (!commentsRoot) throw new Error("expected <w:comments> root");
-	commentsRoot.children.push(
-		<CommentBody
-			options={{
-				id: numericId,
-				author,
-				date,
-				initials: authorInitials(author),
-				paraId: replyParaId,
-				text,
-			}}
-		/>,
-	);
-
-	const extView = document.ensureCommentsExtended();
-	const extRoot = extView.extendedTree
-		? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
-		: undefined;
-	if (!extRoot) throw new Error("expected <w15:commentsEx> root");
-	extRoot.children.push(
-		new XmlNode("w15:commentEx", {
-			"w15:paraId": replyParaId,
-			"w15:paraIdParent": parentParaId,
-			"w15:done": "0",
-		}),
-	);
+	let numericId: string;
+	try {
+		numericId = new Comments(document).reply(parentInput, text, { author });
+	} catch (error) {
+		if (error instanceof CommentsError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
 
 	await document.save(outputPath);
 
