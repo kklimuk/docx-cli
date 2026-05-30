@@ -1,4 +1,3 @@
-import { saveDocView } from "@core";
 import { parseCellRangeAt } from "@core/locators";
 import {
 	buildGrid,
@@ -91,10 +90,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, region.tableId);
+	const tableNode = resolveTableNode(document, region.tableId);
 	if (!tableNode) {
 		return fail("BLOCK_NOT_FOUND", `Table not found: ${region.tableId}`);
 	}
@@ -148,13 +147,13 @@ export async function run(args: string[]): Promise<number> {
 	// Word applies cell merges immediately even under tracking (no revision
 	// marker), so we do the same and note it with an audit comment.
 	noteStructuralChange(
-		view,
+		document,
 		cellAt(grid.rows[r1] as GridRow, c1)?.node,
 		`cells merged (r${r1}c${c1}-r${r2}c${c2})`,
 		parsed.values.author as string | undefined,
 	);
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

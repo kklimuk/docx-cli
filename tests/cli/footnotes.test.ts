@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Pkg } from "../../src/core/package";
+import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 
 type FootnoteRefRun = {
@@ -34,7 +34,7 @@ async function refRuns(docPath: string): Promise<FootnoteRefRun[]> {
 	const doc = result.parsed as { blocks: Array<{ runs?: FootnoteRefRun[] }> };
 	return doc.blocks
 		.flatMap((block) => block.runs ?? [])
-		.filter((run) => run.type === "footnoteRef");
+		.filter((run) => run.type === "noteRef");
 }
 
 async function listFootnotes(docPath: string): Promise<Note[]> {

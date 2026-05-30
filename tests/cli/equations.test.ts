@@ -418,7 +418,7 @@ describe("edit --at eqN --equation", () => {
 		// Without the `latex` field on EquationReference, the mode-toggle
 		// failed for cell-resident equations: the resolver succeeds via
 		// `equationReferences.get(...)` but the lookup that walked
-		// `view.doc.blocks` skipped table cells, yielding a misleading
+		// `view.body.blocks` skipped table cells, yielding a misleading
 		// "LaTeX wasn't readable" error. Insert into a cell paragraph and
 		// confirm --display flips inline → display via the cached `latex`.
 		const workspace = tempWorkspace("eq-edit-cell-display");

@@ -1,9 +1,4 @@
-import {
-	type DocView,
-	isTrackChangesEnabled,
-	mintRevisionMeta,
-	saveDocView,
-} from "@core";
+import { type Document, TrackChanges } from "@core";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -102,10 +97,10 @@ export async function run(args: string[]): Promise<number> {
 	const widthsSpec = parsed.values.widths as string | undefined;
 	if (!widthsSpec) return fail("USAGE", "Missing --widths", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, tableId);
+	const tableNode = resolveTableNode(document, tableId);
 	if (!tableNode) return fail("BLOCK_NOT_FOUND", `Table not found: ${tableId}`);
 
 	const grid = buildGrid(tableNode);
@@ -138,7 +133,7 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const tracking = isTrackChangesEnabled(view);
+	const tracking = document.isTrackChangesEnabled();
 	const author = parsed.values.author as string | undefined;
 	// Snapshot the prior grid columns before resizing so a tracked width change
 	// is reversible (reject restores the prior <w:tblGrid> from the snapshot).
@@ -155,7 +150,7 @@ export async function run(args: string[]): Promise<number> {
 		// a per-cell <w:tcPrChange> (each cell's <w:tcW>) — and it's the per-cell
 		// tcPrChange that Word's reject actually reverts (a grid snapshot alone
 		// isn't honored). Mirror Word's full output under tracking.
-		if (tracking) applyCellWidthsTracked(view, grid, twips, author);
+		if (tracking) applyCellWidthsTracked(document, grid, twips, author);
 		else applyCellWidths(grid, twips);
 		setTableLayout(tableNode, "fixed");
 	}
@@ -164,11 +159,11 @@ export async function run(args: string[]): Promise<number> {
 		appendTblGridChange(
 			grid.tblGrid,
 			priorCols,
-			mintRevisionMeta(view, author),
+			new TrackChanges(document).mintMeta(author),
 		);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,
@@ -232,7 +227,7 @@ function applyCellWidths(grid: Grid, twips: number[]): void {
 /** As {@link applyCellWidths}, but records a `<w:tcPrChange>` snapshot of each
  * cell's prior `<w:tcPr>` — this is the revision Word's reject reverts. */
 function applyCellWidthsTracked(
-	view: DocView,
+	document: Document,
 	grid: Grid,
 	twips: number[],
 	authorFlag: string | undefined,
@@ -245,7 +240,11 @@ function applyCellWidthsTracked(
 				(child) => child.clone(),
 			);
 			setCellWidth(cell.node, { value: cellWidth(cell, twips), unit: "dxa" });
-			appendTcPrChange(cell.node, prior, mintRevisionMeta(view, authorFlag));
+			appendTcPrChange(
+				cell.node,
+				prior,
+				new TrackChanges(document).mintMeta(authorFlag),
+			);
 		}
 	}
 }

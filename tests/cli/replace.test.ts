@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 
-type Doc = {
+type Body = {
 	blocks: Array<{
 		id: string;
 		type: string;
@@ -45,7 +45,7 @@ describe("docx replace", () => {
 			replaced: 1,
 		});
 		const read = await runCli("read", docPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)
@@ -57,7 +57,7 @@ describe("docx replace", () => {
 	test("--all replaces every match", async () => {
 		await runCli("replace", docPath, "fox", "cat", "--all");
 		const read = await runCli("read", docPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)
@@ -70,7 +70,7 @@ describe("docx replace", () => {
 	test("--ignore-case catches mixed case across runs", async () => {
 		await runCli("replace", docPath, "fox", "WOLF", "--all", "--ignore-case");
 		const read = await runCli("read", docPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)
@@ -83,7 +83,7 @@ describe("docx replace", () => {
 	test("--regex with capture-group backrefs", async () => {
 		await runCli("replace", docPath, "(quick) (brown)", "$2 $1", "--regex");
 		const read = await runCli("read", docPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)
@@ -94,7 +94,7 @@ describe("docx replace", () => {
 	test("--regex with $& full-match reference", async () => {
 		await runCli("replace", docPath, "fox", "[$&]", "--regex", "--all");
 		const read = await runCli("read", docPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)
@@ -145,7 +145,7 @@ describe("docx replace", () => {
 		// where "important" is purple+bold and the rest is unstyled.
 		await runCli("replace", colorPath, "important", "essential");
 		const read = await runCli("read", colorPath, "--ast");
-		const paragraph = (read.parsed as Doc).blocks.find(
+		const paragraph = (read.parsed as Body).blocks.find(
 			(block) => block.id === "p1",
 		);
 		const replacementRun = paragraph?.runs?.find(
@@ -161,7 +161,7 @@ describe("docx replace", () => {
 		await runCli("create", multiPath, "--text", "abcabcabc");
 		await runCli("replace", multiPath, "abc", "Z", "--all");
 		const read = await runCli("read", multiPath, "--ast");
-		const text = (read.parsed as Doc).blocks
+		const text = (read.parsed as Body).blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
 			.map((run) => run.text)

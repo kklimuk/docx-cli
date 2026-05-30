@@ -1,5 +1,5 @@
-import { cp, dc, dcterms, w } from "@core/jsx";
-import { XmlNode } from "@core/parser";
+import { cp, dc, dcterms, w } from "../jsx";
+import { XmlNode } from "../parser";
 import { CANONICAL_PARTS } from "./canonical-parts";
 
 const DOC_NAMESPACES = {

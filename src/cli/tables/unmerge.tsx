@@ -1,4 +1,3 @@
-import { saveDocView } from "@core";
 import { parseCellAt } from "@core/locators";
 import {
 	buildGrid,
@@ -87,10 +86,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, target.tableId);
+	const tableNode = resolveTableNode(document, target.tableId);
 	if (!tableNode) {
 		return fail("BLOCK_NOT_FOUND", `Table not found: ${target.tableId}`);
 	}
@@ -151,13 +150,13 @@ export async function run(args: string[]): Promise<number> {
 	// Word applies unmerge immediately even under tracking (no revision marker),
 	// so we do the same and note it with an audit comment.
 	noteStructuralChange(
-		view,
+		document,
 		anchor.node,
 		`cell unmerged (r${target.row}c${target.col})`,
 		parsed.values.author as string | undefined,
 	);
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

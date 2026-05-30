@@ -1,17 +1,11 @@
 import {
-	addHyperlinkRelationship,
-	isTrackChangesEnabled,
 	type Locator,
 	LocatorParseError,
 	locatorToBlockTarget,
 	parseLocator,
-	resolveAuthor,
-	resolveDate,
-	saveDocView,
 } from "@core";
-import { XmlNode } from "@core/parser";
+import { Hyperlinks, HyperlinkWrapError } from "@core/hyperlinks";
 import { parseArgs } from "util";
-import { emitAuditComment } from "../comments/helpers";
 import {
 	EXIT,
 	fail,
@@ -22,7 +16,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import { HyperlinkWrapError, wrapSpanInHyperlink } from "./wrap";
 
 const HELP = `docx hyperlinks add — wrap an existing span in a hyperlink
 
@@ -110,10 +103,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const paragraphRef = await resolveBlockOrFail(view, target.blockId);
+	const paragraphRef = await resolveBlockOrFail(document, target.blockId);
 	if (typeof paragraphRef === "number") return paragraphRef;
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -131,17 +124,10 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (!relationships) {
-		return fail("UNHANDLED", "Missing <Relationships> root in document rels");
-	}
-	const relationshipId = addHyperlinkRelationship(relationships, url);
-
 	try {
-		wrapSpanInHyperlink(paragraphRef.node, target.span, relationshipId);
+		new Hyperlinks(document).add(paragraphRef.node, target.span, url, {
+			author: parsed.values.author as string | undefined,
+		});
 	} catch (error) {
 		if (error instanceof HyperlinkWrapError) {
 			return fail("USAGE", error.message);
@@ -149,21 +135,7 @@ export async function run(args: string[]): Promise<number> {
 		throw error;
 	}
 
-	view.hyperlinksByRelationshipId.set(relationshipId, { url });
-
-	if (isTrackChangesEnabled(view)) {
-		emitAuditComment(
-			view,
-			{ kind: "span", paragraph: paragraphRef.node, span: target.span },
-			{
-				body: `[docx-cli] hyperlink added → ${url}`,
-				author: resolveAuthor(parsed.values.author as string | undefined),
-				date: resolveDate(),
-			},
-		);
-	}
-
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

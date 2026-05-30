@@ -1,4 +1,4 @@
-import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { TrackChanges } from "@core";
 import { parseRowAt } from "@core/locators";
 import {
 	buildGrid,
@@ -83,10 +83,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, target.tableId);
+	const tableNode = resolveTableNode(document, target.tableId);
 	if (!tableNode) {
 		return fail("BLOCK_NOT_FOUND", `Table not found: ${target.tableId}`);
 	}
@@ -112,7 +112,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const tracking = isTrackChangesEnabled(view);
+	const tracking = document.isTrackChangesEnabled();
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
@@ -133,14 +133,16 @@ export async function run(args: string[]): Promise<number> {
 		markRowTracked(
 			row.node,
 			"del",
-			mintRevisionMeta(view, parsed.values.author as string | undefined),
+			new TrackChanges(document).mintMeta(
+				parsed.values.author as string | undefined,
+			),
 		);
 	} else {
 		const index = tableNode.children.indexOf(row.node);
 		if (index !== -1) tableNode.children.splice(index, 1);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

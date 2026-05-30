@@ -3,22 +3,17 @@ import {
 	applySectionType,
 	type BlockRangeReference,
 	type BlockReference,
-	createRevisionAllocator,
-	Del,
-	type DocView,
-	Ins,
+	type Document,
 	isSectionType,
-	isTrackChangesEnabled,
 	LocatorParseError,
 	LocatorResolveError,
-	mintRevisionMeta,
 	parseLocator,
 	type Run,
 	resolveAuthor,
 	resolveBlockRange,
 	resolveDate,
 	type SectionType,
-	saveDocView,
+	TrackChanges,
 	type TrackedMeta,
 	wrapSectPrChange,
 } from "@core";
@@ -27,9 +22,14 @@ import {
 	buildCodeBlockParagraphs,
 	ensureCodeBlockStyles,
 } from "@core/code-block";
-import { EquationParseError, latexToOmml } from "@core/equation";
+import {
+	EquationNotFoundError,
+	EquationParseError,
+	EquationStaleError,
+	Equations,
+} from "@core/equation";
 import type { XmlNode } from "@core/parser";
-import { ensureReferencedRunStyles, ensureReferencedStyle } from "@core/styles";
+
 import { flipCheckboxTracked, flipCheckboxUntracked } from "@core/task-list";
 import {
 	applyTrackedRangeReplace,
@@ -127,8 +127,8 @@ export async function run(args: string[]): Promise<number> {
 	const opts = await parseAndValidateOptions(args);
 	if (typeof opts === "number") return opts;
 
-	const view = await openOrFail(opts.filePath);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(opts.filePath);
+	if (typeof document === "number") return document;
 
 	// Range locator: `pN-pM`. Replaces a span of paragraphs as a unit. Section
 	// edits don't make sense here (sN has its own grammar).
@@ -140,30 +140,32 @@ export async function run(args: string[]): Promise<number> {
 				HELP,
 			);
 		}
-		return commitRangeReplacement(view, opts);
+		return commitRangeReplacement(document, opts);
 	}
 
 	// Equation locator (`eqN`) targets an `<m:oMath>` inside a paragraph,
 	// not the paragraph itself — resolve via `equationReferences` instead of
 	// the block resolver.
 	if (opts.spec.kind === "equation") {
-		return commitEquationEdit(view, opts.spec, opts);
+		return commitEquationEdit(document, opts.spec, opts);
 	}
 
-	const blockRef = await resolveBlockOrFail(view, opts.locator);
+	const blockRef = await resolveBlockOrFail(document, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
 	if (opts.spec.kind === "section") {
-		return commitSectionPropertyEdit(view, blockRef, opts.spec, opts);
+		return commitSectionPropertyEdit(document, blockRef, opts.spec, opts);
 	}
 	if (opts.spec.kind === "task") {
-		return commitTaskToggle(view, blockRef, opts.spec, opts);
+		return commitTaskToggle(document, blockRef, opts.spec, opts);
 	}
-	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
+	document
+		.ensureStyles()
+		.ensureReferencedStyle(opts.spec.paragraphOptions.style);
 	if (opts.spec.kind === "runs") {
-		ensureReferencedRunStyles(view, opts.spec.runs);
+		document.ensureStyles().ensureReferencedRunStyles(opts.spec.runs);
 	}
-	return commitParagraphReplacement(view, blockRef, opts.spec, opts);
+	return commitParagraphReplacement(document, blockRef, opts.spec, opts);
 }
 
 function isBlockRangeLocator(locator: string): boolean {
@@ -176,7 +178,7 @@ function isBlockRangeLocator(locator: string): boolean {
  *  range replace is "del all old, ins all new" (no cross-paragraph LCS),
  *  and we match it. */
 async function commitRangeReplacement(
-	view: DocView,
+	document: Document,
 	opts: ValidatedOptions,
 ): Promise<number> {
 	if (opts.spec.kind === "section") {
@@ -205,7 +207,7 @@ async function commitRangeReplacement(
 			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
 		}
 		rangeRef = resolveBlockRange(
-			view,
+			document,
 			locator.startBlockId,
 			locator.endBlockId,
 		);
@@ -219,15 +221,17 @@ async function commitRangeReplacement(
 		throw err;
 	}
 
-	ensureReferencedStyle(view, opts.spec.paragraphOptions.style);
+	document
+		.ensureStyles()
+		.ensureReferencedStyle(opts.spec.paragraphOptions.style);
 	if (opts.spec.kind === "runs") {
-		ensureReferencedRunStyles(view, opts.spec.runs);
+		document.ensureStyles().ensureReferencedRunStyles(opts.spec.runs);
 	}
 	if (opts.spec.kind === "code") {
-		ensureCodeBlockStyles(view, opts.spec.language);
+		ensureCodeBlockStyles(document, opts.spec.language);
 	}
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	if (tracked) {
 		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
 		if (guard !== null) return guard;
@@ -238,7 +242,7 @@ async function commitRangeReplacement(
 	const newParagraphs = buildNewParagraphs(opts.spec);
 	if (tracked) {
 		applyTrackedRangeReplace(
-			view,
+			document,
 			rangeRef.parent,
 			rangeRef.startIndex,
 			rangeRef.endIndex,
@@ -254,7 +258,7 @@ async function commitRangeReplacement(
 		);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
 
@@ -654,7 +658,7 @@ async function parseParagraphOptions(
 }
 
 async function commitSectionPropertyEdit(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	spec: Extract<EditSpec, { kind: "section" }>,
 	opts: ValidatedOptions,
@@ -668,18 +672,21 @@ async function commitSectionPropertyEdit(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	if (isTrackChangesEnabled(view)) {
-		wrapSectPrChange(blockRef.node, mintRevisionMeta(view, opts.authorFlag));
+	if (document.isTrackChangesEnabled()) {
+		wrapSectPrChange(
+			blockRef.node,
+			new TrackChanges(document).mintMeta(opts.authorFlag),
+		);
 	}
 	applyColumns(blockRef.node, spec.columns);
 	applySectionType(blockRef.node, spec.sectionType);
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
 
 async function commitTaskToggle(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	spec: Extract<EditSpec, { kind: "task" }>,
 	opts: ValidatedOptions,
@@ -692,10 +699,10 @@ async function commitTaskToggle(
 	}
 	if (opts.dryRun) return respondDryRun(opts);
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	let ok: boolean;
 	if (tracked) {
-		const allocator = createRevisionAllocator(view);
+		const allocator = new TrackChanges(document).createAllocator();
 		const baseMeta = {
 			author: resolveAuthor(opts.authorFlag),
 			date: resolveDate(),
@@ -716,12 +723,12 @@ async function commitTaskToggle(
 		);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
 
 /** Resolve an `eqN` locator, splice in a new OMML subtree, save. The locator
- *  resolves via `view.equationReferences` (populated by the reader); spec
+ *  resolves via `document.body.equationReferences` (populated by the reader); spec
  *  carries optional `latex` (content swap) and `display` (mode toggle). At
  *  least one must change something, else it's a no-op error.
  *
@@ -734,33 +741,32 @@ async function commitTaskToggle(
  *  quirk that's cosmetic, not a correctness issue (the kept equation
  *  renders right; the skeleton is invisible). */
 async function commitEquationEdit(
-	view: DocView,
+	document: Document,
 	spec: Extract<EditSpec, { kind: "equation" }>,
 	opts: ValidatedOptions,
 ): Promise<number> {
-	const reference = view.equationReferences.get(spec.locator);
-	if (!reference) {
-		return fail("BLOCK_NOT_FOUND", `Equation not found: ${spec.locator}`);
-	}
 	if (spec.latex === undefined && spec.display === undefined) {
 		return fail(
 			"USAGE",
 			"--equation requires --equation NEW_LATEX, --display, or --inline",
 		);
 	}
-	// When --display/--inline are passed alone we re-emit from the reader's
-	// cached LaTeX on the reference; cached at read time so this works for
-	// equations inside table cells too (where the AST run lives in a cell
-	// paragraph rather than view.doc.blocks).
-	const latex = spec.latex ?? reference.latex;
-	const display = spec.display ?? reference.display;
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	let omml: XmlNode;
 	try {
-		omml = latexToOmml(latex, display);
+		new Equations(document).edit(spec.locator, {
+			latex: spec.latex,
+			display: spec.display,
+			author: opts.authorFlag,
+		});
 	} catch (error) {
+		if (error instanceof EquationNotFoundError) {
+			return fail("BLOCK_NOT_FOUND", error.message);
+		}
+		if (error instanceof EquationStaleError) {
+			return fail("BLOCK_NOT_FOUND", error.message);
+		}
 		if (error instanceof EquationParseError) {
 			return fail(
 				"USAGE",
@@ -771,36 +777,12 @@ async function commitEquationEdit(
 		throw error;
 	}
 
-	const index = reference.parent.indexOf(reference.node);
-	if (index === -1) {
-		return fail(
-			"BLOCK_NOT_FOUND",
-			`Equation ${spec.locator} reference is stale (parent does not contain it)`,
-		);
-	}
-
-	if (isTrackChangesEnabled(view)) {
-		const allocator = createRevisionAllocator(view);
-		const author = resolveAuthor(opts.authorFlag);
-		const date = resolveDate();
-		const delMeta: TrackedMeta = { author, date, revisionId: allocator.next() };
-		const insMeta: TrackedMeta = { author, date, revisionId: allocator.next() };
-		reference.parent.splice(
-			index,
-			1,
-			<Del meta={delMeta}>{[reference.node]}</Del>,
-			<Ins meta={insMeta}>{[omml]}</Ins>,
-		);
-	} else {
-		reference.parent.splice(index, 1, omml);
-	}
-
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
 
 async function commitParagraphReplacement(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	spec: ParagraphContentSpec,
 	opts: ValidatedOptions,
@@ -815,29 +797,29 @@ async function commitParagraphReplacement(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 
 	if (canPreserveFormatting(spec, opts)) {
 		coreApplyFormattingPreservingEdit(
-			view,
+			document,
 			blockRef.node,
 			spec.text,
 			spec.paragraphOptions,
 			opts.authorFlag,
 			tracked,
 		);
-		await saveDocView(view, opts.outputPath);
+		await document.save(opts.outputPath);
 		return emitEditAck(opts);
 	}
 
 	if (spec.kind === "code") {
-		ensureCodeBlockStyles(view, spec.language);
+		ensureCodeBlockStyles(document, spec.language);
 	}
 	const newParagraphs = buildNewParagraphs(spec);
 
 	if (tracked) {
 		applyTrackedRangeReplace(
-			view,
+			document,
 			blockRef.parent,
 			targetIndex,
 			targetIndex,
@@ -853,7 +835,7 @@ async function commitParagraphReplacement(
 		);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
 

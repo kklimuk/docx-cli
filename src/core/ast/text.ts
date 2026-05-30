@@ -1,3 +1,4 @@
+import { iterateBlocks } from "./document/body";
 import type { Block, ImageRun, Paragraph } from "./types";
 
 export function paragraphText(paragraph: Paragraph): string {
@@ -38,18 +39,8 @@ export function paragraphTextBaseline(paragraph: Paragraph): string {
 
 export function flattenParagraphs(blocks: Block[]): Paragraph[] {
 	const out: Paragraph[] = [];
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			out.push(block);
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					out.push(...flattenParagraphs(cell.blocks));
-				}
-			}
-		}
+	for (const block of iterateBlocks(blocks)) {
+		if (block.type === "paragraph") out.push(block);
 	}
 	return out;
 }
@@ -63,16 +54,8 @@ export function flattenImageRuns(blocks: Block[]): ImageRun[] {
 }
 
 export function findBlockById(blocks: Block[], blockId: string): Block | null {
-	for (const block of blocks) {
+	for (const block of iterateBlocks(blocks)) {
 		if (block.id === blockId) return block;
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					const inner = findBlockById(cell.blocks, blockId);
-					if (inner) return inner;
-				}
-			}
-		}
 	}
 	return null;
 }

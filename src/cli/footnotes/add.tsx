@@ -1,22 +1,17 @@
-import { saveDocView } from "@core";
 import {
-	ensureNoteStyles,
-	ensureNotesPart,
 	insertNoteReferenceAtOffset,
 	NoteBody,
 	type NoteKind,
 	NoteOffsetOutOfRangeError,
 	NoteReferenceRun,
-	nextNoteId,
 	noteConfig,
 	TrackedNoteBody,
 } from "@core/notes";
-import { sumRunBearingTextLength } from "@core/parser";
+import { sumRunBearingTextLength, XmlNode } from "@core/parser";
 import {
-	createRevisionAllocator,
-	isTrackChangesEnabled,
 	resolveAuthor,
 	resolveDate,
+	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
 import { Ins } from "@core/track-changes/emit";
@@ -120,13 +115,15 @@ export async function runAddNote(
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const paragraphRef = await resolveBlockOrFail(view, anchor.blockId);
+	const paragraphRef = await resolveBlockOrFail(document, anchor.blockId);
 	if (typeof paragraphRef === "number") return paragraphRef;
 
-	const numericId = nextNoteId(view, kind);
+	const existingNotes =
+		kind === "footnote" ? document.footnotes : document.endnotes;
+	const numericId = existingNotes?.nextId() ?? "1";
 	const config = noteConfig(kind);
 	const idLabel = `${config.idPrefix}${numericId}`;
 	const outputPath = parsed.values.output as string | undefined;
@@ -149,11 +146,11 @@ export async function runAddNote(
 	// `<w:ins>` (different revision ids, shared author/date). Mirroring Word
 	// exactly is what makes accept/reject in Word render this CLI's edits
 	// correctly — empirically validated against `/tmp/fn-probe/add.docx`.
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	let refMeta: TrackedMeta | undefined;
 	let bodyMeta: TrackedMeta | undefined;
 	if (tracked) {
-		const allocator = createRevisionAllocator(view);
+		const allocator = new TrackChanges(document).createAllocator();
 		const author = resolveAuthor(parsed.values.author as string | undefined);
 		const date = resolveDate();
 		refMeta = { author, date, revisionId: allocator.next() };
@@ -181,7 +178,12 @@ export async function runAddNote(
 		throw error;
 	}
 
-	const notesRoot = ensureNotesPart(view, kind);
+	const notesView =
+		kind === "footnote"
+			? document.ensureFootnotes()
+			: document.ensureEndnotes();
+	const notesRoot = XmlNode.findRoot(notesView.tree, config.rootTag);
+	if (!notesRoot) throw new Error(`expected <${config.rootTag}> root`);
 	notesRoot.children.push(
 		bodyMeta ? (
 			<TrackedNoteBody
@@ -194,9 +196,9 @@ export async function runAddNote(
 			<NoteBody config={config} id={numericId} text={text} />
 		),
 	);
-	ensureNoteStyles(view, kind);
+	notesView.ensureNoteStyles(document.ensureStyles());
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

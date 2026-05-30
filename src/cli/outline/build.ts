@@ -1,4 +1,4 @@
-import { type Block, type Doc, type Paragraph, paragraphText } from "@core";
+import { type Block, type Body, type Paragraph, paragraphText } from "@core";
 
 export type OutlineEntry = {
 	id: string;
@@ -14,7 +14,7 @@ export type OutlineOptions = {
 };
 
 export function buildOutline(
-	doc: Doc,
+	doc: Body,
 	options: OutlineOptions = {},
 ): OutlineEntry[] {
 	const stylePrefix = options.stylePrefix ?? "Heading";

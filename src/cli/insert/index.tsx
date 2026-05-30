@@ -1,19 +1,11 @@
 import {
-	addHyperlinkRelationship,
 	type BlockReference,
-	createRevisionAllocator,
-	type DocView,
-	Ins,
+	type Document,
 	isSectionType,
-	isTrackChangesEnabled,
-	markParagraphMarkAs,
 	type Run,
-	resolveAuthor,
-	resolveDate,
 	type SectionType,
 	SentinelSectionParagraph,
-	saveDocView,
-	type TrackedMeta,
+	TrackChanges,
 } from "@core";
 import { Paragraph, type ParagraphOptions } from "@core/blocks";
 import {
@@ -22,22 +14,17 @@ import {
 } from "@core/code-block";
 import { EquationParseError, latexToOmml } from "@core/equation";
 import {
-	addImagePart,
 	computeExtentEmu,
 	Image,
 	type ImageSource,
 	ImageSourceError,
+	Images,
 	loadImageSource,
 	nextDrawingId,
 } from "@core/image";
 import { w } from "@core/jsx";
-import { allocateNum } from "@core/numbering";
-import { XmlNode } from "@core/parser";
-import {
-	ensureReferencedRunStyles,
-	ensureReferencedStyle,
-	ensureStyle,
-} from "@core/styles";
+
+import type { XmlNode } from "@core/parser";
 import { BlankTable, type TableBorders, type TableLayout } from "@core/table";
 import { parseArgs } from "util";
 import {
@@ -145,15 +132,15 @@ export async function run(args: string[]): Promise<number> {
 	const opts = await parseAndValidateOptions(args);
 	if (typeof opts === "number") return opts;
 
-	const view = await openOrFail(opts.filePath);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(opts.filePath);
+	if (typeof document === "number") return document;
 
-	const blockRef = await resolveBlockOrFail(view, opts.placement.locator);
+	const blockRef = await resolveBlockOrFail(document, opts.placement.locator);
 	if (typeof blockRef === "number") return blockRef;
 
 	// `--task` / `--list` paragraph: validate spec compatibility and resolve
 	// the list numId (inherit from the anchor if it's already a list, else
-	// allocate a fresh num of the requested kind). Done here (post-view-open)
+	// allocate a fresh num of the requested kind). Done here (post-document-open)
 	// because allocateNum needs the package, and the anchor inherit needs the
 	// resolved blockRef.
 	const opts2 = opts.paragraphOptions as ParagraphOptions & {
@@ -162,34 +149,34 @@ export async function run(args: string[]): Promise<number> {
 	};
 	if (opts2.taskState !== undefined || opts2.list !== undefined) {
 		const listGuard = await resolveListContext(
-			view,
+			document,
 			blockRef,
 			opts.spec,
 			opts2,
 		);
 		if (typeof listGuard === "number") return listGuard;
-		ensureStyle(view, "ListParagraph");
+		document.ensureStyles().ensureStyle("ListParagraph");
 	}
 
 	const built = await buildInsertedParagraph(
-		view,
+		document,
 		opts.spec,
 		opts.paragraphOptions,
 	);
 	if (typeof built === "number") return built;
-	ensureReferencedStyle(view, opts.paragraphOptions.style);
+	document.ensureStyles().ensureReferencedStyle(opts.paragraphOptions.style);
 	if (opts.spec.kind === "runs") {
-		ensureReferencedRunStyles(view, opts.spec.runs);
+		document.ensureStyles().ensureReferencedRunStyles(opts.spec.runs);
 	}
 	if (opts.spec.kind === "code") {
 		// Provisions `Code` (character) + `CodeBlock` (paragraph), and when a
 		// language was given, the `CodeBlock-LANG` derived paragraph style so
 		// the language survives round-trip (recovered by the reader's
 		// `codeBlockLanguageFromStyleId`).
-		ensureCodeBlockStyles(view, opts.spec.language);
+		ensureCodeBlockStyles(document, opts.spec.language);
 	}
 	const blocks = Array.isArray(built) ? built : [built];
-	return commitInsertedParagraphs(view, blockRef, blocks, opts);
+	return commitInsertedParagraphs(document, blockRef, blocks, opts);
 }
 
 async function parseAndValidateOptions(
@@ -748,7 +735,7 @@ async function parseParagraphOptions(
 			);
 		}
 		// Mark the intent to allocate a list; the numId is resolved later in
-		// `resolveListContext` (post-view-open) using the same anchor-inherit
+		// `resolveListContext` (post-document-open) using the same anchor-inherit
 		// logic as --task. We stash the kind on a side channel so the resolver
 		// knows which abstractNum to use.
 		out.list = { level: 0, numId: -1 };
@@ -782,7 +769,7 @@ async function parseParagraphOptions(
  *  Mutates `paragraphOptions.list` in place. Rejects on spec kinds that can't
  *  carry list metadata. */
 async function resolveListContext(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	spec: InsertSpec,
 	paragraphOptions: ParagraphOptions & {
@@ -818,7 +805,7 @@ async function resolveListContext(
 	} else {
 		paragraphOptions.list = {
 			level: explicitLevel ?? 0,
-			numId: allocateNum(view, kind),
+			numId: document.ensureNumbering().allocate(kind),
 		};
 	}
 	return undefined;
@@ -861,13 +848,13 @@ function parseTaskFlag(value: string): boolean | null {
  *  case — one paragraph or one table) or an array (multi-line code blocks
  *  produce one `<w:p>` per source line). The commit path handles both. */
 async function buildInsertedParagraph(
-	view: DocView,
+	document: Document,
 	spec: InsertSpec,
 	paragraphOptions: ParagraphOptions,
 ): Promise<XmlNode | XmlNode[] | number> {
 	switch (spec.kind) {
 		case "text":
-			return buildTextParagraph(view, spec, paragraphOptions);
+			return buildTextParagraph(document, spec, paragraphOptions);
 		case "runs":
 			return <Paragraph runs={spec.runs} {...paragraphOptions} />;
 		case "break":
@@ -896,7 +883,7 @@ async function buildInsertedParagraph(
 				/>
 			);
 		case "image":
-			return buildImageParagraph(view, spec, paragraphOptions);
+			return buildImageParagraph(document, spec, paragraphOptions);
 		case "code":
 			return buildCodeBlockParagraphs(spec.content, spec.language);
 		case "equation":
@@ -950,7 +937,7 @@ function EquationParagraph({
 }
 
 async function buildImageParagraph(
-	view: DocView,
+	document: Document,
 	spec: Extract<InsertSpec, { kind: "image" }>,
 	paragraphOptions: ParagraphOptions,
 ): Promise<XmlNode | number> {
@@ -976,11 +963,11 @@ async function buildImageParagraph(
 		);
 	}
 
-	const { relationshipId } = addImagePart(view, source);
+	const { relationshipId } = new Images(document).add(source);
 	const imageRun = (
 		<Image
 			relationshipId={relationshipId}
-			drawingId={nextDrawingId(view.documentTree)}
+			drawingId={nextDrawingId(document.documentTree)}
 			widthEmu={extent.widthEmu}
 			heightEmu={extent.heightEmu}
 			alt={spec.alt}
@@ -1002,7 +989,7 @@ async function buildImageParagraph(
 }
 
 function buildTextParagraph(
-	view: DocView,
+	document: Document,
 	spec: Extract<InsertSpec, { kind: "text" }>,
 	paragraphOptions: ParagraphOptions,
 ): XmlNode {
@@ -1016,13 +1003,13 @@ function buildTextParagraph(
 		/>
 	);
 	if (spec.hyperlinkUrl) {
-		wrapFirstRunInHyperlink(view, paragraphNode, spec.hyperlinkUrl);
+		wrapFirstRunInHyperlink(document, paragraphNode, spec.hyperlinkUrl);
 	}
 	return paragraphNode;
 }
 
 async function commitInsertedParagraphs(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	blocks: XmlNode[],
 	opts: ValidatedOptions,
@@ -1037,7 +1024,7 @@ async function commitInsertedParagraphs(
 	const insertIndex =
 		opts.placement.mode === "after" ? targetIndex + 1 : targetIndex;
 
-	if (isTrackChangesEnabled(view)) {
+	if (document.isTrackChangesEnabled()) {
 		// Tables under tracking would require per-row <w:trPr><w:ins/> wrappers
 		// (ECMA-376 §17.13.5) — defer to S4b. Reject cleanly so the agent
 		// knows to toggle tracking off, insert, then back on.
@@ -1050,8 +1037,9 @@ async function commitInsertedParagraphs(
 				);
 			}
 		}
+		const trackChanges = new TrackChanges(document);
 		for (const block of blocks) {
-			applyTrackedInsertion(block, view, opts.authorFlag);
+			trackChanges.applyInsertion(block, opts.authorFlag);
 		}
 	}
 
@@ -1070,7 +1058,7 @@ async function commitInsertedParagraphs(
 
 	// Splice all blocks in at insertIndex, preserving their relative order.
 	blockRef.parent.splice(insertIndex, 0, ...blocks);
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 
 	await respondAck({
 		ok: true,
@@ -1083,19 +1071,11 @@ async function commitInsertedParagraphs(
 }
 
 function wrapFirstRunInHyperlink(
-	view: DocView,
+	document: Document,
 	paragraph: XmlNode,
 	url: string,
 ): void {
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (!relationships) {
-		throw new Error("Missing <Relationships> root in document rels");
-	}
-	const relationshipId = addHyperlinkRelationship(relationships, url);
-	view.hyperlinksByRelationshipId.set(relationshipId, { url });
+	const relationshipId = document.relationships.addHyperlink(url);
 
 	const newChildren: XmlNode[] = [];
 	let wrapped = false;
@@ -1112,51 +1092,3 @@ function wrapFirstRunInHyperlink(
 	}
 	paragraph.children = newChildren;
 }
-
-function applyTrackedInsertion(
-	paragraph: XmlNode,
-	view: DocView,
-	authorFlag: string | undefined,
-): void {
-	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
-	const mintMeta = (): TrackedMeta => ({
-		...baseMeta,
-		revisionId: allocator.next(),
-	});
-
-	// Wrap each contiguous span of trackable run-level children in a single
-	// `<w:ins>`, preserving paragraph-property siblings (`<w:pPr>`) at their
-	// existing positions. Trackable children include `<w:r>` text runs AND
-	// `<m:oMath>` / `<m:oMathPara>` equations — both live as direct
-	// `<w:p>` children for inline / display math respectively, and Word
-	// accepts them inside `<w:ins>` per ECMA-376's permissive content model.
-	const newChildren: XmlNode[] = [];
-	let runBuffer: XmlNode[] = [];
-	const flush = (): void => {
-		if (runBuffer.length === 0) return;
-		newChildren.push(<Ins meta={mintMeta()}>{runBuffer}</Ins>);
-		runBuffer = [];
-	};
-	for (const child of paragraph.children) {
-		if (TRACKABLE_PARAGRAPH_CHILDREN.has(child.tag)) {
-			runBuffer.push(child);
-			continue;
-		}
-		flush();
-		newChildren.push(child);
-	}
-	flush();
-	paragraph.children = newChildren;
-
-	// Mark the paragraph mark itself as inserted so accepting changes attributes
-	// the new paragraph break.
-	markParagraphMarkAs(paragraph, "ins", mintMeta());
-}
-
-/** Paragraph children that are trackable as inserted/deleted run-level
- *  content. Text runs are obvious; OMML equations sit at the same nesting
- *  level (inside `<w:p>`, beside `<w:r>` siblings) and Word's revision
- *  model wraps them the same way. Hyperlinks and field-codes already
- *  contain `<w:r>` themselves so they get tracked by their inner runs. */
-const TRACKABLE_PARAGRAPH_CHILDREN = new Set(["w:r", "m:oMath", "m:oMathPara"]);

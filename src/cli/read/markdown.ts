@@ -1,7 +1,7 @@
 import {
 	type Block,
+	type Body,
 	type Comment,
-	type Doc,
 	type Footnote,
 	flattenParagraphs,
 	type Locator,
@@ -54,7 +54,7 @@ type RenderContext = {
 };
 
 export function renderMarkdown(
-	doc: Doc,
+	doc: Body,
 	options: MarkdownOptions = {},
 ): string {
 	const blocks = sliceBlocks(doc.blocks, options.from, options.to);
@@ -383,7 +383,7 @@ function renderRuns(
 				[{ originalIndex: cursor }],
 				ctx.commentIndex,
 			);
-		} else if (run.type === "footnoteRef") {
+		} else if (run.type === "noteRef") {
 			if (run.kind === "footnote") ctx.referencedFootnoteIds.add(run.id);
 			else ctx.referencedEndnoteIds.add(run.id);
 			out += `[^${run.id}]`;

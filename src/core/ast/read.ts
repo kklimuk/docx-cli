@@ -1,19 +1,17 @@
 import { ommlToLatex } from "../equation";
-import { getListFormat } from "../numbering";
+
+import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
 import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
-import type { DocView } from "./doc-view";
+import type { Document } from "./document";
+import { Body } from "./document/body";
 import { decodeSym } from "./sym";
 import type {
 	Block,
 	ChartRun,
-	Comment,
 	CommentAnchor,
-	Doc,
-	DocProperties,
 	EquationRun,
-	Footnote,
 	Hyperlink,
 	ImageRun,
 	Paragraph,
@@ -27,11 +25,6 @@ import type {
 	TrackedChange,
 } from "./types";
 
-const RELATIONSHIP_NAMESPACE_IMAGE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
-const RELATIONSHIP_NAMESPACE_HYPERLINK =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
-
 type WalkState = {
 	imageIndex: number;
 	hyperlinkIndex: number;
@@ -41,11 +34,11 @@ type WalkState = {
 	openComments: Map<string, { blockId: string; offset: number }>;
 };
 
-export function buildDoc(view: DocView, path: string): Doc {
-	readRelationships(view);
-	const properties = readDocProperties(view);
+export function buildBody(document: Document, path: string): Body {
+	document.relationships.index(document.contentTypes);
+	const properties = document.coreProperties?.snapshot() ?? {};
 
-	const documentRoot = XmlNode.findRoot(view.documentTree, "w:document");
+	const documentRoot = XmlNode.findRoot(document.documentTree, "w:document");
 	if (!documentRoot) {
 		throw new Error("Invalid .docx: missing <w:document>");
 	}
@@ -53,6 +46,17 @@ export function buildDoc(view: DocView, path: string): Doc {
 	if (!body) {
 		throw new Error("Invalid .docx: missing <w:body>");
 	}
+
+	const doc = new Body({
+		path,
+		properties,
+		blocks: [],
+		comments: [],
+		footnotes: [],
+		endnotes: [],
+		body,
+	});
+	document.body = doc;
 
 	const state: WalkState = {
 		imageIndex: 0,
@@ -63,33 +67,20 @@ export function buildDoc(view: DocView, path: string): Doc {
 		openComments: new Map(),
 	};
 
-	const blocks = readBlocks(view, body, state);
-	const comments = readComments(view, state.commentAnchors);
-	const footnotes = readNotes(
-		view.footnotesTree,
-		"w:footnotes",
-		"w:footnote",
-		"fn",
-	);
-	const endnotes = readNotes(
-		view.endnotesTree,
-		"w:endnotes",
-		"w:endnote",
-		"en",
-	);
+	doc.blocks = readBlocks(document, body, state);
+	readNoteTrackedChanges(document, state);
+	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
+	doc.footnotes = document.footnotes?.toNotes() ?? [];
+	doc.endnotes = document.endnotes?.toNotes() ?? [];
 
-	return {
-		schemaVersion: 1,
-		path,
-		properties,
-		blocks,
-		comments,
-		footnotes,
-		endnotes,
-	};
+	return doc;
 }
 
-function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
+function readBlocks(
+	document: Document,
+	body: XmlNode,
+	state: WalkState,
+): Block[] {
 	const blocks: Block[] = [];
 	let paragraphIndex = 0;
 	let tableIndex = 0;
@@ -98,29 +89,38 @@ function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
 	for (const child of body.children) {
 		if (child.tag === "w:p") {
 			const id = `p${paragraphIndex++}`;
-			blocks.push(readParagraph(view, child, id, state));
-			view.blockReferences.set(id, { node: child, parent: body.children });
+			blocks.push(readParagraph(document, child, id, state));
+			document.body.blockReferences.set(id, {
+				node: child,
+				parent: body.children,
+			});
 			const inlineSectPr = findInlineSectPr(child);
 			if (inlineSectPr) {
 				const sectionId = `s${sectionIndex++}`;
 				blocks.push(buildSectionBreak(sectionId, inlineSectPr.node));
-				view.blockReferences.set(sectionId, inlineSectPr);
-				registerSectPrChange(view, inlineSectPr.node, state, sectionId);
+				document.body.blockReferences.set(sectionId, inlineSectPr);
+				registerSectPrChange(document, inlineSectPr.node, state, sectionId);
 			}
-			registerParagraphMarkChanges(view, child, state, id);
+			registerParagraphMarkChanges(document, child, state, id);
 			continue;
 		}
 		if (child.tag === "w:tbl") {
 			const id = `t${tableIndex++}`;
-			blocks.push(readTable(view, child, id, state));
-			view.blockReferences.set(id, { node: child, parent: body.children });
+			blocks.push(readTable(document, child, id, state));
+			document.body.blockReferences.set(id, {
+				node: child,
+				parent: body.children,
+			});
 			continue;
 		}
 		if (child.tag === "w:sectPr") {
 			const id = `s${sectionIndex++}`;
 			blocks.push(buildSectionBreak(id, child));
-			view.blockReferences.set(id, { node: child, parent: body.children });
-			registerSectPrChange(view, child, state, id);
+			document.body.blockReferences.set(id, {
+				node: child,
+				parent: body.children,
+			});
+			registerSectPrChange(document, child, state, id);
 		}
 	}
 	return blocks;
@@ -133,7 +133,7 @@ function readBlocks(view: DocView, body: XmlNode, state: WalkState): Block[] {
  * so the tcN ordering matches `cli/track-changes/apply.ts collectTrackedChanges`
  * (run-level → sectPrChange → paragraph-mark, per paragraph). */
 function registerParagraphMarkChanges(
-	view: DocView,
+	document: Document,
 	paragraph: XmlNode,
 	state: WalkState,
 	blockId: string,
@@ -145,7 +145,7 @@ function registerParagraphMarkChanges(
 	for (const child of rPr.children) {
 		if (child.tag !== "w:ins" && child.tag !== "w:del") continue;
 		const id = `tc${state.trackedChangeIndex++}`;
-		view.trackedChangeReferences.set(id, {
+		document.trackedChangeReferences.set(id, {
 			node: child,
 			parent: rPr.children,
 			blockId,
@@ -158,7 +158,7 @@ function registerParagraphMarkChanges(
  * address it as tcN. The blockId is the corresponding section's sN (both
  * inline and trailing sectPrs). */
 function registerSectPrChange(
-	view: DocView,
+	document: Document,
 	sectPr: XmlNode,
 	state: WalkState,
 	blockId: string,
@@ -166,11 +166,120 @@ function registerSectPrChange(
 	const change = sectPr.findChild("w:sectPrChange");
 	if (!change) return;
 	const id = `tc${state.trackedChangeIndex++}`;
-	view.trackedChangeReferences.set(id, {
+	document.trackedChangeReferences.set(id, {
 		node: change,
 		parent: sectPr.children,
 		blockId,
 	});
+}
+
+/** After the body walk, register tracked changes living in footnotes.xml /
+ * endnotes.xml into the same map, continuing the shared tcN counter so note
+ * changes follow the body in document order. This makes `trackedChangeReferences`
+ * the single source of truth across all parts — `track-changes list`/`accept`/
+ * `reject` read the map and never re-walk. */
+function readNoteTrackedChanges(document: Document, state: WalkState): void {
+	const paired = collectPairedNoteIds(document);
+	registerNotePartChanges(
+		document,
+		document.footnotes?.tree,
+		"footnote",
+		paired,
+		state,
+	);
+	registerNotePartChanges(
+		document,
+		document.endnotes?.tree,
+		"endnote",
+		paired,
+		state,
+	);
+}
+
+/** A footnote/endnote tracked as a whole add or delete has revisions on BOTH
+ * sides: the body reference run (already in the map from the body walk) AND the
+ * note body. We hide the note-body side so the change surfaces as ONE tcN — the
+ * reference side; `applyNotePairing` (apply-time post-pass) processes the hidden
+ * body side via the note-id linkage. Returns the `${kind}:${id}` set whose
+ * reference side appears in the body. Standalone note-body edits (no
+ * reference-side wrapper) aren't paired and stay visible. */
+function collectPairedNoteIds(document: Document): Set<string> {
+	const out = new Set<string>();
+	for (const reference of document.trackedChangeReferences.values()) {
+		collectNoteRefs(reference.node, out);
+	}
+	return out;
+}
+
+function collectNoteRefs(node: XmlNode, out: Set<string>): void {
+	if (node.tag === "w:footnoteReference") {
+		const id = node.getAttribute("w:id");
+		if (id) out.add(`footnote:${id}`);
+		return;
+	}
+	if (node.tag === "w:endnoteReference") {
+		const id = node.getAttribute("w:id");
+		if (id) out.add(`endnote:${id}`);
+		return;
+	}
+	for (const child of node.children) collectNoteRefs(child, out);
+}
+
+function registerNotePartChanges(
+	document: Document,
+	tree: XmlNode[] | undefined,
+	kind: NoteKind,
+	paired: Set<string>,
+	state: WalkState,
+): void {
+	if (!tree) return;
+	const config = noteConfig(kind);
+	const root = XmlNode.findRoot(tree, config.rootTag);
+	if (!root) return;
+	for (const note of root.children) {
+		if (note.tag !== config.itemTag) continue;
+		// Skip Word's reserved separator / continuationSeparator boilerplate.
+		if (note.getAttribute("w:type")) continue;
+		const noteId = note.getAttribute("w:id");
+		if (noteId && paired.has(`${kind}:${noteId}`)) continue;
+		for (const paragraph of note.children) {
+			if (paragraph.tag !== "w:p") continue;
+			registerNoteRunChanges(document, paragraph, state);
+		}
+	}
+}
+
+/** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
+ * inside a standalone note paragraph (footnote/endnote edits). blockId is ""
+ * — note bodies have no pN. Skips `<w:pPr>` (paragraph-mark trackings on a
+ * standalone note don't occur — those only arise on paired deletes, which are
+ * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. */
+function registerNoteRunChanges(
+	document: Document,
+	container: XmlNode,
+	state: WalkState,
+): void {
+	for (const child of container.children) {
+		if (child.tag === "w:pPr") continue;
+		if (child.tag === "w:sdt") continue;
+		if (
+			child.tag === "w:ins" ||
+			child.tag === "w:del" ||
+			child.tag === "w:moveFrom" ||
+			child.tag === "w:moveTo"
+		) {
+			const id = `tc${state.trackedChangeIndex++}`;
+			document.trackedChangeReferences.set(id, {
+				node: child,
+				parent: container.children,
+				blockId: "",
+			});
+			registerNoteRunChanges(document, child, state);
+			continue;
+		}
+		if (child.children.length > 0)
+			registerNoteRunChanges(document, child, state);
+	}
 }
 
 function findInlineSectPr(
@@ -192,7 +301,7 @@ function buildSectionBreak(id: string, sectPr: XmlNode): SectionBreak {
 }
 
 function readParagraph(
-	view: DocView,
+	document: Document,
 	node: XmlNode,
 	id: string,
 	state: WalkState,
@@ -200,20 +309,19 @@ function readParagraph(
 	const paragraph: Paragraph = { id, type: "paragraph", runs: [] };
 	const paragraphProperties = node.findChild("w:pPr");
 	if (paragraphProperties) {
-		applyParagraphProperties(view, paragraph, paragraphProperties);
+		applyParagraphProperties(document, paragraph, paragraphProperties);
 	}
 
 	const skipNodes = detectTaskListState(
-		view,
+		document,
 		paragraph,
 		node,
 		(sdt, parent) => {
-			// Register a checkboxToggle reference at the current walk position so
-			// `tcN` ids agree with the apply walker in `cli/track-changes/apply.ts`.
-			// The apply walker sees the SDT as the first non-pPr child and treats
-			// the toggle as the first tcN of this paragraph; we mirror that here.
+			// Register a checkboxToggle reference at the current walk position.
+			// This is the only walk: `apply`/`list` read it back from
+			// `document.trackedChangeReferences`, so a toggle's tcN is fixed here.
 			const tcId = `tc${state.trackedChangeIndex++}`;
-			view.trackedChangeReferences.set(tcId, {
+			document.trackedChangeReferences.set(tcId, {
 				node: sdt,
 				parent,
 				blockId: id,
@@ -223,7 +331,7 @@ function readParagraph(
 	);
 
 	const context: WalkContext = {
-		view,
+		document,
 		blockId: id,
 		paragraph,
 		activeComments: new Set<string>(),
@@ -237,7 +345,7 @@ function readParagraph(
 }
 
 type WalkContext = {
-	view: DocView;
+	document: Document;
 	blockId: string;
 	paragraph: Paragraph;
 	activeComments: Set<string>;
@@ -257,13 +365,12 @@ function walkRunContainer(
 		if (context.skipNodes.has(child)) continue;
 		// Skip ALL `<w:sdt>` content control bodies, not just leading checkbox
 		// SDTs (which `detectTaskListState` already pushed into `skipNodes`).
-		// The apply walker in `cli/track-changes/apply.ts::visitRunContainer`
-		// does the same, and the alignment invariant in the track-changes
-		// CLAUDE.md requires both walkers to register `tcN` ids in matching
-		// order. Recursing into a Plain Text / Dropdown / Rich Text content
-		// control here would surface its nested `<w:ins>`/`<w:del>` as run-
-		// level tcNs that apply.ts ignores — drift. The structural-ins/del
-		// gap for SDTs is documented in `core/task-list/CLAUDE.md`.
+		// Recursing into a Plain Text / Dropdown / Rich Text content control
+		// here would surface its nested `<w:ins>`/`<w:del>` as run-level tcNs
+		// — and since this walk is the sole source of tcN ids, those phantom
+		// ids would then be addressable by `accept`/`reject` with no sensible
+		// scope. The structural-ins/del gap for SDTs is documented in
+		// `core/task-list/CLAUDE.md`.
 		if (child.tag === "w:sdt") continue;
 
 		if (child.tag === "w:commentRangeStart") {
@@ -300,7 +407,7 @@ function walkRunContainer(
 
 		if (child.tag === "w:r") {
 			const runs = readRun(
-				context.view,
+				context.document,
 				child,
 				context.activeComments,
 				trackedChange,
@@ -331,7 +438,7 @@ function walkRunContainer(
 					run.comments = [...context.activeComments];
 				}
 				context.paragraph.runs.push(run);
-				context.view.equationReferences.set(id, {
+				context.document.body.equationReferences.set(id, {
 					node: child,
 					parent: container.children,
 					blockId: context.blockId,
@@ -356,7 +463,7 @@ function walkRunContainer(
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
-			context.view.trackedChangeReferences.set(trackedChangeId, {
+			context.document.trackedChangeReferences.set(trackedChangeId, {
 				node: child,
 				parent: container.children,
 				blockId: context.blockId,
@@ -367,7 +474,7 @@ function walkRunContainer(
 
 		if (child.tag === "w:hyperlink") {
 			const link = readHyperlinkProperties(
-				context.view,
+				context.document,
 				child,
 				container.children,
 				context.state,
@@ -398,7 +505,7 @@ const TRACKED_CHANGE_KIND_BY_TAG: Record<
 };
 
 function readHyperlinkProperties(
-	view: DocView,
+	document: Document,
 	node: XmlNode,
 	parent: XmlNode[],
 	state: WalkState,
@@ -407,7 +514,8 @@ function readHyperlinkProperties(
 	const link: Hyperlink = { id };
 	const relationshipId = node.getAttribute("r:id");
 	if (relationshipId) {
-		const relationship = view.hyperlinksByRelationshipId.get(relationshipId);
+		const relationship =
+			document.relationships.hyperlinksByRelationshipId.get(relationshipId);
 		if (relationship?.url) link.url = relationship.url;
 	}
 	const anchor = node.getAttribute("w:anchor");
@@ -418,7 +526,7 @@ function readHyperlinkProperties(
 		state.hyperlinkIndex--;
 		return undefined;
 	}
-	view.hyperlinkById.set(id, {
+	document.body.hyperlinkById.set(id, {
 		node,
 		parent,
 		...(relationshipId ? { relationshipId } : {}),
@@ -427,7 +535,7 @@ function readHyperlinkProperties(
 }
 
 function applyParagraphProperties(
-	view: DocView,
+	document: Document,
 	paragraph: Paragraph,
 	paragraphProperties: XmlNode,
 ): void {
@@ -464,7 +572,7 @@ function applyParagraphProperties(
 		};
 		// Resolve the level's numFmt via numbering.xml so the renderer knows
 		// whether to emit `1. ` (ordered) or `- ` (bullet) in markdown.
-		const format = id ? getListFormat(view, id, level) : undefined;
+		const format = id ? document.numbering?.getFormat(id, level) : undefined;
 		if (format !== undefined && format !== "bullet" && format !== "none") {
 			list.ordered = true;
 		}
@@ -478,7 +586,7 @@ function applyParagraphProperties(
  * TextRun until interrupted by an inline child. <w:rPr>, activeComments,
  * trackedChange, and hyperlink apply to every TextRun produced. */
 function readRun(
-	view: DocView,
+	document: Document,
 	node: XmlNode,
 	activeComments: Set<string>,
 	trackedChange: TrackedChange | undefined,
@@ -525,7 +633,7 @@ function readRun(
 		}
 		if (child.tag === "w:drawing") {
 			flushText();
-			const drawing = readDrawing(view, child, state);
+			const drawing = readDrawing(document, child, state);
 			if (drawing) {
 				if (trackedChange && drawing.type === "image") {
 					drawing.trackedChange = trackedChange;
@@ -563,14 +671,13 @@ function readRun(
 		if (child.tag === "w:footnoteReference") {
 			flushText();
 			const id = child.getAttribute("w:id");
-			if (id)
-				out.push({ type: "footnoteRef", kind: "footnote", id: `fn${id}` });
+			if (id) out.push({ type: "noteRef", kind: "footnote", id: `fn${id}` });
 			continue;
 		}
 		if (child.tag === "w:endnoteReference") {
 			flushText();
 			const id = child.getAttribute("w:id");
-			if (id) out.push({ type: "footnoteRef", kind: "endnote", id: `en${id}` });
+			if (id) out.push({ type: "noteRef", kind: "endnote", id: `en${id}` });
 		}
 	}
 
@@ -581,11 +688,11 @@ function readRun(
 /** A <w:drawing> may wrap a picture (rendered as ImageRun) or a chart/shape/
  * SmartArt/etc. (rendered as ChartRun placeholder). */
 function readDrawing(
-	view: DocView,
+	document: Document,
 	drawing: XmlNode,
 	state: WalkState,
 ): ImageRun | ChartRun | null {
-	const image = readImageFromDrawing(view, drawing, state);
+	const image = readImageFromDrawing(document, drawing, state);
 	if (image) return image;
 	if (drawing.findDescendant("c:chart"))
 		return { type: "chart", kind: "chart" };
@@ -666,7 +773,7 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 }
 
 function readImageFromDrawing(
-	view: DocView,
+	document: Document,
 	drawing: XmlNode,
 	state: WalkState,
 ): ImageRun | null {
@@ -675,11 +782,12 @@ function readImageFromDrawing(
 	const relationshipId =
 		blip.getAttribute("r:embed") ?? blip.getAttribute("r:link");
 	if (!relationshipId) return null;
-	const relationship = view.imagesByRelationshipId.get(relationshipId);
+	const relationship =
+		document.relationships.imagesByRelationshipId.get(relationshipId);
 	if (!relationship) return null;
 
 	const id = `img${state.imageIndex++}`;
-	view.imageById.set(id, {
+	document.body.imageById.set(id, {
 		relationshipId,
 		partName: relationship.partName,
 		contentType: relationship.contentType,
@@ -710,7 +818,7 @@ function readImageFromDrawing(
 }
 
 function readTable(
-	view: DocView,
+	document: Document,
 	node: XmlNode,
 	id: string,
 	state: WalkState,
@@ -718,22 +826,36 @@ function readTable(
 	const grid = readTableGrid(node);
 	const width = readTableWidth(node);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
-	// both before the rows), so tcN ids match the apply.ts walk order.
-	readTablePropertyRevision(view, node, id, state);
-	readGridRevision(view, node, id, state);
+	// both before the rows), so tcN ids land in document order.
+	readTablePropertyRevision(document, node, id, state);
+	readGridRevision(document, node, id, state);
 	const rows: TableRow[] = [];
 	let rowIndex = 0;
 	for (const child of node.children) {
 		if (child.tag !== "w:tr") continue;
-		// Register the row-level revision before its cells so tcN ids match the
-		// apply.ts walk order (row marker → per cell: cell marker → content).
-		const rowChange = readRowRevision(view, child, id, state);
+		// Register the row-level revision before its cells so tcN ids land in
+		// document order (row marker → per cell: cell marker → content).
+		const rowChange = readRowRevision(
+			document,
+			child,
+			node.children,
+			id,
+			state,
+		);
 		const cells: TableCell[] = [];
 		let columnIndex = 0;
 		for (const cellNode of child.children) {
 			if (cellNode.tag !== "w:tc") continue;
 			cells.push(
-				readTableCell(view, cellNode, id, rowIndex, columnIndex, state),
+				readTableCell(
+					document,
+					cellNode,
+					child.children,
+					id,
+					rowIndex,
+					columnIndex,
+					state,
+				),
 			);
 			columnIndex++;
 		}
@@ -748,7 +870,7 @@ function readTable(
 }
 
 function readTablePropertyRevision(
-	view: DocView,
+	document: Document,
 	table: XmlNode,
 	tableId: string,
 	state: WalkState,
@@ -757,7 +879,7 @@ function readTablePropertyRevision(
 	const change = tblPr?.findChild("w:tblPrChange");
 	if (!tblPr || !change) return;
 	registerTableRevision(
-		view,
+		document,
 		change,
 		tblPr.children,
 		"tblPrChange",
@@ -767,7 +889,7 @@ function readTablePropertyRevision(
 }
 
 function readGridRevision(
-	view: DocView,
+	document: Document,
 	table: XmlNode,
 	tableId: string,
 	state: WalkState,
@@ -776,7 +898,7 @@ function readGridRevision(
 	const change = tblGrid?.findChild("w:tblGridChange");
 	if (!tblGrid || !change) return;
 	registerTableRevision(
-		view,
+		document,
 		change,
 		tblGrid.children,
 		"tblGridChange",
@@ -786,8 +908,9 @@ function readGridRevision(
 }
 
 function readRowRevision(
-	view: DocView,
+	document: Document,
 	row: XmlNode,
+	tableChildren: XmlNode[],
 	tableId: string,
 	state: WalkState,
 ): TrackedChange | undefined {
@@ -797,18 +920,20 @@ function readRowRevision(
 	);
 	if (!trPr || !marker) return undefined;
 	return registerTableRevision(
-		view,
+		document,
 		marker,
 		trPr.children,
 		marker.tag === "w:ins" ? "rowIns" : "rowDel",
 		tableId,
 		state,
+		{ tableRow: row, tableRowParent: tableChildren },
 	);
 }
 
 function readCellRevision(
-	view: DocView,
+	document: Document,
 	cell: XmlNode,
+	rowChildren: XmlNode[],
 	tableId: string,
 	state: WalkState,
 ): TrackedChange | undefined {
@@ -818,22 +943,29 @@ function readCellRevision(
 	);
 	if (!tcPr || !marker) return undefined;
 	return registerTableRevision(
-		view,
+		document,
 		marker,
 		tcPr.children,
 		marker.tag === "w:cellIns" ? "cellIns" : "cellDel",
 		tableId,
 		state,
+		{ tableCell: cell, tableCellParent: rowChildren },
 	);
 }
 
 function registerTableRevision(
-	view: DocView,
+	document: Document,
 	marker: XmlNode,
 	parent: XmlNode[],
 	kind: TrackedChange["kind"],
 	tableId: string,
 	state: WalkState,
+	scope?: {
+		tableRow?: XmlNode;
+		tableRowParent?: XmlNode[];
+		tableCell?: XmlNode;
+		tableCellParent?: XmlNode[];
+	},
 ): TrackedChange {
 	const trackedChangeId = `tc${state.trackedChangeIndex++}`;
 	const change: TrackedChange = {
@@ -843,11 +975,12 @@ function registerTableRevision(
 		date: marker.getAttribute("w:date") ?? "",
 		revisionId: marker.getAttribute("w:id") ?? "",
 	};
-	view.trackedChangeReferences.set(trackedChangeId, {
+	document.trackedChangeReferences.set(trackedChangeId, {
 		node: marker,
 		parent,
 		blockId: tableId,
 		kind,
+		...scope,
 	});
 	return change;
 }
@@ -884,25 +1017,32 @@ function readWidth(node: XmlNode): TableWidth | undefined {
 }
 
 function readTableCell(
-	view: DocView,
+	document: Document,
 	cellNode: XmlNode,
+	rowChildren: XmlNode[],
 	tableId: string,
 	rowIndex: number,
 	columnIndex: number,
 	state: WalkState,
 ): TableCell {
-	// Register cell-level revisions before content so tcN ids match the apply.ts
-	// walk order: the cellIns/cellDel marker first, then the tcPrChange.
-	const cellChange = readCellRevision(view, cellNode, tableId, state);
+	// Register cell-level revisions before content so tcN ids land in document
+	// order: the cellIns/cellDel marker first, then the tcPrChange.
+	const cellChange = readCellRevision(
+		document,
+		cellNode,
+		rowChildren,
+		tableId,
+		state,
+	);
 	const cellPropertyChange = readCellPropertyRevision(
-		view,
+		document,
 		cellNode,
 		tableId,
 		state,
 	);
 	const cell: TableCell = {
 		blocks: readCellBlocks(
-			view,
+			document,
 			cellNode,
 			tableId,
 			rowIndex,
@@ -937,7 +1077,7 @@ function readTableCell(
 }
 
 function readCellPropertyRevision(
-	view: DocView,
+	document: Document,
 	cell: XmlNode,
 	tableId: string,
 	state: WalkState,
@@ -946,7 +1086,7 @@ function readCellPropertyRevision(
 	const change = tcPr?.findChild("w:tcPrChange");
 	if (!tcPr || !change) return undefined;
 	return registerTableRevision(
-		view,
+		document,
 		change,
 		tcPr.children,
 		"tcPrChange",
@@ -956,7 +1096,7 @@ function readCellPropertyRevision(
 }
 
 function readCellBlocks(
-	view: DocView,
+	document: Document,
 	cell: XmlNode,
 	tableId: string,
 	rowIndex: number,
@@ -970,8 +1110,15 @@ function readCellBlocks(
 	for (const child of cell.children) {
 		if (child.tag === "w:p") {
 			const id = `${cellPrefix}:p${paragraphIndex++}`;
-			blocks.push(readParagraph(view, child, id, state));
-			view.blockReferences.set(id, { node: child, parent: cell.children });
+			blocks.push(readParagraph(document, child, id, state));
+			document.body.blockReferences.set(id, {
+				node: child,
+				parent: cell.children,
+			});
+			// Cell paragraphs can carry a tracked paragraph-mark too; register it
+			// here (top-level paragraphs do this in readBlocks) so the map mirrors
+			// the apply walk and tcN ids stay in document order.
+			registerParagraphMarkChanges(document, child, state, id);
 			continue;
 		}
 		// Nested tables are legal inside a cell (Word emits them for compound
@@ -980,183 +1127,12 @@ function readCellBlocks(
 		// recursive `cell.inner`.
 		if (child.tag === "w:tbl") {
 			const id = `${cellPrefix}:t${nestedTableIndex++}`;
-			blocks.push(readTable(view, child, id, state));
-			view.blockReferences.set(id, { node: child, parent: cell.children });
+			blocks.push(readTable(document, child, id, state));
+			document.body.blockReferences.set(id, {
+				node: child,
+				parent: cell.children,
+			});
 		}
 	}
 	return blocks;
-}
-
-function readRelationships(view: DocView): void {
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (!relationships) return;
-	for (const child of relationships.children) {
-		if (child.tag !== "Relationship") continue;
-		const type = child.getAttribute("Type");
-		const relationshipId = child.getAttribute("Id");
-		const target = child.getAttribute("Target");
-		if (!relationshipId || !target) continue;
-		if (type === RELATIONSHIP_NAMESPACE_IMAGE) {
-			const partName = target.startsWith("/")
-				? target.slice(1)
-				: `word/${target}`;
-			const contentType = lookupContentType(view, partName);
-			view.imagesByRelationshipId.set(relationshipId, {
-				partName,
-				contentType,
-			});
-			continue;
-		}
-		if (type === RELATIONSHIP_NAMESPACE_HYPERLINK) {
-			view.hyperlinksByRelationshipId.set(relationshipId, { url: target });
-		}
-	}
-}
-
-function lookupContentType(view: DocView, partName: string): string {
-	const types = XmlNode.findRoot(view.contentTypesTree, "Types");
-	if (!types) return "application/octet-stream";
-
-	for (const child of types.children) {
-		if (child.tag !== "Override") continue;
-		if (child.getAttribute("PartName") === `/${partName}`) {
-			return child.getAttribute("ContentType") ?? "application/octet-stream";
-		}
-	}
-
-	const extension = partName.split(".").pop()?.toLowerCase() ?? "";
-	for (const child of types.children) {
-		if (child.tag !== "Default") continue;
-		if (child.getAttribute("Extension")?.toLowerCase() === extension) {
-			return child.getAttribute("ContentType") ?? "application/octet-stream";
-		}
-	}
-	return "application/octet-stream";
-}
-
-function readDocProperties(view: DocView): DocProperties {
-	if (!view.corePropertiesTree) return {};
-	const root = XmlNode.findRoot(view.corePropertiesTree, "cp:coreProperties");
-	if (!root) return {};
-	const out: DocProperties = {};
-	const title = root.findChild("dc:title");
-	if (title) out.title = title.collectText();
-	const author = root.findChild("dc:creator");
-	if (author) out.author = author.collectText();
-	const created = root.findChild("dcterms:created");
-	if (created) out.created = created.collectText();
-	const modified = root.findChild("dcterms:modified");
-	if (modified) out.modified = modified.collectText();
-	return out;
-}
-
-function readComments(
-	view: DocView,
-	anchors: Map<string, CommentAnchor>,
-): Comment[] {
-	if (!view.commentsTree) return [];
-	const root = XmlNode.findRoot(view.commentsTree, "w:comments");
-	if (!root) return [];
-
-	const commentIdByParaId = new Map<string, string>();
-	for (const child of root.children) {
-		if (child.tag !== "w:comment") continue;
-		const numericId = child.getAttribute("w:id");
-		if (numericId == null) continue;
-		const paragraph = child.findChild("w:p");
-		const paraId = paragraph?.getAttribute("w14:paraId");
-		if (paraId) commentIdByParaId.set(paraId, `c${numericId}`);
-	}
-
-	const extendedByParaId = readCommentsExtended(view);
-	const comments: Comment[] = [];
-
-	for (const child of root.children) {
-		if (child.tag !== "w:comment") continue;
-		const numericId = child.getAttribute("w:id");
-		if (numericId == null) continue;
-		const commentId = `c${numericId}`;
-		const author = child.getAttribute("w:author") ?? "";
-		const date = child.getAttribute("w:date") ?? "";
-		const initials = child.getAttribute("w:initials");
-		const text = child.collectText();
-		const anchor = anchors.get(commentId) ?? {
-			startBlockId: "",
-			startOffset: 0,
-			endBlockId: "",
-			endOffset: 0,
-		};
-
-		const paragraph = child.findChild("w:p");
-		const paraId = paragraph?.getAttribute("w14:paraId");
-		const meta = paraId ? (extendedByParaId.get(paraId) ?? {}) : {};
-		const parentCommentId = meta.parentParaId
-			? commentIdByParaId.get(meta.parentParaId)
-			: undefined;
-
-		comments.push({
-			id: commentId,
-			author,
-			...(initials ? { initials } : {}),
-			date,
-			text,
-			anchor,
-			...(parentCommentId ? { parentId: parentCommentId } : {}),
-			...(meta.resolved !== undefined ? { resolved: meta.resolved } : {}),
-		});
-		view.commentReferences.set(commentId, {
-			node: child,
-			parent: root.children,
-		});
-	}
-	return comments;
-}
-
-function readCommentsExtended(
-	view: DocView,
-): Map<string, { parentParaId?: string; resolved?: boolean }> {
-	const out = new Map<string, { parentParaId?: string; resolved?: boolean }>();
-	if (!view.commentsExtTree) return out;
-	const root = XmlNode.findRoot(view.commentsExtTree, "w15:commentsEx");
-	if (!root) return out;
-
-	for (const child of root.children) {
-		if (child.tag !== "w15:commentEx") continue;
-		const paragraphId = child.getAttribute("w15:paraId");
-		if (!paragraphId) continue;
-		const resolvedAttribute = child.getAttribute("w15:done");
-		const parentParagraphId = child.getAttribute("w15:paraIdParent");
-		const entry: { parentParaId?: string; resolved?: boolean } = {};
-		if (resolvedAttribute === "1") entry.resolved = true;
-		else if (resolvedAttribute === "0") entry.resolved = false;
-		if (parentParagraphId) entry.parentParaId = parentParagraphId;
-		out.set(paragraphId, entry);
-	}
-	return out;
-}
-
-/** Read footnotes.xml or endnotes.xml. Skips Word's reserved separator/
- * continuationSeparator entries (w:type set, never referenced from the body). */
-function readNotes(
-	tree: XmlNode[] | undefined,
-	rootTag: string,
-	itemTag: string,
-	idPrefix: "fn" | "en",
-): Footnote[] {
-	if (!tree) return [];
-	const root = XmlNode.findRoot(tree, rootTag);
-	if (!root) return [];
-	const out: Footnote[] = [];
-	for (const child of root.children) {
-		if (child.tag !== itemTag) continue;
-		if (child.getAttribute("w:type")) continue;
-		const numericId = child.getAttribute("w:id");
-		if (numericId == null) continue;
-		const text = child.collectText().replace(/\s+/g, " ").trim();
-		out.push({ id: `${idPrefix}${numericId}`, text });
-	}
-	return out;
 }

@@ -57,10 +57,10 @@ export async function run(args: string[]): Promise<number> {
 		return fail("USAGE", "--style-prefix cannot be empty");
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const outline = buildOutline(view.doc, { stylePrefix });
+	const outline = buildOutline(document.body, { stylePrefix });
 	await respond({
 		ok: true,
 		operation: "outline",

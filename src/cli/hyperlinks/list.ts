@@ -1,4 +1,4 @@
-import type { Block, Hyperlink } from "@core";
+import { type Block, type Hyperlink, iterateBlocks } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -50,11 +50,11 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	const entries = new Map<string, HyperlinkEntry>();
-	collectHyperlinks(view.doc.blocks, entries);
+	collectHyperlinks(document.body.blocks, entries);
 	await respond([...entries.values()]);
 	return EXIT.OK;
 }
@@ -63,20 +63,11 @@ function collectHyperlinks(
 	blocks: Block[],
 	entries: Map<string, HyperlinkEntry>,
 ): void {
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			for (const run of block.runs) {
-				if (run.type !== "text" || !run.hyperlink) continue;
-				addToEntry(entries, run.hyperlink, block.id, run.text);
-			}
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					collectHyperlinks(cell.blocks, entries);
-				}
-			}
+	for (const block of iterateBlocks(blocks)) {
+		if (block.type !== "paragraph") continue;
+		for (const run of block.runs) {
+			if (run.type !== "text" || !run.hyperlink) continue;
+			addToEntry(entries, run.hyperlink, block.id, run.text);
 		}
 	}
 }

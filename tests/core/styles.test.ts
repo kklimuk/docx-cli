@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDocView, saveDocView } from "@core/ast/doc-view";
+import { Document } from "@core/ast/document";
 import { XmlNode } from "@core/parser";
-import { type BaselineStyleId, ensureStyle } from "../../src/core/styles";
+import type { BaselineStyleId } from "../../src/core/ast/document/styles";
 
 let workspace: string;
 
@@ -18,27 +18,29 @@ afterAll(() => {
 
 describe("ensureStyle", () => {
 	test("fixture ships canonical parts with Normal as the only defined style", async () => {
-		const view = await openDocView("tests/fixtures/styles-injection.docx");
-		expect(view.stylesTree).toBeDefined();
-		const tree = view.stylesTree;
+		const document = await Document.open(
+			"tests/fixtures/styles-injection.docx",
+		);
+		expect(document.styles?.tree).toBeDefined();
+		const tree = document.styles?.tree;
 		if (!tree) throw new Error("expected stylesTree");
 		expect(styleIds(tree)).toEqual(["Normal"]);
 		// The styles part should already be registered in the canonical fixture.
-		expect(relationshipTypes(view.relationshipsTree)).toContain(
+		expect(relationshipTypes(document.relationships.tree)).toContain(
 			"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
 		);
-		expect(overridePartNames(view.contentTypesTree)).toContain(
+		expect(overridePartNames(document.contentTypes.tree)).toContain(
 			"/word/styles.xml",
 		);
 	});
 
 	test("adds a missing style definition (Heading1) to existing styles.xml", async () => {
 		const target = await stageFixture("add-missing.docx");
-		const view = await openDocView(target);
+		const document = await Document.open(target);
 
-		ensureStyle(view, "Heading1");
+		document.ensureStyles().ensureStyle("Heading1");
 
-		const tree = view.stylesTree;
+		const tree = document.styles?.tree;
 		if (!tree) throw new Error("expected stylesTree after ensureStyle");
 		const ids = styleIds(tree);
 		expect(ids).toContain("Heading1");
@@ -47,23 +49,21 @@ describe("ensureStyle", () => {
 
 	test("seeds the styles part from scratch when the package lacks one", async () => {
 		const target = await stageFixture("from-scratch.docx");
-		const view = await openDocView(target);
+		const document = await Document.open(target);
 
 		// Simulate an older / hand-rolled doc that omits styles.xml entirely.
-		view.pkg.deletePart("word/styles.xml");
-		view.stylesTree = undefined;
+		document.pkg.deletePart("word/styles.xml");
+		document.styles = undefined;
 
-		ensureStyle(view, "Heading1");
-
-		const tree = view.stylesTree;
-		if (!tree) throw new Error("expected stylesTree after ensureStyle");
-		const ids = styleIds(tree);
+		const stylesView = document.ensureStyles();
+		stylesView.ensureStyle("Heading1");
+		const ids = styleIds(stylesView.tree);
 		expect(ids).toContain("Heading1");
 		expect(ids).toContain("Normal");
 		// The relationship + content-type override pre-existed in the canonical
 		// fixture; registerPart is idempotent and should leave them as-is rather
 		// than duplicating.
-		const styleRelCount = relationshipTypes(view.relationshipsTree).filter(
+		const styleRelCount = relationshipTypes(document.relationships.tree).filter(
 			(type) =>
 				type ===
 				"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
@@ -73,41 +73,40 @@ describe("ensureStyle", () => {
 
 	test("registers the relationship + content-type override when the package lacks them entirely", async () => {
 		const target = await stageFixture("rel-from-scratch.docx");
-		const view = await openDocView(target);
+		const document = await Document.open(target);
 
 		// Strip the part AND its rel/override entries — simulates a doc that
 		// truly never had styles.xml registered (vs. the prior test which only
 		// removed the part bytes). Exercises the mintRelationshipId + push path
 		// inside registerPart.
-		view.pkg.deletePart("word/styles.xml");
-		view.stylesTree = undefined;
+		document.pkg.deletePart("word/styles.xml");
+		document.styles = undefined;
 		removeRelationshipByType(
-			view.relationshipsTree,
+			document.relationships.tree,
 			"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
 		);
-		removeOverride(view.contentTypesTree, "/word/styles.xml");
+		removeOverride(document.contentTypes.tree, "/word/styles.xml");
 
-		ensureStyle(view, "Heading1");
+		const stylesView = document.ensureStyles();
+		stylesView.ensureStyle("Heading1");
 
-		const styleRels = relationshipTypes(view.relationshipsTree).filter(
+		const styleRels = relationshipTypes(document.relationships.tree).filter(
 			(type) =>
 				type ===
 				"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
 		);
 		expect(styleRels).toHaveLength(1);
-		expect(overridePartNames(view.contentTypesTree)).toContain(
+		expect(overridePartNames(document.contentTypes.tree)).toContain(
 			"/word/styles.xml",
 		);
-		const tree = view.stylesTree;
-		if (!tree) throw new Error("expected stylesTree after ensureStyle");
-		expect(styleIds(tree)).toContain("Heading1");
+		expect(styleIds(stylesView.tree)).toContain("Heading1");
 	});
 
 	test("IntenseQuote emits pPr children in OOXML schema order (pBdr before spacing/ind)", async () => {
 		const target = await stageFixture("intense-quote-order.docx");
-		const view = await openDocView(target);
-		ensureStyle(view, "IntenseQuote");
-		const tree = view.stylesTree;
+		const document = await Document.open(target);
+		document.ensureStyles().ensureStyle("IntenseQuote");
+		const tree = document.styles?.tree;
 		if (!tree) throw new Error("expected stylesTree");
 		const root = XmlNode.findRoot(tree, "w:styles");
 		if (!root) throw new Error("expected <w:styles> root");
@@ -129,13 +128,13 @@ describe("ensureStyle", () => {
 
 	test("is idempotent — calling twice does not duplicate definitions", async () => {
 		const target = await stageFixture("idempotent.docx");
-		const view = await openDocView(target);
+		const document = await Document.open(target);
 
-		ensureStyle(view, "Heading2");
-		ensureStyle(view, "Heading2");
-		ensureStyle(view, "Heading2");
+		document.ensureStyles().ensureStyle("Heading2");
+		document.ensureStyles().ensureStyle("Heading2");
+		document.ensureStyles().ensureStyle("Heading2");
 
-		const tree = view.stylesTree;
+		const tree = document.styles?.tree;
 		if (!tree) throw new Error("expected stylesTree after ensureStyle");
 		const count = styleIds(tree).filter((id) => id === "Heading2").length;
 		expect(count).toBe(1);
@@ -143,15 +142,15 @@ describe("ensureStyle", () => {
 
 	test("injected styles survive a save/reopen cycle", async () => {
 		const target = await stageFixture("roundtrip.docx");
-		const view = await openDocView(target);
-		ensureStyle(view, "Heading1");
-		ensureStyle(view, "Quote");
-		ensureStyle(view, "Code");
-		ensureStyle(view, "FootnoteReference");
-		await saveDocView(view);
+		const document = await Document.open(target);
+		document.ensureStyles().ensureStyle("Heading1");
+		document.ensureStyles().ensureStyle("Quote");
+		document.ensureStyles().ensureStyle("Code");
+		document.ensureStyles().ensureStyle("FootnoteReference");
+		await document.save();
 
-		const reopened = await openDocView(target);
-		const tree = reopened.stylesTree;
+		const reopened = await Document.open(target);
+		const tree = reopened.styles?.tree;
 		if (!tree) throw new Error("expected reopened stylesTree");
 		const ids = styleIds(tree);
 		expect(ids).toEqual(
@@ -167,7 +166,7 @@ describe("ensureStyle", () => {
 
 	test("covers the full baseline catalog without error", async () => {
 		const target = await stageFixture("baseline.docx");
-		const view = await openDocView(target);
+		const document = await Document.open(target);
 		const all: BaselineStyleId[] = [
 			"Normal",
 			"Heading1",
@@ -184,8 +183,8 @@ describe("ensureStyle", () => {
 			"FootnoteReference",
 			"FootnoteText",
 		];
-		for (const id of all) ensureStyle(view, id);
-		const tree = view.stylesTree;
+		for (const id of all) document.ensureStyles().ensureStyle(id);
+		const tree = document.styles?.tree;
 		if (!tree) throw new Error("expected stylesTree after ensureStyle");
 		expect(styleIds(tree)).toEqual(expect.arrayContaining(all));
 	});

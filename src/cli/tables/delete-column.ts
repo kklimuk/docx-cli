@@ -1,4 +1,4 @@
-import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { TrackChanges } from "@core";
 import { parseColumnAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -84,10 +84,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, target.tableId);
+	const tableNode = resolveTableNode(document, target.tableId);
 	if (!tableNode) {
 		return fail("BLOCK_NOT_FOUND", `Table not found: ${target.tableId}`);
 	}
@@ -115,7 +115,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const tracking = isTrackChangesEnabled(view);
+	const tracking = document.isTrackChangesEnabled();
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
@@ -137,7 +137,11 @@ export async function run(args: string[]): Promise<number> {
 		const cell = cellAt(row, target.col);
 		if (!cell) continue;
 		if (tracking) {
-			markCellTracked(cell.node, "del", mintRevisionMeta(view, author));
+			markCellTracked(
+				cell.node,
+				"del",
+				new TrackChanges(document).mintMeta(author),
+			);
 		} else {
 			const index = row.node.children.indexOf(cell.node);
 			if (index !== -1) row.node.children.splice(index, 1);
@@ -147,7 +151,7 @@ export async function run(args: string[]): Promise<number> {
 		removeGridColumn(grid.tblGrid, target.col);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

@@ -1,14 +1,12 @@
-import type { DocView } from "@core";
-import type { FindView } from "@core/find";
-import { w, w15 } from "@core/jsx";
-import { registerPart } from "@core/package";
+import type { FindView } from "../find";
+import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
 	XmlNode,
-} from "@core/parser";
+} from "../parser";
 
 /** Whether a run-bearing wrapper's contents are visible in the chosen
  *  view. Mirrors `isWrapperVisibleInView` in `cli/replace/replace-span.tsx`
@@ -38,34 +36,6 @@ function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
 	return total;
 }
 
-const COMMENTS_REL_TYPE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const COMMENTS_EXT_REL_TYPE =
-	"http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
-const COMMENTS_CONTENT_TYPE =
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
-const COMMENTS_EXT_CONTENT_TYPE =
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml";
-
-const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-const NS_W14 = "http://schemas.microsoft.com/office/word/2010/wordml";
-const NS_W15 = "http://schemas.microsoft.com/office/word/2012/wordml";
-
-export function nextCommentId(view: DocView): string {
-	if (!view.commentsTree) return "0";
-	const root = XmlNode.findRoot(view.commentsTree, "w:comments");
-	if (!root) return "0";
-	let highest = -1;
-	for (const child of root.children) {
-		if (child.tag !== "w:comment") continue;
-		const idAttribute = child.getAttribute("w:id");
-		if (idAttribute == null) continue;
-		const numeric = Number(idAttribute);
-		if (Number.isFinite(numeric) && numeric > highest) highest = numeric;
-	}
-	return String(highest + 1);
-}
-
 export function generateParaId(): string {
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
@@ -81,47 +51,6 @@ export function authorInitials(author: string): string {
 	const last =
 		parts.length > 1 ? (parts[parts.length - 1]?.charAt(0) ?? "") : "";
 	return (first + last).toUpperCase() || "?";
-}
-
-export function ensureCommentsPart(view: DocView): XmlNode {
-	if (view.commentsTree) {
-		const existing = XmlNode.findRoot(view.commentsTree, "w:comments");
-		if (existing) return existing;
-	}
-	const root = <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
-	view.commentsTree = [root];
-	registerPart(view.relationshipsTree, view.contentTypesTree, {
-		partName: "word/comments.xml",
-		contentType: COMMENTS_CONTENT_TYPE,
-		relationshipType: COMMENTS_REL_TYPE,
-		target: "comments.xml",
-	});
-	return root;
-}
-
-export function ensureCommentsExtPart(view: DocView): XmlNode {
-	if (view.commentsExtTree) {
-		const existing = XmlNode.findRoot(view.commentsExtTree, "w15:commentsEx");
-		if (existing) return existing;
-	}
-	const root = (
-		<w15.commentsEx
-			{...{
-				"xmlns:w15": NS_W15,
-				"xmlns:mc":
-					"http://schemas.openxmlformats.org/markup-compatibility/2006",
-				"mc:Ignorable": "w15",
-			}}
-		/>
-	);
-	view.commentsExtTree = [root];
-	registerPart(view.relationshipsTree, view.contentTypesTree, {
-		partName: "word/commentsExtended.xml",
-		contentType: COMMENTS_EXT_CONTENT_TYPE,
-		relationshipType: COMMENTS_EXT_REL_TYPE,
-		target: "commentsExtended.xml",
-	});
-	return root;
 }
 
 export type CommentSpan = { start: number; end: number };
@@ -318,43 +247,6 @@ export type AuditCommentAnchor =
 	| { kind: "span"; paragraph: XmlNode; span: CommentSpan }
 	| { kind: "run"; paragraph: XmlNode; run: XmlNode };
 
-/**
- * Emit a comment for operations that OOXML can't track natively (hyperlinks
- * and image replacement). Anchored either to a text span (default) or around
- * a specific run (used for image runs where text length is zero). Returns
- * the numeric comment id.
- */
-export function emitAuditComment(
-	view: DocView,
-	anchor: AuditCommentAnchor,
-	options: { body: string; author: string; date: string },
-): string {
-	const numericId = nextCommentId(view);
-	const paraId = generateParaId();
-
-	if (anchor.kind === "span") {
-		addCommentMarkersToParagraph(anchor.paragraph, numericId, anchor.span);
-	} else {
-		addCommentMarkersAroundRun(anchor.paragraph, anchor.run, numericId);
-	}
-
-	const commentsRoot = ensureCommentsPart(view);
-	commentsRoot.children.push(
-		<CommentBody
-			options={{
-				id: numericId,
-				author: options.author,
-				date: options.date,
-				initials: authorInitials(options.author),
-				paraId,
-				text: options.body,
-			}}
-		/>,
-	);
-
-	return numericId;
-}
-
 function commentRangeStartMarker(commentId: string): XmlNode {
 	return <w.commentRangeStart w-id={commentId} />;
 }
@@ -542,64 +434,6 @@ export function CommentBody({
 			</w.p>
 		</w.comment>
 	);
-}
-
-export function findCommentParaId(
-	view: DocView,
-	commentId: string,
-): string | undefined {
-	if (!view.commentsTree) return undefined;
-	const root = XmlNode.findRoot(view.commentsTree, "w:comments");
-	if (!root) return undefined;
-	const numericId = commentId.startsWith("c") ? commentId.slice(1) : commentId;
-	for (const child of root.children) {
-		if (child.tag !== "w:comment") continue;
-		if (child.getAttribute("w:id") !== numericId) continue;
-		const paragraph = child.findChild("w:p");
-		if (!paragraph) return undefined;
-		return paragraph.getAttribute("w14:paraId");
-	}
-	return undefined;
-}
-
-export function ensureCommentParaId(
-	view: DocView,
-	commentId: string,
-): string | undefined {
-	if (!view.commentsTree) return undefined;
-	const root = XmlNode.findRoot(view.commentsTree, "w:comments");
-	if (!root) return undefined;
-	const numericId = commentId.startsWith("c") ? commentId.slice(1) : commentId;
-	for (const child of root.children) {
-		if (child.tag !== "w:comment") continue;
-		if (child.getAttribute("w:id") !== numericId) continue;
-		const paragraph = child.findChild("w:p");
-		if (!paragraph) return undefined;
-		const existing = paragraph.getAttribute("w14:paraId");
-		if (existing) return existing;
-		const fresh = generateParaId();
-		paragraph.setAttribute("w14:paraId", fresh);
-		if (!root.attributes["xmlns:w14"]) {
-			root.setAttribute("xmlns:w14", NS_W14);
-		}
-		return fresh;
-	}
-	return undefined;
-}
-
-export function findCommentByNumericId(
-	view: DocView,
-	numericId: string,
-): { node: XmlNode; parent: XmlNode[] } | undefined {
-	if (!view.commentsTree) return undefined;
-	const root = XmlNode.findRoot(view.commentsTree, "w:comments");
-	if (!root) return undefined;
-	for (const child of root.children) {
-		if (child.tag === "w:comment" && child.getAttribute("w:id") === numericId) {
-			return { node: child, parent: root.children };
-		}
-	}
-	return undefined;
 }
 
 export function removeCommentMarkers(

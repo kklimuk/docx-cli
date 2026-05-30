@@ -1,8 +1,7 @@
 import {
 	type BlockReference,
-	type DocView,
+	Document,
 	LocatorResolveError,
-	openDocView,
 	PkgError,
 	resolveBlock,
 } from "@core";
@@ -123,9 +122,9 @@ function exitCodeFor(code: ErrorCode): number {
 	}
 }
 
-export async function openOrFail(path: string): Promise<DocView | number> {
+export async function openOrFail(path: string): Promise<Document | number> {
 	try {
-		return await openDocView(path);
+		return await Document.open(path);
 	} catch (err) {
 		if (err instanceof PkgError) {
 			if (err.code === "FILE_NOT_FOUND") {
@@ -138,11 +137,11 @@ export async function openOrFail(path: string): Promise<DocView | number> {
 }
 
 export async function resolveBlockOrFail(
-	view: DocView,
+	document: Document,
 	locator: string,
 ): Promise<BlockReference | number> {
 	try {
-		return resolveBlock(view, locator);
+		return resolveBlock(document, locator);
 	} catch (err) {
 		if (err instanceof LocatorResolveError) {
 			return await fail("BLOCK_NOT_FOUND", err.message);

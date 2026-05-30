@@ -1,11 +1,11 @@
-import { w } from "@core/jsx";
+import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
 	type XmlNode,
-} from "@core/parser";
+} from "../parser";
 
 export type Span = { start: number; end: number };
 

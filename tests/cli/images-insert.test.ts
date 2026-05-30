@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Pkg } from "../../src/core/package";
+import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 
 const ASSETS = join(import.meta.dir, "..", "fixtures", "assets");

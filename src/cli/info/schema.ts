@@ -188,7 +188,7 @@ const JSON_SCHEMA = {
 			type: "object",
 			required: ["type", "kind", "id"],
 			properties: {
-				type: { const: "footnoteRef" },
+				type: { const: "noteRef" },
 				kind: { enum: ["footnote", "endnote"] },
 				id: { type: "string" },
 			},

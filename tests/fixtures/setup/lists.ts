@@ -1,11 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
-import { openDocView, saveDocView } from "../../../src/core/ast/doc-view";
+
+import { Document } from "../../../src/core/ast/document";
 import { ListParagraph, Paragraph } from "../../../src/core/blocks";
-import { allocateNum } from "../../../src/core/numbering";
+
 import { XmlNode } from "../../../src/core/parser";
-import { ensureStyle } from "../../../src/core/styles";
 
 /**
  * Build tests/fixtures/lists.docx — a docx exercising bulleted and ordered
@@ -13,8 +13,8 @@ import { ensureStyle } from "../../../src/core/styles";
  *
  * Dogfoods the runtime API:
  *  1. `docx create` for the Word-canonical base
- *  2. allocateNum(view, kind) to mint a numId per top-level list
- *  3. ensureStyle(view, "ListParagraph") so list items inherit the right style
+ *  2. document.ensureNumbering().allocate(kind) to mint a numId per top-level list
+ *  3. document.ensureStyles().ensureStyle("ListParagraph") so list items inherit the right style
  *  4. <ListParagraph> JSX emitter to construct each item, spliced into <w:body>
  *
  * Once S8 lands, the markdown walker will produce equivalent output for
@@ -36,14 +36,14 @@ mkdirSync(dirname(out), { recursive: true });
 await cli("create", out, "--force", "--text", "Lists fixture");
 
 // 2. Open the base, allocate a numId per top-level list, seed the style.
-const view = await openDocView(out);
-const bulletNumId = allocateNum(view, "bullet");
-const orderedNumId = allocateNum(view, "ordered");
-const nestedBulletNumId = allocateNum(view, "bullet");
-ensureStyle(view, "ListParagraph");
+const document = await Document.open(out);
+const bulletNumId = document.ensureNumbering().allocate("bullet");
+const orderedNumId = document.ensureNumbering().allocate("ordered");
+const nestedBulletNumId = document.ensureNumbering().allocate("bullet");
+document.ensureStyles().ensureStyle("ListParagraph");
 
 // 3. Replace the body's single seed paragraph with a richer list demo.
-const documentRoot = XmlNode.findRoot(view.documentTree, "w:document");
+const documentRoot = XmlNode.findRoot(document.documentTree, "w:document");
 if (!documentRoot) throw new Error("expected <w:document> root");
 const body = documentRoot.findChild("w:body");
 if (!body) throw new Error("expected <w:body> child");
@@ -66,7 +66,7 @@ const bullet = (level: number, text: string, numId = bulletNumId) =>
 const ordered = (level: number, text: string) =>
 	newChildren.push(ListParagraph({ numId: orderedNumId, level, text }));
 
-ensureStyle(view, "Heading2");
+document.ensureStyles().ensureStyle("Heading2");
 
 heading("Bulleted list");
 bullet(0, "Apples");
@@ -92,7 +92,7 @@ bullet(1, "And a nested item beneath it", nestedBulletNumId);
 // Splice the new children in front of the trailing sectPr.
 body.children = [...newChildren, sectPr];
 
-await saveDocView(view);
+await document.save();
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);

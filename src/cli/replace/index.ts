@@ -1,12 +1,11 @@
+import { resolveAuthor, resolveBlock, resolveDate, TrackChanges } from "@core";
 import {
-	createRevisionAllocator,
-	isTrackChangesEnabled,
-	resolveAuthor,
-	resolveBlock,
-	resolveDate,
-	saveDocView,
-} from "@core";
-import { type FindView, findTextSpans, type TextMatch } from "@core/find";
+	type FindView,
+	findTextSpans,
+	replaceSpanInParagraph,
+	type TextMatch,
+	type TrackedReplaceOptions,
+} from "@core/find";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -17,10 +16,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	replaceSpanInParagraph,
-	type TrackedReplaceOptions,
-} from "./replace-span";
 
 const HELP = `docx replace — substitute text spans (sed for docx)
 
@@ -35,7 +30,7 @@ Options:
   --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
   --current         operate on the raw concatenation (both ins and del text)
   --baseline        operate on the pre-change text (skip ins/moveTo)
-                    default: accepted view (skip del/moveFrom) — matches
+                    default: accepted document (skip del/moveFrom) — matches
                     "docx find" / "docx read"
   --exact           disable pattern normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
@@ -137,12 +132,12 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	let findResult: ReturnType<typeof findTextSpans>;
 	try {
-		findResult = findTextSpans(view.doc, pattern, {
+		findResult = findTextSpans(document.body, pattern, {
 			regex: useRegex,
 			ignoreCase,
 			view: findView,
@@ -232,19 +227,20 @@ export async function run(args: string[]): Promise<number> {
 	});
 
 	const authorFlag = parsed.values.author as string | undefined;
-	const tracked: TrackedReplaceOptions | undefined = isTrackChangesEnabled(view)
-		? {
-				meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
-				allocator: createRevisionAllocator(view),
-			}
-		: undefined;
+	const tracked: TrackedReplaceOptions | undefined =
+		document.isTrackChangesEnabled()
+			? {
+					meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
+					allocator: new TrackChanges(document).createAllocator(),
+				}
+			: undefined;
 
 	const regexFlags = ignoreCase ? "i" : "";
 	for (const match of reversed) {
 		const concreteReplacement = useRegex
 			? match.text.replace(new RegExp(pattern, regexFlags), replacement)
 			: replacement;
-		const blockRef = resolveBlock(view, match.blockId);
+		const blockRef = resolveBlock(document, match.blockId);
 		replaceSpanInParagraph(
 			blockRef.node,
 			{ start: match.start, end: match.end },
@@ -254,7 +250,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

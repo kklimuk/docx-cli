@@ -64,7 +64,7 @@ describe("docx insert / edit / delete", () => {
 			{ type: "text", text: "Before " },
 			{ type: "equation", text: "x_i", display: false },
 			{ type: "text", text: " middle " },
-			{ type: "footnoteRef", kind: "footnote", id: "fn1" },
+			{ type: "noteRef", kind: "footnote", id: "fn1" },
 			{ type: "chart", kind: "chart" },
 			{ type: "text", text: " after" },
 		]);

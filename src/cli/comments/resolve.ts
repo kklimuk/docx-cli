@@ -1,4 +1,4 @@
-import { saveDocView } from "@core";
+import { Comments } from "@core/comments";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
@@ -10,11 +10,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	ensureCommentParaId,
-	ensureCommentsExtPart,
-	findCommentByNumericId,
-} from "./helpers";
 
 const HELP = `docx comments resolve — mark one or more comments resolved
 
@@ -113,8 +108,8 @@ export async function run(args: string[]): Promise<number> {
 		ordered.push(normalized);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	// Validate every id up-front so the batch is atomic. We pre-resolve
 	// each paraId here too so we don't get half-mutated in the apply loop
@@ -122,13 +117,14 @@ export async function run(args: string[]): Promise<number> {
 	// would otherwise mutate paraIds for entries 0..N-1 in memory before
 	// failing on N. ensureCommentParaId is idempotent — calling it here
 	// and again below is safe.
+	const comments = new Comments(document);
 	const paraIdByCommentId = new Map<string, string>();
 	for (const commentId of ordered) {
 		const numericId = commentId.slice(1);
-		if (!findCommentByNumericId(view, numericId)) {
+		if (!comments.findById(numericId)) {
 			return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
 		}
-		const paraId = ensureCommentParaId(view, commentId);
+		const paraId = comments.ensureParaId(commentId);
 		if (!paraId) {
 			return fail(
 				"COMMENT_NOT_FOUND",
@@ -153,7 +149,11 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const extRoot = ensureCommentsExtPart(view);
+	const extView = document.ensureCommentsExtended();
+	const extRoot = extView.extendedTree
+		? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
+		: undefined;
+	if (!extRoot) throw new Error("expected <w15:commentsEx> root");
 
 	for (const commentId of ordered) {
 		const paraId = paraIdByCommentId.get(commentId);
@@ -174,7 +174,7 @@ export async function run(args: string[]): Promise<number> {
 		else delete entry.attributes["w15:done"];
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	if (batchInput || ordered.length > 1) {
 		await respond({

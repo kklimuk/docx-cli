@@ -44,10 +44,11 @@ export async function runListNotes(
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", helpFor(kind));
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const notes = kind === "footnote" ? view.doc.footnotes : view.doc.endnotes;
+	const notes =
+		kind === "footnote" ? document.body.footnotes : document.body.endnotes;
 	await respond(notes);
 	return EXIT.OK;
 }

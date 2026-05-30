@@ -17,7 +17,7 @@ Options:
   --nth N           return only the Nth match (0-indexed)
   --current         search the raw concatenation (both ins and del text)
   --baseline        search the pre-change text (skip ins/moveTo)
-                    default: accepted view (skip del/moveFrom) — matches
+                    default: accepted document (skip del/moveFrom) — matches
                     "docx read" / "docx wc" / "docx comments add"
   --exact           disable query normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
@@ -96,12 +96,12 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	let result: ReturnType<typeof findTextSpans>;
 	try {
-		result = findTextSpans(view.doc, query, {
+		result = findTextSpans(document.body, query, {
 			regex: useRegex,
 			ignoreCase,
 			view: findView,

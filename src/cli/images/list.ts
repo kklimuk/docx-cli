@@ -1,4 +1,5 @@
-import { enrichImageHashes, flattenImageRuns } from "@core";
+import { flattenImageRuns } from "@core";
+import { Images } from "@core/image";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -38,11 +39,11 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	await enrichImageHashes(view);
+	await new Images(document).enrichHashes();
 
-	await respond(flattenImageRuns(view.doc.blocks));
+	await respond(flattenImageRuns(document.body.blocks));
 	return EXIT.OK;
 }

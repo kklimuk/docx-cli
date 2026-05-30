@@ -9,7 +9,7 @@ type LinkInfo = {
 	tooltip?: string;
 };
 
-type Doc = {
+type Body = {
 	blocks: Array<{
 		type: string;
 		id: string;
@@ -21,7 +21,7 @@ type Doc = {
 	}>;
 };
 
-function collectHyperlinks(doc: Doc): Array<{
+function collectHyperlinks(doc: Body): Array<{
 	blockId: string;
 	text: string;
 	hyperlink: LinkInfo;
@@ -49,7 +49,7 @@ describe("docx read — hyperlinks", () => {
 			"--ast",
 		);
 		expect(result.exitCode).toBe(0);
-		const links = collectHyperlinks(result.parsed as Doc);
+		const links = collectHyperlinks(result.parsed as Body);
 		const urls = new Set(
 			links.map((entry) => entry.hyperlink.url).filter(Boolean),
 		);
@@ -67,7 +67,7 @@ describe("docx read — hyperlinks", () => {
 			"--ast",
 		);
 		expect(result.exitCode).toBe(0);
-		const links = collectHyperlinks(result.parsed as Doc);
+		const links = collectHyperlinks(result.parsed as Body);
 		expect(links).toHaveLength(1);
 		expect(links[0]?.hyperlink.url).toContain("seas.gwu.edu");
 		expect(links[0]?.text).toContain("seas.gwu.edu");
@@ -80,7 +80,7 @@ describe("docx read — hyperlinks", () => {
 			"--ast",
 		);
 		expect(result.exitCode).toBe(0);
-		const doc = result.parsed as Doc;
+		const doc = result.parsed as Body;
 		// Group hyperlink-tagged runs by paragraph and url; any paragraph that
 		// has multiple runs in the same hyperlink should report the same url.
 		for (const block of doc.blocks) {
@@ -105,7 +105,7 @@ describe("docx read — hyperlinks", () => {
 			"tests/fixtures/academic-paper.docx",
 			"--ast",
 		);
-		const doc = result.parsed as Doc;
+		const doc = result.parsed as Body;
 		const linked = collectHyperlinks(doc);
 		const sample = linked[0];
 		expect(sample).toBeDefined();
@@ -125,7 +125,7 @@ describe("docx read — hyperlinks", () => {
 			"tests/fixtures/academic-paper.docx",
 			"--ast",
 		);
-		const links = collectHyperlinks(result.parsed as Doc);
+		const links = collectHyperlinks(result.parsed as Body);
 		const ids = new Set(links.map((entry) => entry.hyperlink.id));
 		expect(ids.size).toBe(16);
 		for (const id of ids) expect(id).toMatch(/^link\d+$/);
@@ -379,7 +379,7 @@ describe("docx hyperlinks add", () => {
 			"https://example.com",
 		);
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as Doc;
+		const doc = read.parsed as Body;
 		const p1 = doc.blocks.find((entry) => entry.id === "p1");
 		const concatenated = (p1?.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -481,7 +481,7 @@ describe("docx hyperlinks delete", () => {
 
 		// The removed link's text should still be in the document as plain text.
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as Doc;
+		const doc = read.parsed as Body;
 		const allText = doc.blocks
 			.flatMap((block) => block.runs ?? [])
 			.filter((run) => run.type === "text")
@@ -621,7 +621,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		return { docPath };
 	}
 
-	function readP1Runs(doc: Doc): Array<{
+	function readP1Runs(doc: Body): Array<{
 		text: string;
 		hyperlink?: LinkInfo;
 	}> {
@@ -639,7 +639,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const result = await runCli("replace", docPath, "after", "AFTER");
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
-		const runs = readP1Runs(read.parsed as Doc);
+		const runs = readP1Runs(read.parsed as Body);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LINKED AFTER");
 	});
@@ -649,7 +649,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const result = await runCli("replace", docPath, "INK", "OOK");
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
-		const runs = readP1Runs(read.parsed as Doc);
+		const runs = readP1Runs(read.parsed as Body);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LOOKED after");
 		const linkedRun = runs.find((entry) => entry.text === "OOK");
@@ -664,7 +664,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const result = await runCli("replace", docPath, "before LIN", "X");
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
-		const runs = readP1Runs(read.parsed as Doc);
+		const runs = readP1Runs(read.parsed as Body);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("XKED after");
 		const xRun = runs.find((entry) => entry.text === "X");
@@ -681,7 +681,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const result = await runCli("replace", docPath, "KED after", "Y");
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
-		const runs = readP1Runs(read.parsed as Doc);
+		const runs = readP1Runs(read.parsed as Body);
 		const all = runs.map((entry) => entry.text).join("");
 		expect(all).toBe("before LINY");
 		const headRun = runs.find((entry) => entry.text === "LIN");
@@ -696,7 +696,7 @@ describe("docx replace — across hyperlink boundaries", () => {
 		const result = await runCli("replace", docPath, "before LINKED after", "Z");
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
-		const runs = readP1Runs(read.parsed as Doc);
+		const runs = readP1Runs(read.parsed as Body);
 		expect(runs.map((entry) => entry.text).join("")).toBe("Z");
 		expect(runs[0]?.hyperlink).toBeUndefined();
 

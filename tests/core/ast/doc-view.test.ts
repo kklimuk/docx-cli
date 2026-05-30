@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDocView, saveDocView } from "@core/ast/doc-view";
+import { Document } from "@core/ast/document";
 import { XmlNode } from "@core/parser";
 
 let workspace: string;
@@ -20,22 +20,22 @@ describe("saveDocView writeback", () => {
 		const target = join(workspace, "notes-footnotes.docx");
 		await Bun.write(target, Bun.file("tests/fixtures/notes.docx"));
 
-		const view = await openDocView(target);
-		const tree = view.footnotesTree;
+		const document = await Document.open(target);
+		const tree = document.footnotes?.tree;
 		if (!tree) throw new Error("expected footnotesTree to be loaded");
 		setNoteText(tree, "w:footnote", "1", " Edited footnote body.");
 		expect(noteText(tree, "w:footnote", "1")).toBe(" Edited footnote body.");
 
-		await saveDocView(view);
+		await document.save();
 
-		const reopened = await openDocView(target);
-		if (!reopened.footnotesTree) {
+		const reopened = await Document.open(target);
+		if (!reopened.footnotes?.tree) {
 			throw new Error("expected reopened footnotesTree");
 		}
-		expect(noteText(reopened.footnotesTree, "w:footnote", "1")).toBe(
+		expect(noteText(reopened.footnotes?.tree, "w:footnote", "1")).toBe(
 			" Edited footnote body.",
 		);
-		expect(reopened.doc.footnotes?.[0]?.text).toContain(
+		expect(reopened.body.footnotes?.[0]?.text).toContain(
 			"Edited footnote body.",
 		);
 	});
@@ -44,29 +44,29 @@ describe("saveDocView writeback", () => {
 		const target = join(workspace, "notes-endnotes.docx");
 		await Bun.write(target, Bun.file("tests/fixtures/notes.docx"));
 
-		const view = await openDocView(target);
-		const tree = view.endnotesTree;
+		const document = await Document.open(target);
+		const tree = document.endnotes?.tree;
 		if (!tree) throw new Error("expected endnotesTree to be loaded");
 		setNoteText(tree, "w:endnote", "1", " Edited endnote body.");
 
-		await saveDocView(view);
+		await document.save();
 
-		const reopened = await openDocView(target);
-		if (!reopened.endnotesTree) {
+		const reopened = await Document.open(target);
+		if (!reopened.endnotes?.tree) {
 			throw new Error("expected reopened endnotesTree");
 		}
-		expect(noteText(reopened.endnotesTree, "w:endnote", "1")).toBe(
+		expect(noteText(reopened.endnotes?.tree, "w:endnote", "1")).toBe(
 			" Edited endnote body.",
 		);
-		expect(reopened.doc.endnotes?.[0]?.text).toContain("Edited endnote body.");
+		expect(reopened.body.endnotes?.[0]?.text).toContain("Edited endnote body.");
 	});
 
 	test("appending a new <w:footnote> persists through save", async () => {
 		const target = join(workspace, "notes-append.docx");
 		await Bun.write(target, Bun.file("tests/fixtures/notes.docx"));
 
-		const view = await openDocView(target);
-		const tree = view.footnotesTree;
+		const document = await Document.open(target);
+		const tree = document.footnotes?.tree;
 		if (!tree) throw new Error("expected footnotesTree to be loaded");
 		const root = XmlNode.findRoot(tree, "w:footnotes");
 		if (!root) throw new Error("expected <w:footnotes> root");
@@ -82,13 +82,13 @@ describe("saveDocView writeback", () => {
 		]);
 		root.children.push(fresh);
 
-		await saveDocView(view);
+		await document.save();
 
-		const reopened = await openDocView(target);
-		if (!reopened.footnotesTree) {
+		const reopened = await Document.open(target);
+		if (!reopened.footnotes?.tree) {
 			throw new Error("expected reopened footnotesTree");
 		}
-		expect(noteText(reopened.footnotesTree, "w:footnote", "2")).toBe(
+		expect(noteText(reopened.footnotes?.tree, "w:footnote", "2")).toBe(
 			"Brand new footnote.",
 		);
 	});

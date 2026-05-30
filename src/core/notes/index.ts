@@ -1,17 +1,15 @@
+export { type NoteConfig, type NoteKind, noteConfig } from "./config";
 export {
-	ensureNoteStyles,
-	ensureNotesPart,
-	findNoteByNumericId,
-	insertNoteReferenceAtOffset,
 	NoteBody,
-	type NoteConfig,
-	type NoteKind,
-	NoteOffsetOutOfRangeError,
 	NoteReferenceRun,
-	nextNoteId,
-	noteConfig,
-	removeNoteReferences,
 	TrackedNoteBody,
 	wrapNoteBodyAsDeleted,
 	wrapNoteBodyAsEdited,
-} from "./helpers";
+} from "./emit";
+export { buildEmptyNotesTree } from "./empty";
+export {
+	insertNoteReferenceAtOffset,
+	NoteOffsetOutOfRangeError,
+	removeNoteReferences,
+	wrapNoteReferencesAsDeleted,
+} from "./splice";

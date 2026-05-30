@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { Pkg } from "@core/package";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 
 const SECTIONS_FIXTURE = join(

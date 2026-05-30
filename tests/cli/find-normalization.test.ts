@@ -58,7 +58,7 @@ describe("docx find — query normalization", () => {
 	});
 
 	test("em-dash in the document matches a hyphen in the query", async () => {
-		// Doc contains "world—ready"; the query passes a hyphen.
+		// Body contains "world—ready"; the query passes a hyphen.
 		const result = await runCli("find", docPath, "world-ready");
 		const payload = result.parsed as {
 			matches: Array<{ text: string }>;

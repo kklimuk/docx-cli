@@ -1,4 +1,11 @@
-import type { Block, Doc, Paragraph, TrackedChange } from "../ast/types";
+import { type Body, iterateBlocks } from "../ast/document/body";
+import type { Block, Paragraph, TrackedChange } from "../ast/types";
+
+export {
+	replaceSpanInParagraph,
+	type Span,
+	type TrackedReplaceOptions,
+} from "./replace-span";
 
 export type TextMatch = {
 	blockId: string;
@@ -26,7 +33,7 @@ export type FindResult = {
 };
 
 export function findTextSpans(
-	doc: Doc,
+	doc: Body,
 	query: string,
 	options: FindOptions = {},
 ): FindResult {
@@ -119,33 +126,24 @@ function collectMatches(
 	view: FindView,
 	out: TextMatch[],
 ): void {
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			const paragraphText = paragraphTextForView(block, view);
-			for (const span of matcher(paragraphText)) {
-				const match: TextMatch = {
-					blockId: block.id,
-					start: span.start,
-					end: span.end,
-					text: span.text,
-				};
-				const overlaps = trackedChangesOverlapping(
-					block,
-					span.start,
-					span.end,
-					view,
-				);
-				if (overlaps.length > 0) match.trackedChanges = overlaps;
-				out.push(match);
-			}
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					collectMatches(cell.blocks, matcher, view, out);
-				}
-			}
+	for (const block of iterateBlocks(blocks)) {
+		if (block.type !== "paragraph") continue;
+		const paragraphText = paragraphTextForView(block, view);
+		for (const span of matcher(paragraphText)) {
+			const match: TextMatch = {
+				blockId: block.id,
+				start: span.start,
+				end: span.end,
+				text: span.text,
+			};
+			const overlaps = trackedChangesOverlapping(
+				block,
+				span.start,
+				span.end,
+				view,
+			);
+			if (overlaps.length > 0) match.trackedChanges = overlaps;
+			out.push(match);
 		}
 	}
 }

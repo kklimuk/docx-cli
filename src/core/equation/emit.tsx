@@ -1,7 +1,97 @@
 import temml from "temml";
+import type { Document } from "../ast/document";
 import { m } from "../jsx";
 import { XmlNode } from "../parser";
+import {
+	resolveAuthor,
+	resolveDate,
+	TrackChanges,
+	type TrackedMeta,
+} from "../track-changes";
+import { Del, Ins } from "../track-changes/emit";
 import { mathmlToOmml } from "./mathml-to-omml";
+
+/** Cross-cutting lens over the document's equations. Constructed at call
+ * sites with `new Equations(document)`; holds only a back-reference. Reads from
+ * `document.body.equationReferences` (populated by the AST reader) and splices
+ * a recompiled `<m:oMath>` / `<m:oMathPara>` back in place. Tracking-aware:
+ * when `<w:trackChanges/>` is on, the edit lands as a paired
+ * `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same
+ * parent. */
+export class Equations {
+	constructor(private document: Document) {}
+
+	/** List every equation in document order with its current LaTeX, mode,
+	 * and the block id of the paragraph containing it. */
+	list(): Array<{
+		id: string;
+		latex: string;
+		display: boolean;
+		blockId: string;
+	}> {
+		const out: Array<{
+			id: string;
+			latex: string;
+			display: boolean;
+			blockId: string;
+		}> = [];
+		for (const [id, reference] of this.document.body.equationReferences) {
+			out.push({
+				id,
+				latex: reference.latex,
+				display: reference.display,
+				blockId: reference.blockId,
+			});
+		}
+		return out;
+	}
+
+	/** Recompile an existing equation. `latex` undefined means "keep the
+	 * cached LaTeX" (a pure display-mode toggle); `display` undefined means
+	 * "keep the cached mode". Throws `EquationNotFoundError` if the id
+	 * doesn't resolve, `EquationStaleError` if the cached reference is no
+	 * longer in its parent, or `EquationParseError` if temml rejects the
+	 * LaTeX. Under track-changes, emits a paired `<w:del>OLD</w:del>
+	 * <w:ins>NEW</w:ins>` instead of an in-place splice. */
+	edit(
+		id: string,
+		options: { latex?: string; display?: boolean; author?: string } = {},
+	): void {
+		const reference = this.document.body.equationReferences.get(id);
+		if (!reference) throw new EquationNotFoundError(id);
+
+		const latex = options.latex ?? reference.latex;
+		const display = options.display ?? reference.display;
+		const omml = latexToOmml(latex, display);
+
+		const index = reference.parent.indexOf(reference.node);
+		if (index === -1) throw new EquationStaleError(id);
+
+		if (this.document.isTrackChangesEnabled()) {
+			const allocator = new TrackChanges(this.document).createAllocator();
+			const author = resolveAuthor(options.author);
+			const date = resolveDate();
+			const delMeta: TrackedMeta = {
+				author,
+				date,
+				revisionId: allocator.next(),
+			};
+			const insMeta: TrackedMeta = {
+				author,
+				date,
+				revisionId: allocator.next(),
+			};
+			reference.parent.splice(
+				index,
+				1,
+				<Del meta={delMeta}>{[reference.node]}</Del>,
+				<Ins meta={insMeta}>{[omml]}</Ins>,
+			);
+		} else {
+			reference.parent.splice(index, 1, omml);
+		}
+	}
+}
 
 /** Compile a LaTeX equation string to an OMML subtree ready to splice into
  *  a `<w:p>`. Inline equations are wrapped in `<m:oMath>`; display equations
@@ -61,6 +151,25 @@ export class EquationParseError extends Error {
 	) {
 		super(message);
 		this.name = "EquationParseError";
+	}
+}
+
+/** Error thrown by `Equations.edit` when the equation id doesn't resolve in
+ *  `document.body.equationReferences`. */
+export class EquationNotFoundError extends Error {
+	constructor(public id: string) {
+		super(`Equation not found: ${id}`);
+		this.name = "EquationNotFoundError";
+	}
+}
+
+/** Error thrown by `Equations.edit` when the cached equation reference is
+ *  no longer in its parent (e.g. the paragraph was edited between
+ *  read-time and edit-time). */
+export class EquationStaleError extends Error {
+	constructor(public id: string) {
+		super(`Equation ${id} reference is stale (parent does not contain it)`);
+		this.name = "EquationStaleError";
 	}
 }
 

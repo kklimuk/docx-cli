@@ -1,4 +1,4 @@
-import { isTrackChangesEnabled, mintRevisionMeta, saveDocView } from "@core";
+import { TrackChanges } from "@core";
 import { Paragraph } from "@core/blocks";
 import { w } from "@core/jsx";
 import { parseTableAt } from "@core/locators";
@@ -95,10 +95,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, tableId);
+	const tableNode = resolveTableNode(document, tableId);
 	if (!tableNode) return fail("BLOCK_NOT_FOUND", `Table not found: ${tableId}`);
 
 	const grid = buildGrid(tableNode);
@@ -126,10 +126,9 @@ export async function run(args: string[]): Promise<number> {
 
 	const newRow = buildRow(grid, position, cellTexts);
 
-	const tracking = isTrackChangesEnabled(view);
+	const tracking = document.isTrackChangesEnabled();
 	if (tracking) {
-		const meta = mintRevisionMeta(
-			view,
+		const meta = new TrackChanges(document).mintMeta(
 			parsed.values.author as string | undefined,
 		);
 		markRowTracked(newRow, "ins", meta);
@@ -154,7 +153,7 @@ export async function run(args: string[]): Promise<number> {
 	const childIndex = rowChildIndex(tableNode, grid, position);
 	tableNode.children.splice(childIndex, 0, newRow);
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

@@ -1,19 +1,11 @@
+import { resolveAuthor, resolveDate } from "@core";
+import { Comments, findContainingParagraph } from "@core/comments";
 import {
-	ensureContentTypeDefault,
-	hasRelationshipWithTarget,
-	isTrackChangesEnabled,
-	resolveAuthor,
-	resolveDate,
-	saveDocView,
-	setRelationshipTarget,
-} from "@core";
-import {
-	collectImageRuns,
+	Images,
 	imageFormatForExtension,
 	SUPPORTED_IMAGE_FORMATS,
 } from "@core/image";
 import { parseArgs } from "util";
-import { emitAuditComment, findContainingParagraph } from "../comments/helpers";
 import {
 	EXIT,
 	fail,
@@ -113,10 +105,10 @@ export async function run(args: string[]): Promise<number> {
 	const newMimeType = format.mimeType;
 	const newExtension = format.extension;
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = view.imageById.get(targetId);
+	const reference = document.body.imageById.get(targetId);
 	if (!reference) {
 		return fail("IMAGE_NOT_FOUND", `Image not found: ${targetId}`);
 	}
@@ -143,11 +135,10 @@ export async function run(args: string[]): Promise<number> {
 	const originalMimeType = reference.contentType;
 
 	if (newPartName === originalPartName) {
-		view.pkg.writeBytes(originalPartName, bytes);
+		document.pkg.writeBytes(originalPartName, bytes);
 	} else {
-		view.pkg.writeBytes(newPartName, bytes);
-		setRelationshipTarget(
-			view.relationshipsTree,
+		document.pkg.writeBytes(newPartName, bytes);
+		document.relationships.setTarget(
 			reference.relationshipId,
 			relativeTargetFor(newPartName),
 		);
@@ -155,37 +146,37 @@ export async function run(args: string[]): Promise<number> {
 		// still targets it — identical images are often deduped to one shared
 		// part, and deleting it would dangle the sibling rId.
 		if (
-			!hasRelationshipWithTarget(
-				view.relationshipsTree,
-				relativeTargetFor(originalPartName),
-			)
+			!document.relationships.hasTarget(relativeTargetFor(originalPartName))
 		) {
-			view.pkg.deletePart(originalPartName);
+			document.pkg.deletePart(originalPartName);
 		}
-		ensureContentTypeDefault(view.contentTypesTree, newExtension, newMimeType);
+		document.contentTypes.registerExtension(newExtension, newMimeType);
 		reference.partName = newPartName;
 		reference.contentType = newMimeType;
 	}
 
-	if (isTrackChangesEnabled(view)) {
+	if (document.isTrackChangesEnabled()) {
 		const author = resolveAuthor(parsed.values.author as string | undefined);
 		const date = resolveDate();
 		const body = `[docx-cli] image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
-		const drawingRuns = collectImageRuns(view)
+		const drawingRuns = new Images(document)
+			.list()
 			.filter((hit) => hit.relationshipId === reference.relationshipId)
 			.map((hit) => hit.run);
 		for (const drawingRun of drawingRuns) {
-			const paragraph = findContainingParagraph(view.documentTree, drawingRun);
+			const paragraph = findContainingParagraph(
+				document.documentTree,
+				drawingRun,
+			);
 			if (!paragraph) continue;
-			emitAuditComment(
-				view,
+			new Comments(document).addAudit(
 				{ kind: "run", paragraph, run: drawingRun },
 				{ body, author, date },
 			);
 		}
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

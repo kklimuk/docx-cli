@@ -1,4 +1,9 @@
-import { saveDocView } from "@core";
+import {
+	authorInitials,
+	CommentBody,
+	Comments,
+	generateParaId,
+} from "@core/comments";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
@@ -10,16 +15,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	authorInitials,
-	CommentBody,
-	ensureCommentParaId,
-	ensureCommentsExtPart,
-	ensureCommentsPart,
-	findCommentByNumericId,
-	generateParaId,
-	nextCommentId,
-} from "./helpers";
 
 const HELP = `docx comments reply — reply to an existing comment
 
@@ -82,10 +77,11 @@ export async function run(args: string[]): Promise<number> {
 		? parentInput.slice(1)
 		: parentInput;
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const parentReference = findCommentByNumericId(view, parentNumericId);
+	const comments = new Comments(document);
+	const parentReference = comments.findById(parentNumericId);
 	if (!parentReference) {
 		return fail(
 			"COMMENT_NOT_FOUND",
@@ -93,7 +89,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const parentParaId = ensureCommentParaId(view, parentInput);
+	const parentParaId = comments.ensureParaId(parentInput);
 	if (!parentParaId) {
 		return fail(
 			"COMMENT_NOT_FOUND",
@@ -104,7 +100,7 @@ export async function run(args: string[]): Promise<number> {
 	const author =
 		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
 	const date = new Date().toISOString();
-	const numericId = nextCommentId(view);
+	const numericId = document.comments?.nextId() ?? "0";
 	const replyParaId = generateParaId();
 	const outputPath = parsed.values.output as string | undefined;
 
@@ -121,7 +117,9 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const commentsRoot = ensureCommentsPart(view);
+	const commentsView = document.ensureComments();
+	const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
+	if (!commentsRoot) throw new Error("expected <w:comments> root");
 	commentsRoot.children.push(
 		<CommentBody
 			options={{
@@ -135,7 +133,11 @@ export async function run(args: string[]): Promise<number> {
 		/>,
 	);
 
-	const extRoot = ensureCommentsExtPart(view);
+	const extView = document.ensureCommentsExtended();
+	const extRoot = extView.extendedTree
+		? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
+		: undefined;
+	if (!extRoot) throw new Error("expected <w15:commentsEx> root");
 	extRoot.children.push(
 		new XmlNode("w15:commentEx", {
 			"w15:paraId": replyParaId,
@@ -144,7 +146,7 @@ export async function run(args: string[]): Promise<number> {
 		}),
 	);
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

@@ -1,20 +1,16 @@
-import { saveDocView } from "@core";
 import {
-	findNoteByNumericId,
 	type NoteKind,
 	noteConfig,
 	removeNoteReferences,
 	wrapNoteBodyAsDeleted,
+	wrapNoteReferencesAsDeleted,
 } from "@core/notes";
-import { XmlNode } from "@core/parser";
 import {
-	createRevisionAllocator,
-	isTrackChangesEnabled,
 	resolveAuthor,
 	resolveDate,
+	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
-import { Del } from "@core/track-changes/emit";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -100,10 +96,12 @@ export async function runDeleteNote(
 		: idInput;
 	const idLabel = `${config.idPrefix}${numericId}`;
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = findNoteByNumericId(view, kind, numericId);
+	const notesView =
+		kind === "footnote" ? document.footnotes : document.endnotes;
+	const reference = notesView?.findByNumericId(numericId);
 	if (!reference) {
 		return fail("BLOCK_NOT_FOUND", `${capitalize(kind)} not found: ${idLabel}`);
 	}
@@ -122,9 +120,9 @@ export async function runDeleteNote(
 		return EXIT.OK;
 	}
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	if (tracked) {
-		const allocator = createRevisionAllocator(view);
+		const allocator = new TrackChanges(document).createAllocator();
 		const author = resolveAuthor(parsed.values.author as string | undefined);
 		const date = resolveDate();
 		// Three coupled <w:del> revisions per Word's empirical shape — body
@@ -141,15 +139,20 @@ export async function runDeleteNote(
 			date,
 			revisionId: allocator.next(),
 		};
-		wrapReferencesAsDeleted(view.documentTree, kind, numericId, refMeta);
+		wrapNoteReferencesAsDeleted(
+			document.documentTree,
+			kind,
+			numericId,
+			refMeta,
+		);
 		wrapNoteBodyAsDeleted(reference.node, bodyMeta);
 	} else {
 		const index = reference.parent.indexOf(reference.node);
 		if (index !== -1) reference.parent.splice(index, 1);
-		removeNoteReferences(view.documentTree, kind, numericId);
+		removeNoteReferences(document.documentTree, kind, numericId);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,
@@ -158,64 +161,6 @@ export async function runDeleteNote(
 		id: idLabel,
 	});
 	return EXIT.OK;
-}
-
-/** Find every `<w:r>` in `documentTree` that contains a reference to
- *  `(kind, numericId)` and wrap it in `<w:del meta>`. Mirrors the pattern in
- *  `removeNoteReferences` but wraps instead of removing — the run stays
- *  intact, the wrapper records the revision. The post-pass GC in apply.ts is
- *  what eventually removes both reference and body on accept.
- *
- *  Skips runs already inside a `<w:del>` (idempotent under repeated calls;
- *  also avoids double-wrap if the agent runs `footnotes delete fnN` twice). */
-function wrapReferencesAsDeleted(
-	documentTree: XmlNode[],
-	kind: NoteKind,
-	numericId: string,
-	meta: TrackedMeta,
-): void {
-	const document = XmlNode.findRoot(documentTree, "w:document");
-	if (!document) return;
-	const config = noteConfig(kind);
-	walkAndWrap(document, config.referenceTag, numericId, meta);
-}
-
-function walkAndWrap(
-	node: XmlNode,
-	referenceTag: string,
-	numericId: string,
-	meta: TrackedMeta,
-): void {
-	if (node.tag === "w:del") return; // already inside a tracked deletion
-	const replaced: XmlNode[] = [];
-	for (const child of node.children) {
-		if (
-			child.tag === "w:r" &&
-			runContainsReference(child, referenceTag, numericId)
-		) {
-			replaced.push(<Del meta={meta}>{child}</Del>);
-			continue;
-		}
-		walkAndWrap(child, referenceTag, numericId, meta);
-		replaced.push(child);
-	}
-	node.children = replaced;
-}
-
-function runContainsReference(
-	run: XmlNode,
-	referenceTag: string,
-	numericId: string,
-): boolean {
-	for (const child of run.children) {
-		if (
-			child.tag === referenceTag &&
-			child.getAttribute("w:id") === numericId
-		) {
-			return true;
-		}
-	}
-	return false;
 }
 
 export async function run(args: string[]): Promise<number> {

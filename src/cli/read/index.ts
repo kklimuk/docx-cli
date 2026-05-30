@@ -1,4 +1,4 @@
-import { enrichImageHashes } from "@core";
+import { Images } from "@core/image";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 import { MarkdownLocatorError, renderMarkdown } from "./markdown";
@@ -102,13 +102,13 @@ export async function run(args: string[]): Promise<number> {
 	if (typeof docView === "number") return docView;
 
 	if (ast) {
-		await enrichImageHashes(docView);
-		await respond(docView.doc);
+		await new Images(docView).enrichHashes();
+		await respond(docView.body);
 		return EXIT.OK;
 	}
 
 	try {
-		const rendered = renderMarkdown(docView.doc, {
+		const rendered = renderMarkdown(docView.body, {
 			from,
 			to,
 			view,

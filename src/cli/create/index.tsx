@@ -1,15 +1,6 @@
-import { writeAtomic } from "@core/package";
-import JSZip from "jszip";
+import { buildBlankPackage } from "@core/create";
 import { parseArgs } from "util";
 import { EXIT, fail, respondAck, setVerboseAck, writeStdout } from "../respond";
-import { CANONICAL_PARTS } from "./canonical-parts";
-import {
-	CONTENT_TYPES,
-	corePropertiesXml,
-	DOCUMENT_RELS,
-	documentXml,
-	ROOT_RELS,
-} from "./template";
 
 const HELP = `docx create — create a new minimal .docx
 
@@ -76,30 +67,15 @@ export async function run(args: string[]): Promise<number> {
 		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
 	const title = (parsed.values.title as string | undefined) ?? "";
 	const text = parsed.values.text as string | undefined;
-	const now = new Date().toISOString();
 
-	const zip = new JSZip();
-	zip.file("[Content_Types].xml", CONTENT_TYPES);
-	zip.file("_rels/.rels", ROOT_RELS);
-	zip.file("word/document.xml", documentXml(text));
-	zip.file("word/_rels/document.xml.rels", DOCUMENT_RELS);
-	zip.file("docProps/core.xml", corePropertiesXml({ title, author, now }));
-	for (const part of Object.values(CANONICAL_PARTS)) {
-		zip.file(part.zipPath, part.body);
-	}
-
-	const buf = await zip.generateAsync({
-		type: "uint8array",
-		compression: "DEFLATE",
-		compressionOptions: { level: 6 },
-	});
-	await writeAtomic(path, buf);
+	const pkg = buildBlankPackage({ path, title, author, text });
+	await pkg.save();
 
 	await respondAck({
 		ok: true,
 		operation: "create",
 		path,
-		bytes: buf.length,
+		bytes: Bun.file(path).size,
 		blocks: 1,
 	});
 	return EXIT.OK;

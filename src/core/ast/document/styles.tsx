@@ -1,7 +1,8 @@
-import type { DocView } from "./ast/doc-view";
-import { w } from "./jsx";
-import { registerPart } from "./package";
-import { XmlNode } from "./parser";
+import { w } from "../../jsx";
+import { XmlNode } from "../../parser";
+import type { ContentTypesView } from "./content-types";
+import type { Pkg } from "./package";
+import type { RelationshipsView } from "./relationships";
 
 export type BaselineStyleId =
 	| "Normal"
@@ -21,111 +22,140 @@ export type BaselineStyleId =
 	| "EndnoteReference"
 	| "EndnoteText";
 
-const STYLES_PART = {
-	partName: "word/styles.xml",
-	contentType:
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-	relationshipType:
-		"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
-	target: "styles.xml",
-};
-
-const EMPTY_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`;
-
-/** Ensure the named paragraph/character style is defined in word/styles.xml.
- *
- * Creates the styles part itself if the package lacks one (and registers the
- * relationship + content-type override). For styles that derive from Normal,
- * Normal is also seeded so basedOn references resolve. Subsequent calls for
- * the same id are no-ops.
- *
- * Used by `insert --style` / `edit --style` (via `isBaselineStyle`) so a
- * referenced baseline style is also defined, and by the S8 markdown walker. */
-export function ensureStyle(view: DocView, styleId: BaselineStyleId): void {
-	const tree = ensureStylesPart(view);
-	const root = XmlNode.findRoot(tree, "w:styles");
-	if (!root) throw new Error("expected <w:styles> root in stylesTree");
-	if (styleId !== "Normal") ensureStyleNode(root, "Normal");
-	ensureStyleNode(root, styleId);
-}
-
-/** Whether `styleId` is one of the baseline styles `ensureStyle` can define.
- * Lets callers provision a `--style` reference only when we have a definition
- * for it (custom/unknown styles are referenced but left for the doc to define). */
 export function isBaselineStyle(styleId: string): styleId is BaselineStyleId {
 	return Object.hasOwn(BASELINE, styleId);
 }
 
-/** Define a referenced paragraph/character style if it's a baseline we know
- * how to provision; no-op for undefined or custom styles. The convenience
- * `insert --style` / `edit --style` call so a `--style Heading2` reference
- * also lands a Heading2 definition in styles.xml (otherwise Word renders it
- * as Normal). */
-export function ensureReferencedStyle(
-	view: DocView,
-	styleId: string | undefined,
-): void {
-	if (styleId && isBaselineStyle(styleId)) ensureStyle(view, styleId);
-}
+const STYLES_PART_NAME = "word/styles.xml";
+const STYLES_RELATIONSHIP_TYPE =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+const STYLES_CONTENT_TYPE =
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 
-/** Provision the baseline character styles referenced by any run's `runStyle`.
- * Mirrors `ensureReferencedStyle` for paragraphs but walks a list of runs.
- * Called by insert/edit (and the code-block helper) so a `--runs` payload that
- * sets `runStyle: "Code"` lands the Code definition in styles.xml. Accepts a
- * heterogeneous `Run[]`-like iterable — only TextRun carries `runStyle`, but
- * the duck-type read here keeps the caller from having to filter first. */
-export function ensureReferencedRunStyles(
-	view: DocView,
-	runs: Iterable<unknown>,
-): void {
-	const seen = new Set<string>();
-	for (const run of runs) {
-		const styleId =
-			typeof run === "object" && run !== null && "runStyle" in run
-				? (run as { runStyle?: unknown }).runStyle
-				: undefined;
-		if (typeof styleId !== "string" || seen.has(styleId)) continue;
-		seen.add(styleId);
-		ensureReferencedStyle(view, styleId);
+const EMPTY_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`;
+
+export class StylesView {
+	tree: XmlNode[];
+
+	constructor(tree: XmlNode[] = XmlNode.parse(EMPTY_STYLES_XML)) {
+		this.tree = tree;
 	}
-}
 
-/** Provision a custom (non-baseline) `<w:style>` whose definition the caller
- * supplies via `build`. No-op if a style with `styleId` already exists. Seeds
- * Normal first so any basedOn references in `build()` resolve. Used by the
- * code-block package to provision `CodeBlock-LANG` styles on demand — the
- * language is metadata stored in the styleId itself, so the catalog can't be
- * a static BASELINE entry. */
-export function ensureCustomStyle(
-	view: DocView,
-	styleId: string,
-	build: () => XmlNode,
-): void {
-	const tree = ensureStylesPart(view);
-	const root = XmlNode.findRoot(tree, "w:styles");
-	if (!root) throw new Error("expected <w:styles> root in stylesTree");
-	ensureStyleNode(root, "Normal");
-	const exists = root
-		.findChildren("w:style")
-		.some((child) => child.getAttribute("w:styleId") === styleId);
-	if (exists) return;
-	root.children.push(build());
-}
+	/** Load this view from a package; returns undefined if the part is absent. */
+	static async fromPackage(pkg: Pkg): Promise<StylesView | undefined> {
+		const tree = await pkg.readPart(STYLES_PART_NAME);
+		return tree ? new StylesView(tree) : undefined;
+	}
 
-function ensureStylesPart(view: DocView): XmlNode[] {
-	if (view.stylesTree) return view.stylesTree;
-	view.stylesTree = XmlNode.parse(EMPTY_STYLES_XML);
-	registerPart(view.relationshipsTree, view.contentTypesTree, STYLES_PART);
-	return view.stylesTree;
-}
+	/** Parse a view from raw XML; returns undefined if the input is absent. */
+	static fromXml(xml: string | undefined): StylesView | undefined {
+		return xml ? new StylesView(XmlNode.parse(xml)) : undefined;
+	}
 
-function ensureStyleNode(stylesRoot: XmlNode, styleId: BaselineStyleId): void {
-	const exists = stylesRoot
-		.findChildren("w:style")
-		.some((child) => child.getAttribute("w:styleId") === styleId);
-	if (exists) return;
-	stylesRoot.children.push(BASELINE[styleId]());
+	/** Serialize this view's tree into the package's `word/styles.xml`. */
+	writeTo(pkg: Pkg): void {
+		pkg.writeText(STYLES_PART_NAME, XmlNode.serialize(this.tree));
+	}
+
+	/** Mint the styles relationship + content-type override on the containing
+	 * package and return a fresh empty view. Idempotent on the relationship
+	 * target. Called by `Document.ensureStyles()`. */
+	static register(deps: {
+		relationships: RelationshipsView;
+		contentTypes: ContentTypesView;
+	}): StylesView {
+		if (!deps.relationships.hasTarget("styles.xml")) {
+			deps.relationships.add(STYLES_RELATIONSHIP_TYPE, "styles.xml");
+		}
+		deps.contentTypes.registerPart(STYLES_PART_NAME, STYLES_CONTENT_TYPE);
+		return new StylesView();
+	}
+
+	listStyleIds(): string[] {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return [];
+		const out: string[] = [];
+		for (const child of root.findChildren("w:style")) {
+			const id = child.getAttribute("w:styleId");
+			if (id) out.push(id);
+		}
+		return out;
+	}
+
+	hasStyle(styleId: string): boolean {
+		return this.getStyle(styleId) !== undefined;
+	}
+
+	getStyle(styleId: string): XmlNode | undefined {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return undefined;
+		return root
+			.findChildren("w:style")
+			.find((child) => child.getAttribute("w:styleId") === styleId);
+	}
+
+	/** Ensure the named baseline style is defined. Seeds `Normal` first so any
+	 * `basedOn` references resolve. Subsequent calls for the same id are no-ops.
+	 *
+	 * Used by `insert --style` / `edit --style` (via `isBaselineStyle`) so a
+	 * referenced baseline style is also defined, and by the markdown walker. */
+	ensureStyle(styleId: BaselineStyleId): void {
+		const root = this.ensureStylesRoot();
+		if (styleId !== "Normal") this.#ensureStyleNode(root, "Normal");
+		this.#ensureStyleNode(root, styleId);
+	}
+
+	/** Define a referenced paragraph/character style if it's a baseline we know
+	 * how to provision; no-op for undefined or custom styles. Convenience for
+	 * `insert --style` / `edit --style` so a `--style Heading2` reference also
+	 * lands a Heading2 definition (otherwise Word renders it as Normal). */
+	ensureReferencedStyle(styleId: string | undefined): void {
+		if (styleId && isBaselineStyle(styleId)) this.ensureStyle(styleId);
+	}
+
+	/** Provision the baseline character styles referenced by any run's `runStyle`.
+	 * Mirrors `ensureReferencedStyle` for paragraphs but walks a list of runs.
+	 * Accepts a heterogeneous `Run[]`-like iterable — only TextRun carries
+	 * `runStyle`, but the duck-type read here keeps the caller from filtering. */
+	ensureReferencedRunStyles(runs: Iterable<unknown>): void {
+		const seen = new Set<string>();
+		for (const run of runs) {
+			const styleId =
+				typeof run === "object" && run !== null && "runStyle" in run
+					? (run as { runStyle?: unknown }).runStyle
+					: undefined;
+			if (typeof styleId !== "string" || seen.has(styleId)) continue;
+			seen.add(styleId);
+			this.ensureReferencedStyle(styleId);
+		}
+	}
+
+	/** Provision a custom (non-baseline) `<w:style>` whose definition the caller
+	 * supplies via `build`. No-op if a style with `styleId` already exists. Seeds
+	 * Normal first so any basedOn references in `build()` resolve. Used by the
+	 * code-block package to provision `CodeBlock-LANG` styles on demand — the
+	 * language is metadata stored in the styleId itself. */
+	ensureCustomStyle(styleId: string, build: () => XmlNode): void {
+		const root = this.ensureStylesRoot();
+		this.#ensureStyleNode(root, "Normal");
+		if (this.hasStyle(styleId)) return;
+		root.children.push(build());
+	}
+
+	private ensureStylesRoot(): XmlNode {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) throw new Error("expected <w:styles> root in styles tree");
+		return root;
+	}
+
+	#ensureStyleNode(stylesRoot: XmlNode, styleId: BaselineStyleId): void {
+		const exists = stylesRoot
+			.findChildren("w:style")
+			.some((child) => child.getAttribute("w:styleId") === styleId);
+		if (exists) return;
+		stylesRoot.children.push(BASELINE[styleId]());
+	}
 }
 
 /** The baseline style catalog: id → a builder that emits the `<w:style>`

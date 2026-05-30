@@ -1,4 +1,4 @@
-import type { DocView } from "@core";
+import type { Document } from "@core";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -43,10 +43,10 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	let comments = view.doc.comments;
+	let comments = document.body.comments;
 	if (!parsed.values["include-resolved"]) {
 		comments = comments.filter((comment) => !comment.resolved);
 	}
@@ -61,7 +61,7 @@ export async function run(args: string[]): Promise<number> {
 }
 
 function collectThread(
-	comments: DocView["doc"]["comments"],
+	comments: Document["body"]["comments"],
 	rootId: string,
 ): Set<string> {
 	const allowed = new Set<string>([rootId]);

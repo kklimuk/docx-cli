@@ -1,8 +1,7 @@
 export {
-	addImagePart,
-	collectImageRuns,
 	Image,
 	type ImageRunHit,
+	Images,
 	nextDrawingId,
 } from "./drawing";
 export {

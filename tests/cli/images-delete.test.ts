@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { openDocView, saveDocView, XmlNode } from "../../src/core";
-import { Pkg } from "../../src/core/package";
+import { Document, XmlNode } from "../../src/core";
+import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 
 const ASSETS = join(import.meta.dir, "..", "fixtures", "assets");
@@ -64,12 +64,13 @@ describe("docx images delete", () => {
 		// drawing walker can't see. Deleting the drawing must NOT prune the part,
 		// or the surviving reference would dangle and corrupt the document.
 		const docPath = await docWithImages("del-vml", 1);
-		const view = await openDocView(docPath);
-		const rId = view.imageById.get("img0")?.relationshipId;
+		const document = await Document.open(docPath);
+		const rId = document.body.imageById.get("img0")?.relationshipId;
 		expect(rId).toBeDefined();
-		const body = XmlNode.findRoot(view.documentTree, "w:document")?.findChild(
-			"w:body",
-		);
+		const body = XmlNode.findRoot(
+			document.documentTree,
+			"w:document",
+		)?.findChild("w:body");
 		body?.children.push(
 			new XmlNode("w:p", {}, [
 				new XmlNode("w:r", {}, [
@@ -79,7 +80,7 @@ describe("docx images delete", () => {
 				]),
 			]),
 		);
-		await saveDocView(view);
+		await document.save();
 
 		const result = await runCli("images", "delete", docPath, "--at", "img0");
 		expect((result.parsed as { pruned: boolean }).pruned).toBe(false);

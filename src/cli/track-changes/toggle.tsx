@@ -1,7 +1,4 @@
-import { saveDocView } from "@core";
-import { w } from "@core/jsx";
-import { registerPart } from "@core/package";
-import { XmlNode } from "@core/parser";
+import { TrackChanges } from "@core";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -33,13 +30,6 @@ Examples:
   docx track-changes doc.docx on
   docx track-changes doc.docx off
 `;
-
-const SETTINGS_PART = "word/settings.xml";
-const SETTINGS_REL_TYPE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
-const SETTINGS_CONTENT_TYPE =
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
-const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 export async function run(args: string[]): Promise<number> {
 	let parsed: ReturnType<typeof parseArgs>;
@@ -79,20 +69,10 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const wasMissing = view.settingsTree === undefined;
-	if (!view.settingsTree) view.settingsTree = [];
-	let settingsRoot = XmlNode.findRoot(view.settingsTree, "w:settings");
-	if (!settingsRoot) {
-		settingsRoot = <w.settings {...{ "xmlns:w": NS_W }} />;
-		view.settingsTree.push(settingsRoot);
-	}
-
-	const hasTrackChanges = settingsRoot.children.some(
-		(child) => child.tag === "w:trackChanges",
-	);
+	const hasTrackChanges = document.settings?.isTrackChangesEnabled() ?? false;
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {
@@ -108,24 +88,11 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	if (mode === "on" && !hasTrackChanges) {
-		settingsRoot.children.unshift(<w.trackChanges />);
-	} else if (mode === "off" && hasTrackChanges) {
-		settingsRoot.children = settingsRoot.children.filter(
-			(child) => child.tag !== "w:trackChanges",
-		);
+	if (mode === "on" || hasTrackChanges) {
+		new TrackChanges(document).setEnabled(mode === "on");
 	}
 
-	if (wasMissing) {
-		registerPart(view.relationshipsTree, view.contentTypesTree, {
-			partName: SETTINGS_PART,
-			contentType: SETTINGS_CONTENT_TYPE,
-			relationshipType: SETTINGS_REL_TYPE,
-			target: "settings.xml",
-		});
-	}
-
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

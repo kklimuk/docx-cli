@@ -1,13 +1,14 @@
-import { Del, Ins, type RevisionAllocator, type TrackedMeta } from "@core";
-import type { FindView } from "@core/find";
-import { w } from "@core/jsx";
+import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	runTextLength,
 	sliceRun,
 	XmlNode,
-} from "@core/parser";
+} from "../parser";
+import type { RevisionAllocator, TrackedMeta } from "../track-changes";
+import { Del, Ins } from "../track-changes/emit";
+import type { FindView } from "./index";
 
 export type Span = { start: number; end: number };
 

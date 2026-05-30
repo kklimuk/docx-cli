@@ -1,6 +1,6 @@
-import type { DocView } from "../ast/doc-view";
+import type { Document } from "../ast/document";
 import type { Paragraph } from "../ast/types";
-import { getListBulletText } from "../numbering";
+
 import type { XmlNode } from "../parser";
 
 /** Recognize a GFM task-list paragraph. Two shapes in the wild:
@@ -22,11 +22,10 @@ import type { XmlNode } from "../parser";
  *
  *  When called from `ast/read.ts`, also registers a `checkboxToggle` tracked-
  *  change reference for any toggle pattern (`<w:ins>`+`<w:del>` inside
- *  `<w:sdtContent>`); the apply walker in `cli/track-changes/apply.ts` does
- *  the same in matching order so `tcN` ids agree between `list` and
- *  `apply --at tcN`. */
+ *  `<w:sdtContent>`). This is the only walk that assigns `tcN` ids; `list`
+ *  and `apply` read them back from `document.trackedChangeReferences`. */
 export function detectTaskListState(
-	view: DocView,
+	document: Document,
 	paragraph: Paragraph,
 	node: XmlNode,
 	registerToggle: (sdt: XmlNode, parent: XmlNode[]) => void,
@@ -64,9 +63,8 @@ export function detectTaskListState(
 				}
 			}
 			// Register a checkboxToggle reference if the SDT has an ins+del pair
-			// (Word's canonical tracked-toggle shape). MUST match the order of
-			// the apply walker, which sees the SDT as the first non-pPr child
-			// and registers the toggle as the first tcN of this paragraph.
+			// (Word's canonical tracked-toggle shape). The SDT is the first
+			// non-pPr child, so the toggle is the paragraph's first tcN.
 			if (findCheckboxToggle(firstContent)) {
 				registerToggle(firstContent, node.children);
 			}
@@ -77,8 +75,7 @@ export function detectTaskListState(
 	// Shape 2: Word-for-Web Checklist (Wingdings ☐ bullet + paragraph-mark
 	// strike for "done"). The bullet character is U+F0A8 in Word for Web; we
 	// also accept the Unicode ☐ U+2610 in case other tools emit it.
-	const bulletText = getListBulletText(
-		view,
+	const bulletText = document.numbering?.getBulletText(
 		paragraph.list.numId,
 		paragraph.list.level,
 	);

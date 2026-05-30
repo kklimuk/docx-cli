@@ -1,12 +1,12 @@
-import type { DocView } from "../ast/doc-view";
+import type { Document } from "../ast/document";
 import { applyParagraphOptionsInPlace, type ParagraphOptions } from "../blocks";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import { Del, Ins, markParagraphMarkAs } from "./emit";
 import {
 	convertTextToDelText,
-	createRevisionAllocator,
 	resolveAuthor,
 	resolveDate,
+	TrackChanges,
 	type TrackedMeta,
 } from "./index";
 import {
@@ -24,7 +24,7 @@ import {
  *  Pure pPr properties (`--style`, `--alignment`) apply to the existing pPr in
  *  place via `applyParagraphOptionsInPlace`. */
 export function applyFormattingPreservingEdit(
-	view: DocView,
+	document: Document,
 	paragraph: XmlNode,
 	newText: string,
 	paragraphOptions: ParagraphOptions,
@@ -36,7 +36,7 @@ export function applyFormattingPreservingEdit(
 	const ops = diffTokens(oldTokens, newTokens);
 
 	const runChildren = tracked
-		? buildTrackedRuns(ops, makeMetaMinter(view, authorFlag))
+		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag))
 		: buildUntrackedRuns(ops);
 
 	const { nonRuns } = partitionParagraphRuns(paragraph);
@@ -67,7 +67,7 @@ export function applyFormattingPreservingEdit(
  *  reject-all removes the new content and restores the old. Both end states
  *  match Word's own accept/reject behavior on equivalent input. */
 export function applyTrackedRangeReplace(
-	view: DocView,
+	document: Document,
 	parent: XmlNode[],
 	startIndex: number,
 	endIndex: number,
@@ -79,7 +79,7 @@ export function applyTrackedRangeReplace(
 			"applyTrackedRangeReplace requires at least one new paragraph; use applyTrackedRangeDelete for pure deletion",
 		);
 	}
-	const mintMeta = makeMetaMinter(view, authorFlag);
+	const mintMeta = makeMetaMinter(document, authorFlag);
 	const newN = newParagraphs.length;
 
 	// Mark every old paragraph except the LAST: content del + paragraph-mark del.
@@ -181,13 +181,13 @@ export function applyUntrackedRangeReplace(
  *  are restored intact. The residue matches Word's behavior — markdown render
  *  hides empty paragraphs, so an agent reading the doc sees a clean delete. */
 export function applyTrackedRangeDelete(
-	view: DocView,
+	document: Document,
 	parent: XmlNode[],
 	startIndex: number,
 	endIndex: number,
 	authorFlag: string | undefined,
 ): void {
-	const mintMeta = makeMetaMinter(view, authorFlag);
+	const mintMeta = makeMetaMinter(document, authorFlag);
 	for (let index = startIndex; index <= endIndex; index++) {
 		const para = parent[index];
 		if (!para) continue;
@@ -248,10 +248,10 @@ function replacePPr(paragraph: XmlNode, newPPr: XmlNode): void {
 }
 
 function makeMetaMinter(
-	view: DocView,
+	document: Document,
 	authorFlag: string | undefined,
 ): () => TrackedMeta {
-	const allocator = createRevisionAllocator(view);
+	const allocator = new TrackChanges(document).createAllocator();
 	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
 	return () => ({ ...baseMeta, revisionId: allocator.next() });
 }

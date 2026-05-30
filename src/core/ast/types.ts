@@ -1,13 +1,3 @@
-export type Doc = {
-	schemaVersion: 1;
-	path: string;
-	properties: DocProperties;
-	blocks: Block[];
-	comments: Comment[];
-	footnotes: Footnote[];
-	endnotes: Footnote[];
-};
-
 export type DocProperties = {
 	title?: string;
 	author?: string;
@@ -97,7 +87,7 @@ export type Run =
 	| BreakRun
 	| TabRun
 	| EquationRun
-	| FootnoteRefRun
+	| NoteRefRun
 	| ChartRun;
 
 export type TextRun = {
@@ -158,7 +148,7 @@ export type TabRun = {
  *  `id` (`eqN`) addresses the equation in document order — same scheme as
  *  imgN/linkN — so callers can target one equation via `--at eqN`. The
  *  original `<m:oMath>` XmlNode isn't on this type (not JSON-serializable);
- *  the reader stashes it in `DocView.equationReferences` for emit-back paths. */
+ *  the reader stashes it in `Document.equationReferences` for emit-back paths. */
 export type EquationRun = {
 	type: "equation";
 	id: string;
@@ -172,10 +162,10 @@ export type EquationRun = {
 	comments?: string[];
 };
 
-/** Reference to a footnote or endnote whose body lives in Doc.footnotes or
- * Doc.endnotes. The id matches the footnote/endnote id (`fn1`, `en1`). */
-export type FootnoteRefRun = {
-	type: "footnoteRef";
+/** Reference to a footnote or endnote whose body lives in Body.footnotes or
+ * Body.endnotes. The id matches the footnote/endnote id (`fn1`, `en1`). */
+export type NoteRefRun = {
+	type: "noteRef";
 	kind: "footnote" | "endnote";
 	id: string;
 };
@@ -188,7 +178,7 @@ export type ChartRun = {
 	kind: "chart" | "shape" | "smartart" | "drawing";
 };
 
-export type Footnote = {
+export type Note = {
 	id: string;
 	text: string;
 };

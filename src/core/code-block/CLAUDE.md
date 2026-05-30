@@ -1,6 +1,6 @@
 # src/core/code-block — code-block emit + syntax highlighting
 
-Two files, reachable via `@core/code-block` ([index.ts](index.ts)): [syntax-highlight.ts](syntax-highlight.ts) (a pure `(language, code) → CodeToken[]` tokenizer) and [paragraphs.tsx](paragraphs.tsx) (an emitter that builds one `<w:p>` per source line). Both are pure — no `DocView`, no package state — so the same functions are called by `cli/insert --code` today and will be called by the S8 markdown walker for fenced code blocks.
+Two files, reachable via `@core/code-block` ([index.ts](index.ts)): [syntax-highlight.ts](syntax-highlight.ts) (a pure `(language, code) → CodeToken[]` tokenizer) and [paragraphs.tsx](paragraphs.tsx) (an emitter that builds one `<w:p>` per source line). Both are pure — no `Document`, no package state — so the same functions are called by `cli/insert --code` today and will be called by the S8 markdown walker for fenced code blocks.
 
 ## Emit shape
 

@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { enrichImageHashes, flattenImageRuns } from "@core";
-import { extensionForImageMime } from "@core/image";
+import { flattenImageRuns } from "@core";
+import { extensionForImageMime, Images } from "@core/image";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
 
@@ -56,12 +56,12 @@ export async function run(args: string[]): Promise<number> {
 
 	const targetId = parsed.values.id as string | undefined;
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	await enrichImageHashes(view);
+	await new Images(document).enrichHashes();
 
-	const allImages = flattenImageRuns(view.doc.blocks);
+	const allImages = flattenImageRuns(document.body.blocks);
 
 	const targets = targetId
 		? allImages.filter((image) => image.id === targetId)
@@ -74,14 +74,14 @@ export async function run(args: string[]): Promise<number> {
 	const manifest: { id: string; path: string; bytes: number }[] = [];
 	const seenHashes = new Set<string>();
 	for (const image of targets) {
-		const reference = view.imageById.get(image.id);
+		const reference = document.body.imageById.get(image.id);
 		if (!reference) continue;
 		const extension = extensionFor(image.contentType, reference.partName);
 		const fileName = `${image.hash}.${extension}`;
 		const outputPath = join(outputDir, fileName);
 
 		if (!seenHashes.has(image.hash)) {
-			const bytes = await view.pkg.readBytes(reference.partName);
+			const bytes = await document.pkg.readBytes(reference.partName);
 			await Bun.write(outputPath, bytes);
 			seenHashes.add(image.hash);
 		}

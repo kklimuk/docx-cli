@@ -1,4 +1,4 @@
-import { saveDocView } from "@core";
+import { Comments, removeCommentMarkers } from "@core/comments";
 import { XmlNode } from "@core/parser";
 import { parseArgs } from "util";
 import {
@@ -10,11 +10,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	findCommentByNumericId,
-	findCommentParaId,
-	removeCommentMarkers,
-} from "./helpers";
 
 const HELP = `docx comments delete — remove one or more comments
 
@@ -110,14 +105,16 @@ export async function run(args: string[]): Promise<number> {
 		ordered.push(normalized);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
+
+	const comments = new Comments(document);
 
 	// Validate every id up-front so the batch is atomic — any unknown id
 	// aborts before we mutate.
 	for (const commentId of ordered) {
 		const numericId = commentId.slice(1);
-		if (!findCommentByNumericId(view, numericId)) {
+		if (!comments.findById(numericId)) {
 			return fail("COMMENT_NOT_FOUND", `Comment not found: ${commentId}`);
 		}
 	}
@@ -138,16 +135,19 @@ export async function run(args: string[]): Promise<number> {
 
 	for (const commentId of ordered) {
 		const numericId = commentId.slice(1);
-		const commentReference = findCommentByNumericId(view, numericId);
+		const commentReference = comments.findById(numericId);
 		if (!commentReference) continue; // already validated above
 
-		const paraId = findCommentParaId(view, commentId);
+		const paraId = comments.paraIdFor(commentId);
 
 		const commentIndex = commentReference.parent.indexOf(commentReference.node);
 		if (commentIndex !== -1) commentReference.parent.splice(commentIndex, 1);
 
-		if (paraId && view.commentsExtTree) {
-			const extRoot = XmlNode.findRoot(view.commentsExtTree, "w15:commentsEx");
+		if (paraId && document.comments?.extendedTree) {
+			const extRoot = XmlNode.findRoot(
+				document.comments?.extendedTree,
+				"w15:commentsEx",
+			);
 			if (extRoot) {
 				extRoot.children = extRoot.children.filter(
 					(child) =>
@@ -159,10 +159,10 @@ export async function run(args: string[]): Promise<number> {
 			}
 		}
 
-		removeCommentMarkers(view.documentTree, numericId);
+		removeCommentMarkers(document.documentTree, numericId);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	if (batchInput || ordered.length > 1) {
 		// Batch (or multiple --id): always print the removed ids.

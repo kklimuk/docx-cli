@@ -1,12 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
-import { openDocView, saveDocView } from "../../../src/core/ast/doc-view";
+
+import { Document } from "../../../src/core/ast/document";
 import { Paragraph } from "../../../src/core/blocks";
 import { w } from "../../../src/core/jsx";
-import { allocateNum } from "../../../src/core/numbering";
+
 import { type NullableXmlNode, XmlNode } from "../../../src/core/parser";
-import { ensureStyle } from "../../../src/core/styles";
 
 /**
  * Build tests/fixtures/task-lists-web.docx — exercises the OTHER GFM task-list
@@ -18,7 +18,7 @@ import { ensureStyle } from "../../../src/core/styles";
  * the empirical probes in /tmp/checkbox-track-probe/ for the data this was
  * derived from.
  *
- * Implementation note: we leverage `allocateNum(view, "bullet")` to provision
+ * Implementation note: we leverage `document.ensureNumbering().allocate("bullet")` to provision
  * the numbering.xml part + register the relationship, then mutate the
  * resulting abstractNum's level-0 lvlText to be Wingdings ☐. We don't expose
  * Wingdings-bullet as a public AbstractNumKind because we don't emit this
@@ -37,14 +37,14 @@ mkdirSync(dirname(out), { recursive: true });
 
 await cli("create", out, "--force", "--text", "Web-Checklist fixture");
 
-const view = await openDocView(out);
-ensureStyle(view, "ListParagraph");
-ensureStyle(view, "Heading2");
+const document = await Document.open(out);
+document.ensureStyles().ensureStyle("ListParagraph");
+document.ensureStyles().ensureStyle("Heading2");
 
-const numId = allocateNum(view, "bullet");
-rewriteLvl0AsWingdingsChecklist(view, numId);
+const numId = document.ensureNumbering().allocate("bullet");
+rewriteLvl0AsWingdingsChecklist(document, numId);
 
-const documentRoot = XmlNode.findRoot(view.documentTree, "w:document");
+const documentRoot = XmlNode.findRoot(document.documentTree, "w:document");
 if (!documentRoot) throw new Error("expected <w:document> root");
 const body = documentRoot.findChild("w:body");
 if (!body) throw new Error("expected <w:body> child");
@@ -64,7 +64,7 @@ const newChildren: XmlNode[] = [
 
 body.children = [...newChildren, sectPr];
 
-await saveDocView(view);
+await document.save();
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);
@@ -112,13 +112,10 @@ function webChecklistItem({
 
 /** Mutate the abstractNum referenced by `numId` so its level-0 bullet glyph
  * is Wingdings ☐ (U+F0A8) with the Wingdings font — the canonical Word-for-Web
- * Checklist bullet. Operates on the in-memory numberingTree; saveDocView will
+ * Checklist bullet. Operates on the in-memory numberingTree; Document.save will
  * persist. */
-function rewriteLvl0AsWingdingsChecklist(
-	v: Awaited<ReturnType<typeof openDocView>>,
-	numId: number,
-): void {
-	const tree = v.numberingTree;
+function rewriteLvl0AsWingdingsChecklist(v: Document, numId: number): void {
+	const tree = v.numbering?.tree;
 	if (!tree) throw new Error("numberingTree should exist after allocateNum");
 	const numberingRoot = XmlNode.findRoot(tree, "w:numbering");
 	if (!numberingRoot) throw new Error("expected <w:numbering> root");

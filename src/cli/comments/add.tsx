@@ -1,10 +1,19 @@
 import {
-	type DocView,
+	type Document,
 	type Locator,
 	locatorToBlockTarget,
 	parseLocator,
-	saveDocView,
+	XmlNode,
 } from "@core";
+import {
+	addCommentMarkersToParagraph,
+	addCommentRangeMarkers,
+	authorInitials,
+	CommentBody,
+	type CommentSpan,
+	generateParaId,
+	SpanOutOfRangeError,
+} from "@core/comments";
 import { type FindView, findTextSpans } from "@core/find";
 import { parseArgs } from "util";
 import {
@@ -18,17 +27,6 @@ import {
 	setVerboseAck,
 	writeStdout,
 } from "../respond";
-import {
-	addCommentMarkersToParagraph,
-	addCommentRangeMarkers,
-	authorInitials,
-	CommentBody,
-	type CommentSpan,
-	ensureCommentsPart,
-	generateParaId,
-	nextCommentId,
-	SpanOutOfRangeError,
-} from "./helpers";
 
 const HELP = `docx comments add — anchor a new comment to a locator or phrase
 
@@ -46,7 +44,7 @@ Anchor (one required, mutually exclusive):
                         tT:rRcC:pK      whole cell paragraph
                         tT:rRcC:pK:S-E  chars S..E of cell paragraph
   --anchor PHRASE     Find the phrase via the same matcher as \`docx find\`
-                      (default: accepted view, normalization on). The match
+                      (default: accepted document, normalization on). The match
                       is converted to a pN:S-E locator and used as the
                       anchor. Errors if the phrase matches more than once
                       without --occurrence.
@@ -66,9 +64,9 @@ View (for resolving --range offsets and --anchor matches):
   --current           Resolve offsets in the raw concatenation (with both
                       ins and del text). Use when offsets came from
                       \`docx find --current\` or hand-counted bytes.
-  --baseline          Resolve offsets in the pre-change view (skip ins/
+  --baseline          Resolve offsets in the pre-change document (skip ins/
                       moveTo).
-                      Default: accepted view (skip del/moveFrom) — matches
+                      Default: accepted document (skip del/moveFrom) — matches
                       \`find\`'s default. Mutually exclusive.
 
 General options:
@@ -206,8 +204,8 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	let rawEntries: RawEntry[];
 	if (batchInput) {
@@ -254,7 +252,7 @@ export async function run(args: string[]): Promise<number> {
 	try {
 		resolved = rawEntries.map((entry, index) =>
 			resolveEntry(
-				view,
+				document,
 				entry,
 				defaultAuthor,
 				index,
@@ -287,12 +285,12 @@ export async function run(args: string[]): Promise<number> {
 	const minted: Array<{ commentId: string; locator: string }> = [];
 
 	for (const entry of resolved) {
-		const numericId = nextCommentId(view);
+		const numericId = document.comments?.nextId() ?? "0";
 		const paraId = generateParaId();
 
 		try {
 			if (entry.kind === "single") {
-				const paragraphRef = await resolveBlockOrFail(view, entry.blockId);
+				const paragraphRef = await resolveBlockOrFail(document, entry.blockId);
 				if (typeof paragraphRef === "number") {
 					return paragraphRef;
 				}
@@ -303,9 +301,9 @@ export async function run(args: string[]): Promise<number> {
 					findView,
 				);
 			} else {
-				const startRef = await resolveBlockOrFail(view, entry.startBlockId);
+				const startRef = await resolveBlockOrFail(document, entry.startBlockId);
 				if (typeof startRef === "number") return startRef;
-				const endRef = await resolveBlockOrFail(view, entry.endBlockId);
+				const endRef = await resolveBlockOrFail(document, entry.endBlockId);
 				if (typeof endRef === "number") return endRef;
 				addCommentRangeMarkers(
 					startRef.node,
@@ -323,7 +321,9 @@ export async function run(args: string[]): Promise<number> {
 			throw error;
 		}
 
-		const commentsRoot = ensureCommentsPart(view);
+		const commentsView = document.ensureComments();
+		const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
+		if (!commentsRoot) throw new Error("expected <w:comments> root");
 		commentsRoot.children.push(
 			<CommentBody
 				options={{
@@ -343,7 +343,7 @@ export async function run(args: string[]): Promise<number> {
 		});
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	if (batchInput) {
 		// Batch: always print the minted ids — the agent can't reconstruct
@@ -373,7 +373,7 @@ export async function run(args: string[]): Promise<number> {
 }
 
 function resolveEntry(
-	view: DocView,
+	document: Document,
 	raw: RawEntry,
 	defaultAuthor: string,
 	entryIndex: number,
@@ -419,7 +419,7 @@ function resolveEntry(
 		);
 	}
 	return resolveAnchorEntry(
-		view,
+		document,
 		anchor,
 		occurrence,
 		occurrenceExplicit,
@@ -476,7 +476,7 @@ function resolveLocatorEntry(
 }
 
 function resolveAnchorEntry(
-	view: DocView,
+	document: Document,
 	anchor: string,
 	occurrence: number,
 	occurrenceExplicit: boolean,
@@ -485,7 +485,7 @@ function resolveAnchorEntry(
 	labelPrefix: string,
 	findView: FindView,
 ): ResolvedEntry {
-	const result = findTextSpans(view.doc, anchor, { view: findView });
+	const result = findTextSpans(document.body, anchor, { view: findView });
 	const matches = result.matches;
 	if (matches.length === 0) {
 		throw new EntryError(

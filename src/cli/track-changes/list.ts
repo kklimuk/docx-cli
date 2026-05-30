@@ -1,12 +1,8 @@
-import type {
-	SectionProperties,
-	TrackedChange,
-	TrackedChangeKind,
-} from "@core";
+import type { SectionProperties, TrackedChange } from "@core";
 import { flattenParagraphs, readSectionProperties } from "@core";
+import { TrackChanges } from "@core/track-changes";
 import { parseArgs } from "util";
 import { EXIT, fail, openOrFail, respond, writeStdout } from "../respond";
-import { collectTrackedChanges } from "./apply";
 
 const HELP = `docx track-changes list — inventory every revision wrapper
 
@@ -80,11 +76,11 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
 	const byId = new Map<string, TrackedChangeRecord>();
-	for (const paragraph of flattenParagraphs(view.doc.blocks)) {
+	for (const paragraph of flattenParagraphs(document.body.blocks)) {
 		for (const run of paragraph.runs) {
 			if (run.type !== "text" || !run.trackedChange) continue;
 			const change = run.trackedChange;
@@ -101,61 +97,34 @@ export async function run(args: string[]): Promise<number> {
 		}
 	}
 
-	// Empty wrappers (e.g. <w:ins> containing only <w:del>) carry no text runs
-	// so the loop above misses them. Pull them from the reference map so the
-	// inventory stays in sync with what `resolveTrackedChange` can address.
-	for (const [id, reference] of view.trackedChangeReferences) {
-		if (byId.has(id)) continue;
-		// Table-structural markers carry an explicit kind (their tag is
-		// ambiguous: a row revision is a <w:ins>/<w:del> like a run-level one).
-		const kind = reference.kind ?? trackedChangeKindForTag(reference.node.tag);
-		if (!kind) continue;
-		// For `checkboxToggle` the reference.node is the SDT; metadata lives on
-		// the inner `<w:ins>` (the new glyph). For other kinds the node IS the
-		// metadata-carrying element.
-		const metadataNode =
-			kind === "checkboxToggle"
-				? (reference.node.findChild("w:sdtContent")?.findChild("w:ins") ??
-					reference.node)
-				: reference.node;
-		const record: TrackedChangeRecord = {
-			id,
-			kind,
-			author: metadataNode.getAttribute("w:author") ?? "",
-			date: metadataNode.getAttribute("w:date") ?? "",
-			revisionId: metadataNode.getAttribute("w:id") ?? "",
-			blockId: reference.blockId,
-			text: "",
-		};
-		if (kind === "sectPrChange") {
-			// Live siblings (parent array) carry the post-edit values; the
-			// snapshot inside the change marker carries the prior values.
-			const liveSiblings = reference.parent.filter(
-				(child) => child !== reference.node,
-			);
-			record.current = readSectionProperties(liveSiblings);
-			const snapshot = reference.node.findChild("w:sectPr");
-			record.prior = snapshot ? readSectionProperties(snapshot.children) : {};
-		}
-		byId.set(id, record);
-	}
-
-	// Body-only note revisions (footnote/endnote edits) aren't reachable from
-	// the AST or the reference map (both walk document.xml only). Pull them
-	// from the apply walker so `list` and `apply --at tcN` agree. Body-side
-	// revisions paired to a doc-body reference are hidden by that walker, so
-	// only standalone body-only edits show up here.
-	for (const change of collectTrackedChanges(view)) {
+	// The AST loop above only sees text-bearing run-level changes. Everything
+	// else — empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
+	// table-property revisions, checkbox toggles, and standalone note-body
+	// edits — comes from the single tracked-change inventory the reader built
+	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
+	// author, date and revisionId are already resolved on each record.
+	for (const change of new TrackChanges(document).list()) {
 		if (byId.has(change.id)) continue;
-		byId.set(change.id, {
+		const record: TrackedChangeRecord = {
 			id: change.id,
 			kind: change.kind,
 			author: change.author,
 			date: change.date,
-			revisionId: change.node.getAttribute("w:id") ?? "",
-			blockId: "",
+			revisionId: change.revisionId,
+			blockId: change.blockId,
 			text: "",
-		});
+		};
+		if (change.kind === "sectPrChange") {
+			// Live siblings (parent array) carry the post-edit values; the
+			// snapshot inside the change marker carries the prior values.
+			const liveSiblings = change.parent.filter(
+				(child) => child !== change.node,
+			);
+			record.current = readSectionProperties(liveSiblings);
+			const snapshot = change.node.findChild("w:sectPr");
+			record.prior = snapshot ? readSectionProperties(snapshot.children) : {};
+		}
+		byId.set(change.id, record);
 	}
 
 	const sorted = [...byId.values()].sort(
@@ -169,13 +138,4 @@ export async function run(args: string[]): Promise<number> {
 function trackedChangeIndex(id: string): number {
 	const match = id.match(/^tc(\d+)$/);
 	return match?.[1] ? Number(match[1]) : 0;
-}
-
-function trackedChangeKindForTag(tag: string): TrackedChangeKind | null {
-	if (tag === "w:ins") return "ins";
-	if (tag === "w:del") return "del";
-	if (tag === "w:moveFrom") return "moveFrom";
-	if (tag === "w:moveTo") return "moveTo";
-	if (tag === "w:sectPrChange") return "sectPrChange";
-	return null;
 }

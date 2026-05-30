@@ -1,17 +1,5 @@
-import {
-	addHyperlinkRelationship,
-	isTrackChangesEnabled,
-	resolveAuthor,
-	resolveDate,
-	saveDocView,
-} from "@core";
-import { XmlNode } from "@core/parser";
+import { countHyperlinkUsages, Hyperlinks } from "@core/hyperlinks";
 import { parseArgs } from "util";
-import {
-	emitAuditComment,
-	findContainingParagraph,
-	findElementOffsetsInParagraph,
-} from "../comments/helpers";
 import {
 	EXIT,
 	fail,
@@ -89,30 +77,21 @@ export async function run(args: string[]): Promise<number> {
 	const newUrl = parsed.values.with as string | undefined;
 	if (!newUrl) return fail("USAGE", "Missing --with URL", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = view.hyperlinkById.get(targetId);
+	const reference = document.body.hyperlinkById.get(targetId);
 	if (!reference) {
 		return fail("HYPERLINK_NOT_FOUND", `Hyperlink not found: ${targetId}`);
 	}
 
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (!relationships) {
-		return fail("UNHANDLED", "Missing <Relationships> root in document rels");
-	}
-
 	const existingId = reference.relationshipId;
 	const oldUrl = existingId
-		? view.hyperlinksByRelationshipId.get(existingId)?.url
+		? document.relationships.hyperlinksByRelationshipId.get(existingId)?.url
 		: undefined;
 	const sharedCount = existingId
-		? countHyperlinkUsages(view.documentTree, existingId)
+		? countHyperlinkUsages(document.documentTree, existingId)
 		: 0;
-	const willAllocateNew = !existingId || sharedCount > 1;
 
 	const outputPath = parsed.values.output as string | undefined;
 
@@ -131,85 +110,19 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	if (willAllocateNew) {
-		const newRelationshipId = addHyperlinkRelationship(relationships, newUrl);
-		reference.node.setAttribute("r:id", newRelationshipId);
-		reference.relationshipId = newRelationshipId;
-		view.hyperlinksByRelationshipId.set(newRelationshipId, { url: newUrl });
-	} else if (existingId) {
-		updateRelationshipTarget(relationships, existingId, newUrl);
-		view.hyperlinksByRelationshipId.set(existingId, { url: newUrl });
-	}
+	const { from } = new Hyperlinks(document).replace(targetId, newUrl, {
+		author: parsed.values.author as string | undefined,
+	});
 
-	if (isTrackChangesEnabled(view)) {
-		const paragraph = findContainingParagraph(
-			view.documentTree,
-			reference.node,
-		);
-		const offsets = paragraph
-			? findElementOffsetsInParagraph(paragraph, reference.node)
-			: null;
-		if (paragraph && offsets) {
-			emitAuditComment(
-				view,
-				{ kind: "span", paragraph, span: offsets },
-				{
-					body: `[docx-cli] hyperlink target changed: ${oldUrl ?? "(none)"} → ${newUrl}`,
-					author: resolveAuthor(parsed.values.author as string | undefined),
-					date: resolveDate(),
-				},
-			);
-		}
-	}
-
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,
 		operation: "hyperlinks.replace",
 		path: outputPath ?? path,
 		hyperlinkId: targetId,
-		from: oldUrl,
+		from,
 		to: newUrl,
 	});
 	return EXIT.OK;
-}
-
-function updateRelationshipTarget(
-	relationships: XmlNode,
-	relationshipId: string,
-	newTarget: string,
-): void {
-	for (const child of relationships.children) {
-		if (child.tag !== "Relationship") continue;
-		if (child.getAttribute("Id") === relationshipId) {
-			child.setAttribute("Target", newTarget);
-			return;
-		}
-	}
-}
-
-function countHyperlinkUsages(
-	documentTree: XmlNode[],
-	relationshipId: string,
-): number {
-	let count = 0;
-	for (const root of documentTree) {
-		count += countInNode(root, relationshipId);
-	}
-	return count;
-}
-
-function countInNode(node: XmlNode, relationshipId: string): number {
-	let count = 0;
-	if (
-		node.tag === "w:hyperlink" &&
-		node.getAttribute("r:id") === relationshipId
-	) {
-		count++;
-	}
-	for (const child of node.children) {
-		count += countInNode(child, relationshipId);
-	}
-	return count;
 }

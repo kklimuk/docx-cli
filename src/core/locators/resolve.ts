@@ -1,16 +1,11 @@
-import type { BlockReference, DocView } from "../ast";
-import type { XmlNode } from "../parser";
+import type { BlockReference, Document } from "../ast";
+import {
+	type BlockRangeReference,
+	LocatorResolveError,
+} from "../ast/document/body";
 import { type Locator, LocatorParseError, parseLocator } from "./parse";
 
-export class LocatorResolveError extends Error {
-	constructor(
-		public locator: Locator,
-		message: string,
-	) {
-		super(message);
-		this.name = "LocatorResolveError";
-	}
-}
+export { type BlockRangeReference, LocatorResolveError };
 
 export type BlockTarget = {
 	blockId: string;
@@ -42,57 +37,22 @@ export function locatorToBlockTarget(locator: Locator): BlockTarget | null {
 	return null;
 }
 
-export function resolveBlock(view: DocView, blockId: string): BlockReference {
-	const reference = view.blockReferences.get(blockId);
-	if (!reference) {
-		throw new LocatorResolveError(
-			{ kind: "block", blockId },
-			`Block not found: ${blockId}`,
-		);
-	}
-	return reference;
+export function resolveBlock(
+	document: Document,
+	blockId: string,
+): BlockReference {
+	return document.body.resolveBlock(blockId);
 }
-
-/** A contiguous span of blocks resolved from a `pN-pM` locator. The two
- * endpoints MUST share a parent (both top-level body children, or both
- * inside the same cell) — cross-parent ranges aren't meaningful. */
-export type BlockRangeReference = {
-	parent: XmlNode[];
-	startIndex: number;
-	endIndex: number;
-};
 
 /** Resolve a `pN-pM` block-range locator. Validates that the two endpoints
  * live under the same parent array (so they can be spliced as a unit) and
  * that the start index is ≤ the end index in document order. */
 export function resolveBlockRange(
-	view: DocView,
+	document: Document,
 	startBlockId: string,
 	endBlockId: string,
 ): BlockRangeReference {
-	const start = resolveBlock(view, startBlockId);
-	const end = resolveBlock(view, endBlockId);
-	if (start.parent !== end.parent) {
-		throw new LocatorResolveError(
-			{ kind: "blockRange", startBlockId, endBlockId },
-			`Range endpoints ${startBlockId} and ${endBlockId} live in different containers — they must be siblings`,
-		);
-	}
-	const startIndex = start.parent.indexOf(start.node);
-	const endIndex = end.parent.indexOf(end.node);
-	if (startIndex === -1 || endIndex === -1) {
-		throw new LocatorResolveError(
-			{ kind: "blockRange", startBlockId, endBlockId },
-			"Range endpoint became detached from its parent (stale block reference)",
-		);
-	}
-	if (endIndex < startIndex) {
-		throw new LocatorResolveError(
-			{ kind: "blockRange", startBlockId, endBlockId },
-			`Range ${startBlockId}-${endBlockId} runs backwards — ${endBlockId} appears before ${startBlockId} in document order`,
-		);
-	}
-	return { parent: start.parent, startIndex, endIndex };
+	return document.body.resolveBlockRange(startBlockId, endBlockId);
 }
 
 /** Parse an `--at`-shaped string for a table-scoped verb. Returns the fully

@@ -1,39 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { DocView } from "@core/ast/doc-view";
-import { buildDoc } from "@core/ast/read";
-import type { Doc, Paragraph } from "@core/ast/types";
-import { XmlNode } from "@core/parser";
+import { Document } from "@core/ast/document";
+import type { Body } from "@core/ast/document/body";
+import type { Paragraph } from "@core/ast/types";
 
-function buildSyntheticView(bodyXml: string): Doc {
-	const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+function buildSyntheticView(bodyXml: string): Body {
+	return Document.fromXml({
+		documentXml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>${bodyXml}<w:sectPr/></w:body>
-</w:document>`;
-	const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
-	const typesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`;
-
-	const view: DocView = {
-		pkg: undefined as unknown as DocView["pkg"],
-		documentTree: XmlNode.parse(documentXml),
-		relationshipsTree: XmlNode.parse(relsXml),
-		contentTypesTree: XmlNode.parse(typesXml),
-		doc: undefined as unknown as Doc,
-		blockReferences: new Map(),
-		commentReferences: new Map(),
-		imagesByRelationshipId: new Map(),
-		imageById: new Map(),
-		hyperlinksByRelationshipId: new Map(),
-		hyperlinkById: new Map(),
-		trackedChangeReferences: new Map(),
-		equationReferences: new Map(),
-	};
-	view.doc = buildDoc(view, "synthetic.docx");
-	return view.doc;
+</w:document>`,
+	}).body;
 }
 
-function firstParagraph(doc: Doc): Paragraph {
+function firstParagraph(doc: Body): Paragraph {
 	const block = doc.blocks[0];
 	if (!block || block.type !== "paragraph") {
 		throw new Error("expected paragraph as first block");

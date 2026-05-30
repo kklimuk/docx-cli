@@ -1,7 +1,6 @@
-import type { DocView } from "../ast/doc-view";
+import type { Document } from "../ast/document";
 import { w } from "../jsx";
 import type { XmlNode } from "../parser";
-import { ensureCustomStyle, ensureStyle } from "../styles";
 
 /** Provision the styles a code block needs in `styles.xml`. Always defines
  *  `Code` (character) and `CodeBlock` (paragraph) from the baseline catalog.
@@ -11,14 +10,16 @@ import { ensureCustomStyle, ensureStyle } from "../styles";
  *  Word/LibreOffice see a normal paragraph style that inherits from CodeBlock
  *  — same rendering, plus a Styles-pane entry that lists the language. */
 export function ensureCodeBlockStyles(
-	view: DocView,
+	document: Document,
 	language: string | undefined,
 ): void {
-	ensureStyle(view, "Code");
-	ensureStyle(view, "CodeBlock");
+	document.ensureStyles().ensureStyle("Code");
+	document.ensureStyles().ensureStyle("CodeBlock");
 	if (!language) return;
 	const styleId = codeBlockStyleIdFor(language);
-	ensureCustomStyle(view, styleId, () => buildLanguageStyle(styleId, language));
+	document
+		.ensureStyles()
+		.ensureCustomStyle(styleId, () => buildLanguageStyle(styleId, language));
 }
 
 function buildLanguageStyle(styleId: string, language: string): XmlNode {

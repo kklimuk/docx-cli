@@ -65,9 +65,9 @@ type EmittableTextFormatting = Pick<
 
 /** A paragraph that belongs to a numbered or bulleted list. Sets pStyle to
  * "ListParagraph" (the canonical Word style for list items — caller is
- * responsible for ensuring it via `ensureStyle(view, "ListParagraph")`) and
+ * responsible for ensuring it via `view.ensureStyles().ensureStyle("ListParagraph")`) and
  * emits the `<w:numPr>` reference. `numId` must come from
- * `allocateNum(view, kind)` in [src/core/numbering.tsx]. */
+ * `view.ensureNumbering().allocate(kind)` in [src/core/numbering.tsx]. */
 export function ListParagraph({
 	numId,
 	level,

@@ -1,57 +1,92 @@
-import type { DocView } from "../ast/doc-view";
+import type { Document } from "../ast/document";
+import { iterateBlocks } from "../ast/document/body";
+import { IMAGE_RELATIONSHIP_TYPE } from "../ast/document/relationships";
 import { a, pic, w, wp } from "../jsx";
-import { ensureContentTypeDefault, nextRelationshipId } from "../package/parts";
-import { XmlNode } from "../parser";
+import type { XmlNode } from "../parser";
 import type { ImageSource } from "./source";
 
-/** Write image bytes into `word/media/imageN.ext`, mint an image relationship,
- * and register the extension's content-type default. Returns the new rId for
- * the `<Image>` blip to reference. An *operation*, not a component — it mutates
- * package state (writes a part, pushes a Relationship, edits content-types). */
-export function addImagePart(
-	view: DocView,
-	source: ImageSource,
-): { relationshipId: string; partName: string } {
-	const partName = nextMediaPartName(view.pkg.listParts(), source.extension);
-	view.pkg.writeBytes(partName, source.bytes);
+/** Cross-cutting lens over the document's inline images: walks the document
+ * tree for image runs, manages the media parts + relationships those runs
+ * reference, and enriches AST image runs with content hashes. Constructed
+ * at call sites with `new Images(document)`; holds only a back-reference. */
+export class Images {
+	constructor(private document: Document) {}
 
-	const relationships = XmlNode.findRoot(
-		view.relationshipsTree,
-		"Relationships",
-	);
-	if (!relationships) {
-		throw new Error("Missing <Relationships> root in document rels");
+	/** Every inline-picture run in document order — the same order `read`
+	 * assigns `imgN` ids (only drawings whose blip resolves to a known image
+	 * relationship count, matching `readImageFromDrawing`). Callers index by
+	 * ordinal (`imgN`), filter by `relationshipId`, or splice via `parent`. */
+	list(): ImageRunHit[] {
+		const hits: ImageRunHit[] = [];
+		const relationships = this.document.relationships;
+		function walk(nodes: XmlNode[]): void {
+			for (const node of nodes) {
+				if (node.tag === "w:r") {
+					for (const child of node.children) {
+						if (child.tag !== "w:drawing") continue;
+						const relationshipId = drawingRelationshipId(child);
+						if (
+							relationshipId &&
+							relationships.imagesByRelationshipId.has(relationshipId)
+						) {
+							hits.push({ run: node, parent: nodes, relationshipId });
+						}
+					}
+				}
+				if (node.children.length > 0) walk(node.children);
+			}
+		}
+		walk(this.document.documentTree);
+		return hits;
 	}
-	const relationshipId = nextRelationshipId(relationships);
-	relationships.children.push(
-		new XmlNode("Relationship", {
-			Id: relationshipId,
-			Type: IMAGE_RELATIONSHIP_TYPE,
-			Target: partName.slice("word/".length),
-		}),
-	);
 
-	ensureContentTypeDefault(
-		view.contentTypesTree,
-		source.extension,
-		source.mimeType,
-	);
-	view.imagesByRelationshipId.set(relationshipId, {
-		partName,
-		contentType: source.mimeType,
-	});
-	return { relationshipId, partName };
-}
+	/** Write image bytes into `word/media/imageN.ext`, mint an image
+	 * relationship, and register the extension's content-type default.
+	 * Returns the rId + partName so the caller's `<Image>` blip can reference
+	 * the new relationship. An *operation*, not a component — mutates package
+	 * state (writes a part, pushes a Relationship, edits content-types). */
+	add(source: ImageSource): { relationshipId: string; partName: string } {
+		const partName = nextMediaPartName(
+			this.document.pkg.listParts(),
+			source.extension,
+		);
+		this.document.pkg.writeBytes(partName, source.bytes);
 
-function nextMediaPartName(parts: string[], extension: string): string {
-	let highest = 0;
-	for (const part of parts) {
-		const match = part.match(/^word\/media\/image(\d+)\./);
-		if (!match) continue;
-		const index = Number(match[1]);
-		if (Number.isFinite(index) && index > highest) highest = index;
+		const relationshipId = this.document.relationships.add(
+			IMAGE_RELATIONSHIP_TYPE,
+			partName.slice("word/".length),
+		);
+		this.document.contentTypes.registerExtension(
+			source.extension,
+			source.mimeType,
+		);
+		this.document.relationships.imagesByRelationshipId.set(relationshipId, {
+			partName,
+			contentType: source.mimeType,
+		});
+		return { relationshipId, partName };
 	}
-	return `word/media/image${highest + 1}.${extension}`;
+
+	/** Walk every `ImageRun` in the body, fetch its underlying media bytes,
+	 * compute the sha256, and write it back into the run's `hash` field.
+	 * Idempotent — runs that already have a hash are skipped, and identical
+	 * media (shared part) is hashed once and reused. Used by `images list` /
+	 * `images extract` / `read --ast` where the manifest needs content hashes. */
+	async enrichHashes(): Promise<void> {
+		const seen = new Set<string>();
+		for (const block of iterateBlocks(this.document.body.blocks)) {
+			if (block.type !== "paragraph") continue;
+			for (const run of block.runs) {
+				if (run.type !== "image" || run.hash) continue;
+				if (seen.has(run.id)) continue;
+				seen.add(run.id);
+				const reference = this.document.body.imageById.get(run.id);
+				if (!reference) continue;
+				const bytes = await this.document.pkg.readBytes(reference.partName);
+				run.hash = await sha256Hex(bytes);
+			}
+		}
+	}
 }
 
 /** A run wrapping a single inline picture. `a:`/`pic:` namespaces are declared
@@ -139,31 +174,15 @@ export type ImageRunHit = {
 	relationshipId: string;
 };
 
-/** Every inline-picture run in document order — the same order `read` assigns
- * `imgN` ids (only drawings whose blip resolves to a known image relationship
- * count, matching `readImageFromDrawing`). Callers index by ordinal (`imgN`),
- * filter by `relationshipId`, or splice via `parent`. */
-export function collectImageRuns(view: DocView): ImageRunHit[] {
-	const hits: ImageRunHit[] = [];
-	function walk(nodes: XmlNode[]): void {
-		for (const node of nodes) {
-			if (node.tag === "w:r") {
-				for (const child of node.children) {
-					if (child.tag !== "w:drawing") continue;
-					const relationshipId = drawingRelationshipId(child);
-					if (
-						relationshipId &&
-						view.imagesByRelationshipId.has(relationshipId)
-					) {
-						hits.push({ run: node, parent: nodes, relationshipId });
-					}
-				}
-			}
-			if (node.children.length > 0) walk(node.children);
-		}
+function nextMediaPartName(parts: string[], extension: string): string {
+	let highest = 0;
+	for (const part of parts) {
+		const match = part.match(/^word\/media\/image(\d+)\./);
+		if (!match) continue;
+		const index = Number(match[1]);
+		if (Number.isFinite(index) && index > highest) highest = index;
 	}
-	walk(view.documentTree);
-	return hits;
+	return `word/media/image${highest + 1}.${extension}`;
 }
 
 function drawingRelationshipId(drawing: XmlNode): string | undefined {
@@ -174,8 +193,20 @@ function drawingRelationshipId(drawing: XmlNode): string | undefined {
 	);
 }
 
-const IMAGE_RELATIONSHIP_TYPE =
-	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+	const owned = new Uint8Array(bytes.byteLength);
+	owned.set(bytes);
+	const buffer = await crypto.subtle.digest("SHA-256", owned);
+	const document = new Uint8Array(buffer);
+	let hex = "";
+	for (let index = 0; index < document.length; index++) {
+		const byte = document[index];
+		if (byte === undefined) continue;
+		hex += byte.toString(16).padStart(2, "0");
+	}
+	return hex;
+}
+
 const DRAWINGML_PICTURE_URI =
 	"http://schemas.openxmlformats.org/drawingml/2006/picture";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";

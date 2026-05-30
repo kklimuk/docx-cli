@@ -1,14 +1,5 @@
-import {
-	convertTextToDelText,
-	Del,
-	type DocView,
-	isRelationshipReferenced,
-	isTrackChangesEnabled,
-	mintRevisionMeta,
-	removeRelationship,
-	saveDocView,
-} from "@core";
-import { collectImageRuns } from "@core/image";
+import { convertTextToDelText, Del, type Document, TrackChanges } from "@core";
+import { Images } from "@core/image";
 import { parseArgs } from "util";
 import {
 	EXIT,
@@ -84,10 +75,10 @@ export async function run(args: string[]): Promise<number> {
 	const targetId = parsed.values.at as string | undefined;
 	if (!targetId) return fail("USAGE", "Missing --at IMG_ID", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = view.imageById.get(targetId);
+	const reference = document.body.imageById.get(targetId);
 	if (!reference) {
 		return fail("IMAGE_NOT_FOUND", `Image not found: ${targetId}`);
 	}
@@ -95,7 +86,7 @@ export async function run(args: string[]): Promise<number> {
 	// `imgN` is positional in document order; collectImageRuns yields hits in the
 	// same order `read` assigns ids, so hit[N] is imgN (two ids can share one
 	// media part / relationship, so we resolve the occurrence, not just the rId).
-	const occurrences = collectImageRuns(view);
+	const occurrences = new Images(document).list();
 	const ordinal = imageOrdinal(targetId);
 	const occurrence = ordinal === null ? undefined : occurrences[ordinal];
 	if (!occurrence) {
@@ -129,11 +120,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	let pruned = false;
-	if (isTrackChangesEnabled(view)) {
+	if (document.isTrackChangesEnabled()) {
 		// Real tracked deletion: wrap the run in <w:del>. Keep the media part —
 		// rejecting the change restores the image, so pruning now would orphan it.
-		const meta = mintRevisionMeta(
-			view,
+		const meta = new TrackChanges(document).mintMeta(
 			parsed.values.author as string | undefined,
 		);
 		const deleted = (
@@ -142,11 +132,11 @@ export async function run(args: string[]): Promise<number> {
 		occurrence.parent.splice(runIndex, 1, deleted);
 	} else {
 		occurrence.parent.splice(runIndex, 1);
-		view.imageById.delete(targetId);
-		pruned = pruneIfUnreferenced(view, occurrence.relationshipId);
+		document.body.imageById.delete(targetId);
+		pruned = pruneIfUnreferenced(document, occurrence.relationshipId);
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,
@@ -170,14 +160,19 @@ function imageOrdinal(id: string): number | null {
  * orphan a reference we don't model (a VML `<v:imagedata>` fallback sharing the
  * rId, an OLE object, a `<w:background>`). Better to leave a harmless orphan
  * part than to dangle an rId and corrupt the file. Returns whether we pruned. */
-function pruneIfUnreferenced(view: DocView, relationshipId: string): boolean {
-	if (isRelationshipReferenced(view.documentTree, relationshipId)) return false;
-
-	const reference = view.imagesByRelationshipId.get(relationshipId);
-	removeRelationship(view.relationshipsTree, relationshipId);
-	if (reference && view.pkg.hasPart(reference.partName)) {
-		view.pkg.deletePart(reference.partName);
+function pruneIfUnreferenced(
+	document: Document,
+	relationshipId: string,
+): boolean {
+	const reference =
+		document.relationships.imagesByRelationshipId.get(relationshipId);
+	const pruned = document.relationships.removeIfUnreferenced(
+		relationshipId,
+		document.documentTree,
+	);
+	if (!pruned) return false;
+	if (reference && document.pkg.hasPart(reference.partName)) {
+		document.pkg.deletePart(reference.partName);
 	}
-	view.imagesByRelationshipId.delete(relationshipId);
 	return true;
 }

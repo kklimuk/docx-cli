@@ -77,8 +77,8 @@ beforeAll(async () => {
 		await Bun.write(docPath, Bun.file(`tests/fixtures/${fixture}`));
 		// Force a write through our serializer by inserting a probe paragraph.
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as { blocks: Array<{ id: string; type: string }> };
-		const lastParagraph = [...doc.blocks]
+		const body = read.parsed as { blocks: Array<{ id: string; type: string }> };
+		const lastParagraph = [...body.blocks]
 			.reverse()
 			.find((block) => block.type === "paragraph");
 		await runCli(

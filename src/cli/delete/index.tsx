@@ -1,30 +1,24 @@
 import {
 	type BlockRangeReference,
 	type BlockReference,
-	convertTextToDelText,
-	createRevisionAllocator,
-	Del,
-	type DocView,
-	isTrackChangesEnabled,
+	type Document,
 	isTrailingSectPr,
 	LocatorParseError,
 	LocatorResolveError,
-	markParagraphMarkAs,
 	parseLocator,
 	removeInlineSectPr,
 	resolveAuthor,
 	resolveBlockRange,
 	resolveDate,
-	saveDocView,
-	type TrackedMeta,
+	TrackChanges,
 } from "@core";
+import { Comments, findContainingParagraph } from "@core/comments";
 import { XmlNode } from "@core/parser";
 import {
 	applyTrackedRangeDelete,
 	applyUntrackedRangeDelete,
 } from "@core/track-changes/replace";
 import { parseArgs } from "util";
-import { emitAuditComment, findContainingParagraph } from "../comments/helpers";
 import { rejectNonParagraphTrackedRange } from "../range-guard";
 import {
 	EXIT,
@@ -76,23 +70,23 @@ export async function run(args: string[]): Promise<number> {
 	const opts = await parseAndValidateOptions(args);
 	if (typeof opts === "number") return opts;
 
-	const view = await openOrFail(opts.filePath);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(opts.filePath);
+	if (typeof document === "number") return document;
 
 	// `pN-pM` range delete. Resolves both endpoints, validates same-parent,
 	// then either splices (untracked) or wraps content+marks for the canonical
 	// Word-shaped tracked-delete (per `/tmp/range-probe/delete-4.docx`).
 	if (isBlockRangeLocator(opts.locator)) {
-		return commitRangeDelete(view, opts);
+		return commitRangeDelete(document, opts);
 	}
 
-	const blockRef = await resolveBlockOrFail(view, opts.locator);
+	const blockRef = await resolveBlockOrFail(document, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
 	if (blockRef.node.tag === "w:sectPr") {
-		return commitSectionDelete(view, blockRef, opts);
+		return commitSectionDelete(document, blockRef, opts);
 	}
-	return commitBlockDelete(view, blockRef, opts);
+	return commitBlockDelete(document, blockRef, opts);
 }
 
 function isBlockRangeLocator(locator: string): boolean {
@@ -100,7 +94,7 @@ function isBlockRangeLocator(locator: string): boolean {
 }
 
 async function commitRangeDelete(
-	view: DocView,
+	document: Document,
 	opts: ValidatedOptions,
 ): Promise<number> {
 	let rangeRef: BlockRangeReference;
@@ -110,7 +104,7 @@ async function commitRangeDelete(
 			return fail("INVALID_LOCATOR", `Expected pN-pM, got ${opts.locator}`);
 		}
 		rangeRef = resolveBlockRange(
-			view,
+			document,
 			locator.startBlockId,
 			locator.endBlockId,
 		);
@@ -124,7 +118,7 @@ async function commitRangeDelete(
 		throw err;
 	}
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	if (tracked) {
 		const guard = await rejectNonParagraphTrackedRange(rangeRef, opts.locator);
 		if (guard !== null) return guard;
@@ -134,7 +128,7 @@ async function commitRangeDelete(
 
 	if (tracked) {
 		applyTrackedRangeDelete(
-			view,
+			document,
 			rangeRef.parent,
 			rangeRef.startIndex,
 			rangeRef.endIndex,
@@ -148,7 +142,7 @@ async function commitRangeDelete(
 		);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitDeleteAck(opts);
 }
 
@@ -208,11 +202,11 @@ type ValidatedOptions = {
 };
 
 async function commitSectionDelete(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	opts: ValidatedOptions,
 ): Promise<number> {
-	const bodyChildren = findBodyChildren(view);
+	const bodyChildren = findBodyChildren(document);
 	if (bodyChildren && isTrailingSectPr(bodyChildren, blockRef.parent)) {
 		return fail(
 			"USAGE",
@@ -223,9 +217,9 @@ async function commitSectionDelete(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	const trackingOn = isTrackChangesEnabled(view);
+	const trackingOn = document.isTrackChangesEnabled();
 	const owningParagraph = trackingOn
-		? findContainingParagraph(view.documentTree, blockRef.node)
+		? findContainingParagraph(document.documentTree, blockRef.node)
 		: null;
 	const anchorRun =
 		owningParagraph?.children.find((child) => child.tag === "w:r") ?? null;
@@ -233,8 +227,7 @@ async function commitSectionDelete(
 	removeInlineSectPr(blockRef.node, blockRef.parent);
 
 	if (trackingOn && owningParagraph && anchorRun) {
-		emitAuditComment(
-			view,
+		new Comments(document).addAudit(
 			{ kind: "run", paragraph: owningParagraph, run: anchorRun },
 			{
 				body: `[docx-cli] section break removed (${opts.locator})`,
@@ -244,12 +237,12 @@ async function commitSectionDelete(
 		);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitDeleteAck(opts);
 }
 
 async function commitBlockDelete(
-	view: DocView,
+	document: Document,
 	blockRef: BlockReference,
 	opts: ValidatedOptions,
 ): Promise<number> {
@@ -263,7 +256,7 @@ async function commitBlockDelete(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	if (isTrackChangesEnabled(view)) {
+	if (document.isTrackChangesEnabled()) {
 		if (blockRef.node.tag !== "w:p") {
 			return fail(
 				"TRACKED_CHANGE_CONFLICT",
@@ -271,12 +264,12 @@ async function commitBlockDelete(
 				"Use `docx track-changes off` first, or delete table contents row-by-row.",
 			);
 		}
-		applyTrackedDeletion(view, blockRef.node, opts.authorFlag);
+		new TrackChanges(document).applyDeletion(blockRef.node, opts.authorFlag);
 	} else {
 		blockRef.parent.splice(targetIndex, 1);
 	}
 
-	await saveDocView(view, opts.outputPath);
+	await document.save(opts.outputPath);
 	return emitDeleteAck(opts);
 }
 
@@ -302,59 +295,10 @@ async function emitDeleteAck(opts: ValidatedOptions): Promise<number> {
 	return EXIT.OK;
 }
 
-function findBodyChildren(view: DocView): XmlNode[] | null {
-	const root = XmlNode.findRoot(view.documentTree, "w:document");
+function findBodyChildren(document: Document): XmlNode[] | null {
+	const root = XmlNode.findRoot(document.documentTree, "w:document");
 	if (!root) return null;
 	const body = root.findChild("w:body");
 	if (!body) return null;
 	return body.children;
 }
-
-function applyTrackedDeletion(
-	view: DocView,
-	paragraph: XmlNode,
-	authorFlag: string | undefined,
-): void {
-	const allocator = createRevisionAllocator(view);
-	const baseMeta = { author: resolveAuthor(authorFlag), date: resolveDate() };
-	const mintMeta = (): TrackedMeta => ({
-		...baseMeta,
-		revisionId: allocator.next(),
-	});
-
-	// Wrap each contiguous span of trackable run-level children in `<w:del>`.
-	// `<w:r>` text runs get their `<w:t>` rewritten as `<w:delText>` (per
-	// ECMA-376 §17.13.5.14). Equation siblings (`<m:oMath>`, `<m:oMathPara>`)
-	// don't have a `<w:t>`/`<w:delText>` distinction — they sit inside the
-	// `<w:del>` wrapper unchanged; Word's revision model treats the whole
-	// element as deleted content.
-	const newChildren: XmlNode[] = [];
-	let runBuffer: XmlNode[] = [];
-	const flush = (): void => {
-		if (runBuffer.length === 0) return;
-		const converted = runBuffer.map((child) =>
-			child.tag === "w:r" ? convertTextToDelText(child) : child,
-		);
-		newChildren.push(<Del meta={mintMeta()}>{converted}</Del>);
-		runBuffer = [];
-	};
-	for (const child of paragraph.children) {
-		if (TRACKABLE_DELETE_CHILDREN.has(child.tag)) {
-			runBuffer.push(child);
-			continue;
-		}
-		flush();
-		newChildren.push(child);
-	}
-	flush();
-	paragraph.children = newChildren;
-
-	// Mark the paragraph mark itself as deleted so accepting changes also removes
-	// the paragraph break, leaving no orphan empty paragraph.
-	markParagraphMarkAs(paragraph, "del", mintMeta());
-}
-
-/** Paragraph children that get wrapped in `<w:del>` when the paragraph
- *  itself is being tracked-deleted. Mirror of `TRACKABLE_PARAGRAPH_CHILDREN`
- *  in [insert/index.tsx](../insert/index.tsx). */
-const TRACKABLE_DELETE_CHILDREN = new Set(["w:r", "m:oMath", "m:oMathPara"]);

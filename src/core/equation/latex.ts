@@ -1,7 +1,6 @@
-/** LaTeX text- and token-shaping helpers used by the OMML→LaTeX walker, and
- *  destined to be reused by the LaTeX→OMML emitter (Phase 2) — the
- *  Unicode↔command map and the special-char escape rules are inverted there
- *  but built from the same tables.
+/** LaTeX text- and token-shaping helpers shared by the OMML→LaTeX walker and
+ *  the LaTeX→OMML emitter — the Unicode↔command map and the special-char
+ *  escape rules are inverted on the write side but built from the same tables.
  *
  *  The maps are deliberately keyed by Unicode codepoint so we can hand-author
  *  them without worrying about parsing complications. We accept that some

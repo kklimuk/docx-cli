@@ -1,33 +1,33 @@
 export {
 	type BlockReference,
+	Body,
 	type CommentReference,
-	type DocView,
-	enrichImageHashes,
+	Document,
+	type EquationReference,
 	findBlockById,
 	flattenImageRuns,
 	flattenParagraphs,
 	type HyperlinkReference,
 	type ImageReference,
-	openDocView,
+	iterateBlocks,
 	paragraphText,
 	paragraphTextAccepted,
 	paragraphTextBaseline,
-	saveDocView,
 	type TrackedChangeReference,
 } from "./ast";
+export { PkgError } from "./ast/document/package";
 export type {
 	Block,
 	BreakRun,
 	ChartRun,
 	Comment,
 	CommentAnchor,
-	Doc,
 	DocProperties,
 	EquationRun,
-	Footnote,
-	FootnoteRefRun,
 	Hyperlink,
 	ImageRun,
+	Note as Footnote,
+	NoteRefRun as FootnoteRefRun,
 	Paragraph,
 	Run,
 	SectionBreak,
@@ -57,17 +57,7 @@ export {
 	resolveBlock,
 	resolveBlockRange,
 } from "./locators";
-export { PkgError } from "./package";
-export { ensureContentTypeDefault, nextRelationshipId } from "./package/parts";
 export { XmlNode } from "./parser";
-export {
-	addHyperlinkRelationship,
-	HYPERLINK_RELATIONSHIP_TYPE,
-	hasRelationshipWithTarget,
-	isRelationshipReferenced,
-	removeRelationship,
-	setRelationshipTarget,
-} from "./relationships";
 export {
 	applyColumns,
 	applySectionType,
@@ -81,12 +71,10 @@ export {
 } from "./sections";
 export {
 	convertTextToDelText,
-	createRevisionAllocator,
-	isTrackChangesEnabled,
-	mintRevisionMeta,
 	type RevisionAllocator,
 	resolveAuthor,
 	resolveDate,
+	TrackChanges,
 	type TrackedMeta,
 } from "./track-changes";
 export { Del, Ins, markParagraphMarkAs } from "./track-changes/emit";

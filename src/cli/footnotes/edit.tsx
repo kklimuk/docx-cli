@@ -1,16 +1,9 @@
-import { saveDocView } from "@core";
 import { w } from "@core/jsx";
+import { type NoteKind, noteConfig, wrapNoteBodyAsEdited } from "@core/notes";
 import {
-	findNoteByNumericId,
-	type NoteKind,
-	noteConfig,
-	wrapNoteBodyAsEdited,
-} from "@core/notes";
-import {
-	createRevisionAllocator,
-	isTrackChangesEnabled,
 	resolveAuthor,
 	resolveDate,
+	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
 import { parseArgs } from "util";
@@ -99,10 +92,12 @@ export async function runEditNote(
 		: idInput;
 	const idLabel = `${config.idPrefix}${numericId}`;
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = findNoteByNumericId(view, kind, numericId);
+	const notesView =
+		kind === "footnote" ? document.footnotes : document.endnotes;
+	const reference = notesView?.findByNumericId(numericId);
 	if (!reference) {
 		return fail("BLOCK_NOT_FOUND", `${capitalize(kind)} not found: ${idLabel}`);
 	}
@@ -121,7 +116,7 @@ export async function runEditNote(
 		return EXIT.OK;
 	}
 
-	const tracked = isTrackChangesEnabled(view);
+	const tracked = document.isTrackChangesEnabled();
 	if (tracked) {
 		// Tracked replace: `<w:ins>NEW</w:ins><w:del>OLD</w:del>` inside the
 		// existing body paragraph, with `<w:footnoteRef/>` and leading
@@ -130,7 +125,7 @@ export async function runEditNote(
 		// Word allocates distinct revision ids for the two sides — we match
 		// that for empirical parity even though the OOXML spec allows shared
 		// ids.
-		const allocator = createRevisionAllocator(view);
+		const allocator = new TrackChanges(document).createAllocator();
 		const author = resolveAuthor(parsed.values.author as string | undefined);
 		const date = resolveDate();
 		const insMeta: TrackedMeta = {
@@ -153,7 +148,7 @@ export async function runEditNote(
 		reference.node.children = [<NoteParagraph config={config} text={text} />];
 	}
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

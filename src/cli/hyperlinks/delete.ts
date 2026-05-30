@@ -1,17 +1,5 @@
-import {
-	isRelationshipReferenced,
-	isTrackChangesEnabled,
-	removeRelationship,
-	resolveAuthor,
-	resolveDate,
-	saveDocView,
-} from "@core";
+import { HyperlinkStaleError, Hyperlinks } from "@core/hyperlinks";
 import { parseArgs } from "util";
-import {
-	emitAuditComment,
-	findContainingParagraph,
-	findElementOffsetsInParagraph,
-} from "../comments/helpers";
 import {
 	EXIT,
 	fail,
@@ -83,16 +71,18 @@ export async function run(args: string[]): Promise<number> {
 	const targetId = parsed.values.at as string | undefined;
 	if (!targetId) return fail("USAGE", "Missing --at LINK_ID", HELP);
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const reference = view.hyperlinkById.get(targetId);
+	const reference = document.body.hyperlinkById.get(targetId);
 	if (!reference) {
 		return fail("HYPERLINK_NOT_FOUND", `Hyperlink not found: ${targetId}`);
 	}
 
 	const oldUrl = reference.relationshipId
-		? view.hyperlinksByRelationshipId.get(reference.relationshipId)?.url
+		? document.relationships.hyperlinksByRelationshipId.get(
+				reference.relationshipId,
+			)?.url
 		: undefined;
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -110,51 +100,18 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const index = reference.parent.indexOf(reference.node);
-	if (index === -1) {
-		return fail(
-			"HYPERLINK_NOT_FOUND",
-			`Hyperlink reference is stale (parent does not contain it): ${targetId}`,
-		);
+	try {
+		new Hyperlinks(document).delete(targetId, {
+			author: parsed.values.author as string | undefined,
+		});
+	} catch (error) {
+		if (error instanceof HyperlinkStaleError) {
+			return fail("HYPERLINK_NOT_FOUND", error.message);
+		}
+		throw error;
 	}
 
-	const trackingOn = isTrackChangesEnabled(view);
-	const paragraph = trackingOn
-		? findContainingParagraph(view.documentTree, reference.node)
-		: null;
-	const offsets =
-		trackingOn && paragraph
-			? findElementOffsetsInParagraph(paragraph, reference.node)
-			: null;
-
-	reference.parent.splice(index, 1, ...reference.node.children);
-	view.hyperlinkById.delete(targetId);
-
-	// Prune only when the rId is referenced nowhere in the document — scanning
-	// every attribute, not just `<w:hyperlink>`, so we don't dangle an
-	// `<a:hlinkClick r:id>` in a drawing or a `<w:fldSimple>` HYPERLINK field
-	// that shares this relationship (root CLAUDE.md invariant).
-	if (
-		reference.relationshipId &&
-		!isRelationshipReferenced(view.documentTree, reference.relationshipId)
-	) {
-		removeRelationship(view.relationshipsTree, reference.relationshipId);
-		view.hyperlinksByRelationshipId.delete(reference.relationshipId);
-	}
-
-	if (trackingOn && paragraph && offsets) {
-		emitAuditComment(
-			view,
-			{ kind: "span", paragraph, span: offsets },
-			{
-				body: `[docx-cli] hyperlink removed (was: ${oldUrl ?? "(none)"})`,
-				author: resolveAuthor(parsed.values.author as string | undefined),
-				date: resolveDate(),
-			},
-		);
-	}
-
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

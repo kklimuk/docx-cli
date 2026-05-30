@@ -1,49 +1,6 @@
 import { lstat, rename, unlink } from "node:fs/promises";
 import JSZip from "jszip";
-
-export {
-	nextRelationshipId,
-	type PartRegistration,
-	registerPart,
-} from "./parts";
-
-export async function writeAtomic(
-	target: string,
-	buf: Uint8Array,
-): Promise<void> {
-	// If the target is a symlink (e.g. a .docx pointed at a cloud-sync folder),
-	// rename() would replace the link with a regular file and break the link.
-	// Write through the symlink instead, accepting non-atomicity for that case.
-	let isSymlink = false;
-	try {
-		isSymlink = (await lstat(target)).isSymbolicLink();
-	} catch {
-		// Target doesn't exist; not a symlink.
-	}
-	if (isSymlink) {
-		await Bun.write(target, buf);
-		return;
-	}
-
-	const tmp = `${target}.docx-cli-tmp-${process.pid}-${Date.now()}`;
-	try {
-		await Bun.write(tmp, buf);
-		await rename(tmp, target);
-	} catch (err) {
-		await unlink(tmp).catch(() => {});
-		throw err;
-	}
-}
-
-export class PkgError extends Error {
-	constructor(
-		public code: string,
-		message: string,
-	) {
-		super(message);
-		this.name = "PkgError";
-	}
-}
+import { XmlNode } from "../../parser";
 
 export class Pkg {
 	private constructor(
@@ -67,8 +24,25 @@ export class Pkg {
 		return new Pkg(zip, path);
 	}
 
+	/** Build an empty package targeting `path`. Callers populate parts via
+	 * `writeText` / `writeBytes` and persist with `save()`. Used by `docx
+	 * create` to assemble a fresh `.docx` from template strings without
+	 * reaching for JSZip directly. */
+	static empty(path: string): Pkg {
+		return new Pkg(new JSZip(), path);
+	}
+
 	hasPart(name: string): boolean {
 		return this.zip.file(name) !== null;
+	}
+
+	async readPart(name: string): Promise<XmlNode[] | undefined> {
+		if (!this.hasPart(name)) return;
+		return XmlNode.parse(await this.readText(name));
+	}
+
+	async ensurePart(name: string): Promise<XmlNode[]> {
+		return (await this.readPart(name)) ?? [XmlNode.textNode("Empty")];
 	}
 
 	listParts(): string[] {
@@ -114,7 +88,32 @@ export class Pkg {
 			compression: "DEFLATE",
 			compressionOptions: { level: 6 },
 		});
-		await writeAtomic(target, buf);
+		await this.#writeAtomic(target, buf);
+	}
+
+	async #writeAtomic(target: string, buf: Uint8Array): Promise<void> {
+		// If the target is a symlink (e.g. a .docx pointed at a cloud-sync folder),
+		// rename() would replace the link with a regular file and break the link.
+		// Write through the symlink instead, accepting non-atomicity for that case.
+		let isSymlink = false;
+		try {
+			isSymlink = (await lstat(target)).isSymbolicLink();
+		} catch {
+			// Target doesn't exist; not a symlink.
+		}
+		if (isSymlink) {
+			await Bun.write(target, buf);
+			return;
+		}
+
+		const tmp = `${target}.docx-cli-tmp-${process.pid}-${Date.now()}`;
+		try {
+			await Bun.write(tmp, buf);
+			await rename(tmp, target);
+		} catch (err) {
+			await unlink(tmp).catch(() => {});
+			throw err;
+		}
 	}
 
 	async toBytes(): Promise<Uint8Array> {
@@ -123,5 +122,15 @@ export class Pkg {
 			compression: "DEFLATE",
 			compressionOptions: { level: 6 },
 		});
+	}
+}
+
+export class PkgError extends Error {
+	constructor(
+		public code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "PkgError";
 	}
 }

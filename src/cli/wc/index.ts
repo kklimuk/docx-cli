@@ -127,8 +127,8 @@ export async function run(args: string[]): Promise<number> {
 			path,
 			scope: "document",
 			view,
-			words: countWordsInBlocks(docView.doc.blocks, { view }),
-			sections: countSectionsInBlocks(docView.doc.blocks),
+			words: countWordsInBlocks(docView.body.blocks, { view }),
+			sections: countSectionsInBlocks(docView.body.blocks),
 		});
 		return EXIT.OK;
 	}
@@ -157,7 +157,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const blocks = docView.doc.blocks;
+	const blocks = docView.body.blocks;
 
 	if (locator.kind === "block") {
 		const block = findBlockById(blocks, locator.blockId);

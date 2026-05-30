@@ -74,7 +74,7 @@ describe("task lists — round-trip", () => {
 		const docPath = join(workspace, "task-lists.docx");
 		copyFileSync(FIXTURE, docPath);
 
-		// Mutate to force a saveDocView path; the SDT lives in the XmlNode tree
+		// Mutate to force a Document.save path; the SDT lives in the XmlNode tree
 		// and should ride through the re-serializer untouched.
 		await runCli("insert", docPath, "--after", "p5", "--text", "after task");
 

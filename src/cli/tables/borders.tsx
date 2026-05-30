@@ -1,4 +1,3 @@
-import { saveDocView } from "@core";
 import { w } from "@core/jsx";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
@@ -109,10 +108,10 @@ export async function run(args: string[]): Promise<number> {
 	const sizeEighths = size ? Number(size) : 4;
 	const color = (parsed.values.color as string | undefined) ?? "auto";
 
-	const view = await openOrFail(path);
-	if (typeof view === "number") return view;
+	const document = await openOrFail(path);
+	if (typeof document === "number") return document;
 
-	const tableNode = resolveTableNode(view, tableId);
+	const tableNode = resolveTableNode(document, tableId);
 	if (!tableNode) return fail("BLOCK_NOT_FOUND", `Table not found: ${tableId}`);
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -141,13 +140,13 @@ export async function run(args: string[]): Promise<number> {
 	// will revert on reject (verified: a tblPrChange we author isn't reverted by
 	// Word's reject), so we apply it in place and note it with an audit comment.
 	noteStructuralChange(
-		view,
+		document,
 		buildGrid(tableNode).rows[0]?.cells[0]?.node,
 		`table borders set (${style})`,
 		parsed.values.author as string | undefined,
 	);
 
-	await saveDocView(view, outputPath);
+	await document.save(outputPath);
 
 	await respondAck({
 		ok: true,

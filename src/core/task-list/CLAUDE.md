@@ -23,7 +23,7 @@ It's the format Pandoc produces, all desktop Word versions render it interactive
 
 ## Tracked-toggle pairing
 
-When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:ins>` (new glyph ☒ or ☐) and `<w:del>` (old glyph ☐ or ☒) pair INSIDE `<w:sdtContent>` AND flips the `w14:checked` attribute in place — no `<w14:checkedChange>` element exists in the spec. `findCheckboxToggle` recognizes the pair structure; both the AST reader's `walkRunContainer` and the apply walker (`visitRunContainer` in [src/cli/track-changes/apply.ts](../../cli/track-changes/apply.ts)) call it so the two walkers register the same `tcN` ids at the same positions — the alignment invariant from [src/cli/track-changes/CLAUDE.md](../../cli/track-changes/CLAUDE.md).
+When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:ins>` (new glyph ☒ or ☐) and `<w:del>` (old glyph ☐ or ☒) pair INSIDE `<w:sdtContent>` AND flips the `w14:checked` attribute in place — no `<w14:checkedChange>` element exists in the spec. `findCheckboxToggle` recognizes the pair structure; the AST reader's `walkRunContainer` calls it to register a `checkboxToggle` `tcN` into `view.trackedChangeReferences`. That reader walk is the single source of `tcN` ids — `list` and `accept`/`reject` (in [src/core/track-changes/apply.ts](../../core/track-changes/apply.ts)) read the map rather than re-walking, so they can't drift.
 
 - `acceptCheckboxToggle` keeps the ins glyph (unwrap) and drops the del. The attribute is already in the "after" state; no fix needed.
 - `rejectCheckboxToggle` drops the ins, unwraps the del, renames the `<w:delText>` back to `<w:t>`, AND **flips `w14:checked` back** — inferred from the deleted glyph (☐ → "0", ☒ → "1") since Word stores no separate prior-value record. This is the only tracked-change kind in the codebase that has to infer a metadata field from its content; document it loudly if you touch it.
@@ -34,7 +34,7 @@ When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:
 
 ## Structural inserts/deletes — known gap
 
-Adding/removing an entire checkbox SDT (Word wraps the SDT in `<w:customXmlDel/InsRangeStart/End>` brackets) round-trips through the XmlNode tree but isn't enumerated as a dedicated tracked-change kind. The apply walker skips checkbox-SDTs whose only tracking is structural so `list`/`apply --at tcN` stays aligned with the reader; `accept --all` won't honor them. Bounded gap — toggle and edit-task-text cover the common cases.
+Adding/removing an entire checkbox SDT (Word wraps the SDT in `<w:customXmlDel/InsRangeStart/End>` brackets) round-trips through the XmlNode tree but isn't enumerated as a dedicated tracked-change kind. The reader's `walkRunContainer` skips checkbox-SDTs whose only tracking is structural so no phantom `tcN` is minted for them; `accept --all` won't honor them. Bounded gap — toggle and edit-task-text cover the common cases.
 
 ## Adding a recognized shape
 

@@ -61,7 +61,7 @@ zip.file("word/_rels/document.xml.rels", buildDocumentRels(extras));
 zip.file(
 	"docProps/core.xml",
 	buildCoreProps({
-		title: "Test Doc",
+		title: "Test Body",
 		author: "Kirill",
 		created: "2026-05-01T00:00:00Z",
 		modified: "2026-05-03T00:00:00Z",

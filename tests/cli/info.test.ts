@@ -21,7 +21,7 @@ describe("docx info schema", () => {
 	test("--ts outputs the live types.ts source", async () => {
 		const result = await runCli("info", "schema", "--ts");
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("export type Doc");
+		expect(result.stdout).toContain("export type DocProperties");
 		expect(result.stdout).toContain("export type Paragraph");
 		expect(result.stdout).toContain("CommentAnchor");
 	});

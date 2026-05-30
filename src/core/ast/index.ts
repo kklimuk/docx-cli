@@ -1,14 +1,16 @@
+export { Document } from "./document";
 export {
+	type BlockRangeReference,
 	type BlockReference,
+	Body,
 	type CommentReference,
-	type DocView,
-	enrichImageHashes,
+	type EquationReference,
 	type HyperlinkReference,
 	type ImageReference,
-	openDocView,
-	saveDocView,
+	iterateBlocks,
+	LocatorResolveError,
 	type TrackedChangeReference,
-} from "./doc-view";
+} from "./document/body";
 export {
 	findBlockById,
 	flattenImageRuns,
@@ -23,13 +25,12 @@ export type {
 	ChartRun,
 	Comment,
 	CommentAnchor,
-	Doc,
 	DocProperties,
 	EquationRun,
-	Footnote,
-	FootnoteRefRun,
 	Hyperlink,
 	ImageRun,
+	Note,
+	NoteRefRun,
 	Paragraph,
 	Run,
 	SectionBreak,
@@ -40,4 +41,5 @@ export type {
 	TabRun,
 	TextRun,
 	TrackedChange,
+	TrackedChangeKind,
 } from "./types";

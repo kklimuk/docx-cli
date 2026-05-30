@@ -1,5 +1,6 @@
 import {
 	type Block,
+	iterateBlocks,
 	type Paragraph,
 	paragraphText,
 	paragraphTextAccepted,
@@ -52,18 +53,8 @@ export function countWordsInSection(
  * ever changes. */
 export function countSectionsInBlocks(blocks: Block[]): number {
 	let total = 0;
-	for (const block of blocks) {
-		if (block.type === "sectionBreak") {
-			total += 1;
-			continue;
-		}
-		if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					total += countSectionsInBlocks(cell.blocks);
-				}
-			}
-		}
+	for (const block of iterateBlocks(blocks)) {
+		if (block.type === "sectionBreak") total += 1;
 	}
 	return total;
 }
@@ -74,16 +65,8 @@ export function countWordsInBlocks(
 ): number {
 	const text = textFor(options);
 	let total = 0;
-	for (const block of blocks) {
-		if (block.type === "paragraph") {
-			total += countWords(text(block));
-		} else if (block.type === "table") {
-			for (const row of block.rows) {
-				for (const cell of row.cells) {
-					total += countWordsInBlocks(cell.blocks, options);
-				}
-			}
-		}
+	for (const block of iterateBlocks(blocks)) {
+		if (block.type === "paragraph") total += countWords(text(block));
 	}
 	return total;
 }

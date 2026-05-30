@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Pkg } from "@core/package";
+import { Pkg } from "@core/ast/document/package";
 import JSZip from "jszip";
 import { runCli } from "./harness";
 
@@ -204,7 +204,7 @@ describe("preserve unknown elements — invariant tests", () => {
 
 		// Round-trip through a save (via `replace` on text in a sibling, but
 		// there is none here — use `insert` after p0 instead, which is enough
-		// to force `saveDocView`).
+		// to force `Document.save`).
 		await runCli(
 			"insert",
 			docPath,

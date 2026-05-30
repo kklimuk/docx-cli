@@ -1,6 +1,10 @@
-# src/core — emitters, AST reader, mutators
+# src/core — `Document`, embedded views, lenses, emitters
 
 `src/core` uses relative imports between siblings (CLI code uses the `@core/*` aliases). JSX is for emitters only: any file that constructs fresh XML can be `.tsx`; readers, locators, and pure analysis stay `.ts` — never JSX in the AST reader.
+
+## Document, embedded views, cross-cutting lenses
+
+`Document` (the composition root, at [ast/document/index.ts](ast/document/index.ts)) holds one **tree-owning view per OPC part** as a field — see [ast/CLAUDE.md](ast/CLAUDE.md) for the list and the reader. **Cross-cutting concerns are lenses** under the feature folder ([image/](image/), [hyperlinks/](hyperlinks/), [equation/](equation/), [track-changes/](track-changes/), [comments/](comments/)) — stateless classes constructed at the call site (`new Images(document).add(source)`, `new TrackChanges(document).accept([...])`) that reach through Document into multiple embedded views. The split — tree-owning views ARE state (embedded), lenses are operations over state (constructed) — is the same one stated in the root [CLAUDE.md](../../CLAUDE.md). Cross-view deps are passed as method args (`NotesView.ensureNoteStyles(stylesView)`), never as constructor or field references.
 
 ## In-place XML mutation, not AST round-trip
 
@@ -8,7 +12,7 @@ The typed AST from `read` is a *view* over the parsed XML tree. Mutations operat
 
 ## RUN_BEARING_WRAPPER_TAGS — the AST↔XML offset bridge
 
-Defined in [parser/run-ops.ts](parser/run-ops.ts). AST text and `find`'s offsets descend into every tag in this set; the XML-side walkers in `cli/comments/helpers.tsx`, `cli/replace/replace-span.tsx`, and `cli/hyperlinks/wrap.tsx` all do the same via `isRunBearingWrapper(tag)` / `sumRunBearingTextLength(children)`. They must stay in sync — if the AST descends into a wrapper the XML walkers don't (or vice versa), `find → replace` / `find → comments add` misaligns by the wrapper's inner-text length. Current set: `<w:ins>`, `<w:del>`, `<w:moveFrom>`, `<w:moveTo>`, `<w:hyperlink>`, `<w:fldSimple>`, `<w:smartTag>`. Any tag NOT in the set is preserved by the catchall `push(child)` in every walker (see `tests/cli/preserve-unknown.test.ts`).
+Defined in [parser/run-ops.ts](parser/run-ops.ts). AST text and `find`'s offsets descend into every tag in this set; the XML-side walkers in [comments/markers.tsx](comments/markers.tsx), [find/replace-span.tsx](find/replace-span.tsx), and [hyperlinks/wrap.tsx](hyperlinks/wrap.tsx) all do the same via `isRunBearingWrapper(tag)` / `sumRunBearingTextLength(children)`. They must stay in sync — if the AST descends into a wrapper the XML walkers don't (or vice versa), `find → replace` / `find → comments add` misaligns by the wrapper's inner-text length. Current set: `<w:ins>`, `<w:del>`, `<w:moveFrom>`, `<w:moveTo>`, `<w:hyperlink>`, `<w:fldSimple>`, `<w:smartTag>`. Any tag NOT in the set is preserved by the catchall `push(child)` in every walker (see `tests/cli/preserve-unknown.test.ts`).
 
 **Adding a run-bearing wrapper:** add to `RUN_BEARING_WRAPPER_TAGS` in `parser/run-ops.ts` and recurse into it in `walkRunContainer` in `ast/read.ts` — that's the only edit (every offset-aware walker reads the predicate). Add a regression test in `tests/cli/preserve-unknown.test.ts` or `tests/cli/transparent-wrappers.test.ts`.
 
@@ -22,7 +26,7 @@ Add it to the appropriate namespace's tag list in [jsx/index.ts](jsx/index.ts). 
 
 ## Adding an AST field
 
-Add to [ast/types.ts](ast/types.ts), populate in [ast/read.ts](ast/read.ts), then update `cli/info/schema.ts`. The `--ts` output reads `types.ts` live via Bun's text import, so it stays in sync.
+See [ast/CLAUDE.md](ast/CLAUDE.md) — `types.ts` is the source, `read.ts` populates, `cli/info/schema.ts` widens.
 
 ## Sections
 
@@ -34,9 +38,9 @@ CRUD: `insert --after pN --section` emits a sentinel paragraph carrying an inlin
 
 ## Styles & numbering
 
-`ensureStyle(view, id)` in [styles.tsx](styles.tsx) lazily provisions styles.xml from the `BASELINE` catalog. **Adding a baseline style:** extend the `BaselineStyleId` union and add a JSX-built definition to `BASELINE` — pStyle children must follow ECMA-376 §17.3.1.26 order (pStyle → keepNext → keepLines → numPr → pBdr → spacing → ind → jc). New tags go in `W_TAGS`. `insert --style`/`edit --style` auto-define baseline styles via `ensureReferencedStyle`; custom values are referenced but left undefined.
+`document.ensureStyles().ensureStyle(id)` ([ast/document/styles.tsx](ast/document/styles.tsx)) lazily provisions `word/styles.xml` from the `BASELINE` catalog if it isn't there yet. **Adding a baseline style:** extend the `BaselineStyleId` union and add a JSX-built definition to `BASELINE` — pStyle children must follow ECMA-376 §17.3.1.26 order (pStyle → keepNext → keepLines → numPr → pBdr → spacing → ind → jc). New tags go in `W_TAGS`. `insert --style`/`edit --style` auto-define baseline styles via `StylesView.ensureReferencedStyle`; custom values are referenced but left undefined.
 
-`allocateNum(view, "bullet"|"ordered")` in [numbering.tsx](numbering.tsx) lazily provisions numbering.xml. **Adding a format:** extend `AbstractNumKind` and add an abstractNum builder; `ensureAbstractNum` reuse keys on `lvl[0]/numFmt/w:val`, so give each kind a distinct level-0 numFmt. Cover it in `tests/core/numbering.test.ts`.
+`document.ensureNumbering().allocate("bullet" | "ordered")` ([ast/document/numbering.tsx](ast/document/numbering.tsx)) lazily provisions `word/numbering.xml`. **Adding a format:** extend `AbstractNumKind` and add an abstractNum builder; `ensureAbstractNum` reuse keys on `lvl[0]/numFmt/w:val`, so give each kind a distinct level-0 numFmt. Cover it in `tests/core/numbering.test.ts`.
 
 ## Task lists (GFM checkboxes)
 

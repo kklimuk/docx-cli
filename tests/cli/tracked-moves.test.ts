@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Pkg } from "@core/package";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 
 /**
@@ -11,7 +11,7 @@ import { runCli, tempWorkspace } from "./harness";
  */
 const FIXTURE = "tests/fixtures/tracked-moves.docx";
 
-type Doc = {
+type Body = {
 	blocks: Array<{
 		type: string;
 		runs?: Array<{
@@ -29,7 +29,7 @@ async function freshCopy(label: string): Promise<string> {
 	return docPath;
 }
 
-function paragraphText(doc: Doc, index: number): string {
+function paragraphText(doc: Body, index: number): string {
 	const block = doc.blocks[index];
 	if (!block || block.type !== "paragraph") return "";
 	return (block.runs ?? [])
@@ -41,7 +41,7 @@ function paragraphText(doc: Doc, index: number): string {
 describe("tracked moves — AST surface", () => {
 	test("read exposes moveFrom and moveTo as TrackedChange entries", async () => {
 		const result = await runCli("read", FIXTURE, "--ast");
-		const doc = result.parsed as Doc;
+		const doc = result.parsed as Body;
 
 		const movedRunFrom = (doc.blocks[0]?.runs ?? []).find(
 			(run) => run.type === "text" && run.text === "the moved sentence",
@@ -115,7 +115,7 @@ describe("tracked moves — accept", () => {
 		expect(result.exitCode).toBe(0);
 
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as Doc;
+		const doc = read.parsed as Body;
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: .");
 		expect(paragraphText(doc, 1)).toBe(
 			"Destination paragraph: the moved sentence.",
@@ -141,7 +141,7 @@ describe("tracked moves — accept", () => {
 		expect(result.exitCode).toBe(0);
 
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as Doc;
+		const doc = read.parsed as Body;
 		// p0: moveFrom accepted → text gone.
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: .");
 		// p1: moveTo still wrapped.
@@ -159,7 +159,7 @@ describe("tracked moves — reject", () => {
 		expect(result.exitCode).toBe(0);
 
 		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as Doc;
+		const doc = read.parsed as Body;
 		expect(paragraphText(doc, 0)).toBe("Origin paragraph: the moved sentence.");
 		expect(paragraphText(doc, 1)).toBe("Destination paragraph: .");
 
