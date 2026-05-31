@@ -133,9 +133,45 @@ ${[...canonical, ...extraLines].join("\n")}
  * for the package-scoped boilerplate (Content_Types, rels) via the build* helpers
  * above, and for any extra parts. */
 export function addCanonicalParts(zip: JSZip): void {
+	const options = pinnedDateOptions();
 	for (const part of Object.values(CANONICAL_PARTS)) {
-		zip.file(part.zipPath, part.body);
+		zip.file(part.zipPath, part.body, options);
 	}
+}
+
+/** Pin per-entry mtimes on a JSZip instance to `DOCX_CLI_NOW` (if set) so
+ * fixture rebuilds produce byte-deterministic output. Without this, JSZip
+ * stamps `new Date()` on every `.file(...)` call AND every auto-created
+ * folder entry (e.g. `_rels/`, `word/`), so the resulting ZIP archive
+ * differs byte-wise between rebuilds even when the unzipped XML is
+ * identical. Monkey-patches `generateAsync` to walk every entry and
+ * overwrite its `date` right before serializing — catches both `.file()`
+ * writes and JSZip's auto-folder entries. No-op when DOCX_CLI_NOW isn't
+ * set. Builders should call this once right after `new JSZip()`. */
+export function pinFixtureZipDates(zip: JSZip): JSZip {
+	const options = pinnedDateOptions();
+	if (!options) return zip;
+	const { date } = options;
+	const original = zip.generateAsync.bind(zip);
+	type Files = Record<string, { date?: Date }>;
+	(zip as unknown as { generateAsync: unknown }).generateAsync = (
+		generateOptions?: JSZip.JSZipGeneratorOptions,
+	): Promise<unknown> => {
+		const files = (zip as unknown as { files: Files }).files;
+		for (const entry of Object.values(files)) entry.date = date;
+		return original(
+			generateOptions as JSZip.JSZipGeneratorOptions<"uint8array">,
+		);
+	};
+	return zip;
+}
+
+function pinnedDateOptions(): { date: Date } | undefined {
+	const pin = Bun.env.DOCX_CLI_NOW;
+	if (!pin) return undefined;
+	const date = new Date(pin);
+	if (Number.isNaN(date.getTime())) return undefined;
+	return { date };
 }
 
 function escapeXml(text: string): string {

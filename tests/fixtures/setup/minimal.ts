@@ -1,6 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import JSZip from "jszip";
+
+// Pin per-entry ZIP mtimes to a fixed value so rebuilds are byte-deterministic.
+// (`buildCoreProps` already takes fixed `created`/`modified` for `core.xml`;
+// this addresses the per-entry mtime that JSZip would otherwise default to
+// `new Date()`.)
+process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
+
 import {
 	addCanonicalParts,
 	buildContentTypes,
@@ -9,6 +16,7 @@ import {
 	buildRootRels,
 	DEFAULT_SECTPR,
 	type ExtraPart,
+	pinFixtureZipDates,
 	wrapDocument,
 } from "./helpers";
 
@@ -54,6 +62,7 @@ const comments: ExtraPart = {
 const extras: ExtraPart[] = [comments];
 
 const zip = new JSZip();
+pinFixtureZipDates(zip);
 zip.file("[Content_Types].xml", buildContentTypes(extras));
 zip.file("_rels/.rels", buildRootRels());
 zip.file("word/document.xml", wrapDocument(body));

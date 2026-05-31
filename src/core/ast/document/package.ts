@@ -70,11 +70,11 @@ export class Pkg {
 	}
 
 	writeText(name: string, content: string): void {
-		this.zip.file(name, content);
+		this.zip.file(name, content, pinnedDateOptions());
 	}
 
 	writeBytes(name: string, content: Uint8Array): void {
-		this.zip.file(name, content);
+		this.zip.file(name, content, pinnedDateOptions());
 	}
 
 	deletePart(name: string): void {
@@ -83,12 +83,28 @@ export class Pkg {
 
 	async save(path?: string): Promise<void> {
 		const target = path ?? this.path;
+		this.#pinAutoFolderDates();
 		const buf = await this.zip.generateAsync({
 			type: "uint8array",
 			compression: "DEFLATE",
 			compressionOptions: { level: 6 },
 		});
 		await this.#writeAtomic(target, buf);
+	}
+
+	/** Pin the date on every entry — `.file()` writes already get the pinned
+	 * date via `writeText`/`writeBytes`, but JSZip also auto-creates folder
+	 * entries (e.g. `_rels/`, `word/`) without going through `.file()`, and
+	 * those default to `new Date()`. Walk the whole entry map right before
+	 * serializing so directories pick up the pin too. No-op when
+	 * `DOCX_CLI_NOW` isn't set. */
+	#pinAutoFolderDates(): void {
+		const options = pinnedDateOptions();
+		if (!options) return;
+		const files = (
+			this.zip as unknown as { files: Record<string, { date?: Date }> }
+		).files;
+		for (const entry of Object.values(files)) entry.date = options.date;
 	}
 
 	async #writeAtomic(target: string, buf: Uint8Array): Promise<void> {
@@ -123,6 +139,20 @@ export class Pkg {
 			compressionOptions: { level: 6 },
 		});
 	}
+}
+
+/** When `DOCX_CLI_NOW` is set to a parseable ISO timestamp, return JSZip
+ * file options that pin the per-entry mtime to that date so the resulting
+ * ZIP archive is byte-deterministic across rebuilds. Without this JSZip
+ * stamps `new Date()` on every entry and the same input produces different
+ * bytes each run. Returns `undefined` when the env var is unset (normal
+ * CLI usage) so JSZip falls back to wall-clock. */
+function pinnedDateOptions(): JSZip.JSZipFileOptions | undefined {
+	const pin = Bun.env.DOCX_CLI_NOW;
+	if (!pin) return undefined;
+	const date = new Date(pin);
+	if (Number.isNaN(date.getTime())) return undefined;
+	return { date };
 }
 
 export class PkgError extends Error {
