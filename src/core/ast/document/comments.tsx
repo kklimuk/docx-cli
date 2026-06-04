@@ -126,6 +126,36 @@ export class CommentsView {
 		);
 	}
 
+	/** Insert `node` (a `<w:comment>`) immediately after the last comment in the
+	 * thread rooted at `parentNumericId` (the parent itself plus every
+	 * transitive reply), so a new reply appends after the existing thread tail
+	 * rather than jumping ahead of siblings. */
+	insertReplyAfter(parentNumericId: string, node: XmlNode): void {
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		if (!root) throw new Error("expected <w:comments> root");
+
+		const threadIds = new Set([
+			parentNumericId,
+			...this.descendantReplyIds(parentNumericId),
+		]);
+
+		let lastIndex = -1;
+		for (let i = 0; i < root.children.length; i++) {
+			const child = root.children[i];
+			if (child.tag !== "w:comment") continue;
+			const cid = child.getAttribute("w:id");
+			if (cid != null && threadIds.has(cid)) {
+				lastIndex = i;
+			}
+		}
+
+		if (lastIndex === -1) {
+			root.children.push(node);
+		} else {
+			root.children.splice(lastIndex + 1, 0, node);
+		}
+	}
+
 	/** Read a comment's threading `w14:paraId`, or undefined if the comment is
 	 * missing or has no inner `<w:p>`. Word keys `<w15:commentEx>` and a
 	 * reply's `w14:paraIdParent`/`w15:paraIdParent` off the comment's LAST

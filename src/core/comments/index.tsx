@@ -177,6 +177,7 @@ export class Comments {
 			options.author,
 			date,
 			parentParaId,
+			parentNumericId,
 		);
 
 		const extView = this.document.ensureCommentsExtended();
@@ -198,13 +199,29 @@ export class Comments {
 			extRoot.children.push(parentEntry);
 		}
 
-		extRoot.children.push(
-			new XmlNode("w15:commentEx", {
-				"w15:paraId": replyParaId,
-				"w15:paraIdParent": parentParaId,
-				"w15:done": "0",
-			}),
-		);
+		const replyEntry = new XmlNode("w15:commentEx", {
+			"w15:paraId": replyParaId,
+			"w15:paraIdParent": parentParaId,
+			"w15:done": "0",
+		});
+		const parentEntryIndex = extRoot.children.indexOf(parentEntry);
+		if (parentEntryIndex !== -1) {
+			// Scan forward from the parent to find the last existing reply
+			// in this thread so the new reply appends after the tail.
+			let insertAfterIndex = parentEntryIndex;
+			for (let i = parentEntryIndex + 1; i < extRoot.children.length; i++) {
+				const child = extRoot.children[i];
+				if (
+					child.tag === "w15:commentEx" &&
+					child.getAttribute("w15:paraIdParent") === parentParaId
+				) {
+					insertAfterIndex = i;
+				}
+			}
+			extRoot.children.splice(insertAfterIndex + 1, 0, replyEntry);
+		} else {
+			extRoot.children.push(replyEntry);
+		}
 
 		return numericId;
 	}
@@ -351,11 +368,12 @@ export class Comments {
 		author: string,
 		date: string,
 		paraIdParent?: string,
+		afterCommentId?: string,
 	): void {
 		const commentsView = this.document.ensureComments();
 		const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
 		if (!commentsRoot) throw new Error("expected <w:comments> root");
-		commentsRoot.children.push(
+		const body = (
 			<CommentBody
 				options={{
 					id: numericId,
@@ -366,8 +384,13 @@ export class Comments {
 					...(paraIdParent ? { paraIdParent } : {}),
 					text,
 				}}
-			/>,
+			/>
 		);
+		if (afterCommentId) {
+			commentsView.insertReplyAfter(afterCommentId, body);
+		} else {
+			commentsRoot.children.push(body);
+		}
 	}
 
 	#resolveBlock(blockId: string): { node: XmlNode; parent: XmlNode[] } {
