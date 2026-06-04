@@ -407,6 +407,7 @@ export type CommentBodyOptions = {
 	date: string;
 	initials: string;
 	paraId: string;
+	paraIdParent?: string;
 	text: string;
 };
 
@@ -422,13 +423,88 @@ export function CommentBody({
 			w-date={options.date}
 			w-initials={options.initials}
 		>
-			<w.p {...{ "w14:paraId": options.paraId, "w14:textId": "00000000" }}>
+			<w.p
+				{...{
+					"w14:paraId": options.paraId,
+					"w14:textId": "00000000",
+					...(options.paraIdParent
+						? { "w14:paraIdParent": options.paraIdParent }
+						: {}),
+				}}
+			>
 				<w.r>
 					<w.t {...{ "xml:space": "preserve" }}>{options.text}</w.t>
 				</w.r>
 			</w.p>
 		</w.comment>
 	);
+}
+
+/**
+ * Anchor a reply in the document body by mirroring the parent thread's
+ * markers for the reply's id. Word drops any comment whose
+ * `<w:commentReference>` is absent from the body, so a reply needs its own
+ * `<w:commentRangeStart>` / `<w:commentRangeEnd>` / `<w:commentReference>`
+ * nested alongside the parent's — the thread shares the parent's span.
+ * Returns true once the parent's reference run is found and the reply
+ * anchored.
+ */
+export function addReplyCommentMarkers(
+	documentTree: XmlNode[],
+	parentNumericId: string,
+	replyNumericId: string,
+): boolean {
+	const document = XmlNode.findRoot(documentTree, "w:document");
+	if (!document) return false;
+	// Bail before mutating if the parent has no reference run to mirror —
+	// otherwise we'd strand half-placed range markers in the body.
+	if (!documentHasCommentReference(document, parentNumericId)) return false;
+	let anchored = false;
+	function walk(node: XmlNode): void {
+		const result: XmlNode[] = [];
+		for (const child of node.children) {
+			result.push(child);
+			if (
+				child.tag === "w:commentRangeStart" &&
+				child.getAttribute("w:id") === parentNumericId
+			) {
+				result.push(commentRangeStartMarker(replyNumericId));
+				continue;
+			}
+			if (
+				child.tag === "w:commentRangeEnd" &&
+				child.getAttribute("w:id") === parentNumericId
+			) {
+				result.push(commentRangeEndMarker(replyNumericId));
+				continue;
+			}
+			if (
+				child.tag === "w:r" &&
+				containsCommentReference(child, parentNumericId)
+			) {
+				result.push(commentReferenceRun(replyNumericId));
+				anchored = true;
+				continue;
+			}
+			walk(child);
+		}
+		node.children = result;
+	}
+	walk(document);
+	return anchored;
+}
+
+function documentHasCommentReference(
+	node: XmlNode,
+	numericId: string,
+): boolean {
+	for (const child of node.children) {
+		if (child.tag === "w:r" && containsCommentReference(child, numericId)) {
+			return true;
+		}
+		if (documentHasCommentReference(child, numericId)) return true;
+	}
+	return false;
 }
 
 export function removeCommentMarkers(

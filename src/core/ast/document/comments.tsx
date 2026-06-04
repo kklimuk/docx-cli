@@ -126,15 +126,16 @@ export class CommentsView {
 		);
 	}
 
-	/** Read a comment's `w14:paraId`, or undefined if the comment is missing
-	 * or has no inner `<w:p>`. Accepts the `cN` or bare-`N` id form. */
+	/** Read a comment's threading `w14:paraId`, or undefined if the comment is
+	 * missing or has no inner `<w:p>`. Word keys `<w15:commentEx>` and a
+	 * reply's `w14:paraIdParent`/`w15:paraIdParent` off the comment's LAST
+	 * paragraph, so threading must too. Accepts the `cN` or bare-`N` id form. */
 	paraIdFor(commentId: string): string | undefined {
 		const numericId = commentId.startsWith("c")
 			? commentId.slice(1)
 			: commentId;
 		const comment = this.findById(numericId);
-		const paragraph = comment?.findChild("w:p");
-		return paragraph?.getAttribute("w14:paraId");
+		return lastParagraph(comment)?.getAttribute("w14:paraId");
 	}
 
 	/** Read a comment's `w14:paraId`, minting + persisting one (and the
@@ -147,7 +148,7 @@ export class CommentsView {
 			: commentId;
 		const root = XmlNode.findRoot(this.tree, "w:comments");
 		const comment = this.findById(numericId);
-		const paragraph = comment?.findChild("w:p");
+		const paragraph = lastParagraph(comment);
 		if (!root || !paragraph) return undefined;
 		const existing = paragraph.getAttribute("w14:paraId");
 		if (existing) return existing;
@@ -176,6 +177,53 @@ export class CommentsView {
 		return String(highest + 1);
 	}
 
+	/** Numeric ids of every transitive reply chained under `commentId` via
+	 * `w15:paraIdParent`. Delete cascades through these so a removed parent
+	 * never strands its replies' body markers or dangles their thread link.
+	 * Accepts the `cN` or bare-`N` id form. */
+	descendantReplyIds(commentId: string): string[] {
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		if (!root) return [];
+		const numericId = commentId.startsWith("c")
+			? commentId.slice(1)
+			: commentId;
+
+		const extended = this.#readExtended();
+		const idByParaId = new Map<string, string>();
+		const childParaIdsByParent = new Map<string, string[]>();
+		for (const child of root.children) {
+			if (child.tag !== "w:comment") continue;
+			const childId = child.getAttribute("w:id");
+			if (childId == null) continue;
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
+			if (!paraId) continue;
+			idByParaId.set(paraId, childId);
+			const parentParaId = extended.get(paraId)?.parentParaId;
+			if (!parentParaId) continue;
+			const siblings = childParaIdsByParent.get(parentParaId) ?? [];
+			siblings.push(paraId);
+			childParaIdsByParent.set(parentParaId, siblings);
+		}
+
+		const startParaId = lastParagraph(this.findById(numericId))?.getAttribute(
+			"w14:paraId",
+		);
+		if (!startParaId) return [];
+
+		const out: string[] = [];
+		const queue = [startParaId];
+		while (queue.length > 0) {
+			const paraId = queue.shift();
+			if (paraId == null) continue;
+			for (const childParaId of childParaIdsByParent.get(paraId) ?? []) {
+				const childId = idByParaId.get(childParaId);
+				if (childId) out.push(childId);
+				queue.push(childParaId);
+			}
+		}
+		return out;
+	}
+
 	/** Parse this part (plus the extended sidecar) into the AST `Comment[]` the
 	 * reader exposes on `Body.comments`, and populate `commentReferences` for
 	 * mutators. `anchors` are the span ranges the body walk computed from
@@ -190,8 +238,9 @@ export class CommentsView {
 			if (child.tag !== "w:comment") continue;
 			const numericId = child.getAttribute("w:id");
 			if (numericId == null) continue;
-			const paragraph = child.findChild("w:p");
-			const paraId = paragraph?.getAttribute("w14:paraId");
+			// Threading keys off the LAST paragraph (see `paraIdFor`), so index
+			// by it to resolve a reply's `w15:paraIdParent` back to its parent.
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
 			if (paraId) commentIdByParaId.set(paraId, `c${numericId}`);
 		}
 
@@ -214,8 +263,7 @@ export class CommentsView {
 				endOffset: 0,
 			};
 
-			const paragraph = child.findChild("w:p");
-			const paraId = paragraph?.getAttribute("w14:paraId");
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
 			const meta = paraId ? (extendedByParaId.get(paraId) ?? {}) : {};
 			const parentCommentId = meta.parentParaId
 				? commentIdByParaId.get(meta.parentParaId)
@@ -278,6 +326,14 @@ export class CommentsView {
 
 function CommentsRoot(): XmlNode {
 	return <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
+}
+
+/** A comment's threading identity is its LAST `<w:p>` — that's the paragraph
+ * Word keys `<w15:commentEx>` and reply `paraIdParent` links to. */
+function lastParagraph(comment: XmlNode | undefined): XmlNode | undefined {
+	if (!comment) return undefined;
+	const paragraphs = comment.findChildren("w:p");
+	return paragraphs.at(-1);
 }
 
 /** Mint a fresh `w14:paraId` value. Word writes 8-char uppercase hex; we

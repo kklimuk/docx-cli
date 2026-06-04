@@ -7,6 +7,7 @@ import {
 	addCommentMarkersAroundRun,
 	addCommentMarkersToParagraph,
 	addCommentRangeMarkers,
+	addReplyCommentMarkers,
 	authorInitials,
 	CommentBody,
 	type CommentSpan,
@@ -20,6 +21,7 @@ export {
 	addCommentMarkersAroundRun,
 	addCommentMarkersToParagraph,
 	addCommentRangeMarkers,
+	addReplyCommentMarkers,
 	authorInitials,
 	CommentBody,
 	type CommentBodyOptions,
@@ -153,13 +155,49 @@ export class Comments {
 		const numericId = view.nextId();
 		const replyParaId = generateParaId();
 
-		this.#appendCommentBody(numericId, replyParaId, body, options.author, date);
+		// Word drops any comment without a `<w:commentReference>` in the body;
+		// mirror the parent thread's anchor markers so the reply renders. Anchor
+		// before writing any part so an unanchorable parent aborts cleanly.
+		const anchored = addReplyCommentMarkers(
+			this.document.documentTree,
+			parentNumericId,
+			numericId,
+		);
+		if (!anchored) {
+			throw new CommentsError(
+				"COMMENT_NOT_FOUND",
+				`Parent comment c${parentNumericId} has no anchor in the document body; cannot anchor reply.`,
+			);
+		}
+
+		this.#appendCommentBody(
+			numericId,
+			replyParaId,
+			body,
+			options.author,
+			date,
+			parentParaId,
+		);
 
 		const extView = this.document.ensureCommentsExtended();
 		const extRoot = extView.extendedTree
 			? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
 			: undefined;
 		if (!extRoot) throw new Error("expected <w15:commentsEx> root");
+
+		let parentEntry = extRoot.children.find(
+			(child) =>
+				child.tag === "w15:commentEx" &&
+				child.getAttribute("w15:paraId") === parentParaId,
+		);
+		if (!parentEntry) {
+			parentEntry = new XmlNode("w15:commentEx", {
+				"w15:paraId": parentParaId,
+				"w15:done": "0",
+			});
+			extRoot.children.push(parentEntry);
+		}
+
 		extRoot.children.push(
 			new XmlNode("w15:commentEx", {
 				"w15:paraId": replyParaId,
@@ -224,7 +262,9 @@ export class Comments {
 	/** Remove every id in `ids`: splice the `<w:comment>` body, prune any
 	 * `<w15:commentEx>` entry keyed to its paraId, and strip
 	 * `<w:commentRangeStart>` / `<w:commentRangeEnd>` /
-	 * `<w:commentReference>` markers from the body. Pre-validates the
+	 * `<w:commentReference>` markers from the body. Deleting a thread parent
+	 * cascades through its replies so none are left with dangling markers or a
+	 * `w15:paraIdParent` pointing at a removed comment. Pre-validates the
 	 * batch — any unknown id aborts before any mutation. Throws
 	 * `CommentsError("COMMENT_NOT_FOUND")` with the first offending id. */
 	delete(ids: string[]): void {
@@ -241,10 +281,17 @@ export class Comments {
 		}
 		if (!view) return; // `normalized` is empty (no ids → no `view` access yet).
 
+		const expanded = new Set(normalized);
+		for (const commentId of normalized) {
+			for (const replyId of view.descendantReplyIds(commentId)) {
+				expanded.add(`c${replyId}`);
+			}
+		}
+
 		const root = XmlNode.findRoot(view.tree, "w:comments");
 		if (!root) return;
 
-		for (const commentId of normalized) {
+		for (const commentId of expanded) {
 			const numericId = commentId.slice(1);
 			const node = view.findById(numericId);
 			if (!node) continue; // pre-validated above
@@ -303,6 +350,7 @@ export class Comments {
 		text: string,
 		author: string,
 		date: string,
+		paraIdParent?: string,
 	): void {
 		const commentsView = this.document.ensureComments();
 		const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
@@ -315,6 +363,7 @@ export class Comments {
 					date,
 					initials: authorInitials(author),
 					paraId,
+					...(paraIdParent ? { paraIdParent } : {}),
 					text,
 				}}
 			/>,
