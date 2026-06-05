@@ -18,6 +18,15 @@ export type Paragraph = {
 	 * plus the leading whitespace run after it are stripped from `runs` so the
 	 * AST carries only the task text. Markdown render emits `- [ ]` / `- [x]`. */
 	taskState?: "checked" | "unchecked";
+	/** Markdown blockquote depth (1 = single `>`, 2 = `> >`, etc.). Detected
+	 * by the AST reader from `pStyle="Quote"` / `pStyle="QuoteListParagraph"`
+	 * combined with the paragraph's `<w:ind w:left>` value (each 720-twip
+	 * step is one nesting level). Markdown render prepends one `> ` per
+	 * depth. Code blocks, tables, math, headings, and HRs inside a markdown
+	 * blockquote intentionally do **not** carry this flag — the walker emits
+	 * them at top level, breaking the quote at that point. See
+	 * [src/core/markdown/CLAUDE.md](../markdown/CLAUDE.md). */
+	quoteDepth?: number;
 	runs: Run[];
 };
 

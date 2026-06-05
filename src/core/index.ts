@@ -71,6 +71,11 @@ export {
 	parseRowAt,
 	parseTableAt,
 } from "./locators";
+export {
+	MarkdownImport,
+	MarkdownImportError,
+	type MarkdownImportErrorCode,
+} from "./markdown";
 export { XmlNode } from "./parser";
 export {
 	isSectionType,

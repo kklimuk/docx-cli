@@ -14,6 +14,7 @@ import {
 	nextDrawingId,
 } from "../image";
 import { w } from "../jsx";
+import { MarkdownImport, MarkdownImportError } from "../markdown";
 import type { XmlNode } from "../parser";
 import { SentinelSectionParagraph } from "../sections";
 import { BlankTable, type TableBorders, type TableLayout } from "../table";
@@ -118,7 +119,8 @@ export type InsertSpec =
 			heightInches?: number;
 	  }
 	| { kind: "code"; content: string; language?: string }
-	| { kind: "equation"; latex: string; display: boolean };
+	| { kind: "equation"; latex: string; display: boolean }
+	| { kind: "markdown"; source: string };
 
 export type TextFormatting = {
 	color?: string;
@@ -189,6 +191,22 @@ async function buildInsertedParagraph(
 			return buildCodeBlockParagraphs(spec.content, spec.language);
 		case "equation":
 			return buildEquationParagraph(spec, paragraphOptions);
+		case "markdown":
+			return buildMarkdownBlocks(document, spec);
+	}
+}
+
+async function buildMarkdownBlocks(
+	document: Document,
+	spec: Extract<InsertSpec, { kind: "markdown" }>,
+): Promise<XmlNode[]> {
+	try {
+		return await new MarkdownImport(document).blocks(spec.source);
+	} catch (error) {
+		if (error instanceof MarkdownImportError) {
+			throw new InsertError(error.code, error.message, error.hint);
+		}
+		throw error;
 	}
 }
 

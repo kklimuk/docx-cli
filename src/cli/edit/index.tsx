@@ -4,6 +4,9 @@ import {
 	type Document,
 	Edit,
 	EditError,
+	MarkdownImport,
+	MarkdownImportError,
+	type ParagraphContentSpec,
 	type Run,
 	type SectionType,
 } from "@core";
@@ -50,6 +53,14 @@ Paragraph content (one required for paragraph / range locators):
   --code TEXT       Replace with a code block — newlines split into one
                     CodeBlock-styled paragraph per source line
   --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin)
+  --markdown TEXT   Replace with parsed GFM markdown. Same dialect as
+                    'docx insert --markdown' (headings, lists, tables, code,
+                    blockquotes, links, math, footnotes, CriticMarkup, …).
+                    Multi-block sources expand naturally — a paragraph
+                    locator gets replaced by however many blocks the source
+                    parses to.
+  --markdown-file PATH  Same as --markdown, but read content from PATH
+                    (use "-" for stdin).
   --task STATE      Flip a task-list item's checkbox state in place ("checked" or
                     "unchecked"). Requires a single paragraph locator that is
                     already a GFM task list item (has a leading <w14:checkbox/>
@@ -171,6 +182,10 @@ async function commitBlockEdit(
 				authorFlag: opts.authorFlag,
 				noFormatting: opts.noFormatting,
 			});
+		} else if (opts.spec.kind === "markdown") {
+			const resolved = await resolveMarkdownBlocks(document, opts.spec);
+			if (typeof resolved === "number") return resolved;
+			edit.paragraph(blockRef, resolved, { authorFlag: opts.authorFlag });
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
 		}
@@ -218,8 +233,23 @@ async function commitRangeEdit(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
+	let spec: ParagraphContentSpec;
+	if (opts.spec.kind === "markdown") {
+		const resolved = await resolveMarkdownBlocks(document, opts.spec);
+		if (typeof resolved === "number") return resolved;
+		spec = resolved;
+	} else if (
+		opts.spec.kind === "text" ||
+		opts.spec.kind === "runs" ||
+		opts.spec.kind === "code"
+	) {
+		spec = opts.spec;
+	} else {
+		return fail("USAGE", "Unsupported edit spec for range locator");
+	}
+
 	try {
-		new Edit(document).range(rangeRef, opts.spec, {
+		new Edit(document).range(rangeRef, spec, {
 			authorFlag: opts.authorFlag,
 		});
 	} catch (error) {
@@ -321,12 +351,20 @@ async function parseAndValidateOptions(
 	};
 }
 
+/** Paragraph-level flags that are meaningless under `--markdown` /
+ *  `--markdown-file` (the markdown source already encodes block styling).
+ *  See `chooseContentSpec` in `cli/insert/index.tsx` for the symmetric
+ *  rejection on the insert side. */
+const MARKDOWN_INCOMPATIBLE_FLAGS = ["style", "alignment"] as const;
+
 const OPTION_SPEC = {
 	at: { type: "string" },
 	text: { type: "string" },
 	runs: { type: "string" },
 	code: { type: "string" },
 	"code-file": { type: "string" },
+	markdown: { type: "string" },
+	"markdown-file": { type: "string" },
 	language: { type: "string" },
 	task: { type: "string" },
 	equation: { type: "string" },
@@ -372,6 +410,11 @@ type EditSpec =
 			kind: "code";
 			content: string;
 			language?: string;
+			paragraphOptions: ParagraphOptions;
+	  }
+	| {
+			kind: "markdown";
+			source: string;
 			paragraphOptions: ParagraphOptions;
 	  }
 	| { kind: "task"; checked: boolean }
@@ -500,23 +543,27 @@ async function validateParagraphEdit(
 		return { kind: "task", checked };
 	}
 
+	const markdownInline = values.markdown as string | undefined;
+	const markdownFile = values["markdown-file"] as string | undefined;
 	const contentFlags = [
 		text !== undefined,
 		runsJson !== undefined,
 		codeInline !== undefined,
 		codeFile !== undefined,
+		markdownInline !== undefined,
+		markdownFile !== undefined,
 	].filter(Boolean).length;
 	if (contentFlags === 0) {
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, --code-file, --task, or --equation",
+			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation",
 			HELP,
 		);
 	}
 	if (contentFlags > 1) {
 		return fail(
 			"USAGE",
-			"Pass only one of --text, --runs, --code, --code-file",
+			"Pass only one of --text, --runs, --code, --code-file, --markdown, --markdown-file",
 			HELP,
 		);
 	}
@@ -555,9 +602,71 @@ async function validateParagraphEdit(
 		};
 	}
 
+	if (markdownInline !== undefined || markdownFile !== undefined) {
+		// Markdown encodes its own block styling — paragraph-level flags
+		// would be silently dropped. Reject up front for the same reason
+		// `--language` is gated to `--code` / `--code-file`.
+		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
+			(flag) => values[flag] !== undefined,
+		);
+		if (conflict) {
+			return fail(
+				"USAGE",
+				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
+				HELP,
+			);
+		}
+		const source =
+			markdownInline !== undefined
+				? markdownInline
+				: await loadMarkdownFile(markdownFile as string);
+		if (typeof source === "number") return source;
+		return { kind: "markdown", source, paragraphOptions };
+	}
+
 	const runs = await parseRunsArg(runsJson as string);
 	if (typeof runs === "number") return runs;
 	return { kind: "runs", runs, paragraphOptions };
+}
+
+/** Read content for `--markdown-file PATH`. `-` means stdin. */
+async function loadMarkdownFile(path: string): Promise<string | number> {
+	try {
+		return path === "-"
+			? await new Response(Bun.stdin.stream()).text()
+			: await Bun.file(path).text();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --markdown-file ${path}: ${message}`,
+		);
+	}
+}
+
+/** Resolve a `markdown` spec into a `markdown-blocks` spec by parsing the
+ * source against the now-open document. The lens registers footnote bodies,
+ * mints image rels, and provisions any styles the source references — all on
+ * `document` — before returning the splice-ready blocks. */
+async function resolveMarkdownBlocks(
+	document: Document,
+	spec: Extract<EditSpec, { kind: "markdown" }>,
+): Promise<
+	Extract<ParagraphContentSpec, { kind: "markdown-blocks" }> | number
+> {
+	try {
+		const blocks = await new MarkdownImport(document).blocks(spec.source);
+		return {
+			kind: "markdown-blocks",
+			blocks,
+			paragraphOptions: spec.paragraphOptions,
+		};
+	} catch (error) {
+		if (error instanceof MarkdownImportError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
 }
 
 /** Read content for `--code-file PATH`. `-` means stdin (handled the same as

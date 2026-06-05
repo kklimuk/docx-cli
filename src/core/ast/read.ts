@@ -578,6 +578,36 @@ function applyParagraphProperties(
 		}
 		paragraph.list = list;
 	}
+
+	// Markdown blockquote depth — see `Paragraph.quoteDepth` in types.ts. The
+	// markdown walker tags a quoted paragraph with `pStyle="Quote"` (plain
+	// quote text) or `pStyle="QuoteListParagraph"` (a list item inside a
+	// quote). Depth is recovered from the paragraph's `<w:ind w:left>`:
+	//   • Quote: leftTwips / 720
+	//   • QuoteListParagraph: (leftTwips - 300*(level+1)) / 720, because the
+	//     walker shifts the bullet+body indent by `300*(level+1)` on top of
+	//     `720*depth` so Word renders the bullet inside the quote rather
+	//     than flush-left (see [src/core/markdown/walker.tsx]).
+	if (paragraph.style === "Quote") {
+		const indNode = paragraphProperties.findChild("w:ind");
+		const leftTwips = indNode
+			? Number(indNode.getAttribute("w:left") ?? "720")
+			: 720;
+		paragraph.quoteDepth = Math.max(1, Math.round(leftTwips / 720));
+	} else if (paragraph.style === "QuoteListParagraph") {
+		const indNode = paragraphProperties.findChild("w:ind");
+		const ilvl = paragraph.list?.level ?? 0;
+		const baseListLeft = 300 * (ilvl + 1);
+		// Default to depth 1 if no `<w:ind>` is present (e.g., a paragraph
+		// styled with QuoteListParagraph but no paragraph-level override).
+		const leftTwips = indNode
+			? Number(indNode.getAttribute("w:left") ?? String(baseListLeft + 720))
+			: baseListLeft + 720;
+		paragraph.quoteDepth = Math.max(
+			1,
+			Math.round((leftTwips - baseListLeft) / 720),
+		);
+	}
 }
 
 /** A single <w:r> can contain a mix of <w:t>, <w:tab>, <w:br>, <w:drawing>,

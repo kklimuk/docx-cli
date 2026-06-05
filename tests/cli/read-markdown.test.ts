@@ -80,10 +80,13 @@ describe("docx read (markdown)", () => {
 		expect(out).toContain("<br>for Submission <!-- t0:r0c0:p1 -->");
 	});
 
-	test("large-mixed: images render as ![alt](imgN) and locator survives", async () => {
+	test("large-mixed: images render as ![alt](<sha256>.<ext>) and locator survives", async () => {
 		const out = await render(fixture("large-mixed.docx"));
-		expect(out).toMatch(/!\[[^\]]*\]\(img0\)/);
-		expect(out).toMatch(/!\[[^\]]*\]\(img1\)/);
+		// Each image surfaces as a content-addressed URL: `<64-hex>.<ext>`.
+		// The walker uses the hash on round-trip to reuse the existing
+		// media part instead of re-fetching/duplicating.
+		const hashMatches = out.match(/!\[[^\]]*\]\([0-9a-f]{64}\.[a-z0-9]+\)/g);
+		expect(hashMatches?.length ?? 0).toBeGreaterThanOrEqual(2);
 		expect(out).toContain("# Chinese Folding Fan Design Project");
 	});
 

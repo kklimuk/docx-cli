@@ -1,4 +1,5 @@
 import type { XmlNode } from "../../parser";
+import { flattenImageRuns } from "../text";
 import type {
 	Block,
 	Comment,
@@ -101,6 +102,19 @@ export class Body {
 
 	listImageIds(): string[] {
 		return [...this.imageById.keys()];
+	}
+
+	/** Find an image by its SHA-256 content hash. Used by the markdown
+	 * importer to round-trip `![alt](<sha256>.<ext>)` references without
+	 * re-fetching: when the reader emits an image, it identifies the bytes
+	 * by their hash; on import we look the hash up against the target
+	 * doc's media and reuse the existing relationship if it matches.
+	 * Returns `undefined` if no image in this body carries that hash. */
+	findImageByHash(hash: string): ImageReference | undefined {
+		for (const run of flattenImageRuns(this.blocks)) {
+			if (run.hash === hash) return this.imageById.get(run.id);
+		}
+		return undefined;
 	}
 
 	listHyperlinkIds(): string[] {

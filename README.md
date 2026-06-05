@@ -71,7 +71,7 @@ Open `mnda-filled.docx` in Word: tracked changes and comments appear in the revi
 ## Commands
 
 ```sh
-docx create FILE [--title T] [--author A] [--text "..."]
+docx create FILE [--title T] [--author A] [--text "..." | --from PATH.md]
 docx read FILE [--from pN] [--to pN] [--accepted | --baseline | --current] [--comments]
 docx read FILE --ast    # JSON-AST opt-in (every other read flag is markdown-only)
 docx insert FILE --after p3 --text "..." [--style HeadingN] [--color HEX] [--bold] [--italic] [--url URL]
@@ -85,6 +85,7 @@ docx insert FILE --after p3 --code-file PATH [--language LANG] | --code-file -  
 docx insert FILE --after p3 --task checked|unchecked --text "..." [--list-level N]   # GFM task list item
 docx insert FILE --after p3 --list bullet|ordered --text "..." [--list-level N]      # plain list item
 docx insert FILE --after p3 --equation "x^2 + y^2" [--display]   # LaTeX → OMML via temml + own MathML→OMML adapter
+docx insert FILE --after p3 --markdown "..." | --markdown-file PATH | --markdown-file -    # GFM + math + CriticMarkup → one or more blocks
 docx edit   FILE --at p3 --task checked|unchecked         # flip an existing task's state; track-changes emits checkboxToggle
 docx edit   FILE --at eq3 --equation "x^3" [--display|--inline]  # replace equation content and/or toggle display mode
 docx edit   FILE --at p3 --text "..." [--no-formatting]   # word-level diff preserves bold/italic on unchanged words
@@ -93,6 +94,7 @@ docx edit   FILE --at p3 --code "..." [--language LANG]   # replace paragraph wi
 docx edit   FILE --at p3 --code-file PATH [--language LANG]
 docx edit   FILE --at p2-p5 --text "..."                  # range replace: collapse paragraph range to one paragraph
 docx edit   FILE --at p2-p5 --code-file new.go --language go  # range replace with a fresh code block
+docx edit   FILE --at p3 --markdown "..." | --markdown-file PATH    # replace paragraph (or pN-pM range) with parsed markdown
 docx edit   FILE --at s0 [--columns N] [--type T]         # mutate section properties
 docx delete FILE --at p3
 docx delete FILE --at p2-p5                               # range delete: drop a contiguous paragraph span
@@ -176,6 +178,14 @@ The same `--current`/`--baseline` flags apply to `find`, `replace`, `wc`, and `c
 
 `--comments` appends a GFM footnote reference (`[^cN]`) at the end of each commented span and emits one footnote definition per comment at the end of the output. Footnotes/endnotes (the document's own `<w:footnoteReference>` / `<w:endnoteReference>`) are rendered unconditionally as `[^fnN]` / `[^enN]`. Run `docx info schema` for the full mapping table.
 
+### Markdown authoring
+
+`docx create FILE --from PATH.md`, `docx insert FILE --after pN --markdown "..."` / `--markdown-file PATH`, and `docx edit FILE --at pN --markdown ...` (or `--at pN-pM` for range replace) all accept the same dialect: GitHub-flavored Markdown via `remark-gfm` (tables, strikethrough, footnotes, task lists, autolinks), inline + display math via `remark-math` (`$x^2$`, `$$x^2$$`), and CriticMarkup (`{++ins++}` / `{--del--}`). The walker emits real OOXML — fenced code becomes `CodeBlock-LANG` paragraphs, tables become `<w:tbl>` with even-grid columns, lists provision `numbering.xml` lazily, footnote refs/defs author `footnotes.xml`, images fetch bytes (path, `data:`, or `http(s)`) and mint media parts. CriticMarkup wraps in real `<w:ins>` / `<w:del>` under tracking, and respects the accepted view (`{++X++}` keeps `X`, `{--X--}` drops it) when tracking is off.
+
+`docx read FILE` (which already defaults to markdown render) emits a compatible dialect, so the **read → edit → write** loop round-trips: render a doc to markdown, hand it to an LLM, splice the result back via `--markdown-file`. Use `--markdown-file` (not `--markdown TEXT`) when the source starts with `-` — Node's `parseArgs` rejects leading-dash flag values.
+
+**Blockquote round-trip** is lossless for **paragraphs, lists, and nested blockquotes** (encoded as `pStyle="Quote"` / `"QuoteListParagraph"` + `<w:ind w:left={720 * depth}>`, recovered as `paragraph.quoteDepth` on read). **Code blocks, tables, math, headings, and HRs inside a blockquote intentionally escape** — they emit at top level on import, breaking the surrounding quote. Adjacent quoted content before and after surfaces as separate blockquotes on re-read. See [src/core/markdown/CLAUDE.md](src/core/markdown/CLAUDE.md) for why.
+
 ### Bulk + anchored comments
 
 `comments add --anchor "phrase"` resolves the phrase via the same matcher as `docx find` (default accepted view, query normalization on) and anchors the comment to that match. Pass `--occurrence N` (1-indexed) to disambiguate when the phrase matches more than once; without it, an ambiguous anchor errors atomically before any writes.
@@ -235,6 +245,8 @@ Run `docx info locators` for the full reference.
 
 - **Runtime**: Bun (`node:util` parseArgs, JSX with custom factory, native zlib)
 - **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
+- **Markdown**: [`unified`](https://www.npmjs.com/package/unified) + [`remark-parse`](https://www.npmjs.com/package/remark-parse) + [`remark-gfm`](https://www.npmjs.com/package/remark-gfm) + [`remark-math`](https://www.npmjs.com/package/remark-math) drive the import path (`docx create --from`, `docx insert/edit --markdown`)
+- **Math**: [`temml`](https://www.npmjs.com/package/temml) (MIT) compiles LaTeX → MathML; our own MathML → OMML adapter handles the OOXML side bidirectionally
 - **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif) transcodes HEIC/HEIF input to JPEG on insert
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile

@@ -9,6 +9,7 @@ import {
 	resolveDate,
 	TrackChanges,
 	type TrackedMeta,
+	wrapContiguousTrackable,
 } from "./index";
 import {
 	buildTrackedRuns,
@@ -249,21 +250,36 @@ function convertParagraphContentToDeleted(
 	paragraph: XmlNode,
 	mintMeta: () => TrackedMeta,
 ): void {
-	const { runs, nonRuns } = partitionParagraphRuns(paragraph);
-	paragraph.children = nonRuns;
-	if (runs.length === 0) return;
-	const deletedRuns = runs.map((run) => convertTextToDelText(run));
-	paragraph.children.push(<Del meta={mintMeta()}>{deletedRuns}</Del>);
+	// Wrap each contiguous span of trackable run-level children
+	// (`<w:r>`, `<m:oMath>`, `<m:oMathPara>`) in its own `<w:del>`, leaving
+	// pre-existing wrappers (`<w:ins>`, `<w:del>`, `<w:hyperlink>`,
+	// `<w:moveFrom>`, `<w:moveTo>`, `<w:fldSimple>`, `<w:smartTag>`) in
+	// place. Mirrors the `applyDeletion` shape in `index.tsx` so a tracked
+	// range-delete preserves walker-emitted CriticMarkup (or any other
+	// inner-wrapper-carrying input) instead of nesting it under an outer
+	// del that clobbers its metadata. See [CLAUDE.md "Tracked range edit /
+	// delete — Word-canonical shapes"](./CLAUDE.md).
+	paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => {
+		const converted = runs.map((run) =>
+			run.tag === "w:r" ? convertTextToDelText(run) : run,
+		);
+		return <Del meta={mintMeta()}>{converted}</Del>;
+	});
 }
 
 function wrapNewParagraphContentAsInserted(
 	paragraph: XmlNode,
 	mintMeta: () => TrackedMeta,
 ): void {
-	const { runs, nonRuns } = partitionParagraphRuns(paragraph);
-	paragraph.children = nonRuns;
-	if (runs.length === 0) return;
-	paragraph.children.push(<Ins meta={mintMeta()}>{runs}</Ins>);
+	// See `convertParagraphContentToDeleted` for the rationale — same
+	// contiguous-wrap pattern, just emitting `<w:ins>`. This is the path
+	// that was previously losing CriticMarkup `<w:ins>`/`<w:del>` metadata
+	// from `edit --markdown` source — the walker's inner wrapper would get
+	// flattened into the outer one carrying the editor's author, dropping
+	// the markdown source's author/revisionId entirely.
+	paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => (
+		<Ins meta={mintMeta()}>{runs}</Ins>
+	));
 }
 
 function replacePPr(paragraph: XmlNode, newPPr: XmlNode): void {

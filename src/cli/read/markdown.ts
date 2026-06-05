@@ -19,6 +19,7 @@ import {
 	codeBlockLanguageFromStyleId,
 	isCodeBlockStyleId,
 } from "@core/code-block";
+import { extensionForImageMime } from "@core/image/formats";
 
 export type MarkdownView = "current" | "accepted" | "baseline";
 
@@ -287,8 +288,18 @@ function isDisplayEquationOnly(body: string): boolean {
 }
 
 function paragraphPrefix(paragraph: Paragraph): string {
+	// Blockquote prefix comes before everything else. `> ` repeats per
+	// nesting depth; the AST reader fills `quoteDepth` from `pStyle="Quote"`
+	// / `pStyle="QuoteListParagraph"` plus the paragraph's `<w:ind w:left>`
+	// value. Markdown stitches adjacent `> ` lines back into one logical
+	// blockquote on re-parse.
+	const quotePrefix = paragraph.quoteDepth
+		? "> ".repeat(paragraph.quoteDepth)
+		: "";
 	const headingLevel = headingLevelFor(paragraph.style);
-	if (headingLevel !== null) return `${"#".repeat(headingLevel)} `;
+	if (headingLevel !== null) {
+		return `${quotePrefix}${"#".repeat(headingLevel)} `;
+	}
 	if (paragraph.list) {
 		const indent = "  ".repeat(paragraph.list.level);
 		// GFM ordered-list numbering auto-increments client-side; using `1. `
@@ -300,9 +311,9 @@ function paragraphPrefix(paragraph: Paragraph): string {
 				: paragraph.taskState === "unchecked"
 					? "[ ] "
 					: "";
-		return `${indent}${marker}${task}`;
+		return `${quotePrefix}${indent}${marker}${task}`;
 	}
-	return "";
+	return quotePrefix;
 }
 
 function headingLevelFor(style: string | undefined): number | null {
@@ -363,7 +374,16 @@ function renderRuns(
 		}
 		if (run.type === "image") {
 			const alt = sanitizeAltText(run.alt ?? run.id);
-			out += `![${alt}](${run.id})`;
+			// Content-addressed URL: `<sha256>.<ext>`. The walker on the
+			// import side (`@core/markdown::preloadImages`) recognizes the
+			// shape and reuses the existing media part by hash instead of
+			// shelling out to `loadImageSource` — that's what makes
+			// `read → edit → write` round-trip without re-fetching images.
+			// `imageById.values()` in `Body` shares the same hash → rId
+			// mapping the walker queries. Mirrors the on-disk naming
+			// convention used by `docx images extract`.
+			const extension = extensionForImageMime(run.contentType) ?? "bin";
+			out += `![${alt}](${run.hash}.${extension})`;
 		} else if (run.type === "break") {
 			if (run.kind === "line") out += "<br>";
 		} else if (run.type === "tab") {

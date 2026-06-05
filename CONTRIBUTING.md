@@ -49,6 +49,8 @@ src/
     ast/                      # types + DocView + XML→AST reader; text.ts (paragraph helpers), sym.ts (<w:sym> decode)
     locators/                 # parse "p3:5-20" → Locator + resolve to refs
     image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http + HEIC→JPEG), formats.ts (one mime↔ext table)
+    equation/                 # latexToOmml / ommlToLatex bidirectional (temml + own MathML↔OMML adapter)
+    markdown/                 # MarkdownImport lens: remark-parse + remark-gfm + remark-math + CriticMarkup plugin → walker → emitters
     blocks.tsx                # <Paragraph> / <RunElement> / <ListParagraph> / <HorizontalRule> emitters
     table.tsx                 # <BlankTable> / <Table> / <TableRow> / <TableCell> emitters
     sections.tsx              # sectPr emitters + mutators

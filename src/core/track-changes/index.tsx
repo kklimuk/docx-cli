@@ -149,9 +149,14 @@ export class TrackChanges {
 }
 
 /** Wrap each contiguous span of `TRACKABLE_PARAGRAPH_CHILDREN` in the wrapper
- * `build` produces, passing non-trackable siblings (e.g. `<w:pPr>`) through at
- * their existing positions. Shared by `applyInsertion` / `applyDeletion`. */
-function wrapContiguousTrackable(
+ * `build` produces, passing non-trackable siblings (e.g. `<w:pPr>`,
+ * existing `<w:ins>` / `<w:del>` / `<w:hyperlink>` wrappers) through at
+ * their existing positions. Shared by `applyInsertion` / `applyDeletion`
+ * here, and by the range-replace machinery in [replace.tsx](./replace.tsx)
+ * to preserve walker-emitted inner `<w:ins>` / `<w:del>` (e.g. CriticMarkup
+ * from `edit --markdown`) instead of nesting them inside a fresh outer
+ * wrapper that would clobber their author/revisionId metadata. */
+export function wrapContiguousTrackable(
 	children: XmlNode[],
 	build: (runs: XmlNode[]) => XmlNode,
 ): XmlNode[] {

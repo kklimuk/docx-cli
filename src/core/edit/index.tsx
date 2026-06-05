@@ -196,7 +196,10 @@ export class Edit {
 
 /** The paragraph-content specs that produce one or more new paragraphs.
  * Shared between `Edit.paragraph` (single block) and `Edit.range` (block
- * range); equation/task/section have their own method signatures. */
+ * range); equation/task/section have their own method signatures. The
+ * `markdown-blocks` variant carries pre-built XmlNodes from a prior
+ * `new MarkdownImport(document).blocks(source)` — the CLI does the async
+ * parse before calling into the lens, so the lens stays synchronous. */
 export type ParagraphContentSpec =
 	| {
 			kind: "text";
@@ -209,6 +212,11 @@ export type ParagraphContentSpec =
 			kind: "code";
 			content: string;
 			language?: string;
+			paragraphOptions: ParagraphOptions;
+	  }
+	| {
+			kind: "markdown-blocks";
+			blocks: XmlNode[];
 			paragraphOptions: ParagraphOptions;
 	  };
 
@@ -272,6 +280,14 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 				{...(spec.format.italic ? { italic: true as const } : {})}
 			/>,
 		];
+	}
+	if (spec.kind === "markdown-blocks") {
+		// Pre-built by the CLI via `MarkdownImport.blocks(...)`. The lens does
+		// nothing else — the markdown walker has already provisioned styles,
+		// allocated list numIds, registered footnote bodies, and minted image
+		// rels on the document. We just splice these blocks where the locator
+		// pointed.
+		return spec.blocks;
 	}
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
 }

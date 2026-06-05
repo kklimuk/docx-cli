@@ -17,6 +17,8 @@ export type BaselineStyleId =
 	| "Code"
 	| "CodeBlock"
 	| "ListParagraph"
+	| "QuoteListParagraph"
+	| "Hyperlink"
 	| "FootnoteReference"
 	| "FootnoteText"
 	| "EndnoteReference"
@@ -162,12 +164,18 @@ export class StylesView {
  * definition. Each builder renders one of the style components below. */
 const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 	Normal: () => <NormalStyle />,
+	// Modern Word (Office 365 / 2013+) heading defaults. Size + bold/italic
+	// + color = visual hierarchy. Color cues (`2E74B5` mid-blue, `1F4D78`
+	// darker blue) carry most of the differentiation since H3–H6 are all
+	// 11pt; the bold/italic mix discriminates the lower levels.
 	Heading1: () => (
 		<HeadingStyle
 			styleId="Heading1"
 			displayName="heading 1"
 			outlineLevel={0}
 			sizeHalfPoints={32}
+			bold
+			color="2E74B5"
 		/>
 	),
 	Heading2: () => (
@@ -175,7 +183,9 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			styleId="Heading2"
 			displayName="heading 2"
 			outlineLevel={1}
-			sizeHalfPoints={28}
+			sizeHalfPoints={26}
+			bold
+			color="2E74B5"
 		/>
 	),
 	Heading3: () => (
@@ -183,7 +193,9 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			styleId="Heading3"
 			displayName="heading 3"
 			outlineLevel={2}
-			sizeHalfPoints={26}
+			sizeHalfPoints={24}
+			bold
+			color="1F4D78"
 		/>
 	),
 	Heading4: () => (
@@ -191,7 +203,10 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			styleId="Heading4"
 			displayName="heading 4"
 			outlineLevel={3}
-			sizeHalfPoints={24}
+			sizeHalfPoints={22}
+			bold
+			italic
+			color="2E74B5"
 		/>
 	),
 	Heading5: () => (
@@ -200,6 +215,7 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			displayName="heading 5"
 			outlineLevel={4}
 			sizeHalfPoints={22}
+			color="2E74B5"
 		/>
 	),
 	Heading6: () => (
@@ -207,7 +223,9 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			styleId="Heading6"
 			displayName="heading 6"
 			outlineLevel={5}
-			sizeHalfPoints={20}
+			sizeHalfPoints={22}
+			italic
+			color="1F4D78"
 		/>
 	),
 	Quote: () => <QuoteStyle />,
@@ -215,6 +233,8 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 	Code: () => <CodeStyle />,
 	CodeBlock: () => <CodeBlockStyle />,
 	ListParagraph: () => <ListParagraphStyle />,
+	QuoteListParagraph: () => <QuoteListParagraphStyle />,
+	Hyperlink: () => <HyperlinkStyle />,
 	FootnoteReference: () => <FootnoteReferenceStyle />,
 	FootnoteText: () => <FootnoteTextStyle />,
 	EndnoteReference: () => <EndnoteReferenceStyle />,
@@ -235,11 +255,19 @@ function HeadingStyle({
 	displayName,
 	outlineLevel,
 	sizeHalfPoints,
+	bold,
+	italic,
+	color,
 }: {
 	styleId: BaselineStyleId;
 	displayName: string;
 	outlineLevel: number;
 	sizeHalfPoints: number;
+	bold?: boolean;
+	italic?: boolean;
+	/** Hex color without `#` (e.g. `2E74B5`). Optional — Word's H5 is the
+	 *  uncolored case among the modern defaults. */
+	color?: string;
 }): XmlNode {
 	return (
 		<w.style w-type="paragraph" w-styleId={styleId}>
@@ -254,7 +282,15 @@ function HeadingStyle({
 				<w.outlineLvl w-val={String(outlineLevel)} />
 			</w.pPr>
 			<w.rPr>
-				<w.b />
+				{/* `<w:rFonts>` per ECMA-376 §17.3.2.26 sits before bold/italic in
+				   `<w:rPr>`. Word's modern headings use Calibri Light (one font
+				   for all heading levels); apply via `w:asciiTheme="majorHAnsi"`
+				   if/when we wire up theme inheritance, but a direct ascii/hAnsi
+				   reference is portable across docs without a theme part. */}
+				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				{bold && <w.b />}
+				{italic && <w.i />}
+				{color && <w.color w-val={color} />}
 				<w.sz w-val={String(sizeHalfPoints)} />
 			</w.rPr>
 		</w.style>
@@ -345,6 +381,44 @@ function ListParagraphStyle(): XmlNode {
 				    style — matches Word's own List Paragraph definition. */}
 				<w.contextualSpacing />
 			</w.pPr>
+		</w.style>
+	);
+}
+
+function QuoteListParagraphStyle(): XmlNode {
+	// List items inside a markdown blockquote. Extends ListParagraph so the
+	// numbering machinery (numId / lvlText / bullet glyphs) keeps working,
+	// and adds italic to match the visual treatment of `Quote`. The actual
+	// left indent comes from a paragraph-level `<w:ind>` the markdown walker
+	// emits — that way nesting depth is encoded as `720 * depth` twips and
+	// the read side recovers `paragraph.quoteDepth` from the indent value.
+	return (
+		<w.style w-type="paragraph" w-styleId="QuoteListParagraph">
+			<w.name w-val="Quote List Paragraph" />
+			<w.basedOn w-val="ListParagraph" />
+			<w.qFormat />
+			<w.rPr>
+				<w.i />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function HyperlinkStyle(): XmlNode {
+	// Word's canonical Hyperlink character style: theme color 0563C1 (blue
+	// hyperlink), single underline. The inline walker applies `rStyle` to
+	// every text run inside `<w:hyperlink>` so anchors are visually obvious
+	// without an explicit color/underline flag on each run.
+	return (
+		<w.style w-type="character" w-styleId="Hyperlink">
+			<w.name w-val="Hyperlink" />
+			<w.basedOn w-val="DefaultParagraphFont" />
+			<w.uiPriority w-val="99" />
+			<w.unhideWhenUsed />
+			<w.rPr>
+				<w.color w-val="0563C1" />
+				<w.u w-val="single" />
+			</w.rPr>
 		</w.style>
 	);
 }

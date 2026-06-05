@@ -27,6 +27,7 @@ const CORE_FIXTURES = [
 	"task-lists-web.docx", // Word-for-Web shape: Wingdings ☐ bullet + strike-for-done
 	"task-lists-tracked.docx", // tracked checkbox toggles inside SDT content controls
 	"equations.docx", // OMML coverage: <m:f> <m:rad> <m:nary> <m:lim> <m:acc> <m:d> <m:m> <m:eqArr> <m:bar> <m:box> + 70+ formulas (statistics, engineering, chemistry)
+	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`)
 ] as const;
 
 const EXTRA_FIXTURES = [

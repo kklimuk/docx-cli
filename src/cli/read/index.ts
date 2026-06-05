@@ -103,8 +103,14 @@ export async function run(args: string[]): Promise<number> {
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;
 
+	// Hashes are content-addressed image identifiers — read --ast surfaces
+	// them on each ImageRun, and read --markdown uses them as the URL in
+	// `![alt](<sha256>.<ext>)` so a round-trip through `insert --markdown`
+	// can reuse existing media parts instead of re-fetching. Both paths
+	// need the hashes populated, so enrich up front for either output mode.
+	await new Images(docView).enrichHashes();
+
 	if (ast) {
-		await new Images(docView).enrichHashes();
 		await respond(docView.body);
 		return EXIT.OK;
 	}

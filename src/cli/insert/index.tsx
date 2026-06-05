@@ -50,6 +50,18 @@ Content (one required):
                     (KaTeX/MathJax-compatible LaTeX dialect) → MathML → OMML.
                     Pair with --display for block-mode equations; omit for
                     inline. Round-trips as $LATEX$ / $$LATEX$$ in markdown.
+  --markdown TEXT   Parse TEXT as GFM markdown (remark + remark-gfm +
+                    remark-math + CriticMarkup) and emit the result as one or
+                    more blocks. Supports: headings, paragraphs, lists
+                    (bullet/ordered/task), tables, code fences, blockquotes,
+                    horizontal rules, links, inline + display math ($x^2$,
+                    $$x^2$$), inline images (path/URL/data:), footnote
+                    refs/defs ([^id]: body), GFM strikethrough (~~x~~), and
+                    CriticMarkup insertions/deletions ({++x++}/{--x--}; under
+                    tracking these wrap in <w:ins>/<w:del>, otherwise the
+                    insertion is plain text and the deletion is dropped).
+  --markdown-file PATH  Same as --markdown, but read content from PATH
+                    (use "-" for stdin).
 
 Paragraph options:
   --style NAME       Apply paragraph style (e.g., Heading1)
@@ -114,6 +126,9 @@ Examples:
   docx insert doc.docx --after p3 --code $'function foo() {\\n  return 42;\\n}' --language typescript
   docx insert doc.docx --after p3 --code-file snippet.go --language go
   cat snippet.py | docx insert doc.docx --after p3 --code-file - --language python
+  docx insert doc.docx --after p3 --markdown $'# Heading\\n\\n- a\\n- b'
+  docx insert doc.docx --after p3 --markdown-file README.md
+  cat draft.md | docx insert doc.docx --after p3 --markdown-file -
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -210,6 +225,22 @@ async function parseAndValidateOptions(
 	const spec = await chooseContentSpec(parsed.values);
 	if (typeof spec === "number") return spec;
 
+	// Markdown spec carries its own block styling (heading levels, list
+	// numbering, code blocks, …) so paragraph-level flags would be silently
+	// dropped. Reject them up front instead.
+	if (spec.kind === "markdown") {
+		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
+			(flag) => parsed.values[flag] !== undefined,
+		);
+		if (conflict) {
+			return fail(
+				"USAGE",
+				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
+				HELP,
+			);
+		}
+	}
+
 	const paragraphOptions = await parseParagraphOptions(parsed.values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
 
@@ -253,6 +284,8 @@ const OPTION_SPEC = {
 	"list-level": { type: "string" },
 	equation: { type: "string" },
 	display: { type: "boolean" },
+	markdown: { type: "string" },
+	"markdown-file": { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
 	color: { type: "string" },
@@ -297,6 +330,19 @@ type RawValues = ReturnType<typeof parseArgs>["values"];
  * make sense alongside it. Drives both the "exactly one content flag" check
  * and the "this sub-flag requires its content flag" check, so those rules
  * live in one place instead of scattered guards. */
+/** Paragraph-level flags that are meaningless under `--markdown` /
+ *  `--markdown-file` because the markdown source already encodes block
+ *  styling (heading levels, list numbering, code-block fences, …). We
+ *  reject explicitly so the agent doesn't silently lose their intent.
+ *  `--text` / `--runs` etc. still accept these. */
+const MARKDOWN_INCOMPATIBLE_FLAGS = [
+	"style",
+	"alignment",
+	"task",
+	"list",
+	"list-level",
+] as const;
+
 const CONTENT_KINDS = [
 	{ flag: "text", subFlags: ["color", "bold", "italic", "url"] },
 	{ flag: "runs", subFlags: [] },
@@ -311,6 +357,8 @@ const CONTENT_KINDS = [
 	{ flag: "code", subFlags: ["language"] },
 	{ flag: "code-file", subFlags: ["language"] },
 	{ flag: "equation", subFlags: ["display"] },
+	{ flag: "markdown", subFlags: [] },
+	{ flag: "markdown-file", subFlags: [] },
 ] as const;
 
 const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
@@ -379,6 +427,35 @@ async function chooseContentSpec(
 				latex: values.equation as string,
 				display: Boolean(values.display),
 			};
+		case "markdown":
+		case "markdown-file":
+			return resolveMarkdownSpec(values, chosen.flag);
+	}
+}
+
+/** Resolve `--markdown TEXT` (inline) or `--markdown-file PATH` (file / stdin)
+ *  into a uniform `markdown` spec. Stdin path mirrors `--code-file -`. */
+async function resolveMarkdownSpec(
+	values: RawValues,
+	flag: "markdown" | "markdown-file",
+): Promise<Extract<InsertSpec, { kind: "markdown" }> | number> {
+	if (flag === "markdown") {
+		const source = values.markdown as string;
+		return { kind: "markdown", source };
+	}
+	const path = values["markdown-file"] as string;
+	try {
+		const source =
+			path === "-"
+				? await new Response(Bun.stdin.stream()).text()
+				: await Bun.file(path).text();
+		return { kind: "markdown", source };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --markdown-file ${path}: ${message}`,
+		);
 	}
 }
 

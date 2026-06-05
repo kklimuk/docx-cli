@@ -81,13 +81,18 @@ export class NumberingView {
 	 * num is the per-list instance). Seeds the bullet/ordered `abstractNum` on
 	 * first use. Style provisioning for the `ListParagraph` pStyle is the
 	 * caller's responsibility — typically via
-	 * `view.ensureStyles().ensureStyle("ListParagraph")`. */
-	allocate(kind: AbstractNumKind): number {
+	 * `view.ensureStyles().ensureStyle("ListParagraph")`.
+	 *
+	 * Pass `start` to set the level-0 start value via `<w:lvlOverride>` —
+	 * needed both to honor `1. / 10. ordered` lists from markdown and to
+	 * stop Word from auto-continuing adjacent lists into one. Defaults to
+	 * 1, which is the safe restart-from-the-top behavior. */
+	allocate(kind: AbstractNumKind, start = 1): number {
 		const root = this.ensureNumberingRoot();
 		const abstractNumId = this.ensureAbstractNum(root, kind);
 		const numId = nextNumId(root);
 		root.children.push(
-			<NumElement numId={numId} abstractNumId={abstractNumId} />,
+			<NumElement numId={numId} abstractNumId={abstractNumId} start={start} />,
 		);
 		return numId;
 	}
@@ -203,13 +208,23 @@ function findLevel(abstractNum: XmlNode, ilvl: number): XmlNode | undefined {
 function NumElement({
 	numId,
 	abstractNumId,
+	start,
 }: {
 	numId: number;
 	abstractNumId: number;
+	start: number;
 }): XmlNode {
+	// `<w:lvlOverride>` + `<w:startOverride>` forces this num instance to
+	// (re)start at the given value. Always emitting it (even for start=1)
+	// stops Word's "continue numbering" autoformat from merging adjacent
+	// lists that happen to share the abstractNum, and lets `start=10` from
+	// `10. item` survive into Word's rendered output.
 	return (
 		<w.num w-numId={String(numId)}>
 			<w.abstractNumId w-val={String(abstractNumId)} />
+			<w.lvlOverride w-ilvl="0">
+				<w.startOverride w-val={String(start)} />
+			</w.lvlOverride>
 		</w.num>
 	);
 }
