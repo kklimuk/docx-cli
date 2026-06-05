@@ -32,6 +32,13 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Compile
         run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.name }} src/index.ts
+      - name: Smoke-test render on Linux artifact
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'bun-linux-x64'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libreoffice
+          ./${{ matrix.name }} render tests/fixtures/markdown-import.docx \
+            --out /tmp/smoke --engine libreoffice --pages 1
+          test -s /tmp/smoke/page-001.png
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -48,6 +55,11 @@ jobs:
         with:
           path: ./artifacts
           merge-multiple: true
+      - name: Stage attribution files for release
+        # Per LGPL §4 we ship LGPL-3.0.txt + NOTICES alongside every binary;
+        # NOTICES is the canonical attribution surface for PDFium (BSD-3),
+        # jpeg-js (BSD-3), highlight.js (BSD-3), and libheif (LGPL).
+        run: cp LICENSE LGPL-3.0.txt NOTICES ./artifacts/
       - name: List artifacts
         run: ls -la ./artifacts
       - uses: softprops/action-gh-release@v2

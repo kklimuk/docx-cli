@@ -18,6 +18,7 @@ Commands:
   replace   FILE PATTERN REPL  Substitute text spans (sed for docx)
   wc        FILE [LOCATOR]  Count words in the doc or a slice
   outline   FILE  List headings as a hierarchical tree
+  render    FILE  Render each page as a PNG/JPG via Word or LibreOffice
   comments  …     Add, reply, resolve, delete, list comments
   footnotes …     Add, edit, delete, list footnotes
   endnotes  …     Add, edit, delete, list endnotes

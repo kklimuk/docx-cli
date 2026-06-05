@@ -1,0 +1,181 @@
+docx-cli — third-party notices
+
+This file lists the third-party software docx-cli redistributes (statically
+linked into the published binaries via `bun build --compile`, or bundled
+into `dist/index.js`), along with the attribution each license requires.
+
+docx-cli itself is licensed under the MIT License (see LICENSE). Linking
+permissively-licensed libraries (MIT / Apache-2.0 / BSD-3-Clause) leaves
+that license unchanged. Linking the LGPL-3.0 libheif-js library does NOT
+make docx-cli copyleft either — LGPL §4 permits use by works under other
+licenses provided the conditions in this NOTICES file (acknowledgement +
+LGPL-3.0 text + the right to swap in a modified libheif by rebuilding
+docx-cli from source) are met.
+
+Whenever a runtime dependency is added or changed in package.json,
+re-audit whether the new entry needs an attribution here.
+
+
+================================================================================
+PDFium — `@hyzyla/pdfium` (renderer for `docx render`)
+================================================================================
+
+@hyzyla/pdfium wrapper                  MIT License (see node_modules/@hyzyla/pdfium/LICENSE.md)
+PDFium WASM binary                      BSD-3-Clause OR Apache-2.0 (dual)
+
+docx-cli redistributes the PDFium binary under the BSD-3-Clause option.
+The required notice:
+
+	Copyright 2014 The PDFium Authors. All rights reserved.
+
+	Redistribution and use in source and binary forms, with or without
+	modification, are permitted provided that the following conditions are
+	met:
+
+	    * Redistributions of source code must retain the above copyright
+	notice, this list of conditions and the following disclaimer.
+	    * Redistributions in binary form must reproduce the above copyright
+	notice, this list of conditions and the following disclaimer in the
+	documentation and/or other materials provided with the distribution.
+	    * Neither the name of Google Inc. nor the names of its contributors
+	may be used to endorse or promote products derived from this software
+	without specific prior written permission.
+
+	THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+	IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+	TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+	PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+	OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+	SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+	LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+	DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+	THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+	(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+	OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+(The required PDFium copyright notice is reproduced above — this NOTICES
+file is itself the attribution surface. The upstream PDFium LICENSE is
+not included verbatim inside the @hyzyla/pdfium npm tarball; the wrapper's
+own LICENSE.md covers only the MIT-licensed wrapper code.)
+
+
+================================================================================
+libheif-js (HEIC/HEIF input transcoding for `docx insert --image`)
+================================================================================
+
+License: LGPL-3.0-only (see LGPL-3.0.txt at the root of this distribution).
+Copyright: libheif authors, https://github.com/strukturag/libheif.
+
+docx-cli links libheif-js statically into its compiled binaries (`dist/docx`
+and the GitHub Release artifacts). LGPL §4 imposes the following obligations
+that this notice satisfies:
+
+  (a) Acknowledged here: libheif-js is incorporated into docx-cli's binaries.
+  (b) The full LGPL-3.0 text is distributed as LGPL-3.0.txt alongside this
+      file.
+  (c) docx-cli's own source code is publicly available at
+      https://github.com/kklimuk/docx-cli — anyone may rebuild the
+      binaries with a modified libheif by replacing the `libheif-js` /
+      `heic-convert` dependency in package.json and running
+      `bun run build:binary`. libheif's source is at
+      https://github.com/strukturag/libheif.
+
+Linking LGPL-3.0 code does NOT make docx-cli a derivative work for the
+purpose of LGPL §3 — docx-cli remains under the MIT License declared in
+LICENSE.
+
+
+================================================================================
+BSD-3-Clause components
+================================================================================
+
+The following dependencies are inlined into the published binaries and
+require their copyright notice + disclaimer to be reproduced in this
+NOTICES file per BSD-3-Clause §1(2).
+
+----  jpeg-js (JPEG encoder for `docx render --format jpg`)  ----
+
+	Copyright (c) 2014, Eugene Ware
+	All rights reserved.
+
+	Redistribution and use in source and binary forms, with or without
+	modification, are permitted provided that the following conditions are
+	met:
+
+	1. Redistributions of source code must retain the above copyright
+	   notice, this list of conditions and the following disclaimer.
+	2. Redistributions in binary form must reproduce the above copyright
+	   notice, this list of conditions and the following disclaimer in the
+	   documentation and/or other materials provided with the distribution.
+	3. Neither the name of Eugene Ware nor the names of its contributors
+	   may be used to endorse or promote products derived from this software
+	   without specific prior written permission.
+
+	THIS SOFTWARE IS PROVIDED BY EUGENE WARE ''AS IS'' AND ANY EXPRESS OR
+	IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+	WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+	DISCLAIMED. IN NO EVENT SHALL EUGENE WARE BE LIABLE FOR ANY DIRECT,
+	INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+	(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+	SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+	HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+	STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+	IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+	POSSIBILITY OF SUCH DAMAGE.
+
+----  highlight.js (transitive via lowlight; syntax highlighting for `insert --code`)  ----
+
+	BSD 3-Clause License
+
+	Copyright (c) 2006, Ivan Sagalaev.
+	All rights reserved.
+
+	Redistribution and use in source and binary forms, with or without
+	modification, are permitted provided that the following conditions are
+	met:
+
+	* Redistributions of source code must retain the above copyright notice,
+	  this list of conditions and the following disclaimer.
+
+	* Redistributions in binary form must reproduce the above copyright
+	  notice, this list of conditions and the following disclaimer in the
+	  documentation and/or other materials provided with the distribution.
+
+	* Neither the name of the copyright holder nor the names of its
+	  contributors may be used to endorse or promote products derived from
+	  this software without specific prior written permission.
+
+	THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+	IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+	TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+	PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+	HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+	SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+	LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+	DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+	THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+	(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+	OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+================================================================================
+Other dependencies (license elections + MIT components)
+================================================================================
+
+  jszip                 dual MIT OR GPL-3.0-or-later; docx-cli elects MIT
+  fast-xml-parser       MIT
+  fast-xml-builder      MIT
+  pngjs                 MIT
+  temml                 MIT
+  lowlight              MIT (wrapper around BSD-3 highlight.js, attributed above)
+  unified               MIT
+  remark-parse          MIT
+  remark-gfm            MIT
+  remark-math           MIT
+  unist-util-visit      MIT
+  mdast-util-math       MIT
+  heic-convert          MIT (wrapper around LGPL libheif-js, attributed above)
+
+Each package's own LICENSE file is distributed alongside its source inside
+`node_modules/<pkg>/` for anyone consuming docx-cli via Bun's dependency
+resolution.

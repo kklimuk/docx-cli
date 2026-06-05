@@ -105,6 +105,7 @@ docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit
 
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current]
 docx outline FILE
+docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]    # per-page PNG/JPG via Word or LibreOffice
 
 docx comments add     FILE --range p3:5-20 --text "..." [--author NAME] [--current | --baseline]
 docx comments add     FILE --anchor "phrase" --text "..." [--occurrence N]
@@ -186,6 +187,25 @@ The same `--current`/`--baseline` flags apply to `find`, `replace`, `wc`, and `c
 
 **Blockquote round-trip** is lossless for **paragraphs, lists, and nested blockquotes** (encoded as `pStyle="Quote"` / `"QuoteListParagraph"` + `<w:ind w:left={720 * depth}>`, recovered as `paragraph.quoteDepth` on read). **Code blocks, tables, math, headings, and HRs inside a blockquote intentionally escape** — they emit at top level on import, breaking the surrounding quote. Adjacent quoted content before and after surfaces as separate blockquotes on re-read. See [src/core/markdown/CLAUDE.md](src/core/markdown/CLAUDE.md) for why.
 
+### Visual verification
+
+`docx render FILE` produces one PNG (or JPG) per page using Microsoft Word as the ground-truth renderer on macOS / Windows, with LibreOffice as the cross-platform fallback. Auto-detect picks the highest-fidelity engine available on the machine; `--engine word|libreoffice` overrides. The JSON ack lists the page paths so agents reading PNGs can iterate over them programmatically — same shape as `comments add --batch` printing minted ids:
+
+```sh
+$ docx render report.docx --out ./snapshots
+{"ok":true,"operation":"render","path":"report.docx","engine":"word-mac",
+ "output":"./snapshots","pages":["./snapshots/page-001.png", ...]}
+```
+
+**Runtime requirements** (none for any other command — `render` is the only verb that needs an external runtime):
+
+- **Word engine**: Microsoft Word installed locally. macOS drives Word via `osascript` (first run triggers a one-time Automation permission prompt that has to be granted); Windows drives Word via PowerShell COM. Linux isn't supported by the Word path — use `--engine libreoffice` instead.
+- **LibreOffice engine**: `soffice` on PATH or installed at the canonical location (`brew install --cask libreoffice` on macOS, `apt install libreoffice` on Linux, libreoffice.org on Windows).
+
+PDF rasterization is built in — the PDFium WASM binary (BSD-3-Clause / Apache-2.0 dual) is embedded into every shipped artifact: `dist/index.js` carries it as a sibling `dist/pdfium-<hash>.wasm` asset; the `bun build --compile` standalone binary embeds it directly inside the executable. No `poppler` / `pdftoppm` / `imagemagick` install required.
+
+Use cases: visual verification of an agent's edits, comparing tracked-change accept/reject before vs after, generating screenshots for PR descriptions or bug reports.
+
 ### Bulk + anchored comments
 
 `comments add --anchor "phrase"` resolves the phrase via the same matcher as `docx find` (default accepted view, query normalization on) and anchors the comment to that match. Pass `--occurrence N` (1-indexed) to disambiguate when the phrase matches more than once; without it, an ambiguous anchor errors atomically before any writes.
@@ -247,6 +267,7 @@ Run `docx info locators` for the full reference.
 - **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
 - **Markdown**: [`unified`](https://www.npmjs.com/package/unified) + [`remark-parse`](https://www.npmjs.com/package/remark-parse) + [`remark-gfm`](https://www.npmjs.com/package/remark-gfm) + [`remark-math`](https://www.npmjs.com/package/remark-math) drive the import path (`docx create --from`, `docx insert/edit --markdown`)
 - **Math**: [`temml`](https://www.npmjs.com/package/temml) (MIT) compiles LaTeX → MathML; our own MathML → OMML adapter handles the OOXML side bidirectionally
+- **Render**: [`@hyzyla/pdfium`](https://www.npmjs.com/package/@hyzyla/pdfium) (MIT wrapper + Apache-2.0 PDFium-as-WASM) for `docx render`'s PDF → PNG/JPG step, plus [`pngjs`](https://www.npmjs.com/package/pngjs) / [`jpeg-js`](https://www.npmjs.com/package/jpeg-js) for the image encoding — no `poppler`/`pdftoppm`/`imagemagick` install required
 - **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif) transcodes HEIC/HEIF input to JPEG on insert
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile

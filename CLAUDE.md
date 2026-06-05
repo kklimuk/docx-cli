@@ -41,6 +41,7 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 - **Sections are blocks; CRUD goes through the standard verbs** — see [src/core](src/core/CLAUDE.md).
 - **Table structure is a merge-aware logical grid** — `gridSpan`/`vMerge` map logical (row,col) onto physical `<w:tc>`. The `docx tables` verbs reshape rows/columns/merges/widths/borders through that model — see [src/cli/tables](src/cli/tables/CLAUDE.md).
 - **Markdown is GFM + math + CriticMarkup, parsed via remark.** The `MarkdownImport` lens (`src/core/markdown/`) composes existing emitters; the walker is sync (image fetch + footnote registration happen in an async pre-walk). See [src/core/markdown](src/core/markdown/CLAUDE.md).
+- **`docx render` is the only external-runtime command.** Every other verb works purely against the .docx zip + XML; `render` shells out to Word (macOS/Windows) or LibreOffice (cross-platform) to produce a PDF, then rasterizes in-process via the bundled `@hyzyla/pdfium` WASM package (no system tools needed for the rasterizer). The lens lives at [`@core/render`](src/core/render/CLAUDE.md) (`renderDocxPages` is the entry point); [`src/cli/render`](src/cli/render/CLAUDE.md) is a thin arg-parse shell. Agents that consume PNGs (and you, when verifying a fixture) use this command; the rest of the CLI never invokes it.
 - **No undo, no journal.** Mutating commands overwrite `FILE` in place; git is the history. `-o/--output PATH` writes a parallel file; `--dry-run` previews (wins over `--output`).
 
 ## Commands
@@ -49,7 +50,7 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 
 | Surface         | Verbs                                                                                                                              |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| top-level       | `create` (`--from PATH.md`) `read` `insert` (`--markdown TEXT` / `--markdown-file PATH`) `edit` (`--markdown` on `pN` or `pN-pM`) `delete` `find` `replace` `wc` `outline` (insert: `--code [--language LANG]` / `--code-file PATH`) |
+| top-level       | `create` (`--from PATH.md`) `read` `insert` (`--markdown TEXT` / `--markdown-file PATH`) `edit` (`--markdown` on `pN` or `pN-pM`) `delete` `find` `replace` `wc` `outline` `render` (per-page PNG via Word or LibreOffice) (insert: `--code [--language LANG]` / `--code-file PATH`) |
 | `comments`      | `add` `reply` `resolve` `delete` `list`                                                                                            |
 | `footnotes`     | `add` `edit` `delete` `list`                                                                                                       |
 | `endnotes`      | `add` `edit` `delete` `list`                                                                                                       |

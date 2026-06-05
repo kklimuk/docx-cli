@@ -31,6 +31,8 @@ export type ErrorCode =
 	| "MATCH_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT"
 	| "TABLE_STRUCTURE"
+	| "RENDER_ENGINE"
+	| "RENDER_FAILED"
 	| "UNHANDLED";
 
 // Output sinks. Production leaves these null and writes straight to the real
@@ -120,6 +122,8 @@ function exitCodeFor(code: ErrorCode): number {
 		case "TRACKED_CHANGE_CONFLICT":
 		case "TABLE_STRUCTURE":
 		case "IMAGE_SOURCE":
+		case "RENDER_ENGINE":
+		case "RENDER_FAILED":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
 	}

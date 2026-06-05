@@ -78,6 +78,15 @@ export {
 } from "./markdown";
 export { XmlNode } from "./parser";
 export {
+	detectEngine,
+	engineByName,
+	listAvailable,
+	type RenderEngine,
+	RenderEngineError,
+	type RenderEngineName,
+	renderDocxPages,
+} from "./render";
+export {
 	isSectionType,
 	isTrailingSectPr,
 	readSectionProperties,
