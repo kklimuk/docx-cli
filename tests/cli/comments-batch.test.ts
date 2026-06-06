@@ -56,7 +56,7 @@ describe("docx comments add --anchor", () => {
 			"check",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 		expect((result.parsed as { error: string }).error).toContain(
 			"matches 3 times",
 		);
@@ -95,7 +95,6 @@ describe("docx comments add --anchor", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "MATCH_NOT_FOUND",
 		});
 	});
@@ -108,9 +107,9 @@ describe("docx comments add --batch", () => {
 		writeFileSync(
 			batchPath,
 			[
-				'{"range": "p0", "text": "first comment"}',
+				'{"at": "p0", "text": "first comment"}',
 				'{"anchor": "Beta", "text": "second comment", "author": "Reviewer"}',
-				'{"range": "p2:0-5", "text": "third comment"}',
+				'{"at": "p2:0-5", "text": "third comment"}',
 			].join("\n"),
 		);
 
@@ -141,9 +140,9 @@ describe("docx comments add --batch", () => {
 		writeFileSync(
 			batchPath,
 			[
-				'{"range": "p0", "text": "first"}',
+				'{"at": "p0", "text": "first"}',
 				'{"anchor": "nonexistent", "text": "missing"}',
-				'{"range": "p1", "text": "third"}',
+				'{"at": "p1", "text": "third"}',
 			].join("\n"),
 		);
 
@@ -159,7 +158,6 @@ describe("docx comments add --batch", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "MATCH_NOT_FOUND",
 		});
 
@@ -168,21 +166,21 @@ describe("docx comments add --batch", () => {
 		expect(after).toHaveLength(0);
 	});
 
-	test("rejects --batch combined with --range/--anchor/--text on the CLI", async () => {
+	test("rejects --batch combined with --at/--anchor/--text on the CLI", async () => {
 		const { workspace, docPath } = await freshCopy("batch-mutex");
 		const batchPath = join(workspace, "x.jsonl");
-		writeFileSync(batchPath, '{"range": "p0", "text": "hi"}\n');
+		writeFileSync(batchPath, '{"at": "p0", "text": "hi"}\n');
 		const result = await runCli(
 			"comments",
 			"add",
 			docPath,
 			"--batch",
 			batchPath,
-			"--range",
+			"--at",
 			"p1",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 
@@ -286,7 +284,7 @@ describe("docx comments add — view-aware offset resolution (regression)", () =
 			"--baseline",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 
@@ -303,7 +301,7 @@ describe("docx comments delete --id (repeatable) and --batch", () => {
 				"comments",
 				"add",
 				docPath,
-				"--range",
+				"--at",
 				para,
 				"--text",
 				`note on ${para}`,
@@ -325,9 +323,9 @@ describe("docx comments delete --id (repeatable) and --batch", () => {
 			"comments",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			idA as string,
-			"--id",
+			"--at",
 			idC as string,
 		);
 		expect(result.exitCode).toBe(0);
@@ -351,14 +349,13 @@ describe("docx comments delete --id (repeatable) and --batch", () => {
 			"comments",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			idA as string,
-			"--id",
+			"--at",
 			"c999",
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "COMMENT_NOT_FOUND",
 		});
 		const remaining = await listComments(docPath);
@@ -398,7 +395,7 @@ describe("docx comments resolve --id (repeatable) and --batch", () => {
 				"comments",
 				"add",
 				docPath,
-				"--range",
+				"--at",
 				para,
 				"--text",
 				`note ${para}`,
@@ -419,9 +416,9 @@ describe("docx comments resolve --id (repeatable) and --batch", () => {
 			"comments",
 			"resolve",
 			docPath,
-			"--id",
+			"--at",
 			idA as string,
-			"--id",
+			"--at",
 			idC as string,
 		);
 		expect(result.exitCode).toBe(0);
@@ -456,9 +453,9 @@ describe("docx comments resolve --id (repeatable) and --batch", () => {
 			"comments",
 			"resolve",
 			docPath,
-			"--id",
+			"--at",
 			idA as string,
-			"--id",
+			"--at",
 			idB as string,
 		);
 		// Now unset both.
@@ -466,9 +463,9 @@ describe("docx comments resolve --id (repeatable) and --batch", () => {
 			"comments",
 			"resolve",
 			docPath,
-			"--id",
+			"--at",
 			idA as string,
-			"--id",
+			"--at",
 			idB as string,
 			"--unset",
 		);

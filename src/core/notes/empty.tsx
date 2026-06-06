@@ -15,7 +15,7 @@ export function buildEmptyNotesTree(kind: NoteKind): XmlNode[] {
 function buildEmptyNotesRoot(config: NoteConfig): XmlNode {
 	const Root = config.kind === "footnote" ? w.footnotes : w.endnotes;
 	return (
-		<Root {...{ "xmlns:w": NS_W }}>
+		<Root {...{ "xmlns:w": NS_W, "xmlns:r": NS_R }}>
 			<NoteBoilerplate config={config} type="separator" id="-1" />
 			<NoteBoilerplate config={config} type="continuationSeparator" id="0" />
 		</Root>
@@ -44,3 +44,9 @@ function NoteBoilerplate({
 }
 
 const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+// `r:id` on note-body `<w:hyperlink>` (and any future note-body media) needs the
+// relationships namespace declared on the part root, exactly as document.xml
+// does — without it the part is malformed XML and Word reports "unreadable
+// content". Declared unconditionally (Word always declares it on these parts).
+const NS_R =
+	"http://schemas.openxmlformats.org/officeDocument/2006/relationships";

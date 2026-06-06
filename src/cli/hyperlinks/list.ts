@@ -16,8 +16,12 @@ Usage:
 Options:
   -h, --help        Show this help
 
-Each entry has: id, url (or anchor), tooltip (if set), text (display text),
-and blockId (the paragraph containing the link).
+Output:
+  A bare JSON array of hyperlink objects: { id, url (or anchor), tooltip (if
+  set), text (display text), blockId (the paragraph containing the link) }. Each
+  item's "id" (e.g. link0) is its addressable handle — pass it to
+  \`hyperlinks replace/delete --at\`. Errors print {code, error, hint?} with a
+  nonzero exit.
 
 Examples:
   docx hyperlinks list doc.docx | jq -c '.[] | {id, url, text}'

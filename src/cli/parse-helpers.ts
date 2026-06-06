@@ -74,8 +74,8 @@ export async function parseSectionFlags(
 	return out;
 }
 
-/** Dedupe a list of `--id` strings while preserving the caller's order.
- *  Normalizes the `cN` prefix (so `--id 3` and `--id c3` collapse to the
+/** Dedupe a list of `--at` comment-id strings while preserving the caller's
+ *  order. Normalizes the `cN` prefix (so `--at 3` and `--at c3` collapse to the
  *  same key). Used by the comments batch verbs. */
 export function normalizeAndDedupCommentIds(rawIds: string[]): string[] {
 	const seen = new Set<string>();

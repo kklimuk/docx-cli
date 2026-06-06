@@ -8,6 +8,7 @@ import { buildBlankPackage } from "@core/create";
 import {
 	EXIT,
 	fail,
+	respond,
 	respondAck,
 	setVerboseAck,
 	tryParseArgs,
@@ -20,21 +21,34 @@ Usage:
   docx create FILE [options]
 
 Options:
-  --title TEXT     Document title
-  --author TEXT    Document author (default: $DOCX_AUTHOR)
-  --text TEXT      Seed first paragraph with this text
-  --from PATH      Seed the body with parsed markdown from PATH (use "-" for
-                   stdin). Mutex with --text. Uses the same markdown dialect
-                   as 'docx insert --markdown'.
-  --force          Overwrite if file exists
-  -v, --verbose    Print the success ack JSON (default: silent on success)
-  -h, --help       Show this help
+  --title TEXT       Document title
+  --author TEXT      Document author (default: $DOCX_AUTHOR)
+  --text TEXT        Seed first paragraph with this text. Mutex with --from.
+  --from PATH        Seed the body with parsed markdown from PATH (use "-" for
+                     stdin). Mutex with --text. Uses the same markdown dialect
+                     as 'docx insert --markdown'. This is the canonical way to
+                     build a whole .docx from a markdown file. Footnote/endnote
+                     bodies keep bold/italic + hyperlinks; footnote labels
+                     renumber to [^fnN] on import. (Under track-changes, note
+                     bodies flatten to plain text.)
+  --force            Overwrite if FILE already exists
+  -o, --output PATH  Write the new .docx to PATH instead of the FILE positional
+  --dry-run          Print what would be created; do not write the file
+                     (wins over --output)
+  -v, --verbose      Print the success ack JSON (default: silent on success)
+  -h, --help         Show this help
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  bytes, blocks}. --dry-run prints {operation, dryRun:true, path, ...} and
+  writes nothing. Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx create out.docx
   docx create out.docx --title "Spec" --author "Claude" --text "First paragraph."
   docx create out.docx --from draft.md
   cat draft.md | docx create out.docx --from -
+  docx create scratch.docx --from draft.md --output final.docx
 
 For a doc that opens with a code block, chain create with insert:
   docx create out.docx
@@ -50,6 +64,8 @@ export async function run(args: string[]): Promise<number> {
 			text: { type: "string" },
 			from: { type: "string" },
 			force: { type: "boolean" },
+			output: { type: "string", short: "o" },
+			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
 			help: { type: "boolean", short: "h" },
 		},
@@ -79,12 +95,30 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	if ((await Bun.file(path).exists()) && !parsed.values.force) {
+	const outputPath = parsed.values.output as string | undefined;
+	const dryRun = Boolean(parsed.values["dry-run"]);
+	// --dry-run is a preview; the destination path it names mirrors the real
+	// run, so it honors --output too. The existence guard below targets the
+	// same destination.
+	const destination = outputPath ?? path;
+
+	if ((await Bun.file(destination).exists()) && !parsed.values.force) {
 		return fail(
 			"USAGE",
-			`File already exists: ${path}`,
+			`File already exists: ${destination}`,
 			"Pass --force to overwrite.",
 		);
+	}
+
+	if (dryRun) {
+		await respond({
+			operation: "create",
+			dryRun: true,
+			path: destination,
+			...(text !== undefined ? { text } : {}),
+			...(fromPath !== undefined ? { from: fromPath } : {}),
+		});
+		return EXIT.OK;
 	}
 
 	const author =
@@ -97,13 +131,15 @@ export async function run(args: string[]): Promise<number> {
 	// inline against the raw template tree because MarkdownImport needs a
 	// full Document (relationships, content-types, lazy-provisioned views) to
 	// register footnote bodies / hyperlinks / images — all of which only come
-	// alive once the package is on disk and re-opened.
-	const pkg = buildBlankPackage({ path, title, author, text });
+	// alive once the package is on disk and re-opened. We write the blank
+	// package straight to `destination` (the --output target if given, else
+	// FILE), then re-open and re-save that same file for the markdown pass.
+	const pkg = buildBlankPackage({ path: destination, title, author, text });
 	await pkg.save();
 
 	let blockCount = 1; // the seed paragraph buildBlankPackage emitted
 	if (fromPath !== undefined) {
-		const applied = await applyMarkdownToBody(path, fromPath);
+		const applied = await applyMarkdownToBody(destination, fromPath);
 		if (typeof applied === "number") return applied;
 		blockCount = applied.blockCount;
 	}
@@ -111,8 +147,8 @@ export async function run(args: string[]): Promise<number> {
 	await respondAck({
 		ok: true,
 		operation: "create",
-		path,
-		bytes: Bun.file(path).size,
+		path: destination,
+		bytes: Bun.file(destination).size,
 		blocks: blockCount,
 	});
 	return EXIT.OK;

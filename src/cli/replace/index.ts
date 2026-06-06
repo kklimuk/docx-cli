@@ -30,8 +30,9 @@ Options:
   --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
   --current         operate on the raw concatenation (both ins and del text)
   --baseline        operate on the pre-change text (skip ins/moveTo)
-                    default: accepted document (skip del/moveFrom) — matches
-                    "docx find" / "docx read"
+                    (--current and --baseline are mutually exclusive; default:
+                    accepted document (skip del/moveFrom) — matches
+                    "docx find" / "docx read")
   --exact           disable pattern normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
   -o, --output PATH write to PATH instead of overwriting FILE
@@ -57,6 +58,13 @@ With --regex, REPLACEMENT supports JS String.replace substitution syntax:
   $\`            text before the match
   $'            text after the match
   $$            a literal $
+
+Output:
+  Silent on success (exit 0) — replace mutates text in place and mints no new
+  addressable handle (matched-span locators shift as text changes; re-read or
+  use --dry-run to see them). --verbose / --dry-run print
+  {ok:true, operation, totalMatches, replaced, matches:[{locator,…}], …}.
+  Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx replace doc.docx "fox" "cat"
@@ -175,7 +183,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "replace",
 			dryRun: true,
 			path,

@@ -96,16 +96,14 @@ describe("docx find", () => {
 		const result = await runCli("find", docPath, "fox", "--nth", "5");
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "MATCH_NOT_FOUND",
 		});
 	});
 
-	test("zero matches returns ok with empty array", async () => {
+	test("zero matches returns empty array", async () => {
 		const result = await runCli("find", docPath, "absent");
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toMatchObject({
-			ok: true,
 			totalMatches: 0,
 			matches: [],
 		});
@@ -124,7 +122,7 @@ describe("docx find", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			locator ?? "p0",
 			"--text",
 			"Reconsider",
@@ -144,7 +142,7 @@ describe("docx find", () => {
 	test("invalid regex returns USAGE error", async () => {
 		const result = await runCli("find", docPath, "(unclosed", "--regex");
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("matches inside table cells get tT:rRcC:pK locators", async () => {
@@ -179,7 +177,7 @@ describe("docx find", () => {
 			"comments",
 			"add",
 			cellDocPath,
-			"--range",
+			"--at",
 			cellLocator ?? "p0",
 			"--text",
 			"This row",

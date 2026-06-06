@@ -10,6 +10,7 @@ import {
 
 function helpFor(kind: NoteKind): string {
 	const verb = kind === "footnote" ? "footnotes" : "endnotes";
+	const idPrefix = kind === "footnote" ? "fn" : "en";
 	return `docx ${verb} list — print existing ${kind}s as JSON
 
 Usage:
@@ -17,6 +18,11 @@ Usage:
 
 Options:
   -h, --help          Show this help
+
+Output:
+  A bare JSON array, one object per ${kind}: { id, text }. Each item's \`id\`
+  (e.g. ${idPrefix}0) is the addressable handle you pass as \`--at ${idPrefix}N\` to
+  \`docx ${verb} edit\` / \`delete\`. Empty array if the doc has no ${kind}s part.
 
 Examples:
   docx ${verb} list doc.docx | jq '.[] | select(.text | test("citation"))'

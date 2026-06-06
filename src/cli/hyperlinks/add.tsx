@@ -1,4 +1,6 @@
 import {
+	Document,
+	describeForms,
 	type Locator,
 	LocatorParseError,
 	locatorToBlockTarget,
@@ -11,11 +13,13 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	respond,
-	respondAck,
+	respondMinted,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+
+const AT_FORMS = describeForms(["span", "cellSpan"], "                    ");
 
 const HELP = `docx hyperlinks add — wrap an existing span in a hyperlink
 
@@ -23,17 +27,19 @@ Usage:
   docx hyperlinks add FILE --at LOCATOR --url URL [options]
 
 Required:
-  --at LOCATOR      Where to wrap. Supports:
-                      pN:S-E          chars S..E of pN
-                      tT:rRcC:pK:S-E  chars S..E of a cell paragraph
+  --at LOCATOR      Span to wrap (within a single paragraph or cell). Supports:
+${AT_FORMS}
+                    Tip: don't hand-count offsets — run
+                    \`docx find FILE "phrase"\` to get the exact span locator.
+                    See \`docx info locators\`.
   --url URL         Target URL
 
 Optional:
   --author NAME     Author for the audit comment when track-changes is on
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
-  --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  --dry-run         Print what would change; do not write the file (wins over -o)
+  -v, --verbose     Print the full success ack JSON
   -h, --help        Show this help
 
 The span must lie inside a single paragraph and must not overlap an existing
@@ -44,8 +50,18 @@ wrapper first, then add the hyperlink.
 When track-changes is on, an audit comment is anchored to the wrapped span
 since OOXML has no native tracked-change form for hyperlink edits.
 
+Output:
+  Prints the new hyperlink id (e.g. linkN) on success — address it later with
+  \`--at linkN\`. --verbose prints the full ack {ok:true, operation, path,
+  hyperlinkId, text, at, url} — \`text\` echoes the span that was actually
+  wrapped, so an off-by-one offset is obvious. A --dry-run prints a bare preview
+  object (no id minted). Errors print {code, error, hint?} with a nonzero exit.
+  Notation: uppercase letters are numeric indices; offsets are 0-based,
+  end-exclusive.
+
 Examples:
   docx hyperlinks add doc.docx --at p3:5-20 --url https://example.com
+  docx hyperlinks add doc.docx --at t0:r1c2:p0:0-8 --url https://example.com
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -107,7 +123,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "hyperlinks.add",
 			dryRun: true,
 			path,
@@ -131,12 +146,60 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	await respondAck({
+	// `Hyperlinks.add` mutates the XML tree in place but doesn't re-key
+	// `hyperlinkById` (ids are positional, assigned by the reader's walk order).
+	// Re-read the saved file and locate the hyperlink now covering the wrapped
+	// span — that positional id is the addressable handle the agent can't
+	// reconstruct, so print it by default; --verbose upgrades to the full ack.
+	const savedPath = outputPath ?? path;
+	const minted = await findMintedHyperlink(
+		savedPath,
+		target.blockId,
+		target.span.start,
+	);
+	await respondMinted(minted ? [minted.id] : [], {
 		ok: true,
 		operation: "hyperlinks.add",
-		path: outputPath ?? path,
+		path: savedPath,
+		...(minted ? { hyperlinkId: minted.id, text: minted.text } : {}),
 		at: atInput,
 		url,
 	});
 	return EXIT.OK;
+}
+
+/** Re-read the saved document and find the linkN now covering `spanStart` in
+ *  the target block, plus the text it actually wraps. `add` rejects spans
+ *  overlapping an existing hyperlink, so the only hyperlink covering this offset
+ *  after the add is the new one; the contiguous text runs carrying that id are
+ *  the wrapped span — echoing them lets the caller catch an off-by-one offset.
+ *  The text-offset model mirrors `paragraphText` (only `text` runs count).
+ *  Returns `undefined` only if the re-read can't relocate the link (defensive —
+ *  the span was just wrapped). */
+async function findMintedHyperlink(
+	savedPath: string,
+	blockId: string,
+	spanStart: number,
+): Promise<{ id: string; text: string } | undefined> {
+	const reread = await Document.open(savedPath);
+	const block = reread.body.findBlockById(blockId);
+	if (!block || block.type !== "paragraph") return undefined;
+
+	let offset = 0;
+	let foundId: string | undefined;
+	let text = "";
+	for (const run of block.runs) {
+		if (run.type !== "text") continue;
+		const runEnd = offset + run.text.length;
+		// The first text run reaching past `spanStart` carries the new hyperlink.
+		if (foundId === undefined && run.hyperlink && spanStart < runEnd) {
+			foundId = run.hyperlink.id;
+		}
+		// Collect the contiguous run text carrying that id — the wrapped span.
+		if (foundId !== undefined && run.hyperlink?.id === foundId) {
+			text += run.text;
+		}
+		offset = runEnd;
+	}
+	return foundId === undefined ? undefined : { id: foundId, text };
 }

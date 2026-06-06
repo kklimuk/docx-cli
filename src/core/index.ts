@@ -60,7 +60,11 @@ export {
 export {
 	type BlockRangeReference,
 	type BlockTarget,
+	describeForms,
+	LOCATOR_FORMS,
 	type Locator,
+	type LocatorForm,
+	type LocatorFormKey,
 	LocatorParseError,
 	LocatorResolveError,
 	locatorToBlockTarget,

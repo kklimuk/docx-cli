@@ -60,7 +60,6 @@ export async function runApply(
 	try {
 		if (parsed.values["dry-run"]) {
 			await respond({
-				ok: true,
 				operation: `track-changes.${verb}`,
 				dryRun: true,
 				path,
@@ -86,7 +85,11 @@ export async function runApply(
 		return EXIT.OK;
 	} catch (error) {
 		if (error instanceof TrackedChangeNotFoundError) {
-			return fail("TRACKED_CHANGE_NOT_FOUND", error.message);
+			return fail(
+				"TRACKED_CHANGE_NOT_FOUND",
+				error.message,
+				"Run 'docx track-changes list FILE' to see available ids.",
+			);
 		}
 		throw error;
 	}

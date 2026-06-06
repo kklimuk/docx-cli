@@ -27,40 +27,77 @@ export function NoteReferenceRun({
 	);
 }
 
-/** The note's own body paragraph — a `<w:footnote>` / `<w:endnote>` whose first
- *  run carries the back-reference marker (`<w:footnoteRef/>` / `<w:endnoteRef/>`)
- *  that Word renders as the same numeral as the in-body reference. The text
- *  follows as a separate run with a leading space, matching the shape Word
- *  emits. */
+/** The note's own body — a `<w:footnote>` / `<w:endnote>` whose first
+ *  paragraph carries the back-reference marker (`<w:footnoteRef/>` /
+ *  `<w:endnoteRef/>`) that Word renders as the same numeral as the in-body
+ *  reference. Pass `text` for the single-paragraph convenience shape (a leading
+ *  space + the text follows the back-ref run, matching what Word emits). Pass
+ *  `runs` and/or `paragraphs` for a rich body: `runs` become sibling `<w:r>`
+ *  inside the first paragraph (after the back-ref run); each entry in
+ *  `paragraphs` is appended as its own sibling `<w:p>` inside the note. The
+ *  back-ref run always leads the first paragraph regardless of which body shape
+ *  is used. */
 export function NoteBody({
 	config,
 	id,
 	text,
+	runs,
+	paragraphs,
 }: {
 	config: NoteConfig;
 	id: string;
-	text: string;
+	text?: string;
+	runs?: XmlNode[];
+	paragraphs?: XmlNode[];
 }): XmlNode {
 	const Note = config.kind === "footnote" ? w.footnote : w.endnote;
-	const BodyRef = config.kind === "footnote" ? w.footnoteRef : w.endnoteRef;
 	return (
 		<Note w-id={id}>
 			<w.p>
 				<w.pPr>
 					<w.pStyle w-val={config.textStyle} />
 				</w.pPr>
-				<w.r>
-					<w.rPr>
-						<w.rStyle w-val={config.referenceStyle} />
-					</w.rPr>
-					<BodyRef />
-				</w.r>
-				<w.r>
-					<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
-				</w.r>
+				<NoteBackRefRun config={config} />
+				{noteFirstParagraphRuns({ text, runs })}
 			</w.p>
+			{paragraphs ?? []}
 		</Note>
 	);
+}
+
+/** The back-reference run (`<w:footnoteRef/>` / `<w:endnoteRef/>`) Word renders
+ *  as the body-side numeral. Lives at the head of a note's first paragraph. */
+function NoteBackRefRun({ config }: { config: NoteConfig }): XmlNode {
+	const BodyRef = config.kind === "footnote" ? w.footnoteRef : w.endnoteRef;
+	return (
+		<w.r>
+			<w.rPr>
+				<w.rStyle w-val={config.referenceStyle} />
+			</w.rPr>
+			<BodyRef />
+		</w.r>
+	);
+}
+
+/** The body content that follows the back-ref run in a note's first paragraph.
+ *  `text` is the single-paragraph convenience (a leading-space `<w:t>` run);
+ *  `runs` are explicit, pre-built `<w:r>` siblings. Exactly one is meaningful;
+ *  `runs` wins if both are given. Neither yields an empty body (just the
+ *  back-ref numeral). */
+function noteFirstParagraphRuns({
+	text,
+	runs,
+}: {
+	text?: string;
+	runs?: XmlNode[];
+}): XmlNode[] {
+	if (runs) return runs;
+	if (text === undefined) return [];
+	return [
+		<w.r>
+			<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
+		</w.r>,
+	];
 }
 
 /** Body of a footnote that's being added under tracking: the entire run

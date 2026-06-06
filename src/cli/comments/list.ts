@@ -18,6 +18,12 @@ Options:
   --thread cN          Print only the thread rooted at the given comment id
   -h, --help           Show this help
 
+Output:
+  A bare JSON array of comment objects: { id, author, date, text, anchor,
+  parentId?, resolved? }. Each item's "id" (e.g. c0) is its addressable handle —
+  pass it to \`comments reply/resolve/delete --at\`. Errors print
+  {code, error, hint?} with a nonzero exit.
+
 Examples:
   docx comments list doc.docx
   docx comments list doc.docx --include-resolved | jq '.[] | select(.author == "Jane")'

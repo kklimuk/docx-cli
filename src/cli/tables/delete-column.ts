@@ -1,4 +1,4 @@
-import { TrackChanges } from "@core";
+import { describeForms, TrackChanges } from "@core";
 import { parseColumnAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -19,13 +19,17 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["tableColumn"], "                     ");
+
 const HELP = `docx tables delete-column — delete a table column
 
 Usage:
   docx tables delete-column FILE --at tN:cC [options]
 
 Required:
-  --at tN:cC         Column C of table tN (e.g. t0:c2)
+  --at LOCATOR       Column to delete. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --author NAME      Author for tracked deletion (default: $DOCX_AUTHOR)
@@ -38,6 +42,11 @@ When track-changes is on, each cell of the column is marked as a tracked
 deletion (<w:tcPr><w:cellDel/>); the grid column is trimmed on accept.
 Rejected if the column passes through a horizontal merge (unmerge first) or
 is the table's only column (delete the table instead).
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  column, tracked}. --dry-run prints the preview object (no ok field). Errors
+  print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables delete-column doc.docx --at t0:c1
@@ -114,7 +123,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.delete-column",
 			dryRun: true,
 			path,

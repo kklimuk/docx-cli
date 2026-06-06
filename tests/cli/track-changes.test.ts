@@ -50,7 +50,7 @@ describe("docx track-changes", () => {
 		await runCli("create", docPath, "--text", "hi");
 		const result = await runCli("track-changes", docPath, "maybe");
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("list returns every <w:ins>/<w:del> with metadata", async () => {
@@ -211,7 +211,6 @@ describe("docx track-changes accept / reject", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toMatchObject({
-			ok: true,
 			dryRun: true,
 			operation: "track-changes.accept",
 			applied: [{ id: "tc0", kind: "ins", action: "unwrap" }],
@@ -232,7 +231,6 @@ describe("docx track-changes accept / reject", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "TRACKED_CHANGE_NOT_FOUND",
 		});
 	});
@@ -248,14 +246,14 @@ describe("docx track-changes accept / reject", () => {
 			"--all",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("missing --at and --all is rejected", async () => {
 		const docPath = await freshFixture("missing-target");
 		const result = await runCli("track-changes", "accept", docPath);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--all on a doc with no tracked changes succeeds with empty applied", async () => {

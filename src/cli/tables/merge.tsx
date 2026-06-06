@@ -1,3 +1,4 @@
+import { describeForms } from "@core";
 import { parseCellRangeAt } from "@core/locators";
 import {
 	buildGrid,
@@ -21,13 +22,17 @@ import {
 } from "../respond";
 import { noteStructuralChange } from "./common";
 
+const AT_FORMS = describeForms(["cellRange"], "                     ");
+
 const HELP = `docx tables merge — merge a rectangular cell region
 
 Usage:
   docx tables merge FILE --at tN:rR1cC1-rR2cC2 [options]
 
 Required:
-  --at tN:rR1cC1-rR2cC2   Top-left to bottom-right cell region (e.g. t0:r0c0-r1c1)
+  --at LOCATOR       Cell region to merge. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --author NAME      Author for the audit comment when track-changes is on
@@ -43,6 +48,11 @@ tracked-change construct for merges, so under track-changes the merge applies
 immediately with a [docx-cli] audit comment.
 
 Rejected if the region edges bisect an existing merge — unmerge first.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  region}. --dry-run prints the preview object (no ok field). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables merge doc.docx --at t0:r0c0-r0c2     # merge 3 cells across
@@ -120,7 +130,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.merge",
 			dryRun: true,
 			path,

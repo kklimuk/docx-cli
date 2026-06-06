@@ -179,7 +179,7 @@ describe("docx replace", () => {
 			"-1",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("invalid regex returns USAGE", async () => {
@@ -191,7 +191,7 @@ describe("docx replace", () => {
 			"--regex",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("replaces text inside table cells", async () => {

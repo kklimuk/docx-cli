@@ -128,7 +128,7 @@ describe("preserve unknown elements — invariant tests", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:6-11",
 			"--text",
 			"about the world",

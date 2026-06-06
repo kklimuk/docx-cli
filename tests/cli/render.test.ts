@@ -27,41 +27,41 @@ describe("docx render — argument parsing (no engine needed)", () => {
 	test("missing FILE → USAGE error", async () => {
 		const result = await runCli("render");
 		expect(result.exitCode).toBeGreaterThan(0);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("non-existent FILE → FILE_NOT_FOUND", async () => {
 		const result = await runCli("render", "/does/not/exist.docx");
 		expect(result.exitCode).toBeGreaterThan(0);
-		expect(result.parsed).toMatchObject({ ok: false, code: "FILE_NOT_FOUND" });
+		expect(result.parsed).toMatchObject({ code: "FILE_NOT_FOUND" });
 	});
 
 	test("--dpi out of range → USAGE", async () => {
 		const path = join(tempWorkspace("render-dpi"), "x.docx");
 		await runCli("create", path, "--text", "X");
 		const result = await runCli("render", path, "--dpi", "10");
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--format bogus → USAGE", async () => {
 		const path = join(tempWorkspace("render-fmt"), "x.docx");
 		await runCli("create", path, "--text", "X");
 		const result = await runCli("render", path, "--format", "tiff");
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--pages bogus → USAGE", async () => {
 		const path = join(tempWorkspace("render-pages"), "x.docx");
 		await runCli("create", path, "--text", "X");
 		const result = await runCli("render", path, "--pages", "abc");
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--engine bogus → USAGE", async () => {
 		const path = join(tempWorkspace("render-engine"), "x.docx");
 		await runCli("create", path, "--text", "X");
 		const result = await runCli("render", path, "--engine", "abiword");
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 

@@ -1,4 +1,4 @@
-import { TrackChanges } from "@core";
+import { describeForms, TrackChanges } from "@core";
 import { parseRowAt } from "@core/locators";
 import {
 	buildGrid,
@@ -17,13 +17,17 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["tableRow"], "                     ");
+
 const HELP = `docx tables delete-row — delete a table row
 
 Usage:
   docx tables delete-row FILE --at tN:rR [options]
 
 Required:
-  --at tN:rR         Row R of table tN (e.g. t0:r1)
+  --at LOCATOR       Row to delete. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --author NAME      Author for tracked deletion (default: $DOCX_AUTHOR)
@@ -37,6 +41,11 @@ When track-changes is on, the row is marked as a tracked deletion
 
 Rejected if the row holds the "restart" half of a vertical merge whose
 continuation rows would be orphaned; unmerge first.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  row, tracked}. --dry-run prints the preview object (no ok field). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables delete-row doc.docx --at t0:r2
@@ -111,7 +120,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.delete-row",
 			dryRun: true,
 			path,

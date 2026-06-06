@@ -19,10 +19,10 @@ import {
 const HELP = `docx images replace — swap an image's bytes
 
 Usage:
-  docx images replace FILE --at IMG_ID --with PATH [options]
+  docx images replace FILE --at imgN --with PATH [options]
 
 Required:
-  --at IMG_ID       Existing image to replace (e.g., img0)
+  --at imgN         image id to replace (e.g. img0)
   --with PATH       New image file (any image MIME type)
 
 Optional:
@@ -40,6 +40,12 @@ renamed (extension changes), the relationship Target is rewritten, and
 When track-changes is on, an audit comment is anchored to each drawing that
 referenced the swapped image since OOXML has no native tracked-change form
 for image replacement.
+
+Output:
+  Silent on success (exit 0) — replace mints no new id (the image keeps its
+  imgN). --verbose prints {ok:true, operation, path, imageId, partName,
+  mimeType, bytes}. Errors print {code, error, hint?} with a nonzero exit.
+  Discover ids with \`docx images list FILE\`.
 
 Examples:
   docx images replace doc.docx --at img2 --with ./new-photo.png
@@ -73,7 +79,7 @@ export async function run(args: string[]): Promise<number> {
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const targetId = parsed.values.at as string | undefined;
-	if (!targetId) return fail("USAGE", "Missing --at IMG_ID", HELP);
+	if (!targetId) return fail("USAGE", "Missing --at imgN", HELP);
 
 	const sourcePath = parsed.values.with as string | undefined;
 	if (!sourcePath) return fail("USAGE", "Missing --with PATH", HELP);
@@ -113,7 +119,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "images.replace",
 			dryRun: true,
 			path,

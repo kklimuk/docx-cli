@@ -15,12 +15,14 @@ Usage:
   docx hyperlinks <verb> FILE [options]
 
 Verbs:
-  add      Wrap an existing span in a hyperlink
-  delete   Unwrap a hyperlink (keep the text)
-  list     Print hyperlink manifest as JSON
-  replace  Change a hyperlink's URL
+  add      Wrap a span (pN:S-E / tN:rRcC:pK:S-E) in a hyperlink; mints a linkN
+  list     Print the hyperlink manifest as JSON (each id is a linkN handle)
+  replace  Change an existing hyperlink's URL (--at linkN)
+  delete   Unwrap an existing hyperlink, keeping the text (--at linkN)
 
-Run "docx hyperlinks <verb> --help" for verb-specific help.
+Hyperlinks are addressed by id (linkN); discover ids with
+"docx hyperlinks list FILE". Run "docx hyperlinks <verb> --help" for
+verb-specific help. See "docx info locators" for locator syntax.
 `;
 
 export async function run(args: string[]): Promise<number> {

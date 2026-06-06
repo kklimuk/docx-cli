@@ -22,6 +22,10 @@ const TOP_LEVEL_MUTATORS = new Set([
 	"edit",
 	"delete",
 	"replace",
+	// `render` is a producer, not a doc mutator, but it's silent-by-default in
+	// the same way (bare page paths unless --verbose) — inject --verbose so the
+	// JSON-ack assertions keep working.
+	"render",
 ]);
 
 /** For verb-style commands (`comments add`, `track-changes accept`, …),
@@ -64,12 +68,25 @@ function shouldInjectVerbose(args: string[]): boolean {
 	return false;
 }
 
-function withInjectedVerbose(args: string[]): string[] {
-	return shouldInjectVerbose(args) &&
+/** Query verbs that now default to a text-first (non-JSON) output and accept
+ *  `--json` for the structured form. The harness injects `--json` so existing
+ *  assertions on the parsed JSON keep working — mirroring the `--verbose`
+ *  injection for mutators. Tests of the text default use {@link spawnCli} or
+ *  assert `result.stdout` directly. */
+const TEXT_FIRST_QUERIES = new Set(["find", "wc", "outline"]);
+
+function withInjectedFlags(args: string[]): string[] {
+	let result =
+		shouldInjectVerbose(args) &&
 		!args.includes("--verbose") &&
 		!args.includes("-v")
-		? [...args, "--verbose"]
-		: args;
+			? [...args, "--verbose"]
+			: args;
+	const first = result[0];
+	if (first && TEXT_FIRST_QUERIES.has(first) && !result.includes("--json")) {
+		result = [...result, "--json"];
+	}
+	return result;
 }
 
 function parseAck(stdout: string): unknown {
@@ -102,7 +119,7 @@ export async function runCli(...args: string[]): Promise<CliResult> {
 	setVerboseAck(false); // reset the one module-global between calls
 	let exitCode: number;
 	try {
-		exitCode = await main(["bun", "docx", ...withInjectedVerbose(args)]);
+		exitCode = await main(["bun", "docx", ...withInjectedFlags(args)]);
 	} finally {
 		captureOutput();
 	}

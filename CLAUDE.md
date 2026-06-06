@@ -46,7 +46,15 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 
 ## Commands
 
-`docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH`. JSON by default; `{ok: false, code, error, hint}` on failure. Exit codes: `0` ok, `1` general, `2` usage, `3` not-found (defined in `src/cli/respond.ts`).
+`docx <verb>` and `docx <noun> <verb>`. Every command has `--help`. Mutating commands accept `--dry-run` and `-o/--output PATH` (including `create`).
+
+**Locator flags are unified:** address an existing thing with **`--at LOCATOR`** everywhere (edit, delete, tables, comments, footnotes/endnotes, images, hyperlinks, track-changes). `insert` uses `--after`/`--before` (relative placement), `read` uses `--from`/`--to` (a block slice), `comments add` also takes `--anchor PHRASE`, and `wc` takes a positional `[LOCATOR]`. No more `--id`/`--range`/`--to` for addressing.
+
+**Output model — exit code is the success signal** (`0` ok, `1` general, `2` usage, `3` not-found, in `src/cli/respond.ts`). The `ok` field appears ONLY on the `--verbose` ack. So:
+- A mutator that mints a new addressable handle (`comments add`→`cN`, `comments reply`→`cN`, `footnotes/endnotes add`→`fnN`/`enN`, `hyperlinks add`→`linkN`, `insert`→the new `pN`) prints the bare locator(s) — one per line — by default (`respondMinted`); `--verbose` → full `{ok:true,…}` ack.
+- A mutator with no new handle (`edit`/`delete`/`replace`/`comments resolve`/`tables *`/`track-changes *`/`toggle`) is silent on success (`respondAck`; `--verbose` → ack).
+- Query commands are text-first where there's a clean plain form: `find`→locator lines, `wc`→count, `outline`→indented `locator␉text` tree, `read`→markdown — each with `--json`/`--ast` for the structured payload. List verbs print a bare JSON array whose items' `id` is the `--at` handle.
+- Errors print `{code, error, hint?}` (no `ok`) + a nonzero exit. Dry-run previews drop `ok` too.
 
 | Surface         | Verbs                                                                                                                              |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |

@@ -41,10 +41,14 @@ Options:
                     ranges (e.g., "1,3,5") aren't supported yet — run the
                     command multiple times for those.
   --format FMT      png (default) | jpg
-  -v, --verbose     Print the full success ack JSON (default: silent on
-                    success — but render always prints the page list since
-                    the agent can't reconstruct them otherwise).
+  -v, --verbose     Print the full JSON ack {ok, operation, path, engine,
+                    output, pages} instead of the bare page-path list.
   -h, --help        Show this help
+
+Output:
+  Default: the rendered image paths, one per line (the agent reads these
+  files). --verbose: the full JSON ack (adds engine + output dir). Errors
+  print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx render report.docx
@@ -123,19 +127,22 @@ export async function run(args: string[]): Promise<number> {
 			format,
 			range,
 		});
-		// Always print the page list (not gated on --verbose): agents need
-		// it to know which files to read. Same pattern as `comments add
-		// --batch` printing minted ids — the output isn't reconstructable
-		// downstream. The ack uses `output` (not `outDir`) because that's
-		// the public field name agents are coded against.
-		await respond({
-			ok: true,
-			operation: "render",
-			path: filePath,
-			engine: result.engine,
-			output: result.outDir,
-			pages: result.pages,
-		});
+		// The page paths are the point of the command, so they always print
+		// (the agent reads these files). Text-first by default — the paths, one
+		// per line; --verbose adds the engine/output envelope as JSON. The ack
+		// uses `output` (not `outDir`) because that's the public field name.
+		if (parsed.values.verbose) {
+			await respond({
+				ok: true,
+				operation: "render",
+				path: filePath,
+				engine: result.engine,
+				output: result.outDir,
+				pages: result.pages,
+			});
+		} else if (result.pages.length > 0) {
+			await writeStdout(`${result.pages.join("\n")}\n`);
+		}
 		return EXIT.OK;
 	} catch (error) {
 		if (error instanceof RenderEngineError) {

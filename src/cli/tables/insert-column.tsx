@@ -1,4 +1,4 @@
-import { TrackChanges } from "@core";
+import { describeForms, TrackChanges } from "@core";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -22,13 +22,17 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["table"], "                     ");
+
 const HELP = `docx tables insert-column — insert a table column
 
 Usage:
   docx tables insert-column FILE --at tN [options]
 
 Required:
-  --at tN            Target table (e.g. t0)
+  --at LOCATOR       Target table. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --position INDEX   0-based column index to insert at (default: append at end)
@@ -43,6 +47,11 @@ Optional:
 When track-changes is on, each new cell is wrapped as a tracked insertion
 (<w:tcPr><w:cellIns/>). Rejected if the insertion point bisects a horizontal
 merge — unmerge first.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  position, width, tracked}. --dry-run prints the preview object (no ok field).
+  Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables insert-column doc.docx --at t0
@@ -126,7 +135,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.insert-column",
 			dryRun: true,
 			path,

@@ -40,9 +40,9 @@ describe("docx info locators", () => {
 		expect(result.exitCode).toBe(0);
 		const reference = result.parsed as {
 			blockLocators: Record<string, unknown>;
-			spanLocator: { syntax: string };
+			spanLocators: { span: { syntax: string } };
 		};
-		expect(reference.spanLocator.syntax).toBe("pN:S-E");
+		expect(reference.spanLocators.span.syntax).toBe("pN:S-E");
 	});
 });
 
@@ -58,6 +58,6 @@ describe("docx info dispatcher", () => {
 	test("unknown topic returns USAGE", async () => {
 		const result = await runCli("info", "nope");
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });

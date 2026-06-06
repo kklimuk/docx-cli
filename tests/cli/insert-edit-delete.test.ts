@@ -220,7 +220,6 @@ describe("docx insert / edit / delete", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toMatchObject({
-			ok: true,
 			dryRun: true,
 			path: docPath,
 			output: outPath,
@@ -234,7 +233,6 @@ describe("docx insert / edit / delete", () => {
 		const result = await runCli("edit", docPath, "--at", "p99", "--text", "x");
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "BLOCK_NOT_FOUND",
 		});
 	});

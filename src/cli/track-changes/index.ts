@@ -22,12 +22,15 @@ Verbs:
             unwrap (with <w:delText> → <w:t> rename); sectPrChange restores
             its snapshot
 
-When tracking is on, this CLI's insert/edit/delete/replace commands
-emit <w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR);
-edit --at sN under tracking emits <w:sectPrChange>. moveFrom/moveTo are
-read, listed, and accept/reject independently — we don't emit them
-ourselves (Word does that interactively). Accept/reject themselves
-bypass tracking — they're doc surgery, not edits.
+Exact-change addressing is always --at tcN (repeatable); --all targets every
+change. Discover ids with "docx track-changes list FILE".
+
+When tracking is on, the SUBSEQUENT insert/edit/delete/replace commands emit
+<w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR on those
+commands, not on the on/off toggle); edit --at sN under tracking emits
+<w:sectPrChange>. moveFrom/moveTo are read, listed, and accept/reject
+independently — we don't emit them ourselves (Word does that interactively).
+Accept/reject themselves bypass tracking — they're doc surgery, not edits.
 
 Run "docx track-changes <verb> --help" for verb-specific help.
 `;

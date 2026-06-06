@@ -121,7 +121,7 @@ describe("docx track-changes accept --at (batch)", () => {
 			"--all",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("unknown id in the batch errors atomically (no writes)", async () => {
@@ -139,7 +139,6 @@ describe("docx track-changes accept --at (batch)", () => {
 		);
 		expect(result.exitCode).toBe(3); // NOT_FOUND
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "TRACKED_CHANGE_NOT_FOUND",
 		});
 		// p0 unchanged because the batch aborted before any apply.

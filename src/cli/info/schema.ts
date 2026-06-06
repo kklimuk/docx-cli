@@ -8,7 +8,8 @@ Usage:
   docx info schema [options]
 
 Options:
-  --json       Print as a JSON Schema document (default)
+  --json       Print as a JSON Schema document (this is the default — emitted
+               when neither --ts nor --json is passed)
   --ts         Print TypeScript type source (read live from src/core/ast/types.ts)
   -h, --help   Show this help
 

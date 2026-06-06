@@ -14,10 +14,10 @@ import {
 const HELP = `docx images delete — remove an embedded image
 
 Usage:
-  docx images delete FILE --at IMG_ID [options]
+  docx images delete FILE --at imgN [options]
 
 Required:
-  --at IMG_ID       Existing image to remove (e.g., img0)
+  --at imgN         image id to remove (e.g. img0)
 
 Optional:
   --author NAME     Author for the tracked deletion when track-changes is on
@@ -36,6 +36,12 @@ media part is always kept (rejecting must be able to restore the image); an
 accepted deletion leaves it as a harmless unreferenced part rather than pruning.
 Image ids are positional and shift after a delete — re-read before the next
 mutation.
+
+Output:
+  Silent on success (exit 0) — delete mints no new id. --verbose prints
+  {ok:true, operation, path, imageId, partName, pruned}. Errors print
+  {code, error, hint?} with a nonzero exit. Discover ids with
+  \`docx images list FILE\`.
 
 Examples:
   docx images delete doc.docx --at img0
@@ -67,7 +73,7 @@ export async function run(args: string[]): Promise<number> {
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const targetId = parsed.values.at as string | undefined;
-	if (!targetId) return fail("USAGE", "Missing --at IMG_ID", HELP);
+	if (!targetId) return fail("USAGE", "Missing --at imgN", HELP);
 
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
@@ -94,7 +100,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "images.delete",
 			dryRun: true,
 			path,

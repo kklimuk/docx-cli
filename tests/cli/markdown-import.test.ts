@@ -266,6 +266,64 @@ describe("docx insert/create --markdown — block features", () => {
 		expect(noteRef).toBeDefined();
 	});
 
+	test("a footnote referenced multiple times mints one definition PER reference (OOXML 1:1)", async () => {
+		// Markdown lets the same `[^1]` be cited repeatedly; Word treats N
+		// references to a single footnote definition as corruption ("unreadable
+		// content", repaired by cloning). So each reference must get its own
+		// definition. Regression for that Word-validity bug.
+		const docPath = join(tempWorkspace("md-footnote-reuse"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"First cite[^a] then second cite[^a] then a third[^a].\n\n[^a]: shared body.",
+		);
+
+		const footnotes = await readPart(docPath, "word/footnotes.xml");
+		const definitions = [...footnotes.matchAll(/<w:footnote\s+w:id="(\d+)"/g)]
+			.map((match) => match[1])
+			.filter((id) => id !== "0"); // drop the id=0 continuationSeparator
+		const document = await readPart(docPath, "word/document.xml");
+		const references = [
+			...document.matchAll(/<w:footnoteReference\s+w:id="(\d+)"/g),
+		].map((match) => match[1]);
+
+		// Three references → three distinct definitions, 1:1.
+		expect(references).toHaveLength(3);
+		expect(new Set(references).size).toBe(3);
+		expect(definitions).toHaveLength(3);
+		// Every reference points at a real definition.
+		for (const id of references) expect(definitions).toContain(id);
+	});
+
+	test("a hyperlink inside a footnote body becomes a real <w:hyperlink> backed by the footnotes part's rels", async () => {
+		const docPath = join(tempWorkspace("md-footnote-link"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Cite[^s] here.\n\n[^s]: see [AP](https://ap.example.com/x) for detail.",
+		);
+
+		const footnotes = await readPart(docPath, "word/footnotes.xml");
+		expect(footnotes).toContain("<w:hyperlink");
+
+		// The hyperlink rel lives in the FOOTNOTES part's rels, not the document's,
+		// so the `<w:hyperlink r:id>` inside footnotes.xml resolves correctly.
+		const rels = await readPart(docPath, "word/_rels/footnotes.xml.rels");
+		expect(rels).toContain("https://ap.example.com/x");
+		expect(rels).toContain('TargetMode="External"');
+		const rid = footnotes.match(/<w:hyperlink[^>]*r:id="([^"]+)"/)?.[1];
+		expect(rid).toBeDefined();
+		expect(rels).toContain(`Id="${rid}"`);
+	});
+
 	test("thematicBreak (---) becomes a HorizontalRule paragraph", async () => {
 		const docPath = join(tempWorkspace("md-hr"), "out.docx");
 		await runCli("create", docPath, "--text", "Intro.");
@@ -528,7 +586,6 @@ describe("docx create --from PATH.md", () => {
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 	});
@@ -550,7 +607,6 @@ describe("docx insert/edit --markdown — flag conflicts", () => {
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 		const parsed = result.parsed as { error?: string };
@@ -572,7 +628,6 @@ describe("docx insert/edit --markdown — flag conflicts", () => {
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 	});
@@ -592,7 +647,7 @@ describe("docx insert --markdown — error paths", () => {
 			"Broken: $\\frac{a$ here.",
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--markdown-file PATH not found surfaces FILE_NOT_FOUND", async () => {
@@ -608,7 +663,6 @@ describe("docx insert --markdown — error paths", () => {
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "FILE_NOT_FOUND",
 		});
 	});
@@ -669,7 +723,6 @@ describe("docx insert --markdown — image round-trip via SHA-256 hash", () => {
 		);
 		expect(result.exitCode).toBeGreaterThan(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "IMAGE_SOURCE",
 		});
 		const parsed = result.parsed as { error?: string };

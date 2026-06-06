@@ -1,3 +1,4 @@
+import { describeForms } from "@core";
 import { parseCellAt } from "@core/locators";
 import {
 	buildGrid,
@@ -20,14 +21,19 @@ import {
 } from "../respond";
 import { noteStructuralChange } from "./common";
 
+const AT_FORMS = describeForms(["cell"], "                     ");
+
 const HELP = `docx tables unmerge — split a merged cell back into individual cells
 
 Usage:
   docx tables unmerge FILE --at tN:rRcC [options]
 
 Required:
-  --at tN:rRcC       The merge anchor — the top-left cell of the merge
-                     (the <w:gridSpan> cell and/or the "restart" of a vMerge)
+  --at LOCATOR       The merge anchor — the top-left cell of the merge
+                     (the <w:gridSpan> cell and/or the "restart" of a vMerge).
+                     Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --author NAME      Author for the audit comment when track-changes is on
@@ -40,6 +46,11 @@ Horizontal spans are split by re-inserting the collapsed empty cells; vertical
 merges are split by stripping the <w:vMerge> markers from the anchor and its
 continuation cells. OOXML has no tracked-change construct for this, so under
 track-changes the change applies immediately with a [docx-cli] audit comment.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  cell}. --dry-run prints the preview object (no ok field). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables unmerge doc.docx --at t0:r0c0
@@ -115,7 +126,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.unmerge",
 			dryRun: true,
 			path,

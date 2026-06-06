@@ -19,9 +19,12 @@ Options:
                     Disables all the Markdown-only flags below.
   --from LOC        Start rendering at top-level block LOC (inclusive)
   --to LOC          End rendering at top-level block LOC (inclusive)
-                    Accepts pN, tN, tN:rRcC[:pK[:S-E]], pN:S-E, pN:S-pM:E.
-                    Cell/span/range locators collapse to their enclosing
-                    top-level block (the table or paragraph).
+                    A two-ended TOP-LEVEL BLOCK slice — the ends may be
+                    different block types. Accepts pN, tN, sN, pN-pM, pN:S-E,
+                    pN:S-pM:E, tN:rRcC[:pK[:S-E]]; cell/span/range ends collapse
+                    to their enclosing top-level block (the table or paragraph).
+                    (This is a block slice, distinct from a character span like
+                    pN:S-E. See \`docx info locators\`.)
   --accepted        Default view: render the post-accept document — drop
                     subtractive wrappers (<w:del>, <w:moveFrom>), inline
                     additive wrappers (<w:ins>, <w:moveTo>) as plain text,
@@ -38,6 +41,13 @@ Options:
                     footnote definition for each comment at the end of the
                     output (author, date, body).
   -h, --help        Show this help
+
+Output:
+  Default: GitHub-flavored Markdown. Each paragraph is trailed by an HTML
+  comment with its locator (<!-- p3 -->) so an agent can recover ids from the
+  rendered text. --ast: the bare JSON AST (the body object: blocks, comments,
+  footnotes, endnotes; no envelope) — see \`docx info schema\`. Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx read input.docx

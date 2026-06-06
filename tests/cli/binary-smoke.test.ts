@@ -27,7 +27,7 @@ describe("binary smoke (real subprocess)", () => {
 	test("unknown command exits non-zero with an error payload", async () => {
 		const result = await spawnCli("frobnicate");
 		expect(result.exitCode).not.toBe(0);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("not-found locator propagates exit code 3", async () => {

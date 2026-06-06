@@ -12,6 +12,8 @@ export type Locator =
 	| { kind: "hyperlink"; hyperlinkId: string }
 	| { kind: "trackedChange"; trackedChangeId: string }
 	| { kind: "equation"; equationId: string }
+	| { kind: "footnote"; footnoteId: string }
+	| { kind: "endnote"; endnoteId: string }
 	| {
 			kind: "cell";
 			tableId: string;
@@ -47,6 +49,8 @@ const IMAGE_RE = /^img(\d+)$/;
 const LINK_RE = /^link(\d+)$/;
 const TRACKED_CHANGE_RE = /^tc(\d+)$/;
 const EQUATION_RE = /^eq(\d+)$/;
+const FOOTNOTE_RE = /^fn(\d+)$/;
+const ENDNOTE_RE = /^en(\d+)$/;
 const CELL_RANGE_RE = /^t(\d+):r(\d+)c(\d+)-r(\d+)c(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
 const TABLE_ROW_RE = /^t(\d+):r(\d+)$/;
@@ -80,6 +84,16 @@ export function parseLocator(input: string): Locator {
 	const equationMatch = trimmed.match(EQUATION_RE);
 	if (equationMatch) {
 		return { kind: "equation", equationId: `eq${equationMatch[1]}` };
+	}
+
+	const footnoteMatch = trimmed.match(FOOTNOTE_RE);
+	if (footnoteMatch) {
+		return { kind: "footnote", footnoteId: `fn${footnoteMatch[1]}` };
+	}
+
+	const endnoteMatch = trimmed.match(ENDNOTE_RE);
+	if (endnoteMatch) {
+		return { kind: "endnote", endnoteId: `en${endnoteMatch[1]}` };
 	}
 
 	const cellRangeMatch = trimmed.match(CELL_RANGE_RE);

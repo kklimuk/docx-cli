@@ -1,6 +1,7 @@
 import {
 	type BlockReference,
 	type Document,
+	describeForms,
 	Insert,
 	InsertError,
 	type InsertSpec,
@@ -20,20 +21,28 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	respond,
-	respondAck,
+	respondMinted,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx insert — insert a paragraph at a locator
+const ANCHOR_FORMS = describeForms(
+	["paragraph", "table", "section", "cellParagraph"],
+	"                      ",
+);
+
+const HELP = `docx insert — insert a block (paragraph, table, image, …) at a locator
 
 Usage:
-  docx insert FILE [options]
+  docx insert FILE (--after | --before) LOCATOR <content> [options]
 
-Locator (one required):
-  --after LOCATOR   Insert after the block at LOCATOR (e.g., p3)
+Locator (one required) — where to place the new block, relative to:
+  --after LOCATOR   Insert after the block at LOCATOR
   --before LOCATOR  Insert before the block at LOCATOR
+                    LOCATOR is one of:
+${ANCHOR_FORMS}
+                    See \`docx info locators\`.
 
 Content (one required):
   --text TEXT       Insert a paragraph with this text
@@ -62,15 +71,23 @@ Content (one required):
                     insertion is plain text and the deletion is dropped).
   --markdown-file PATH  Same as --markdown, but read content from PATH
                     (use "-" for stdin).
+                    Footnote/endnote bodies keep bold/italic + hyperlinks
+                    (under track-changes they flatten to plain text; note-body
+                    images are dropped).
 
-Paragraph options:
+Paragraph options (incompatible with --markdown / --markdown-file, which carry
+their own block styling):
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
-  --task STATE       Make the new paragraph a GFM task list item with state
+  --task STATE       Make the new paragraph a GFM task list item. STATE is
                      "checked" (☒) or "unchecked" (☐). Requires --text or --runs.
                      If the anchor is itself a list paragraph, inherits its numId
                      (so consecutive --task inserts build a contiguous list);
-                     otherwise allocates a fresh bullet list.
+                     otherwise allocates a fresh bullet list. Mutex with --list.
+  --list KIND        Make the new paragraph a list item. KIND is "bullet" or
+                     "ordered". Requires --text or --runs. Mutex with --task.
+  --list-level N     List nesting level, integer 0-8 (default 0). Use with
+                     --list (or --task) to nest.
 
 Run options (only with --text):
   --color HEX       Run color, hex (e.g., 800080 for purple)
@@ -109,8 +126,14 @@ General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the full success ack JSON
   -h, --help        Show this help
+
+Output:
+  Prints the locator(s) the new block(s) landed at, one per line (a multi-block
+  --markdown insert prints several). Positional ids shift after an insert, so
+  re-read before further edits. --verbose prints {ok:true, operation, path,
+  locators, anchor, placement}. Errors print {code, error, hint?} + nonzero exit.
 
 Examples:
   docx insert doc.docx --after p3 --text "Section header" --style Heading2
@@ -170,11 +193,10 @@ async function commitInsert(
 ): Promise<number> {
 	if (opts.dryRun) {
 		await respond({
-			ok: true,
 			operation: "insert",
 			dryRun: true,
 			path: opts.filePath,
-			locator: opts.placement.locator,
+			anchor: opts.placement.locator,
 			placement: opts.placement.mode,
 			...(opts.outputPath ? { output: opts.outputPath } : {}),
 		});
@@ -193,11 +215,22 @@ async function commitInsert(
 	blockRef.parent.splice(insertIndex, 0, ...blocks);
 	await document.save(opts.outputPath);
 
-	await respondAck({
+	// Positional block ids shift after a structural edit, so the agent can't
+	// compute where the new block(s) landed. Re-derive ids from the mutated
+	// tree and report each inserted block's locator (one per line by default).
+	document.reread();
+	const insertedNodes = new Set(blocks);
+	const locators: string[] = [];
+	for (const [blockId, reference] of document.body.blockReferences) {
+		if (insertedNodes.has(reference.node)) locators.push(blockId);
+	}
+
+	await respondMinted(locators, {
 		ok: true,
 		operation: "insert",
 		path: opts.outputPath ?? opts.filePath,
-		locator: opts.placement.locator,
+		locators,
+		anchor: opts.placement.locator,
 		placement: opts.placement.mode,
 	});
 	return EXIT.OK;

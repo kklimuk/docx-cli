@@ -6,7 +6,7 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
-import { buildOutline } from "./build";
+import { buildOutline, type OutlineEntry } from "./build";
 
 const HELP = `docx outline — list headings as a hierarchical tree
 
@@ -15,6 +15,7 @@ Usage:
 
 Options:
   --style-prefix S  paragraph-style prefix that marks a heading (default: "Heading")
+  --json            emit the nested JSON tree instead of the indented text tree
   -h, --help        show this help
 
 Walks top-level paragraphs whose style starts with the prefix and parses the
@@ -23,13 +24,17 @@ Paragraphs nested inside table cells are skipped — outlines reflect the
 document's structural skeleton, not embedded labels. Lower levels nest under
 higher ones; missing intermediate levels nest directly (H1 → H3 is fine).
 
-Output is JSON: an array of entries, each shaped like
-  { id, locator, level, style, text, children }.
+Output:
+  Default: an indented text tree, one heading per line as "<indent>LOCATOR\\tTEXT"
+  (two spaces per nesting level). The LOCATOR (a pN block locator) feeds into
+  other commands' --at / read --from. --json: the nested JSON array of
+  { id, locator, level, style, text, children } (no envelope). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx outline doc.docx
   docx outline doc.docx --style-prefix "Section"
-  docx outline doc.docx | jq '.outline[].text'
+  docx outline doc.docx --json | jq '.[].text'
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -37,6 +42,7 @@ export async function run(args: string[]): Promise<number> {
 		args,
 		{
 			"style-prefix": { type: "string" },
+			json: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 		},
 		HELP,
@@ -61,12 +67,25 @@ export async function run(args: string[]): Promise<number> {
 	if (typeof document === "number") return document;
 
 	const outline = buildOutline(document.body, { stylePrefix });
-	await respond({
-		ok: true,
-		operation: "outline",
-		path,
-		stylePrefix,
-		outline,
-	});
+
+	if (parsed.values.json) {
+		await respond(outline);
+		return EXIT.OK;
+	}
+
+	const lines = renderOutlineText(outline);
+	if (lines.length > 0) await writeStdout(`${lines.join("\n")}\n`);
 	return EXIT.OK;
+}
+
+/** Flatten the nested outline into indented `LOCATOR\tTEXT` lines, two spaces
+ *  per nesting level — the text-first default that's quick for an agent to
+ *  skim and whose leading locator pastes straight into `--at` / `--from`. */
+function renderOutlineText(entries: OutlineEntry[], depth = 0): string[] {
+	const lines: string[] = [];
+	for (const entry of entries) {
+		lines.push(`${"  ".repeat(depth)}${entry.locator}\t${entry.text}`);
+		lines.push(...renderOutlineText(entry.children, depth + 1));
+	}
+	return lines;
 }

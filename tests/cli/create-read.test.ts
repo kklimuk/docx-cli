@@ -67,7 +67,6 @@ describe("docx create + read", () => {
 		const result = await runCli("read", "/tmp/does-not-exist.docx");
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "FILE_NOT_FOUND",
 		});
 	});
@@ -78,6 +77,6 @@ describe("docx create + read", () => {
 		await runCli("create", docPath, "--text", "first");
 		const second = await runCli("create", docPath, "--text", "second");
 		expect(second.exitCode).toBe(2);
-		expect(second.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(second.parsed).toMatchObject({ code: "USAGE" });
 	});
 });

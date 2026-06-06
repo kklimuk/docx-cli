@@ -36,8 +36,6 @@ describe("docx wc", () => {
 		const result = await runCli("wc", docPath);
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toMatchObject({
-			ok: true,
-			operation: "wc",
 			scope: "document",
 			words: 9 + 7 + 8,
 		});
@@ -46,7 +44,6 @@ describe("docx wc", () => {
 	test("paragraph locator counts that paragraph", async () => {
 		const result = await runCli("wc", docPath, "p1");
 		expect(result.parsed).toMatchObject({
-			locator: "p1",
 			scope: "paragraph",
 			words: 7,
 		});
@@ -56,7 +53,6 @@ describe("docx wc", () => {
 		// "The quick brown fox" → chars 0..19, four words
 		const result = await runCli("wc", docPath, "p0:0-19");
 		expect(result.parsed).toMatchObject({
-			locator: "p0:0-19",
 			scope: "paragraphSpan",
 			words: 4,
 		});
@@ -69,7 +65,6 @@ describe("docx wc", () => {
 		// "Sphinx of black quartz, judge my vow." + "Pack my box"
 		const result = await runCli("wc", docPath, "p0:16-p2:11");
 		expect(result.parsed).toMatchObject({
-			locator: "p0:16-p2:11",
 			scope: "range",
 			words: 6 + 7 + 3,
 		});
@@ -83,7 +78,6 @@ describe("docx wc", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toMatchObject({
-			locator: "t0",
 			scope: "table",
 			words: 32,
 		});
@@ -96,7 +90,6 @@ describe("docx wc", () => {
 			"t0:r1c0",
 		);
 		expect(cellResult.parsed).toMatchObject({
-			locator: "t0:r1c0",
 			scope: "cell",
 			words: 7,
 		});
@@ -107,7 +100,6 @@ describe("docx wc", () => {
 			"t0:r1c0:p0",
 		);
 		expect(cellParagraphResult.parsed).toMatchObject({
-			locator: "t0:r1c0:p0",
 			scope: "paragraph",
 			words: 7,
 		});
@@ -116,18 +108,17 @@ describe("docx wc", () => {
 	test("comment and image locators are rejected as USAGE errors", async () => {
 		const commentResult = await runCli("wc", docPath, "c0");
 		expect(commentResult.exitCode).toBe(2);
-		expect(commentResult.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(commentResult.parsed).toMatchObject({ code: "USAGE" });
 
 		const imageResult = await runCli("wc", docPath, "img0");
 		expect(imageResult.exitCode).toBe(2);
-		expect(imageResult.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(imageResult.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("missing block returns BLOCK_NOT_FOUND with exit 3", async () => {
 		const result = await runCli("wc", docPath, "p99");
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "BLOCK_NOT_FOUND",
 		});
 	});
@@ -136,7 +127,6 @@ describe("docx wc", () => {
 		const result = await runCli("wc", docPath, "p3:bogus");
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "INVALID_LOCATOR",
 		});
 	});
@@ -202,7 +192,7 @@ describe("docx wc — tracked changes", () => {
 			"--baseline",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("tracked-changes fixture: current/accepted both count ins, baseline skips it", async () => {

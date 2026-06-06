@@ -3,6 +3,7 @@ import {
 	Comments,
 	CommentsError,
 	type Document,
+	describeForms,
 	type Locator,
 	locatorToBlockTarget,
 	parseLocator,
@@ -14,74 +15,79 @@ import {
 	fail,
 	openOrFail,
 	respond,
-	respondAck,
+	respondMinted,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(
+	["paragraph", "span", "crossSpan", "cellParagraph", "cellSpan"],
+	"                        ",
+);
+
 const HELP = `docx comments add — anchor a new comment to a locator or phrase
 
 Usage:
-  docx comments add FILE --range LOCATOR --text TEXT [options]
+  docx comments add FILE --at LOCATOR --text TEXT [options]
   docx comments add FILE --anchor PHRASE --text TEXT [options]
   docx comments add FILE --batch FILE.jsonl [options]
   docx comments add FILE --batch -    [options]   # read JSONL from stdin
 
 Anchor (one required, mutually exclusive):
-  --range LOCATOR     Where to anchor. Supports:
-                        pN              whole paragraph
-                        pN:S-E          chars S..E of pN
-                        pN:S-pM:E       chars S of pN through char E of pM
-                        tT:rRcC:pK      whole cell paragraph
-                        tT:rRcC:pK:S-E  chars S..E of cell paragraph
+  --at LOCATOR        Where to anchor. Supports:
+${AT_FORMS}
   --anchor PHRASE     Find the phrase via the same matcher as \`docx find\`
-                      (default: accepted document, normalization on). The match
-                      is converted to a pN:S-E locator and used as the
-                      anchor. Errors if the phrase matches more than once
-                      without --occurrence.
-  --batch PATH        Read a JSONL file (one entry per line). Each entry is
-                      a JSON object with the same shape as a single-shot
-                      call: { range | anchor (+ optional occurrence), text,
+                      (default: accepted view, normalization on). The match is
+                      converted to a pN:S-E locator and used as the anchor.
+                      Errors if the phrase matches more than once without
+                      --occurrence.
+  --batch PATH        Read a JSONL file (one entry per line). Each entry is a
+                      JSON object: { at | anchor (+ optional occurrence), text,
                       optional author }. Use - for stdin.
 
 Per-entry fields:
-  --text TEXT         Comment body. Required for single-shot; required as
-                      a "text" field on every JSONL entry.
-  --occurrence N      For --anchor: pick the Nth match (1-indexed,
-                      default 1). Errors if N is out of range.
+  --text TEXT         Comment body. Required for single-shot; required as a
+                      "text" field on every JSONL entry.
+  --occurrence N      For --anchor: pick the Nth match (1-indexed, default 1).
+                      Errors if N is out of range.
   --author NAME       Author name (default: $DOCX_AUTHOR)
 
-View (for resolving --range offsets and --anchor matches):
-  --current           Resolve offsets in the raw concatenation (with both
-                      ins and del text). Use when offsets came from
-                      \`docx find --current\` or hand-counted bytes.
-  --baseline          Resolve offsets in the pre-change document (skip ins/
-                      moveTo).
-                      Default: accepted document (skip del/moveFrom) — matches
-                      \`find\`'s default. Mutually exclusive.
+View — for resolving --at offsets and --anchor matches (mutually exclusive;
+default: accepted view, matching \`docx find\`):
+  --current           Resolve offsets in the raw concatenation (ins+del text).
+                      Use when offsets came from \`docx find --current\`.
+  --baseline          Resolve offsets in the pre-change document (skip ins/moveTo).
 
 General options:
   -o, --output PATH   Write to PATH instead of overwriting FILE
   --dry-run           Print what would be added; do not write the file
-  -v, --verbose       Print the success ack JSON (default: silent on success
-                      for single; batch always prints the minted ids)
+  -v, --verbose       Print the full success ack JSON
   -h, --help          Show this help
 
+Output:
+  Prints the new comment id (e.g. c0), one per line for --batch. Address it
+  later with \`--at c0\`. --verbose prints the full ack
+  {ok:true, operation, path, commentId, locator}. Errors print
+  {code, error, hint?} with a nonzero exit. Notation: uppercase letters are
+  numeric indices; offsets are 0-based, end-exclusive. See \`docx info locators\`.
+  Discover existing comment ids with \`docx comments list FILE\`.
+
 Examples:
-  docx comments add doc.docx --range p3 --text "Reconsider this paragraph"
+  docx comments add doc.docx --at p3 --text "Reconsider this paragraph"
+  docx comments add doc.docx --at p3:5-20 --text "Tighten this clause"
   docx comments add doc.docx --anchor "fatally flawed" --text "Cite source?"
   docx comments add doc.docx --anchor "TODO" --occurrence 2 --text "Pick up here"
   docx comments add doc.docx --batch reviews.jsonl
   cat reviews.jsonl | docx comments add doc.docx --batch -
 
 Batch JSONL example:
-  {"range": "p3:5-20", "text": "Sharper wording?"}
+  {"at": "p3:5-20", "text": "Sharper wording?"}
   {"anchor": "fatally flawed", "text": "Cite Bianco here.", "author": "Reviewer"}
 `;
 
 type RawEntry = {
-	range?: string;
+	at?: string;
 	anchor?: string;
 	/** Explicit `--occurrence N` (or `"occurrence": N` in JSONL). When unset
 	 *  AND the anchor matches more than once, we error so the agent knows to
@@ -113,7 +119,7 @@ export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
-			range: { type: "string" },
+			at: { type: "string" },
 			anchor: { type: "string" },
 			occurrence: { type: "string" },
 			text: { type: "string" },
@@ -140,7 +146,7 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const rangeInput = parsed.values.range as string | undefined;
+	const atInput = parsed.values.at as string | undefined;
 	const anchorInput = parsed.values.anchor as string | undefined;
 	const batchInput = parsed.values.batch as string | undefined;
 	const text = parsed.values.text as string | undefined;
@@ -161,18 +167,18 @@ export async function run(args: string[]): Promise<number> {
 			: "accepted";
 
 	const anchorCount =
-		(rangeInput ? 1 : 0) + (anchorInput ? 1 : 0) + (batchInput ? 1 : 0);
+		(atInput ? 1 : 0) + (anchorInput ? 1 : 0) + (batchInput ? 1 : 0);
 	if (anchorCount === 0) {
 		return fail(
 			"USAGE",
-			"Specify exactly one of --range, --anchor, or --batch",
+			"Specify exactly one of --at, --anchor, or --batch",
 			HELP,
 		);
 	}
 	if (anchorCount > 1) {
 		return fail(
 			"USAGE",
-			"--range, --anchor, and --batch are mutually exclusive",
+			"--at, --anchor, and --batch are mutually exclusive",
 			HELP,
 		);
 	}
@@ -182,10 +188,10 @@ export async function run(args: string[]): Promise<number> {
 
 	let rawEntries: RawEntry[];
 	if (batchInput) {
-		if (text !== undefined || rangeInput || anchorInput || occurrenceRaw) {
+		if (text !== undefined || atInput || anchorInput || occurrenceRaw) {
 			return fail(
 				"USAGE",
-				"--batch reads each entry's range/anchor/text/author from JSONL — do not pass them on the CLI",
+				"--batch reads each entry's at/anchor/text/author from JSONL — do not pass them on the CLI",
 				HELP,
 			);
 		}
@@ -213,7 +219,7 @@ export async function run(args: string[]): Promise<number> {
 		}
 		rawEntries = [
 			{
-				range: rangeInput,
+				at: atInput,
 				anchor: anchorInput,
 				occurrence,
 				text,
@@ -242,7 +248,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (dryRun) {
 		await respond({
-			ok: true,
 			operation: "comments.add",
 			dryRun: true,
 			path,
@@ -281,15 +286,19 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
+	// Minted comment ids are the addressable handle (`--at cN`) and can't be
+	// reconstructed without re-reading, so they print by default — one `cN`
+	// per line — upgrading to the full ack under --verbose.
 	if (batchInput) {
-		// Batch: always print the minted ids — the agent can't reconstruct
-		// them without re-reading.
-		await respond({
-			ok: true,
-			operation: "comments.add",
-			path: outputPath ?? path,
-			batch: minted,
-		});
+		await respondMinted(
+			minted.map((entry) => entry.commentId),
+			{
+				ok: true,
+				operation: "comments.add",
+				path: outputPath ?? path,
+				batch: minted,
+			},
+		);
 	} else {
 		const single = minted[0];
 		if (!single) {
@@ -297,7 +306,7 @@ export async function run(args: string[]): Promise<number> {
 			// entry by construction. Defensive narrow so we don't ! the array.
 			throw new Error("internal: single-shot path produced no minted entry");
 		}
-		await respondAck({
+		await respondMinted([single.commentId], {
 			ok: true,
 			operation: "comments.add",
 			path: outputPath ?? path,
@@ -319,25 +328,25 @@ function resolveEntry(
 	const labelPrefix = isBatch ? `entry ${entryIndex}: ` : "";
 	const author = raw.author ?? defaultAuthor;
 
-	const anchorCount = (raw.range ? 1 : 0) + (raw.anchor ? 1 : 0);
+	const anchorCount = (raw.at ? 1 : 0) + (raw.anchor ? 1 : 0);
 	if (anchorCount === 0) {
 		throw new EntryError(
 			"USAGE",
-			`${labelPrefix}must specify either "range" or "anchor"`,
+			`${labelPrefix}must specify either "at" or "anchor"`,
 		);
 	}
 	if (anchorCount > 1) {
 		throw new EntryError(
 			"USAGE",
-			`${labelPrefix}"range" and "anchor" are mutually exclusive`,
+			`${labelPrefix}"at" and "anchor" are mutually exclusive`,
 		);
 	}
 	if (typeof raw.text !== "string" || raw.text.length === 0) {
 		throw new EntryError("USAGE", `${labelPrefix}"text" is required`);
 	}
 
-	if (raw.range) {
-		return resolveLocatorEntry(raw.range, raw.text, author, labelPrefix);
+	if (raw.at) {
+		return resolveLocatorEntry(raw.at, raw.text, author, labelPrefix);
 	}
 
 	const anchor = raw.anchor;
@@ -367,14 +376,14 @@ function resolveEntry(
 }
 
 function resolveLocatorEntry(
-	rangeInput: string,
+	atValue: string,
 	text: string,
 	author: string,
 	labelPrefix: string,
 ): ResolvedEntry {
 	let locator: Locator;
 	try {
-		locator = parseLocator(rangeInput);
+		locator = parseLocator(atValue);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new EntryError("INVALID_LOCATOR", `${labelPrefix}${message}`);
@@ -391,7 +400,7 @@ function resolveLocatorEntry(
 			},
 			text,
 			author,
-			locatorString: rangeInput,
+			locatorString: atValue,
 		};
 	}
 
@@ -399,8 +408,8 @@ function resolveLocatorEntry(
 	if (!target) {
 		throw new EntryError(
 			"INVALID_LOCATOR",
-			`${labelPrefix}comments add supports paragraph locators only (pN, pN:start-end, pN:S-pM:E, or tT:rRcC:pK[:start-end])`,
-			"Comments and images are not valid anchors.",
+			`${labelPrefix}comments add anchors to a paragraph locator only (pN, pN:S-E, pN:S-pM:E, or tN:rRcC:pK[:S-E])`,
+			"A whole table, section, comment, image, or other entity is not a valid anchor.",
 		);
 	}
 	return {
@@ -411,7 +420,7 @@ function resolveLocatorEntry(
 		},
 		text,
 		author,
-		locatorString: rangeInput,
+		locatorString: atValue,
 	};
 }
 

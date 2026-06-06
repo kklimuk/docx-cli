@@ -34,11 +34,13 @@ describe("docx images", () => {
 		const outDir = join(workspace, "extracted");
 		mkdirSync(outDir, { recursive: true });
 		const result = await runCli("images", "extract", docPath, "--to", outDir);
-		const payload = result.parsed as {
-			manifest: Array<{ id: string; path: string; bytes: number }>;
-		};
-		expect(payload.manifest).toHaveLength(15);
-		for (const entry of payload.manifest) {
+		const manifest = result.parsed as Array<{
+			id: string;
+			path: string;
+			bytes: number;
+		}>;
+		expect(manifest).toHaveLength(15);
+		for (const entry of manifest) {
 			const file = Bun.file(entry.path);
 			expect(await file.exists()).toBe(true);
 			expect(entry.bytes).toBeGreaterThan(0);
@@ -54,14 +56,12 @@ describe("docx images", () => {
 			docPath,
 			"--to",
 			outDir,
-			"--id",
+			"--at",
 			"img2",
 		);
-		const payload = result.parsed as {
-			manifest: Array<{ id: string }>;
-		};
-		expect(payload.manifest).toHaveLength(1);
-		expect(payload.manifest[0]?.id).toBe("img2");
+		const manifest = result.parsed as Array<{ id: string }>;
+		expect(manifest).toHaveLength(1);
+		expect(manifest[0]?.id).toBe("img2");
 	});
 
 	test("replace swaps bytes preserving the partName for matching format", async () => {
@@ -86,7 +86,7 @@ describe("docx images", () => {
 			replaceDoc,
 			"--to",
 			extractDir,
-			"--id",
+			"--at",
 			replacementSrc?.id ?? "img1",
 		);
 		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpeg`);
@@ -125,7 +125,7 @@ describe("docx images", () => {
 			fakeFile,
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("replace returns image-not-found for unknown id", async () => {
@@ -137,7 +137,7 @@ describe("docx images", () => {
 			docPath,
 			"--to",
 			extractDir,
-			"--id",
+			"--at",
 			"img0",
 		);
 		const realImage = (
@@ -155,7 +155,6 @@ describe("docx images", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "IMAGE_NOT_FOUND",
 		});
 	});

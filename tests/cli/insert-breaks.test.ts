@@ -59,7 +59,6 @@ describe("docx insert --page-break / --column-break", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 	});
@@ -75,7 +74,6 @@ describe("docx insert --page-break / --column-break", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 	});
@@ -84,7 +82,6 @@ describe("docx insert --page-break / --column-break", () => {
 		const result = await runCli("insert", docPath, "--after", "p0");
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "USAGE",
 		});
 	});

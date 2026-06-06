@@ -21,7 +21,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"Reconsider this sentence",
@@ -55,7 +55,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:16-19",
 			"--text",
 			"fox?",
@@ -82,7 +82,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"Q?",
@@ -93,7 +93,7 @@ describe("docx comments", () => {
 			"comments",
 			"reply",
 			docPath,
-			"--to",
+			"--at",
 			"c0",
 			"--text",
 			"Answer",
@@ -111,14 +111,14 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"x",
 			"--author",
 			"A",
 		);
-		await runCli("comments", "resolve", docPath, "--id", "c0");
+		await runCli("comments", "resolve", docPath, "--at", "c0");
 
 		const defaultList = await runCli("comments", "list", docPath);
 		expect((defaultList.parsed as unknown[]).length).toBe(0);
@@ -138,14 +138,14 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"hi",
 			"--author",
 			"A",
 		);
-		await runCli("comments", "delete", docPath, "--id", "c0");
+		await runCli("comments", "delete", docPath, "--at", "c0");
 		const afterDelete = await runCli(
 			"comments",
 			"list",
@@ -177,7 +177,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:16-p2:6",
 			"--text",
 			"Spans three paragraphs",
@@ -221,7 +221,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:0-p1:999",
 			"--text",
 			"too far",
@@ -230,7 +230,6 @@ describe("docx comments", () => {
 		);
 		expect(result.exitCode).not.toBe(0);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "INVALID_LOCATOR",
 		});
 	});
@@ -255,7 +254,7 @@ describe("docx comments", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:4-19",
 			"--text",
 			"Spans the hyperlink",
@@ -281,7 +280,7 @@ describe("docx comments", () => {
 		const workspace = tempWorkspace("legacy");
 		const docCopy = join(workspace, "legacy.docx");
 		await Bun.write(docCopy, Bun.file("tests/fixtures/comments-simple.docx"));
-		const result = await runCli("comments", "resolve", docCopy, "--id", "c0");
+		const result = await runCli("comments", "resolve", docCopy, "--at", "c0");
 		expect(result.exitCode).toBe(0);
 		const list = await runCli(
 			"comments",

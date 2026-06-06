@@ -739,6 +739,8 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "hyperlink":
 		case "trackedChange":
 		case "equation":
+		case "footnote":
+		case "endnote":
 		case "tableRow":
 		case "tableColumn":
 		case "cellRange":

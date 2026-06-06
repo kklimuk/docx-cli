@@ -18,18 +18,13 @@ describe("docx outline", () => {
 			"tests/fixtures/academic-paper.docx",
 		);
 		expect(result.exitCode).toBe(0);
-		const payload = result.parsed as {
-			ok: true;
-			stylePrefix: string;
-			outline: OutlineEntry[];
-		};
-		expect(payload.stylePrefix).toBe("Heading");
-		const topLevelTexts = payload.outline.map((entry) => entry.text);
+		const payload = result.parsed as OutlineEntry[];
+		const topLevelTexts = payload.map((entry) => entry.text);
 		expect(topLevelTexts).toContain("Guided Imagery");
 		expect(topLevelTexts).toContain("Conclusion");
 		expect(topLevelTexts).toContain("References");
 
-		const guidedImagery = payload.outline.find(
+		const guidedImagery = payload.find(
 			(entry) => entry.text === "Guided Imagery",
 		);
 		expect(guidedImagery?.level).toBe(1);
@@ -47,7 +42,7 @@ describe("docx outline", () => {
 		await runCli("create", docPath, "--text", "Just a body paragraph.");
 		const result = await runCli("outline", docPath);
 		expect(result.exitCode).toBe(0);
-		expect(result.parsed).toMatchObject({ outline: [] });
+		expect(result.parsed).toEqual([]);
 	});
 
 	test("--style-prefix targets a non-default style family", async () => {
@@ -59,14 +54,10 @@ describe("docx outline", () => {
 			"--style-prefix",
 			"Title",
 		);
-		const payload = result.parsed as {
-			stylePrefix: string;
-			outline: OutlineEntry[];
-		};
-		expect(payload.stylePrefix).toBe("Title");
-		expect(payload.outline).toHaveLength(1);
-		expect(payload.outline[0]?.style).toBe("Title");
-		expect(payload.outline[0]?.level).toBe(1);
+		const payload = result.parsed as OutlineEntry[];
+		expect(payload).toHaveLength(1);
+		expect(payload[0]?.style).toBe("Title");
+		expect(payload[0]?.level).toBe(1);
 	});
 
 	test("skipped levels nest directly under the nearest shallower level", async () => {
@@ -95,11 +86,11 @@ describe("docx outline", () => {
 		);
 
 		const result = await runCli("outline", docPath);
-		const payload = result.parsed as { outline: OutlineEntry[] };
-		expect(payload.outline).toHaveLength(1);
-		expect(payload.outline[0]?.text).toBe("Top");
-		expect(payload.outline[0]?.children).toHaveLength(1);
-		expect(payload.outline[0]?.children[0]).toMatchObject({
+		const payload = result.parsed as OutlineEntry[];
+		expect(payload).toHaveLength(1);
+		expect(payload[0]?.text).toBe("Top");
+		expect(payload[0]?.children).toHaveLength(1);
+		expect(payload[0]?.children[0]).toMatchObject({
 			text: "Skipped",
 			level: 3,
 		});

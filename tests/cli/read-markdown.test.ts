@@ -168,7 +168,6 @@ describe("docx read (markdown) --from / --to", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "INVALID_LOCATOR",
 		});
 	});
@@ -182,7 +181,6 @@ describe("docx read (markdown) --from / --to", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "INVALID_LOCATOR",
 		});
 	});
@@ -196,7 +194,7 @@ describe("docx read (markdown) --from / --to", () => {
 			"--ast",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 
@@ -249,7 +247,7 @@ describe("docx read (markdown) tracked changes", () => {
 			"--baseline",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("AST exposes stable tcN id on tracked-change runs", async () => {

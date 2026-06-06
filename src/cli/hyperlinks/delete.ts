@@ -1,3 +1,4 @@
+import { describeForms } from "@core";
 import { HyperlinkStaleError, Hyperlinks } from "@core/hyperlinks";
 import {
 	EXIT,
@@ -10,20 +11,24 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["hyperlink"], "                    ");
+
 const HELP = `docx hyperlinks delete — unwrap a hyperlink (keep the text)
 
 Usage:
-  docx hyperlinks delete FILE --at LINK_ID [options]
+  docx hyperlinks delete FILE --at linkN [options]
 
 Required:
-  --at LINK_ID      Existing hyperlink to remove (e.g., link0)
+  --at linkN        Existing hyperlink to remove. Supports:
+${AT_FORMS}
+                    See \`docx info locators\`.
 
 Optional:
   --author NAME     Author for the audit comment when track-changes is on
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
-  --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  --dry-run         Print what would change; do not write the file (wins over -o)
+  -v, --verbose     Print the success ack JSON
   -h, --help        Show this help
 
 The display text stays in place; only the <w:hyperlink> wrapper is removed.
@@ -32,6 +37,12 @@ rels file too.
 
 When track-changes is on, an audit comment is anchored to the surviving text
 since OOXML has no native tracked-change form for hyperlink removal.
+
+Output:
+  Silent on success (exit 0) — delete mints no new id. --verbose prints
+  {ok:true, operation, path, hyperlinkId, from}. A --dry-run prints a bare
+  preview object. Errors print {code, error, hint?} with a nonzero exit.
+  Discover ids with \`docx hyperlinks list FILE\`.
 
 Examples:
   docx hyperlinks delete doc.docx --at link0
@@ -63,7 +74,7 @@ export async function run(args: string[]): Promise<number> {
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const targetId = parsed.values.at as string | undefined;
-	if (!targetId) return fail("USAGE", "Missing --at LINK_ID", HELP);
+	if (!targetId) return fail("USAGE", "Missing --at linkN", HELP);
 
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
@@ -83,7 +94,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "hyperlinks.delete",
 			dryRun: true,
 			path,
@@ -107,6 +117,8 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
+	// delete unwraps an existing hyperlink and mints no new addressable handle,
+	// so it stays silent on success unless --verbose.
 	await respondAck({
 		ok: true,
 		operation: "hyperlinks.delete",

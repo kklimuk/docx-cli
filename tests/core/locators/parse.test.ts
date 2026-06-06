@@ -35,6 +35,19 @@ describe("parseLocator", () => {
 		});
 	});
 
+	test("parses footnote and endnote ids", () => {
+		expect(parseLocator("fn0")).toEqual({
+			kind: "footnote",
+			footnoteId: "fn0",
+		});
+		expect(parseLocator("fn12")).toEqual({
+			kind: "footnote",
+			footnoteId: "fn12",
+		});
+		expect(parseLocator("en0")).toEqual({ kind: "endnote", endnoteId: "en0" });
+		expect(parseLocator("en3")).toEqual({ kind: "endnote", endnoteId: "en3" });
+	});
+
 	test("parses span within a paragraph", () => {
 		expect(parseLocator("p3:5-20")).toEqual({
 			kind: "blockSpan",

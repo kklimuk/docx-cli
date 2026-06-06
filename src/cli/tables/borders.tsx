@@ -1,3 +1,4 @@
+import { describeForms } from "@core";
 import { w } from "@core/jsx";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
@@ -20,27 +21,38 @@ import { noteStructuralChange } from "./common";
 
 const STYLES = new Set(["single", "double", "none"]);
 
+const AT_FORMS = describeForms(["table"], "                     ");
+
 const HELP = `docx tables borders — set table borders
 
 Usage:
   docx tables borders FILE --at tN [options]
 
 Required:
-  --at tN            Target table (e.g. t0)
+  --at LOCATOR       Target table. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --style STYLE      single | double | none (default: single)
   --size EIGHTHS     Border thickness in eighths of a point (default: 4 = 0.5pt)
   --color HEX        Hex color without '#', or "auto" (default: auto)
-  --author NAME      Author for the tracked change (default: $DOCX_AUTHOR)
+  --author NAME      Author for the audit comment when track-changes is on
+                     (default: $DOCX_AUTHOR)
   -o, --output PATH  Write to PATH instead of overwriting FILE
   --dry-run          Print what would change; do not write
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Applies to all six table border edges (<w:tblBorders>). Under track-changes the
-change is recorded as a real table-property revision (<w:tblPrChange> snapshots
-the prior <w:tblPr>), so it can be accepted or rejected.
+Applies to all six table border edges (<w:tblBorders>). OOXML has no
+tracked-change construct Word will round-trip for a hand-authored border change
+(Word does not revert a tblPrChange we author on reject), so under track-changes
+the change is applied in place with a [docx-cli] audit comment instead.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  style, ...}. --dry-run prints the preview object (no ok field). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables borders doc.docx --at t0 --style double --size 8 --color 444444
@@ -112,7 +124,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.borders",
 			dryRun: true,
 			path,

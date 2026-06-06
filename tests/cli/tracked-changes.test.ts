@@ -365,7 +365,7 @@ describe("docx comments add — tracked changes", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:24-32",
 			"--text",
 			"Inside ins",
@@ -388,7 +388,7 @@ describe("docx comments add — tracked changes", () => {
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0:15-35",
 			"--text",
 			"Spans the tracked change",
@@ -607,7 +607,7 @@ describe("audit-comments — hyperlinks/images under track-changes", () => {
 			docPath,
 			"--to",
 			extractDir,
-			"--id",
+			"--at",
 			replacementSrc?.id ?? "img1",
 		);
 		const replacementPath = join(extractDir, `${replacementSrc?.hash}.jpeg`);

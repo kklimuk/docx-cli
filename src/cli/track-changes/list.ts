@@ -25,8 +25,10 @@ paragraph-mark <w:ins>/<w:del> markers (a self-closing element inside
 of the same logical move appear as separate entries; their kind tells them
 apart.
 
-Output: JSON array of { id, kind, author, date, revisionId, blockId, text }
-sorted by id (document order). kind is one of: "ins", "del", "moveFrom",
+Output: a bare JSON array of { id, kind, author, date, revisionId, blockId,
+text } sorted by id (document order). Each item's "id" (e.g. tc0) is its
+addressable handle — pass it to \`accept\`/\`reject --at tcN\`. Errors print
+{code, error, hint?} with a nonzero exit. kind is one of: "ins", "del", "moveFrom",
 "moveTo", "sectPrChange", "rowIns", "rowDel", "cellIns", "cellDel",
 "tblGridChange", "tblPrChange", "tcPrChange", "checkboxToggle". Paragraph-mark
 entries have kind "ins"/"del" with text "" — their blockId is the owning

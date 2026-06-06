@@ -17,6 +17,12 @@ Usage:
 Options:
   -h, --help        Show this help
 
+Output:
+  A bare JSON array of image objects: { id, contentType, hash, ... }. Each
+  item's "id" (e.g. img0) is its addressable handle — pass it to
+  \`images extract/replace/delete --at\`. Errors print {code, error, hint?}
+  with a nonzero exit.
+
 Examples:
   docx images list doc.docx | jq -c '.[] | {id, contentType, hash}'
 `;

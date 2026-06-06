@@ -114,6 +114,14 @@ export class Document {
 		return view;
 	}
 
+	/** Rebuild the body AST + locator maps from the current (possibly mutated)
+	 *  `documentTree`. Call after a structural mutation to read back the
+	 *  freshly-assigned locators (e.g. the `pN` of a just-inserted block).
+	 *  Block ids are positional, so they shift after inserts/deletes. */
+	reread(): void {
+		this.body = buildBody(this, this.body.path);
+	}
+
 	async save(path?: string): Promise<void> {
 		this.pkg.writeText(
 			"word/document.xml",
@@ -166,16 +174,30 @@ export class Document {
 	 * content-type via `NotesView.register`, seeded with the separator +
 	 * continuationSeparator boilerplate Word expects); cached on the view. */
 	ensureFootnotes(): NotesView {
-		if (this.footnotes) return this.footnotes;
-		this.footnotes = NotesView.register("footnote", this);
-		return this.footnotes;
+		this.ensureNoteInfrastructure();
+		// biome-ignore lint/style/noNonNullAssertion: set by ensureNoteInfrastructure.
+		return this.footnotes!;
 	}
 
 	/** Materialize the optional endnotes part if absent — see `ensureFootnotes`. */
 	ensureEndnotes(): NotesView {
-		if (this.endnotes) return this.endnotes;
-		this.endnotes = NotesView.register("endnote", this);
-		return this.endnotes;
+		this.ensureNoteInfrastructure();
+		// biome-ignore lint/style/noNonNullAssertion: set by ensureNoteInfrastructure.
+		return this.endnotes!;
+	}
+
+	/** Provision the full footnote/endnote infrastructure Word requires whenever
+	 * EITHER notes part is needed: both `footnotes.xml` AND `endnotes.xml` (Word
+	 * always pairs them), plus the matching `<w:footnotePr>` / `<w:endnotePr>`
+	 * separator declarations in `settings.xml`. Without those settings pointers
+	 * Word reports "unreadable content" and repairs the file by adding exactly
+	 * this. Idempotent — only registers what's missing. */
+	private ensureNoteInfrastructure(): void {
+		if (!this.footnotes) this.footnotes = NotesView.register("footnote", this);
+		if (!this.endnotes) this.endnotes = NotesView.register("endnote", this);
+		const settings = this.ensureSettings();
+		settings.ensureNotePr("footnote");
+		settings.ensureNotePr("endnote");
 	}
 
 	/** Materialize the optional comments part if absent (mints rel +

@@ -4,7 +4,7 @@ import {
 	fail,
 	openOrFail,
 	respond,
-	respondAck,
+	respondMinted,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
@@ -13,28 +13,34 @@ import {
 const HELP = `docx comments reply — reply to an existing comment
 
 Usage:
-  docx comments reply FILE --to cN --text TEXT [options]
+  docx comments reply FILE --at cN --text TEXT [options]
 
 Required:
-  --to ID           Parent comment id (e.g., c0)
+  --at cN           Parent comment id (e.g., c0). The "c" prefix is optional.
   --text TEXT       Reply body
 
 Optional:
   --author NAME     Author name (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be added; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the full success ack JSON
   -h, --help        Show this help
 
+Output:
+  Prints the new reply's comment id (e.g. c4) on success. --verbose prints the
+  full ack {ok:true, operation, path, commentId, parentId}. Errors print
+  {code, error, hint?} with a nonzero exit.
+  Discover existing comment ids with \`docx comments list FILE\`.
+
 Examples:
-  docx comments reply doc.docx --to c0 --text "Good catch" --author "Reviewer"
+  docx comments reply doc.docx --at c0 --text "Good catch" --author "Reviewer"
 `;
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
-			to: { type: "string" },
+			at: { type: "string" },
 			text: { type: "string" },
 			author: { type: "string" },
 			output: { type: "string", short: "o" },
@@ -56,9 +62,9 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const parentInput = parsed.values.to as string | undefined;
+	const parentInput = parsed.values.at as string | undefined;
 	const text = parsed.values.text as string | undefined;
-	if (!parentInput) return fail("USAGE", "Missing --to PARENT_ID", HELP);
+	if (!parentInput) return fail("USAGE", "Missing --at cN", HELP);
 	if (!text) return fail("USAGE", "Missing --text TEXT", HELP);
 
 	const document = await openOrFail(path);
@@ -81,7 +87,6 @@ export async function run(args: string[]): Promise<number> {
 		}
 		const nextId = document.comments.nextId();
 		await respond({
-			ok: true,
 			operation: "comments.reply",
 			dryRun: true,
 			path,
@@ -104,7 +109,9 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	await respondAck({
+	// The reply is itself a new comment with a fresh id the agent can't
+	// reconstruct, so print it by default; --verbose upgrades to the full ack.
+	await respondMinted([`c${numericId}`], {
 		ok: true,
 		operation: "comments.reply",
 		path: outputPath ?? path,

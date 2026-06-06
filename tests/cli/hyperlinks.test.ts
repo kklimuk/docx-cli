@@ -169,7 +169,7 @@ describe("docx hyperlinks list", () => {
 	test("missing FILE returns USAGE", async () => {
 		const result = await runCli("hyperlinks", "list");
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 
@@ -264,7 +264,6 @@ describe("docx hyperlinks replace", () => {
 		);
 		expect(dryRun.exitCode).toBe(0);
 		expect(dryRun.parsed).toMatchObject({
-			ok: true,
 			dryRun: true,
 		});
 
@@ -317,7 +316,6 @@ describe("docx hyperlinks replace", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "HYPERLINK_NOT_FOUND",
 		});
 	});
@@ -409,7 +407,7 @@ describe("docx hyperlinks add", () => {
 			"https://example.com/second",
 		);
 		expect(second.exitCode).toBe(2);
-		expect(second.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(second.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--dry-run does not modify the file", async () => {
@@ -425,7 +423,7 @@ describe("docx hyperlinks add", () => {
 			"https://example.com",
 			"--dry-run",
 		);
-		expect(dry.parsed).toMatchObject({ ok: true, dryRun: true });
+		expect(dry.parsed).toMatchObject({ dryRun: true });
 		const after = await runCli("hyperlinks", "list", docPath);
 		expect(after.parsed).toEqual(before.parsed);
 	});
@@ -443,7 +441,6 @@ describe("docx hyperlinks add", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "INVALID_LOCATOR",
 		});
 	});
@@ -504,7 +501,7 @@ describe("docx hyperlinks delete", () => {
 			"link0",
 			"--dry-run",
 		);
-		expect(dry.parsed).toMatchObject({ ok: true, dryRun: true });
+		expect(dry.parsed).toMatchObject({ dryRun: true });
 		const after = await runCli("hyperlinks", "list", docPath);
 		expect(after.parsed).toEqual(before.parsed);
 	});
@@ -519,7 +516,6 @@ describe("docx hyperlinks delete", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "HYPERLINK_NOT_FOUND",
 		});
 	});
@@ -590,7 +586,7 @@ describe("docx insert --url", () => {
 			"https://example.com",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 });
 

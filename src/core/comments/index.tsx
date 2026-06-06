@@ -336,7 +336,7 @@ export class Comments {
 	}
 }
 
-/** Anchor for `Comments.add`. The CLI parses `--range LOCATOR` and resolves
+/** Anchor for `Comments.add`. The CLI parses `--at LOCATOR` and resolves
  * `--anchor PHRASE` (via the find subsystem) into one of these two shapes:
  * single block (optionally with a sub-paragraph span), or cross-paragraph
  * range with explicit start/end offsets. */

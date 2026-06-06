@@ -80,25 +80,41 @@ export function setVerboseAck(verbose: boolean): void {
 	verboseAck = verbose;
 }
 
-/** Mutating-command success ack: prints the JSON payload only when
- *  `--verbose` is set. By default mutators are silent on success — agents
- *  rely on exit code 0 + the absence of an error payload. */
+/** Mutating-command success ack: prints the full JSON payload only when
+ *  `--verbose` is set. By default mutators are silent on success — agents rely
+ *  on exit code 0. The payload is the one place `ok: true` is retained. */
 export async function respondAck(payload: unknown): Promise<void> {
 	if (!verboseAck) return;
 	await respond(payload);
 }
 
+/** Success output for a mutator that mints a new addressable handle the agent
+ *  can't reconstruct (comment/footnote/endnote/hyperlink id, inserted-block
+ *  locator). Default: print the bare locator(s), one per line, so the agent can
+ *  feed them straight into `--at`. With `--verbose`: print the full `ok: true`
+ *  ack instead. Errors still go through `fail()`. */
+export async function respondMinted(
+	locators: string[],
+	verbosePayload: unknown,
+): Promise<void> {
+	if (verboseAck) {
+		await respond(verbosePayload);
+		return;
+	}
+	if (locators.length > 0) await writeStdout(`${locators.join("\n")}\n`);
+}
+
+/** Error output. Exit code is the canonical failure signal, so no `ok` field —
+ *  the nonzero exit plus the `code`/`error` keys are unambiguous. */
 export async function fail(
 	code: ErrorCode,
 	message: string,
 	hint?: string,
 ): Promise<number> {
-	const payload: { ok: false; code: ErrorCode; error: string; hint?: string } =
-		{
-			ok: false,
-			code,
-			error: message,
-		};
+	const payload: { code: ErrorCode; error: string; hint?: string } = {
+		code,
+		error: message,
+	};
 	if (hint) payload.hint = hint;
 	await respond(payload);
 	return exitCodeFor(code);

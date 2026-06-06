@@ -1,4 +1,4 @@
-import { type Document, TrackChanges } from "@core";
+import { type Document, describeForms, TrackChanges } from "@core";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -22,13 +22,17 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["table"], "                     ");
+
 const HELP = `docx tables set-widths — set column widths
 
 Usage:
   docx tables set-widths FILE --at tN --widths SPEC [options]
 
 Required:
-  --at tN            Target table (e.g. t0)
+  --at LOCATOR       Target table. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
   --widths SPEC      One of:
                        "20%,30%,50%"  percentages (must sum to ~100)
                        "1440,2880"    per-column twips
@@ -45,6 +49,11 @@ Percentages and twips set a fixed layout and rewrite <w:tblGrid> plus each
 cell's <w:tcW>. Under track-changes the resize is recorded as a real revision
 (<w:tblGridChange> for the grid plus a per-cell <w:tcPrChange>), so it can be
 accepted or rejected — matching what Word emits for a width change.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  layout, widths}. --dry-run prints the preview object (no ok field). Errors
+  print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables set-widths doc.docx --at t0 --widths "25%,25%,50%"
@@ -115,7 +124,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.set-widths",
 			dryRun: true,
 			path,

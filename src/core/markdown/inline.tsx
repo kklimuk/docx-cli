@@ -8,6 +8,7 @@ import type {
 } from "mdast";
 import type { InlineMath } from "mdast-util-math";
 import type { Document } from "../ast/document";
+import type { RelationshipsView } from "../ast/document/relationships";
 import { latexToOmml } from "../equation";
 import { Image } from "../image";
 import { w } from "../jsx";
@@ -36,10 +37,16 @@ export type WalkContext = {
 	document: Document;
 	tracked: boolean;
 	authorFlag?: string;
-	/** Markdown identifier → minted numeric note id, so multiple `[^x]` refs
-	 *  in the body share one footnote body. Populated by the lens before the
-	 *  block walk; the walker only reads. */
-	mintedNoteIds: Map<string, string>;
+	/** Markdown footnote identifier → the list of minted note ids for it, one
+	 *  per reference in document order. Markdown lets the same `[^x]` be cited
+	 *  repeatedly, but OOXML/Word require a *distinct* footnote definition per
+	 *  reference (Word treats N references to one definition as corruption and
+	 *  "repairs" it by cloning) — so the lens mints one clone per reference and
+	 *  the walker consumes them in order via `footnoteRefCursor`. */
+	mintedNoteIds: Map<string, string[]>;
+	/** Per-identifier cursor into `mintedNoteIds`: how many references to this
+	 *  footnote the walker has emitted so far. Each `[^x]` consumes the next id. */
+	footnoteRefCursor: Map<string, number>;
 	/** Pre-resolved image bytes, alt, and minted rel/drawing ids — keyed by
 	 *  mdast `image.url`. Populated by the lens; the walker only reads. */
 	imageCache: Map<string, ResolvedImage>;
@@ -48,6 +55,11 @@ export type WalkContext = {
 	 *  inline walker hits a `linkReference` / `imageReference` so the
 	 *  reference resolves to a real hyperlink / image rather than dropping. */
 	definitions: Map<string, Definition>;
+	/** Where hyperlink (and future media) relationships minted during this walk
+	 *  are recorded. Defaults to the document's rels; when building a footnote
+	 *  /endnote body the lens swaps in that part's own rels so a note-body
+	 *  `<w:hyperlink r:id>` resolves against `word/_rels/footnotes.xml.rels`. */
+	relationships: RelationshipsView;
 	/** Allocator over `core/track-changes/computeMaxRevisionId`. Lazy-built
 	 *  on first tracked emission so untracked walks don't pay the scan cost.
 	 *  The lens preallocates an author/date pair so all tracked nodes from
@@ -189,7 +201,7 @@ function wrapHyperlink(
 	ctx: WalkContext,
 	format: InlineFormat,
 ): XmlNode[] {
-	const relationshipId = ctx.document.relationships.addHyperlink(node.url);
+	const relationshipId = ctx.relationships.addHyperlink(node.url);
 	ctx.document.ensureStyles().ensureStyle("Hyperlink");
 	const inner = node.children.flatMap((child) =>
 		walkPhrasing(child, ctx, { ...format, hyperlinkId: relationshipId }),
@@ -274,14 +286,21 @@ function inlineImageRun(image: MdImage, ctx: WalkContext): XmlNode {
 }
 
 function footnoteReferenceRun(identifier: string, ctx: WalkContext): XmlNode {
-	const numericId = ctx.mintedNoteIds.get(identifier);
-	if (!numericId) {
+	const ids = ctx.mintedNoteIds.get(identifier);
+	if (!ids || ids.length === 0) {
 		throw new MarkdownImportError(
 			"USAGE",
 			`Footnote reference [^${identifier}] has no matching definition`,
 			"Provide `[^id]: body text` for every `[^id]` reference.",
 		);
 	}
+	// Consume the next clone for this footnote. The lens minted one definition
+	// per reference (OOXML requires a 1:1 reference↔definition mapping), so the
+	// Nth `[^identifier]` in document order takes the Nth id. Clamp to the last
+	// id defensively if reference/definition counts ever drift.
+	const cursor = ctx.footnoteRefCursor.get(identifier) ?? 0;
+	ctx.footnoteRefCursor.set(identifier, cursor + 1);
+	const numericId = ids[Math.min(cursor, ids.length - 1)];
 	// `ensureNoteStyles` is idempotent — registering it on every ref keeps the
 	// dependency local. The lens calls `ensureFootnotes()` once when it sees
 	// the first definition; this call here is a defensive no-op if there are

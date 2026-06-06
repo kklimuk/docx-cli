@@ -28,11 +28,11 @@ function helpFor(kind: NoteKind): string {
 	return `docx ${verb} delete — remove a ${kind} body and every reference to it
 
 Usage:
-  docx ${verb} delete FILE --id ${idPrefix}N [options]
+  docx ${verb} delete FILE --at ${idPrefix}N [options]
 
-Required:
-  --id ID              ${capitalize(kind)} id (e.g., ${idPrefix}1). The
-                       \`${idPrefix}\` prefix is optional.
+Target:
+  --at ${idPrefix}N              ${capitalize(kind)} id (e.g. ${idPrefix}0); the ${idPrefix} prefix is optional.
+                       See \`docx info locators\`.
 
 Optional:
   --author NAME        Author for tracked deletions (default: $DOCX_AUTHOR
@@ -42,8 +42,13 @@ Optional:
   -v, --verbose        Print the success ack JSON (default: silent on success).
   -h, --help           Show this help.
 
+Output:
+  Silent on success; --verbose prints {ok:true, operation, path, id}. Errors
+  print {code, error, hint?} with a nonzero exit. Discover ids with
+  \`docx ${verb} list FILE\`.
+
 Examples:
-  docx ${verb} delete doc.docx --id ${idPrefix}3
+  docx ${verb} delete doc.docx --at ${idPrefix}3
 `;
 }
 
@@ -58,7 +63,7 @@ export async function runDeleteNote(
 	const parsed = await tryParseArgs(
 		args,
 		{
-			id: { type: "string" },
+			at: { type: "string" },
 			author: { type: "string" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
@@ -80,9 +85,9 @@ export async function runDeleteNote(
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", help);
 
-	const idInput = parsed.values.id as string | undefined;
+	const idInput = parsed.values.at as string | undefined;
 	if (!idInput)
-		return fail("USAGE", `Missing --id ${noteConfig(kind).idPrefix}N`, help);
+		return fail("USAGE", `Missing --at ${noteConfig(kind).idPrefix}N`, help);
 
 	const config = noteConfig(kind);
 	const numericId = idInput.startsWith(config.idPrefix)
@@ -104,7 +109,6 @@ export async function runDeleteNote(
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: `${kind}s.delete`,
 			dryRun: true,
 			path,

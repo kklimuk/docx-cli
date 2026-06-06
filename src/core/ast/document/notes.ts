@@ -4,25 +4,54 @@ import { XmlNode } from "../../parser";
 import type { Note } from "../types";
 import type { ContentTypesView } from "./content-types";
 import type { Pkg } from "./package";
-import type { RelationshipsView } from "./relationships";
+import { RelationshipsView, relsPartNameFor } from "./relationships";
 import type { StylesView } from "./styles";
 
 export class NotesView {
 	kind: NoteKind;
 	tree: XmlNode[];
+	/** This part's own `word/_rels/<kind>s.xml.rels`, holding the hyperlink (and
+	 *  any future media) relationships referenced from note bodies. Lazily
+	 *  created the first time a body needs one; absent for plain-text notes. */
+	relationships?: RelationshipsView;
 
 	constructor(kind: NoteKind, tree: XmlNode[]) {
 		this.kind = kind;
 		this.tree = tree;
 	}
 
-	/** Load this view from a package; returns undefined if the part is absent. */
+	/** Load this view from a package; returns undefined if the part is absent.
+	 *  Also attaches the part's own rels (`word/_rels/<kind>s.xml.rels`) when
+	 *  present so note-body hyperlinks survive a round-trip. */
 	static async fromPackage(
 		pkg: Pkg,
 		kind: NoteKind,
 	): Promise<NotesView | undefined> {
 		const tree = await pkg.readPart(noteConfig(kind).partName);
-		return tree ? new NotesView(kind, tree) : undefined;
+		if (!tree) return undefined;
+		const view = new NotesView(kind, tree);
+		const relsTree = await pkg.readPart(
+			relsPartNameFor(noteConfig(kind).partName),
+		);
+		if (relsTree) {
+			view.relationships = new RelationshipsView(
+				relsTree,
+				relsPartNameFor(noteConfig(kind).partName),
+			);
+		}
+		return view;
+	}
+
+	/** This part's rels view, created empty (targeting the right `.rels` part)
+	 *  on first use. Note-body hyperlink rels go here, not the document's. */
+	ensureRelationships(): RelationshipsView {
+		if (!this.relationships) {
+			this.relationships = RelationshipsView.fromXml(
+				undefined,
+				relsPartNameFor(noteConfig(this.kind).partName),
+			);
+		}
+		return this.relationships;
 	}
 
 	/** Parse a view from raw XML; returns undefined if the input is absent. */
@@ -33,9 +62,11 @@ export class NotesView {
 		return xml ? new NotesView(kind, XmlNode.parse(xml)) : undefined;
 	}
 
-	/** Serialize this view's tree into the package's `word/${kind}s.xml`. */
+	/** Serialize this view's tree into the package's `word/${kind}s.xml`, plus
+	 *  its rels part when any note-body relationships were minted. */
 	writeTo(pkg: Pkg): void {
 		pkg.writeText(noteConfig(this.kind).partName, XmlNode.serialize(this.tree));
+		if (this.relationships?.hasAny()) this.relationships.writeTo(pkg);
 	}
 
 	/** Mint the relationship + content-type override for `word/${kind}s.xml`

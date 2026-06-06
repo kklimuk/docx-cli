@@ -23,10 +23,12 @@ Options:
   --nth N           return only the Nth match (0-indexed)
   --current         search the raw concatenation (both ins and del text)
   --baseline        search the pre-change text (skip ins/moveTo)
-                    default: accepted document (skip del/moveFrom) — matches
-                    "docx read" / "docx wc" / "docx comments add"
+                    (--current and --baseline are mutually exclusive; default:
+                    accepted document (skip del/moveFrom) — matches
+                    "docx read" / "docx wc" / "docx comments add")
   --exact           disable query normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
+  --json            emit the full match objects as JSON (default: bare locators)
   -h, --help        show this help
 
 Within-paragraph matches only — cross-paragraph ranges aren't supported
@@ -39,11 +41,18 @@ non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
 straight quotes; em-dash and en-dash match the hyphen. Pass --exact to
 match the raw query verbatim. --regex is always verbatim.
 
+Output:
+  Default: the matched span locators (e.g. p3:5-8), one per line — feed them
+  straight into another command's --at. No matches prints nothing (exit 0).
+  --json: { totalMatches, query, view, matches:[{locator, blockId, start, end,
+  text, …}], normalizedQuery? } (no envelope). Errors print {code, error,
+  hint?} with a nonzero exit. Notation: offsets are 0-based, end-exclusive.
+
 Examples:
   docx find doc.docx "fox"
   docx find doc.docx "Action Item:" --all
   docx find doc.docx "TODO|FIXME" --regex --ignore-case
-  docx comments add doc.docx --range "$(docx find doc.docx fox | jq -r .matches[0].locator)" --text "..."
+  docx comments add doc.docx --at "$(docx find doc.docx fox | head -1)" --text "..."
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -57,6 +66,7 @@ export async function run(args: string[]): Promise<number> {
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
 			exact: { type: "boolean" },
+			json: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 		},
 		HELP,
@@ -132,25 +142,32 @@ export async function run(args: string[]): Promise<number> {
 		selected = allMatches.slice(0, 1);
 	}
 
-	await respond({
-		ok: true,
-		operation: "find",
-		path,
-		query,
-		regex: useRegex,
-		ignoreCase,
-		view: findView,
-		totalMatches: allMatches.length,
-		matches: selected.map((match) => ({
-			locator: `${match.blockId}:${match.start}-${match.end}`,
-			...match,
-		})),
-		...(result.normalizedQuery !== undefined
-			? {
-					normalizedQuery: result.normalizedQuery,
-					normalizationApplied: result.normalizationApplied,
-				}
-			: {}),
-	});
+	const matches = selected.map((match) => ({
+		locator: `${match.blockId}:${match.start}-${match.end}`,
+		...match,
+	}));
+
+	if (parsed.values.json) {
+		await respond({
+			totalMatches: allMatches.length,
+			query,
+			regex: useRegex,
+			ignoreCase,
+			view: findView,
+			matches,
+			...(result.normalizedQuery !== undefined
+				? {
+						normalizedQuery: result.normalizedQuery,
+						normalizationApplied: result.normalizationApplied,
+					}
+				: {}),
+		});
+		return EXIT.OK;
+	}
+
+	// Text-first default: the locators, one per line, ready to paste into --at.
+	if (matches.length > 0) {
+		await writeStdout(`${matches.map((match) => match.locator).join("\n")}\n`);
+	}
 	return EXIT.OK;
 }

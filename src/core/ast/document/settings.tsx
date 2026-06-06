@@ -13,6 +13,26 @@ const SETTINGS_CONTENT_TYPE =
 const W_NAMESPACE =
 	"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+/** CT_Settings elements that follow `<w:footnotePr>`/`<w:endnotePr>` in the
+ *  ECMA-376 §17.15.1.78 sequence — note-pr inserts before the first one present
+ *  to stay schema-valid. Covers the tail elements that actually occur in real
+ *  settings parts (Word always writes `<w:compat>`; the rest appear variably).
+ *  Namespaced docId variants (`w14:`/`w15:`) are the common round-trip cases. */
+const NOTE_PR_SUCCESSORS = new Set<string>([
+	"w:compat",
+	"w:rsids",
+	"m:mathPr",
+	"w:themeFontLang",
+	"w:clrSchemeMapping",
+	"w:shapeDefaults",
+	"w:decimalSymbol",
+	"w:listSeparator",
+	"w:docId",
+	"w14:docId",
+	"w15:docId",
+	"w:chartTrackingRefBased",
+]);
+
 export class SettingsView {
 	tree: XmlNode[];
 
@@ -68,6 +88,39 @@ export class SettingsView {
 				(child) => child.tag !== "w:trackChanges",
 			);
 		}
+	}
+
+	/** Ensure `<w:footnotePr>` / `<w:endnotePr>` is present, declaring the
+	 *  reserved separator (id -1) + continuationSeparator (id 0) notes that live
+	 *  in `footnotes.xml` / `endnotes.xml`. Word REQUIRES this settings-level
+	 *  pointer to render a notes part — without it Word reports the document as
+	 *  unreadable and "repairs" it by adding exactly this. Idempotent; inserted
+	 *  before the first CT_Settings element that must follow note-pr so the child
+	 *  order stays valid even when `<w:compat>` is absent (an imported settings
+	 *  part may have none). Word/LibreOffice are lenient about settings order, so
+	 *  the append fallback is a safe best-effort if no successor is present. */
+	ensureNotePr(kind: "footnote" | "endnote"): void {
+		const tag = kind === "footnote" ? "w:footnotePr" : "w:endnotePr";
+		const root = this.ensureSettingsRoot();
+		if (root.children.some((child) => child.tag === tag)) return;
+		const NotePr = kind === "footnote" ? w.footnotePr : w.endnotePr;
+		const Note = kind === "footnote" ? w.footnote : w.endnote;
+		const node = (
+			<NotePr>
+				<Note w-id="-1" />
+				<Note w-id="0" />
+			</NotePr>
+		);
+		// `<w:footnotePr>` then `<w:endnotePr>` sit near the END of CT_Settings
+		// (§17.15.1.78), just before this tail. Insert before the first tail
+		// element present; when called for both kinds, footnotePr goes in first
+		// and endnotePr then lands right after it (still before the tail), so
+		// their required relative order is preserved.
+		const successorIndex = root.children.findIndex((child) =>
+			NOTE_PR_SUCCESSORS.has(child.tag),
+		);
+		if (successorIndex === -1) root.children.push(node);
+		else root.children.splice(successorIndex, 0, node);
 	}
 
 	private ensureSettingsRoot(): XmlNode {

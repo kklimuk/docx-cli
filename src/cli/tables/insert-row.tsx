@@ -1,4 +1,4 @@
-import { TrackChanges } from "@core";
+import { describeForms, TrackChanges } from "@core";
 import { Paragraph } from "@core/blocks";
 import { w } from "@core/jsx";
 import { parseTableAt } from "@core/locators";
@@ -22,13 +22,17 @@ import {
 	writeStdout,
 } from "../respond";
 
+const AT_FORMS = describeForms(["table"], "                     ");
+
 const HELP = `docx tables insert-row — insert a table row
 
 Usage:
   docx tables insert-row FILE --at tN [options]
 
 Required:
-  --at tN            Target table (e.g. t0)
+  --at LOCATOR       Target table. Supports:
+${AT_FORMS}
+                     See \`docx info locators\`.
 
 Optional:
   --position INDEX   0-based row index to insert at (default: append at end)
@@ -46,6 +50,11 @@ A row inserted below the merge is a normal independent row.
 
 When track-changes is on, the new row is wrapped as a tracked insertion
 (<w:trPr><w:ins/>) — accept keeps it, reject removes it.
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  position, tracked}. --dry-run prints the preview object (no ok field). Errors
+  print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx tables insert-row doc.docx --at t0
@@ -132,7 +141,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "tables.insert-row",
 			dryRun: true,
 			path,

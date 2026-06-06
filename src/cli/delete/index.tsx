@@ -34,13 +34,15 @@ Usage:
   docx delete FILE [options]
 
 Locator (required):
-  --at LOCATOR      Block to remove
+  --at LOCATOR      What to remove. One of:
                     pN     paragraph (whole block, with all its runs)
                     pN-pM  contiguous paragraph range (delete as a unit)
                     tN     table (entire table)
                     sN     inline section break — strips the <w:sectPr> from
                            its owning paragraph (the paragraph itself stays);
                            rejects the trailing section break (mandatory in OOXML)
+                    Discover ids with \`docx read FILE --ast\`. See
+                    \`docx info locators\`.
 
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -56,6 +58,10 @@ Tracked behavior:
   paragraphs from "insert --section" have no runs) the mutation is silent.
   delete --at tN under tracking is rejected (tracked table-row deletion is
   not supported).
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  locator}. Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx delete doc.docx --at p3
@@ -250,7 +256,6 @@ async function commitBlockDelete(
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {
 	await respond({
-		ok: true,
 		operation: "delete",
 		dryRun: true,
 		path: opts.filePath,

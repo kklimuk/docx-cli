@@ -14,14 +14,15 @@ import {
 const HELP = `docx comments resolve — mark one or more comments resolved
 
 Usage:
-  docx comments resolve FILE --id cN [--id cM ...] [options]
+  docx comments resolve FILE --at cN [--at cM ...] [options]
   docx comments resolve FILE --batch FILE.jsonl [options]
   docx comments resolve FILE --batch -    [options]   # JSONL from stdin
 
-Anchor (one required, mutually exclusive):
-  --id ID             Comment id (e.g., c0). Repeat for multiple ids:
-                      --id c1 --id c3 --id c5. All ids are validated against
-                      the pre-mutation tree, so the batch is atomic.
+Target (one required, mutually exclusive):
+  --at cN             Comment id (e.g., c0). Repeat for multiple ids:
+                      --at c1 --at c3 --at c5. All ids are validated against
+                      the pre-mutation tree, so the batch is atomic. The "c"
+                      prefix is optional.
   --batch PATH        JSONL with one {"id": "cN"} per line. Use - for stdin.
 
 Optional:
@@ -29,13 +30,17 @@ Optional:
                       ids in the batch)
   -o, --output PATH   Write to PATH instead of overwriting FILE
   --dry-run           Print what would change; do not write the file
-  -v, --verbose       Print the success ack JSON (default: silent on success
-                      for single; batch always prints the affected ids)
+  -v, --verbose       Print the success ack JSON
   -h, --help          Show this help
 
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  resolved, batch:[{commentId, resolved}]}. Errors print {code, error, hint?}
+  with a nonzero exit. Discover comment ids with \`docx comments list FILE\`.
+
 Examples:
-  docx comments resolve doc.docx --id c2
-  docx comments resolve doc.docx --id c1 --id c3 --unset
+  docx comments resolve doc.docx --at c2
+  docx comments resolve doc.docx --at c1 --at c3 --unset
   docx comments resolve doc.docx --batch resolutions.jsonl
 `;
 
@@ -43,7 +48,7 @@ export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
-			id: { type: "string", multiple: true },
+			at: { type: "string", multiple: true },
 			batch: { type: "string" },
 			unset: { type: "boolean" },
 			output: { type: "string", short: "o" },
@@ -65,15 +70,15 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const idsRaw = (parsed.values.id as string[] | undefined) ?? [];
+	const atValues = (parsed.values.at as string[] | undefined) ?? [];
 	const batchInput = parsed.values.batch as string | undefined;
 	const resolved = !parsed.values.unset;
 
-	if (idsRaw.length > 0 && batchInput) {
-		return fail("USAGE", "--id and --batch are mutually exclusive", HELP);
+	if (atValues.length > 0 && batchInput) {
+		return fail("USAGE", "--at and --batch are mutually exclusive", HELP);
 	}
-	if (idsRaw.length === 0 && !batchInput) {
-		return fail("USAGE", "Specify --id cN (repeatable) or --batch FILE", HELP);
+	if (atValues.length === 0 && !batchInput) {
+		return fail("USAGE", "Specify --at cN (repeatable) or --batch FILE", HELP);
 	}
 
 	let rawIds: string[];
@@ -88,7 +93,7 @@ export async function run(args: string[]): Promise<number> {
 			return fail("USAGE", "Batch file is empty");
 		}
 	} else {
-		rawIds = idsRaw;
+		rawIds = atValues;
 	}
 
 	const ordered = normalizeAndDedupCommentIds(rawIds);
@@ -108,7 +113,6 @@ export async function run(args: string[]): Promise<number> {
 			}
 		}
 		await respond({
-			ok: true,
 			operation: "comments.resolve",
 			dryRun: true,
 			path,
@@ -130,26 +134,14 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	if (batchInput || ordered.length > 1) {
-		await respond({
-			ok: true,
-			operation: "comments.resolve",
-			path: outputPath ?? path,
-			resolved,
-			batch: ordered.map((commentId) => ({ commentId, resolved })),
-		});
-	} else {
-		const single = ordered[0];
-		if (!single) {
-			throw new Error("internal: empty single-shot id list");
-		}
-		await respondAck({
-			ok: true,
-			operation: "comments.resolve",
-			path: outputPath ?? path,
-			commentId: single,
-			resolved,
-		});
-	}
+	// resolve mints no new addressable handle (it flips state on existing
+	// comments), so it stays silent on success unless --verbose.
+	await respondAck({
+		ok: true,
+		operation: "comments.resolve",
+		path: outputPath ?? path,
+		resolved,
+		batch: ordered.map((commentId) => ({ commentId, resolved })),
+	});
 	return EXIT.OK;
 }

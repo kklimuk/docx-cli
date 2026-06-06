@@ -14,26 +14,31 @@ import {
 const HELP = `docx comments delete — remove one or more comments
 
 Usage:
-  docx comments delete FILE --id cN [--id cM ...] [options]
+  docx comments delete FILE --at cN [--at cM ...] [options]
   docx comments delete FILE --batch FILE.jsonl [options]
   docx comments delete FILE --batch -    [options]   # JSONL from stdin
 
-Anchor (one required, mutually exclusive):
-  --id ID             Comment id (e.g., c0). Repeat for multiple ids:
-                      --id c1 --id c3 --id c5. All ids are validated against
-                      the pre-mutation tree, so the batch is atomic.
+Target (one required, mutually exclusive):
+  --at cN             Comment id (e.g., c0). Repeat for multiple ids:
+                      --at c1 --at c3 --at c5. All ids are validated against
+                      the pre-mutation tree, so the batch is atomic. The "c"
+                      prefix is optional.
   --batch PATH        JSONL with one {"id": "cN"} per line. Use - for stdin.
 
 Optional:
   -o, --output PATH   Write to PATH instead of overwriting FILE
   --dry-run           Print what would be removed; do not write the file
-  -v, --verbose       Print the success ack JSON (default: silent on success
-                      for single; batch always prints the removed ids)
+  -v, --verbose       Print the success ack JSON
   -h, --help          Show this help
 
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  batch:[{commentId}]}. Errors print {code, error, hint?} with a nonzero exit.
+  Discover comment ids with \`docx comments list FILE\`.
+
 Examples:
-  docx comments delete doc.docx --id c2
-  docx comments delete doc.docx --id c1 --id c3 --id c7
+  docx comments delete doc.docx --at c2
+  docx comments delete doc.docx --at c1 --at c3 --at c7
   docx comments delete doc.docx --batch removals.jsonl
 `;
 
@@ -41,7 +46,7 @@ export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
-			id: { type: "string", multiple: true },
+			at: { type: "string", multiple: true },
 			batch: { type: "string" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
@@ -62,14 +67,14 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const idsRaw = (parsed.values.id as string[] | undefined) ?? [];
+	const atValues = (parsed.values.at as string[] | undefined) ?? [];
 	const batchInput = parsed.values.batch as string | undefined;
 
-	if (idsRaw.length > 0 && batchInput) {
-		return fail("USAGE", "--id and --batch are mutually exclusive", HELP);
+	if (atValues.length > 0 && batchInput) {
+		return fail("USAGE", "--at and --batch are mutually exclusive", HELP);
 	}
-	if (idsRaw.length === 0 && !batchInput) {
-		return fail("USAGE", "Specify --id cN (repeatable) or --batch FILE", HELP);
+	if (atValues.length === 0 && !batchInput) {
+		return fail("USAGE", "Specify --at cN (repeatable) or --batch FILE", HELP);
 	}
 
 	let rawIds: string[];
@@ -84,7 +89,7 @@ export async function run(args: string[]): Promise<number> {
 			return fail("USAGE", "Batch file is empty");
 		}
 	} else {
-		rawIds = idsRaw;
+		rawIds = atValues;
 	}
 
 	const ordered = normalizeAndDedupCommentIds(rawIds);
@@ -105,7 +110,6 @@ export async function run(args: string[]): Promise<number> {
 			}
 		}
 		await respond({
-			ok: true,
 			operation: "comments.delete",
 			dryRun: true,
 			path,
@@ -126,24 +130,13 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	if (batchInput || ordered.length > 1) {
-		await respond({
-			ok: true,
-			operation: "comments.delete",
-			path: outputPath ?? path,
-			batch: ordered.map((commentId) => ({ commentId })),
-		});
-	} else {
-		const single = ordered[0];
-		if (!single) {
-			throw new Error("internal: empty single-shot id list");
-		}
-		await respondAck({
-			ok: true,
-			operation: "comments.delete",
-			path: outputPath ?? path,
-			commentId: single,
-		});
-	}
+	// delete removes existing comments and mints no new handle, so it stays
+	// silent on success unless --verbose.
+	await respondAck({
+		ok: true,
+		operation: "comments.delete",
+		path: outputPath ?? path,
+		batch: ordered.map((commentId) => ({ commentId })),
+	});
 	return EXIT.OK;
 }

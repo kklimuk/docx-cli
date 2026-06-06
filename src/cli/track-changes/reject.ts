@@ -1,4 +1,7 @@
+import { describeForms } from "@core";
 import { runApply } from "./apply";
+
+const AT_FORMS = describeForms(["trackedChange"], "                    ");
 
 const HELP = `docx track-changes reject — reject tracked changes (revert to pre-change state)
 
@@ -29,16 +32,26 @@ shared revision id, not by atomic accept/reject.
 Out of scope: formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't
 modeled in the AST today and --all silently skips them.
 
-Options:
+Target (one required, mutually exclusive):
   --at tcN          Reject a tracked change by id. Repeat for multiple ids
                     (--at tc1 --at tc2 --at tc3) — all targets are resolved
                     against the pre-mutation tree, so renumbering during the
-                    batch is not a concern.
-  --all             Reject every tracked change (mutually exclusive with --at)
+                    batch is not a concern. Supports:
+${AT_FORMS}
+                    See \`docx info locators\`.
+  --all             Reject every tracked change.
+
+Options:
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  applied}. --dry-run prints the preview {operation, dryRun, path, applied}.
+  Errors print {code, error, hint?} with a nonzero exit. Discover ids with
+  \`docx track-changes list FILE\`.
 
 Examples:
   docx track-changes reject doc.docx --at tc0

@@ -9,7 +9,7 @@ Usage:
   docx <command> [options]
 
 Commands:
-  create    FILE  Create a new minimal .docx
+  create    FILE  Create a new .docx (--from PATH.md to build it from Markdown)
   read      FILE  Render body as Markdown (--ast for JSON)
   edit      FILE  Replace text/properties at a locator
   insert    FILE  Insert a block or run

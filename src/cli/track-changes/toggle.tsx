@@ -15,16 +15,25 @@ const HELP = `docx track-changes — toggle the document's tracked-changes mode
 Usage:
   docx track-changes FILE on|off [options]
 
-Sets <w:trackChanges/> in word/settings.xml. When on, this CLI's
-insert/edit/delete/replace commands also emit <w:ins>/<w:del> markers
-(attributed to $DOCX_AUTHOR) so changes remain reviewable. Existing
-<w:ins>/<w:del> markers are unaffected by the toggle itself.
+Toggle only sets (on) or clears (off) the <w:trackChanges/> flag in
+word/settings.xml — nothing else. It does not author any <w:ins>/<w:del>
+markers, and existing markers are unaffected by the toggle itself.
+
+When on, the SUBSEQUENT insert/edit/delete/replace commands emit
+<w:ins>/<w:del> markers so changes remain reviewable. The --author
+attribution (--author NAME, else $DOCX_AUTHOR) is read by those mutating
+commands, NOT by toggle — toggle takes no --author.
 
 Options:
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
+
+Output:
+  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  mode, previouslyOn}. --dry-run prints the preview {operation, dryRun, path,
+  mode, previouslyOn}. Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx track-changes doc.docx on
@@ -71,7 +80,6 @@ export async function run(args: string[]): Promise<number> {
 
 	if (parsed.values["dry-run"]) {
 		await respond({
-			ok: true,
 			operation: "track-changes",
 			dryRun: true,
 			path,

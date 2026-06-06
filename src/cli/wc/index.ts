@@ -1,5 +1,6 @@
 import {
 	type Block,
+	describeForms,
 	findBlockById,
 	flattenParagraphs,
 	type Locator,
@@ -34,22 +35,27 @@ const HELP = `docx wc — count words in a document or a locator-addressed slice
 Usage:
   docx wc FILE [LOCATOR] [options]
 
-Locators (optional; default: whole document):
-  pN              whole paragraph N
-  pN:S-E          chars S..E within paragraph N
-  pN:S-pM:E       cross-paragraph range
-  tN              whole table
-  tN:rRcC         whole cell
-  tN:rRcC:pK      paragraph K inside that cell
-  tN:rRcC:pK:S-E  span within a cell paragraph
-  tN:rRcC:tK[…]   nested table inside a cell — chain further (\`:rRcC\`,
-                  \`:pK\`, \`:pK:S-E\`) to address rows/cells/paragraphs/spans
-                  at any depth
-  sN              section N — every paragraph and table from the prior section
-                  boundary up to and including the paragraph that holds sN's
-                  inline sectPr (or to end of body for the trailing section)
+Locator (optional positional; default: whole document):
+${describeForms([
+	"paragraph",
+	"blockRange",
+	"span",
+	"crossSpan",
+	"table",
+	"cell",
+	"cellParagraph",
+	"cellSpan",
+	"section",
+])}
+  cellParagraph chains to any nesting depth (a table inside a cell:
+  tN:rRcC:tN:rR2cC2:pK …). Notation: uppercase letters are numeric indices;
+  offsets 0-based, end-exclusive. Section sN counts every paragraph and table
+  from the prior section boundary through the paragraph holding sN's inline
+  sectPr (or to end of body for the trailing section). Table row/column
+  (tN:rR, tN:cC) and cell-range forms are NOT accepted — use tN or tN:rRcC.
+  See \`docx info locators\`.
 
-Options:
+View flags (mutually exclusive; default --accepted):
   --accepted        Default. Count the accepted view: skip subtractive
                     wrappers (<w:del>, <w:moveFrom>); keep additive
                     wrappers (<w:ins>, <w:moveTo>) as plain text. Mirrors
@@ -60,20 +66,29 @@ Options:
                     it was before any tracked changes were made.
   --current         Count the raw concatenation: every tracked-change
                     wrapper's text counts (everything on disk).
+
+Options:
+  --json            Emit JSON instead of the bare count
   -h, --help        show this help
 
 Counting is whitespace-segmented (\\S+) over the joined paragraph text. Hidden
-content like images/breaks/tabs contributes no words. The three view flags
-are mutually exclusive; default (no flag) is --accepted, matching what a
-reader would see if every tracked change were accepted.
+content like images/breaks/tabs contributes no words.
+
+Output:
+  Default: the bare word count (a single integer). For the whole document a
+  second tab-separated column gives the section count, like real \`wc\`.
+  --json: { words, scope, view, sections? } (no envelope). Errors print
+  {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx wc doc.docx
   docx wc doc.docx p3
+  docx wc doc.docx p2-p5
   docx wc doc.docx p3:0-120
   docx wc doc.docx p5:10-p9:42
   docx wc doc.docx t0:r1c0
   docx wc doc.docx s2
+  docx wc doc.docx --json | jq .words
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -83,6 +98,7 @@ export async function run(args: string[]): Promise<number> {
 			accepted: { type: "boolean" },
 			baseline: { type: "boolean" },
 			current: { type: "boolean" },
+			json: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 		},
 		HELP,
@@ -115,22 +131,18 @@ export async function run(args: string[]): Promise<number> {
 		: wantBaseline
 			? "baseline"
 			: "accepted";
+	const json = Boolean(parsed.values.json);
 	const pickText = paragraphTextFor(view);
 
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;
 
 	if (!locatorInput) {
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
+		return emitWc(json, countWordsInBlocks(docView.body.blocks, { view }), {
 			scope: "document",
 			view,
-			words: countWordsInBlocks(docView.body.blocks, { view }),
 			sections: countSectionsInBlocks(docView.body.blocks),
 		});
-		return EXIT.OK;
 	}
 
 	let locator: Locator;
@@ -148,12 +160,14 @@ export async function run(args: string[]): Promise<number> {
 		locator.kind === "image" ||
 		locator.kind === "hyperlink" ||
 		locator.kind === "trackedChange" ||
-		locator.kind === "equation"
+		locator.kind === "equation" ||
+		locator.kind === "footnote" ||
+		locator.kind === "endnote"
 	) {
 		return fail(
 			"USAGE",
 			`Locator ${locatorInput} addresses a ${locator.kind}, not text`,
-			"wc accepts paragraph, span, range, table, and cell locators.",
+			"wc accepts paragraph, span, range, section, table, and cell locators.",
 		);
 	}
 
@@ -171,16 +185,7 @@ export async function run(args: string[]): Promise<number> {
 			if (sectionWords === null) {
 				return fail("BLOCK_NOT_FOUND", `Section not found: ${locator.blockId}`);
 			}
-			await respond({
-				ok: true,
-				operation: "wc",
-				path,
-				locator: locatorInput,
-				scope: "section",
-				view,
-				words: sectionWords,
-			});
-			return EXIT.OK;
+			return emitWc(json, sectionWords, { scope: "section", view });
 		}
 		const words =
 			block.type === "paragraph"
@@ -188,16 +193,7 @@ export async function run(args: string[]): Promise<number> {
 				: block.type === "table"
 					? countWordsInBlocks([block], { view })
 					: 0;
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
-			locator: locatorInput,
-			scope: block.type,
-			view,
-			words,
-		});
-		return EXIT.OK;
+		return emitWc(json, words, { scope: block.type, view });
 	}
 
 	if (locator.kind === "blockSpan") {
@@ -205,18 +201,11 @@ export async function run(args: string[]): Promise<number> {
 		if (!block || block.type !== "paragraph") {
 			return fail("BLOCK_NOT_FOUND", `Paragraph not found: ${locator.blockId}`);
 		}
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
-			locator: locatorInput,
-			scope: "paragraphSpan",
-			view,
-			words: countWordsInParagraphSpan(block, locator.start, locator.end, {
-				view,
-			}),
-		});
-		return EXIT.OK;
+		return emitWc(
+			json,
+			countWordsInParagraphSpan(block, locator.start, locator.end, { view }),
+			{ scope: "paragraphSpan", view },
+		);
 	}
 
 	if (locator.kind === "blockRange") {
@@ -235,21 +224,16 @@ export async function run(args: string[]): Promise<number> {
 				`Paragraph not found: ${locator.endBlockId}`,
 			);
 		}
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
-			locator: locatorInput,
-			scope: "blockRange",
-			view,
-			words: countWordsInBlockRange(
+		return emitWc(
+			json,
+			countWordsInBlockRange(
 				paragraphs,
 				locator.startBlockId,
 				locator.endBlockId,
 				{ view },
 			),
-		});
-		return EXIT.OK;
+			{ scope: "blockRange", view },
+		);
 	}
 
 	if (locator.kind === "range") {
@@ -268,14 +252,9 @@ export async function run(args: string[]): Promise<number> {
 				`Paragraph not found: ${locator.end.blockId}`,
 			);
 		}
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
-			locator: locatorInput,
-			scope: "range",
-			view,
-			words: countWordsInRange(
+		return emitWc(
+			json,
+			countWordsInRange(
 				paragraphs,
 				locator.start.blockId,
 				locator.start.offset,
@@ -283,8 +262,8 @@ export async function run(args: string[]): Promise<number> {
 				locator.end.offset,
 				{ view },
 			),
-		});
-		return EXIT.OK;
+			{ scope: "range", view },
+		);
 	}
 
 	if (locator.kind === "cell") {
@@ -293,28 +272,16 @@ export async function run(args: string[]): Promise<number> {
 			return fail("BLOCK_NOT_FOUND", `Not found: ${locatorInput}`);
 		}
 		if (resolved.kind === "wholeCell") {
-			await respond({
-				ok: true,
-				operation: "wc",
-				path,
-				locator: locatorInput,
+			return emitWc(json, countWordsInBlocks(resolved.blocks, { view }), {
 				scope: "cell",
 				view,
-				words: countWordsInBlocks(resolved.blocks, { view }),
 			});
-			return EXIT.OK;
 		}
 		if (resolved.kind === "wholeTable") {
-			await respond({
-				ok: true,
-				operation: "wc",
-				path,
-				locator: locatorInput,
+			return emitWc(json, countWordsInBlocks([resolved.block], { view }), {
 				scope: "table",
 				view,
-				words: countWordsInBlocks([resolved.block], { view }),
 			});
-			return EXIT.OK;
 		}
 		const words = resolved.span
 			? countWordsInParagraphSpan(
@@ -324,16 +291,10 @@ export async function run(args: string[]): Promise<number> {
 					{ view },
 				)
 			: countWords(pickText(resolved.paragraph));
-		await respond({
-			ok: true,
-			operation: "wc",
-			path,
-			locator: locatorInput,
+		return emitWc(json, words, {
 			scope: resolved.span ? "paragraphSpan" : "paragraph",
 			view,
-			words,
 		});
-		return EXIT.OK;
 	}
 
 	return fail("USAGE", `Unsupported locator: ${locatorInput}`);
@@ -414,6 +375,30 @@ function findNthBlockOfKind(
 		seen++;
 	}
 	return null;
+}
+
+/** wc output: bare integer by default (whole-doc adds a tab-separated section
+ *  count, like real `wc`); `--json` emits the structured payload (no envelope). */
+async function emitWc(
+	json: boolean,
+	words: number,
+	meta: { scope: string; view: CountView; sections?: number },
+): Promise<number> {
+	if (json) {
+		await respond({
+			words,
+			scope: meta.scope,
+			view: meta.view,
+			...(meta.sections !== undefined ? { sections: meta.sections } : {}),
+		});
+	} else {
+		await writeStdout(
+			meta.sections !== undefined
+				? `${words}\t${meta.sections}\n`
+				: `${words}\n`,
+		);
+	}
+	return EXIT.OK;
 }
 
 function paragraphTextFor(view: CountView): (p: Paragraph) => string {

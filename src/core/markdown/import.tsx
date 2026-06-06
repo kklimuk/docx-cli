@@ -12,6 +12,8 @@ import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type { Document } from "../ast/document";
+import type { NotesView } from "../ast/document/notes";
+import type { RelationshipsView } from "../ast/document/relationships";
 import {
 	computeExtentEmu,
 	type ImageSource,
@@ -20,12 +22,13 @@ import {
 	loadImageSource,
 	nextDrawingId,
 } from "../image";
+import { w } from "../jsx";
 import { NoteBody, noteConfig, TrackedNoteBody } from "../notes";
 import { XmlNode } from "../parser";
 import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
 import { remarkCriticMarkup } from "./critic";
 import { MarkdownImportError } from "./errors";
-import type { ResolvedImage, WalkContext } from "./inline";
+import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
 import { walkRoot } from "./walker";
 
 /** Cross-cutting lens over "import this markdown source into the document."
@@ -41,12 +44,25 @@ export class MarkdownImport {
 	/** Parse `source` and return the block-level XmlNodes ready to splice
 	 * into `<w:body>`. Footnote definitions and image rels/parts are written
 	 * as a side effect on `this.document`; the caller's job is only to
-	 * splice the returned blocks and persist. */
+	 * splice the returned blocks and persist.
+	 *
+	 * `options.relationships` overrides where hyperlink (and media) rels are
+	 * minted — the note-body callers pass the notes part's OWN rels so a
+	 * `<w:hyperlink r:id>` spliced into `footnotes.xml` resolves against
+	 * `word/_rels/footnotes.xml.rels`, not the document's (a dangling rId
+	 * otherwise — Word reports "unreadable content"). `options.stripImages`
+	 * drops every `image`/`imageReference` before the walk so a note body
+	 * (text + links only) can't mint a media rel in the wrong part. */
 	async blocks(
 		source: string,
-		options: { authorFlag?: string } = {},
+		options: {
+			authorFlag?: string;
+			relationships?: RelationshipsView;
+			stripImages?: boolean;
+		} = {},
 	): Promise<XmlNode[]> {
 		const tree = parseToMdast(source);
+		if (options.stripImages) stripImageNodes(tree);
 
 		const tracked = this.document.isTrackChangesEnabled();
 		const ctx: WalkContext = {
@@ -54,8 +70,10 @@ export class MarkdownImport {
 			tracked,
 			authorFlag: options.authorFlag,
 			mintedNoteIds: new Map(),
+			footnoteRefCursor: new Map(),
 			imageCache: new Map(),
 			definitions: collectDefinitions(tree),
+			relationships: options.relationships ?? this.document.relationships,
 		};
 
 		if (tracked) {
@@ -74,7 +92,7 @@ export class MarkdownImport {
 		// synchronous block walk so the walker can read from `ctx.mintedNoteIds`
 		// / `ctx.imageCache` without itself being async.
 		const definitions = collectFootnoteDefinitions(tree);
-		await registerFootnotes(definitions, ctx);
+		await registerFootnotes(definitions, countFootnoteReferences(tree), ctx);
 		await preloadImages(tree, ctx);
 
 		return walkRoot(tree, ctx);
@@ -108,6 +126,20 @@ function collectFootnoteDefinitions(root: Root): FootnoteDefinition[] {
 	return out;
 }
 
+/** Count how many times each footnote identifier is referenced (`[^x]`) in the
+ * body. Markdown allows reusing a footnote; OOXML/Word require a *distinct*
+ * footnote definition per reference, so the registrar mints this many clones of
+ * each definition. */
+function countFootnoteReferences(root: Root): Map<string, number> {
+	const counts = new Map<string, number>();
+	visitNodes(root, (node) => {
+		if (node.type === "footnoteReference") {
+			counts.set(node.identifier, (counts.get(node.identifier) ?? 0) + 1);
+		}
+	});
+	return counts;
+}
+
 /** Collect link/image reference definitions (`[ref]: url "title"`) keyed by
  *  their normalized identifier so the inline walker can resolve
  *  `[text][ref]` / `![alt][ref]` against them. mdast already attaches
@@ -119,6 +151,22 @@ function collectDefinitions(root: Root): Map<string, Definition> {
 		if (node.type === "definition") out.set(node.identifier, node);
 	});
 	return out;
+}
+
+/** Recursively drop every `image` / `imageReference` node from the mdast tree,
+ *  in place. Note bodies are text + links only; an image there would mint a
+ *  media rel into the wrong part (the note-body markdown is spliced into
+ *  `footnotes.xml`, whose rels are separate). Running before `preloadImages` +
+ *  the walk means no image rel is minted and the walker never sees one. Mirrors
+ *  the phrasing-level `stripImagePhrasing` used by `buildRichNoteBody`, but at
+ *  the whole-tree level for the block-producing `blocks()` path. */
+function stripImageNodes(node: { type: string; children?: unknown }): void {
+	if (!Array.isArray(node.children)) return;
+	const kept = (node.children as { type: string }[]).filter(
+		(child) => child.type !== "image" && child.type !== "imageReference",
+	);
+	node.children = kept;
+	for (const child of kept) stripImageNodes(child);
 }
 
 /** Walk every node in the tree and call `visitor`. Tiny in-house walker so
@@ -142,6 +190,7 @@ function visitNodes(
  * the markdown identifier so inline `footnoteReference` walks find them. */
 async function registerFootnotes(
 	definitions: readonly FootnoteDefinition[],
+	refCounts: ReadonlyMap<string, number>,
 	ctx: WalkContext,
 ): Promise<void> {
 	if (definitions.length === 0) return;
@@ -157,30 +206,111 @@ async function registerFootnotes(
 	}
 
 	for (const definition of definitions) {
-		const numericId = footnotes.nextId();
-		ctx.mintedNoteIds.set(definition.identifier, numericId);
-		const bodyText = phrasingPlaintext(definition.children);
-		// Tracked-body wrapping: footnote bodies authored under tracking carry
-		// a `<w:ins>` around their content runs (mirrors Word's empirical
-		// shape from `scripts/word-redlines.sh`). The reference-side `<w:ins>`
-		// is emitted at the inline walker; both get distinct revision ids from
-		// the shared allocator.
-		if (ctx.tracked && ctx.mintTrackedMeta) {
-			const bodyMeta = ctx.mintTrackedMeta();
-			notesRoot.children.push(
-				<TrackedNoteBody
-					config={config}
-					id={numericId}
-					text={bodyText}
-					meta={bodyMeta}
-				/>,
-			);
+		// OOXML/Word require a distinct footnote definition per reference (Word
+		// treats N references to one definition as corruption and "repairs" it
+		// by cloning). So mint one body per reference; an unreferenced
+		// definition still gets a single orphan body.
+		const copies = Math.max(refCounts.get(definition.identifier) ?? 0, 1);
+		const ids: string[] = [];
+		for (let copy = 0; copy < copies; copy++) {
+			const numericId = footnotes.nextId();
+			ids.push(numericId);
+			if (ctx.tracked && ctx.mintTrackedMeta) {
+				// Tracked footnote bodies carry a `<w:ins>` around their content
+				// runs (mirrors Word's empirical shape from
+				// `scripts/word-redlines.sh`). That verified shape is single-run
+				// text only, so rich content (links/formatting) flattens to text
+				// under tracking — the untracked path below keeps it.
+				const bodyMeta = ctx.mintTrackedMeta();
+				notesRoot.children.push(
+					<TrackedNoteBody
+						config={config}
+						id={numericId}
+						text={phrasingPlaintext(definition.children)}
+						meta={bodyMeta}
+					/>,
+				);
+			} else {
+				// Untracked: walk the definition's inline content so hyperlinks and
+				// bold/italic survive. Each clone mints its own rels into the
+				// footnotes part (a `<w:hyperlink r:id>` inside footnotes.xml
+				// resolves against word/_rels/footnotes.xml.rels, not the doc's).
+				const body = buildRichNoteBody(definition, footnotes, ctx);
+				notesRoot.children.push(
+					<NoteBody
+						config={config}
+						id={numericId}
+						runs={body.runs}
+						paragraphs={body.paragraphs}
+					/>,
+				);
+			}
+		}
+		ctx.mintedNoteIds.set(definition.identifier, ids);
+	}
+}
+
+/** Build a footnote body that preserves inline formatting + hyperlinks. Walks
+ *  each definition paragraph through the inline walker with a context whose
+ *  relationships target the footnotes part's own rels, so note-body links are
+ *  real, valid `<w:hyperlink>`s. The first paragraph's runs follow the back-ref
+ *  numeral (with a leading space, matching Word); further paragraphs become
+ *  sibling `<w:p>`. Images inside note bodies are dropped (rare, unsupported). */
+function buildRichNoteBody(
+	definition: FootnoteDefinition,
+	notesView: NotesView,
+	ctx: WalkContext,
+): { runs: XmlNode[]; paragraphs: XmlNode[] } {
+	const config = noteConfig("footnote");
+	const noteCtx: WalkContext = {
+		...ctx,
+		relationships: notesView.ensureRelationships(),
+	};
+	const leadingSpace = (
+		<w.r>
+			<w.t {...{ "xml:space": "preserve" }}> </w.t>
+		</w.r>
+	);
+	const paragraphs = definition.children.filter(
+		(child) => child.type === "paragraph",
+	);
+	const [firstParagraph, ...restParagraphs] = paragraphs;
+	if (!firstParagraph) return { runs: [leadingSpace], paragraphs: [] };
+
+	const firstRuns = walkInline(
+		stripImagePhrasing(firstParagraph.children),
+		noteCtx,
+	);
+	const extraParagraphs = restParagraphs.map((paragraph) => (
+		<w.p>
+			<w.pPr>
+				<w.pStyle w-val={config.textStyle} />
+			</w.pPr>
+			{walkInline(stripImagePhrasing(paragraph.children), noteCtx)}
+		</w.p>
+	));
+	return { runs: [leadingSpace, ...firstRuns], paragraphs: extraParagraphs };
+}
+
+/** Recursively drop `image` / `imageReference` phrasing from a note body. Note
+ *  bodies are text + links; an image there would mint a media rel in the wrong
+ *  part. Returns the kept phrasing with the same nesting. */
+function stripImagePhrasing(
+	nodes: readonly PhrasingContent[],
+): PhrasingContent[] {
+	const out: PhrasingContent[] = [];
+	for (const node of nodes) {
+		if (node.type === "image" || node.type === "imageReference") continue;
+		if ("children" in node && Array.isArray(node.children)) {
+			out.push({
+				...node,
+				children: stripImagePhrasing(node.children as PhrasingContent[]),
+			} as PhrasingContent);
 		} else {
-			notesRoot.children.push(
-				<NoteBody config={config} id={numericId} text={bodyText} />,
-			);
+			out.push(node);
 		}
 	}
+	return out;
 }
 
 /** Flatten a footnote definition's block children to a single plaintext

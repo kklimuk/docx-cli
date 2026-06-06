@@ -113,7 +113,7 @@ describe("sections via insert / edit / delete", () => {
 			"nope",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("edit --at pN rejects --columns/--type", async () => {
@@ -128,7 +128,7 @@ describe("sections via insert / edit / delete", () => {
 			"2",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("edit --at sN rejects invalid --type", async () => {
@@ -141,7 +141,7 @@ describe("sections via insert / edit / delete", () => {
 			"bogus",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("delete --at sN removes an inline sectPr; the sentinel paragraph remains", async () => {
@@ -174,7 +174,7 @@ describe("sections via insert / edit / delete", () => {
 	test("delete --at sN rejects the trailing section break", async () => {
 		const result = await runCli("delete", docPath, "--at", "s0");
 		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ ok: false, code: "USAGE" });
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
 	test("wc reports a sections count alongside words", async () => {
@@ -189,7 +189,6 @@ describe("sections via insert / edit / delete", () => {
 		);
 		const wc = await runCli("wc", docPath);
 		expect(wc.parsed).toMatchObject({
-			ok: true,
 			scope: "document",
 			words: 1,
 			sections: 2,
@@ -435,7 +434,6 @@ describe("sections.docx fixture", () => {
 	test("wc reports words and the section count from the fixture", async () => {
 		const wc = await runCli("wc", SECTIONS_FIXTURE);
 		expect(wc.parsed).toMatchObject({
-			ok: true,
 			scope: "document",
 			sections: 8,
 		});
@@ -486,9 +484,7 @@ describe("sections.docx fixture", () => {
 	test("wc sN counts words in the section's content range", async () => {
 		const wc = await runCli("wc", SECTIONS_FIXTURE, "s4");
 		expect(wc.parsed).toMatchObject({
-			ok: true,
 			scope: "section",
-			locator: "s4",
 		});
 		const words = (wc.parsed as { words: number }).words;
 		expect(words).toBeGreaterThan(0);
@@ -514,7 +510,6 @@ describe("sections.docx fixture", () => {
 		const result = await runCli("wc", SECTIONS_FIXTURE, "s99");
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({
-			ok: false,
 			code: "BLOCK_NOT_FOUND",
 		});
 	});

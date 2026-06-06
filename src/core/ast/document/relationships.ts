@@ -4,6 +4,17 @@ import type { Pkg } from "./package";
 
 const RELATIONSHIPS_PART_NAME = "word/_rels/document.xml.rels";
 
+/** The `_rels/<part>.rels` path for an OPC part — e.g. `word/footnotes.xml`
+ *  → `word/_rels/footnotes.xml.rels`. A part's `<… r:id>` references resolve
+ *  against its OWN rels part, so footnote-body hyperlinks need the footnotes
+ *  rels, not the document's. */
+export function relsPartNameFor(partName: string): string {
+	const slash = partName.lastIndexOf("/");
+	const dir = partName.slice(0, slash);
+	const base = partName.slice(slash + 1);
+	return `${dir}/_rels/${base}.rels`;
+}
+
 const HYPERLINK_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 
@@ -33,23 +44,45 @@ export class RelationshipsView {
 	 * `addHyperlink`/`setTarget`/`remove`. */
 	hyperlinksByRelationshipId: Map<string, { url: string }> = new Map();
 
-	constructor(tree: XmlNode[]) {
+	/** The OPC part this view serializes to. Defaults to the document's rels;
+	 *  the notes views pass their own (`word/_rels/footnotes.xml.rels`, …) so a
+	 *  footnote-body `<w:hyperlink r:id>` resolves against the right part. */
+	partName: string;
+
+	constructor(tree: XmlNode[], partName: string = RELATIONSHIPS_PART_NAME) {
 		this.tree = tree;
+		this.partName = partName;
 	}
 
 	/** Load this view from a package; missing part becomes an empty tree. */
-	static async fromPackage(pkg: Pkg): Promise<RelationshipsView> {
-		return new RelationshipsView(await pkg.ensurePart(RELATIONSHIPS_PART_NAME));
+	static async fromPackage(
+		pkg: Pkg,
+		partName: string = RELATIONSHIPS_PART_NAME,
+	): Promise<RelationshipsView> {
+		return new RelationshipsView(await pkg.ensurePart(partName), partName);
 	}
 
 	/** Parse a view from raw XML; missing input becomes an empty tree. */
-	static fromXml(xml?: string): RelationshipsView {
-		return new RelationshipsView(XmlNode.parse(xml ?? EMPTY_RELATIONSHIPS_XML));
+	static fromXml(
+		xml?: string,
+		partName: string = RELATIONSHIPS_PART_NAME,
+	): RelationshipsView {
+		return new RelationshipsView(
+			XmlNode.parse(xml ?? EMPTY_RELATIONSHIPS_XML),
+			partName,
+		);
 	}
 
-	/** Serialize this view's tree into the package's `word/_rels/document.xml.rels`. */
+	/** Serialize this view's tree into its `partName` rels part. */
 	writeTo(pkg: Pkg): void {
-		pkg.writeText(RELATIONSHIPS_PART_NAME, XmlNode.serialize(this.tree));
+		pkg.writeText(this.partName, XmlNode.serialize(this.tree));
+	}
+
+	/** True if this view holds at least one `<Relationship>` — used to decide
+	 *  whether a lazily-created notes rels part is worth writing out. */
+	hasAny(): boolean {
+		const root = XmlNode.findRoot(this.tree, "Relationships");
+		return !!root?.children.some((child) => child.tag === "Relationship");
 	}
 
 	/** Build the rId → media / rId → hyperlink lookup maps from the tree. Image

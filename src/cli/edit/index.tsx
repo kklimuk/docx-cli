@@ -2,6 +2,7 @@ import {
 	type BlockRangeReference,
 	type BlockReference,
 	type Document,
+	describeForms,
 	Edit,
 	EditError,
 	MarkdownImport,
@@ -36,16 +37,22 @@ import {
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx edit — replace a paragraph (or paragraph range) or modify a section
+const AT_FORMS = describeForms(
+	["paragraph", "blockRange", "cellParagraph", "section", "equation"],
+	"                      ",
+);
+
+const HELP = `docx edit — replace a paragraph (or paragraph range), a section, or an equation
 
 Usage:
-  docx edit FILE [options]
+  docx edit FILE --at LOCATOR <content> [options]
 
 Locator (required):
   --at LOCATOR      What to edit. One of:
-                      pN          a single paragraph
-                      pN-pM       a contiguous paragraph range (replace as a unit)
-                      sN          a section break
+${AT_FORMS}
+                    pN / pN-pM take paragraph content (below); sN takes
+                    --columns/--type; eqN takes --equation/--display/--inline.
+                    See \`docx info locators\`.
 
 Paragraph content (one required for paragraph / range locators):
   --text TEXT       Replace with a single-run paragraph
@@ -110,12 +117,19 @@ General options:
   -v, --verbose     Print the success ack JSON (default: silent on success)
   -h, --help        Show this help
 
+Output:
+  Silent on success (exit 0) — the edited locator is unchanged, so there's
+  nothing to mint. --verbose prints {ok:true, operation, path, locator}.
+  Errors print {code, error, hint?} with a nonzero exit. Discover ids with
+  \`docx read FILE --ast\` (equation ids appear on EquationRun nodes).
+
 Examples:
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
   docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
   docx edit doc.docx --at p2-p5 --text "Rewrite this section as one paragraph."
   docx edit doc.docx --at p3-p7 --code-file new-snippet.go --language go
   docx edit doc.docx --at s0 --columns 2 --type continuous
+  docx edit doc.docx --at eq0 --equation "x = \\\\frac{-b}{2a}" --display
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -715,7 +729,6 @@ async function parseParagraphOptions(
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {
 	await respond({
-		ok: true,
 		operation: "edit",
 		dryRun: true,
 		path: opts.filePath,

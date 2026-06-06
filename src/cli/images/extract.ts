@@ -19,16 +19,20 @@ Required:
   --to DIR          Output directory (created if missing)
 
 Optional:
-  --id IMG_ID       Extract a single image (default: extract all)
+  --at imgN         Extract a single image (e.g., img0; default: extract all)
   -h, --help        Show this help
 
 Files are named <hash>.<ext> where hash is the sha256 of the image bytes
-and ext is derived from contentType. Returns a manifest mapping image ids
-to written paths.
+and ext is derived from contentType.
+
+Output:
+  Prints a bare JSON array — the manifest, one entry per extracted image:
+  {id, path, bytes}. Errors print {code, error, hint?} with a nonzero exit.
+  Discover ids with \`docx images list FILE\`.
 
 Examples:
   docx images extract doc.docx --to ./media
-  docx images extract doc.docx --to ./media --id img2
+  docx images extract doc.docx --to ./media --at img2
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -36,7 +40,7 @@ export async function run(args: string[]): Promise<number> {
 		args,
 		{
 			to: { type: "string" },
-			id: { type: "string" },
+			at: { type: "string" },
 			help: { type: "boolean", short: "h" },
 		},
 		HELP,
@@ -54,7 +58,7 @@ export async function run(args: string[]): Promise<number> {
 	const outputDir = parsed.values.to as string | undefined;
 	if (!outputDir) return fail("USAGE", "Missing --to DIR", HELP);
 
-	const targetId = parsed.values.id as string | undefined;
+	const targetId = parsed.values.at as string | undefined;
 
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
@@ -92,7 +96,7 @@ export async function run(args: string[]): Promise<number> {
 		});
 	}
 
-	await respond({ ok: true, operation: "images.extract", path, manifest });
+	await respond(manifest);
 	return EXIT.OK;
 }
 

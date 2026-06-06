@@ -210,7 +210,7 @@ describe("docx footnotes edit", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--text",
 			"Updated.",
@@ -229,7 +229,7 @@ describe("docx footnotes edit", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn9",
 			"--text",
 			"Nope.",
@@ -263,7 +263,7 @@ describe("docx footnotes delete", () => {
 		expect(await listFootnotes(docPath)).toHaveLength(2);
 		expect(await refRuns(docPath)).toHaveLength(2);
 
-		const result = await runCli("footnotes", "delete", docPath, "--id", "fn1");
+		const result = await runCli("footnotes", "delete", docPath, "--at", "fn1");
 		expect(result.exitCode).toBe(0);
 
 		const remaining = await listFootnotes(docPath);
@@ -275,7 +275,7 @@ describe("docx footnotes delete", () => {
 
 	test("unknown id is BLOCK_NOT_FOUND", async () => {
 		const docPath = await freshDoc("del-missing", ["Body."]);
-		const result = await runCli("footnotes", "delete", docPath, "--id", "fn9");
+		const result = await runCli("footnotes", "delete", docPath, "--at", "fn9");
 		expect(result.exitCode).toBe(3);
 		expect((result.parsed as { code: string }).code).toBe("BLOCK_NOT_FOUND");
 	});
@@ -287,7 +287,7 @@ describe("docx footnotes delete", () => {
 			"footnotes",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--dry-run",
 		);
@@ -330,7 +330,7 @@ describe("docx endnotes (parity with footnotes)", () => {
 			"endnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"en1",
 			"--text",
 			"Updated endnote.",
@@ -339,7 +339,7 @@ describe("docx endnotes (parity with footnotes)", () => {
 			{ id: "en1", text: "Updated endnote." },
 		]);
 
-		await runCli("endnotes", "delete", docPath, "--id", "en1");
+		await runCli("endnotes", "delete", docPath, "--at", "en1");
 		expect(await listEndnotes(docPath)).toEqual([]);
 		expect(await refRuns(docPath)).toHaveLength(0);
 	});
@@ -545,7 +545,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--author",
 			"Probe",
@@ -575,7 +575,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--author",
 			"Probe",
@@ -595,7 +595,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"delete",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--author",
 			"Probe",
@@ -619,7 +619,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--text",
 			"New.",
@@ -645,7 +645,7 @@ describe("docx footnotes under track-changes", () => {
 		await runCli("create", docPath, "--text", "Body.");
 		await runCli("footnotes", "add", docPath, "--at", "p0", "--text", "Old.");
 		await runCli("track-changes", docPath, "on");
-		await runCli("footnotes", "edit", docPath, "--id", "fn1", "--text", "New.");
+		await runCli("footnotes", "edit", docPath, "--at", "fn1", "--text", "New.");
 		const list = (await runCli("track-changes", "list", docPath))
 			.parsed as Array<{
 			kind: string;
@@ -671,7 +671,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--text",
 			"Replaced.",
@@ -700,7 +700,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--text",
 			"Replaced.",
@@ -746,7 +746,7 @@ describe("docx footnotes under track-changes", () => {
 			"footnotes",
 			"edit",
 			docPath,
-			"--id",
+			"--at",
 			"fn1",
 			"--text",
 			"Edited.",

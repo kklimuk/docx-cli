@@ -46,7 +46,7 @@ describe("docx mutators — quiet by default", () => {
 		const result = await rawCli("create", "--text", "hello"); // missing FILE
 		expect(result.exitCode).not.toBe(0);
 		const payload = JSON.parse(result.stdout.trim());
-		expect(payload).toMatchObject({ ok: false, code: "USAGE" });
+		expect(payload).toMatchObject({ code: "USAGE" });
 	});
 
 	test("--dry-run prints regardless of --verbose", async () => {
@@ -64,18 +64,19 @@ describe("docx mutators — quiet by default", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		const payload = JSON.parse(result.stdout.trim());
-		expect(payload).toMatchObject({ ok: true, dryRun: true });
+		expect(payload).toMatchObject({ dryRun: true });
 	});
 
 	test("read commands stay loud (no --verbose needed)", async () => {
 		const workspace = tempWorkspace("read-loud");
 		const docPath = join(workspace, "out.docx");
 		await rawCli("create", docPath, "--text", "hello");
+		// Query verbs default to text output (no --verbose / --json needed) — the
+		// bare match locator line proves they're loud-by-default, unlike mutators.
 		const result = await rawCli("find", docPath, "hello");
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout.length).toBeGreaterThan(0);
-		const payload = JSON.parse(result.stdout.trim());
-		expect(payload).toMatchObject({ ok: true, operation: "find" });
+		expect(result.stdout.trim()).toBe("p0:0-5");
 	});
 
 	test("track-changes on is silent by default; --verbose prints the toggle ack", async () => {
@@ -93,28 +94,29 @@ describe("docx mutators — quiet by default", () => {
 		expect(payload).toMatchObject({ ok: true, operation: "track-changes" });
 	});
 
-	test("comments add is silent by default; --verbose returns commentId", async () => {
+	test("comments add prints the minted cN by default; --verbose returns commentId", async () => {
 		const workspace = tempWorkspace("comments-quiet");
 		const docPath = join(workspace, "out.docx");
 		await rawCli("create", docPath, "--text", "hello world");
 
+		// Handle-minting mutators print the bare locator line by default.
 		const quiet = await rawCli(
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"check",
 		);
 		expect(quiet.exitCode).toBe(0);
-		expect(quiet.stdout).toBe("");
+		expect(quiet.stdout.trim()).toBe("c0");
 
 		const verbose = await rawCli(
 			"comments",
 			"add",
 			docPath,
-			"--range",
+			"--at",
 			"p0",
 			"--text",
 			"check 2",
