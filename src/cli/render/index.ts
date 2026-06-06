@@ -90,11 +90,10 @@ export async function run(args: string[]): Promise<number> {
 		return fail("FILE_NOT_FOUND", `File not found: ${filePath}`);
 	}
 
-	const engineChoice = await resolveEngine(
-		parsed.values.engine as string | undefined,
-	);
-	if (typeof engineChoice === "number") return engineChoice;
-
+	// Validate every pure-argument flag BEFORE engine detection so a typo'd
+	// --dpi/--format/--pages returns a clear USAGE error even on a machine with
+	// no render engine (otherwise the RENDER_ENGINE error masks the real fix the
+	// user needs — and the bad-value tests run engine-less in CI).
 	const dpiRaw = parsed.values.dpi as string | undefined;
 	const dpi = dpiRaw !== undefined ? Number(dpiRaw) : 150;
 	if (!Number.isFinite(dpi) || dpi < 36 || dpi > 600) {
@@ -113,6 +112,11 @@ export async function run(args: string[]): Promise<number> {
 	const pagesRaw = parsed.values.pages as string | undefined;
 	const range = pagesRaw !== undefined ? parsePagesSpec(pagesRaw) : undefined;
 	if (typeof range === "string") return fail("USAGE", range);
+
+	const engineChoice = await resolveEngine(
+		parsed.values.engine as string | undefined,
+	);
+	if (typeof engineChoice === "number") return engineChoice;
 
 	const outDir = resolve(
 		(parsed.values.out as string | undefined) ??
