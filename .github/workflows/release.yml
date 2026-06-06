@@ -22,9 +22,9 @@ jobs:
           - { os: macos-latest,   target: bun-darwin-arm64, name: docx-darwin-arm64 }
           - { os: windows-latest, target: bun-windows-x64,  name: docx-windows-x64.exe }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -39,7 +39,7 @@ jobs:
           ./${{ matrix.name }} render tests/fixtures/markdown-import.docx \
             --out /tmp/smoke --engine libreoffice --pages 1
           test -s /tmp/smoke/page-001.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -50,8 +50,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           merge-multiple: true
