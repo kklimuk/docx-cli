@@ -23,7 +23,10 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   5. Task lists
  *   6. List items with multi-block content (paragraph + code + blockquote)
  *   7. Blockquotes (simple, multi-paragraph, nested list)
- *   8. Indented + fenced code blocks (typescript / python / sql / json)
+ *   8. Indented + fenced code blocks (typescript / python / sql / json); the
+ *      typescript block carries a `// returns the sum` comment so lowlight
+ *      emits the gray comment-token color (6E7781) — the round-trip surface
+ *      formerly covered by the standalone code-blocks.docx fixture.
  *   9. GFM tables (basic + alignment markers)
  *  10. Links (inline / autolink / email / reference) + inline image
  *  11. Thematic breaks (---, ***, ___)
@@ -216,6 +219,7 @@ no highlighting.
 
 \`\`\`typescript
 function add(a: number, b: number): number {
+\t// returns the sum
 \treturn a + b;
 }
 \`\`\`

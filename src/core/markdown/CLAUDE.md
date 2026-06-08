@@ -1,18 +1,18 @@
-# src/core/markdown — `MarkdownImport` lens, walker, CriticMarkup
+# src/core/markdown — `MarkdownImport` lens, walker, inline-surgery (CriticMarkup + spans)
 
 Five files behind the `@core/markdown` barrel ([index.ts](index.ts)):
 
-- [import.tsx](import.tsx) — the `MarkdownImport` lens. Assembles the unified pipeline (`remark-parse` + `remark-gfm` + `remark-math` + our `remarkCriticMarkup`), pre-walks the mdast tree once for side effects (mint footnote ids, register bodies into `footnotes.xml`, fetch image bytes and mint rels), then hands off to the block walker.
+- [import.tsx](import.tsx) — the `MarkdownImport` lens. Assembles the unified pipeline (`remark-parse` + `remark-gfm` + `remark-math` + our `remarkInlineSurgery`), pre-walks the mdast tree once for side effects (mint footnote ids, register bodies into `footnotes.xml`, fetch image bytes and mint rels), then hands off to the block walker.
 - [walker.tsx](walker.tsx) — block dispatcher (`walkRoot`, `walkBlock`). One handler per mdast block type, each composing the existing emitters in `@core` (`Paragraph` / `HorizontalRule` / `Table` / `BlankTable` / `buildCodeBlockParagraphs` / `latexToOmml`).
-- [inline.tsx](inline.tsx) — phrasing walker (`walkInline`). Returns `<w:p>`-child siblings: a mix of `<w:r>`, `<w:hyperlink>`, `<m:oMath>`, `<w:ins>`, `<w:del>`. Threads an immutable `InlineFormat` through nested strong / em / delete / inlineCode wrappers.
-- [critic.ts](critic.ts) — `remarkCriticMarkup` plugin. Post-parse, visits every `text` node and splits it on `{++…++}` / `{--…--}` markers, producing `criticInsert` / `criticDelete` phrasing nodes the inline walker dispatches on.
+- [inline.tsx](inline.tsx) — phrasing walker (`walkInline`). Returns `<w:p>`-child siblings: a mix of `<w:r>`, `<w:hyperlink>`, `<m:oMath>`, `<w:ins>`, `<w:del>`. Threads an immutable `InlineFormat` through nested strong / em / delete / inlineCode / bracketed-span wrappers.
+- [inline-surgery.ts](inline-surgery.ts) — `remarkInlineSurgery` plugin. Post-parse, rewrites each phrasing-children array with two reducers: text-marker surgery gathers CriticMarkup (`{++…++}` / `{--…--}`) and legacy Pandoc spans (`[text]{.class key="value"}`); **HTML-element surgery (`gatherHtmlSpans`)** re-pairs the `<span>` / `<mark>` / `<sup>` / `<sub>` / `<u>` tags `read` now emits (remark leaves inline HTML as FLAT, unpaired `html` tokens — open tag, mdast content, close tag as separate siblings — so we re-pair them, the same stack-reduce as the text markers). Both feed `bracketedSpan` (etc.) parent nodes the inline walker dispatches on. Each tag's attributes are parsed with the project's `XmlNode.parse` (fast-xml-parser), not a bespoke regex. Scanning whole sibling arrays (not single `text` nodes) is what lets a marker straddle inline formatting.
 - [errors.ts](errors.ts) — `MarkdownImportError` (code is a strict subset of `cli/respond.ts`'s `ErrorCode`).
 
 ## The lens does an async pre-walk, then a sync block walk
 
 `MarkdownImport.blocks(source)` is the only public entry point. It runs in three phases:
 
-1. **Parse** — `parseToMdast(source)`: build the unified processor, call `.parse()`, then `.runSync()` to apply the CriticMarkup transformer. Returns the mutated mdast `Root`.
+1. **Parse** — `parseToMdast(source)`: build the unified processor, call `.parse()`, then `.runSync()` to apply the inline-surgery transformer. Returns the mutated mdast `Root`.
 2. **Pre-walk (async)** — `collectFootnoteDefinitions` then `registerFootnotes` (mint numeric ids, append `<w:footnote>` bodies to `footnotes.xml`, populate `ctx.mintedNoteIds`); `preloadImages` (for each `<image>` URL: if the URL is hash-shaped — `<sha256>.<ext>` — first try to reuse an existing image from the target document via `body.findImageByHash`; otherwise fetch via `loadImageSource`, mint rel + image part via `Images.add`, compute EMU extents, cache as `ResolvedImage`).
 3. **Block walk (sync)** — `walkRoot(tree, ctx)` reads from `ctx.mintedNoteIds` / `ctx.imageCache` without itself touching async; produces the `<w:body>`-ready `XmlNode[]` the caller splices.
 
@@ -20,11 +20,39 @@ Phases 2 and 3 share one `WalkContext` (see [inline.tsx](inline.tsx)). The CLI v
 
 `blocks(source, options)` takes two routing knobs the note-body callers (`footnotes`/`endnotes add|edit --markdown`) MUST pass, because their result is spliced into `footnotes.xml`/`endnotes.xml`, NOT `document.xml`: `options.relationships` overrides where hyperlink rels are minted (pass `notesView.ensureRelationships()` so a `<w:hyperlink r:id>` resolves against `word/_rels/<part>.xml.rels` — otherwise the rId dangles and Word reports "unreadable content"), and `options.stripImages` drops every `image`/`imageReference` before the walk (note bodies are text + links; an image's media rel is minted by `Images.add` into the document rels regardless of `options.relationships`, so it would dangle in the note part — strip it instead). The default body verbs (`insert`/`create`/`edit`) splice into `document.xml` and pass neither.
 
-## CriticMarkup tokenization happens at text-node level
+## inline-surgery: CriticMarkup + bracketed spans, gathered across phrasing siblings
 
-`{++text++}` and `{--text--}` are tokenized only inside parsed `Text` nodes — markers that straddle markdown formatting (`{++**bold**++}`) are NOT recognized because the strong wrapper is already established at parse time. To track formatted content, place markers INSIDE the formatting (`**{++bold++}**`). Documented limitation; a follow-up could implement a micromark extension for proper inline-level tokenization.
+`remarkInlineSurgery` runs **after** remark's own parse and rewrites whole phrasing-children arrays. Because it tokenizes a sibling sequence — not one `text` node at a time — a marker may **straddle** inline formatting: `{++**bold**++}` parses to `[text("{++"), strong, text("++}")]`, and the matched markers gather the `strong` between them (the old text-split plugin couldn't, and leaked the markers as literal text). The same machinery parses Pandoc spans `[text]{attrs}`; the walker overlays a span's parsed attributes onto the inherited `InlineFormat`.
 
-When `<w:trackChanges/>` is on, `criticInsert` wraps its runs in `<w:ins>` (text stays `<w:t>`); `criticDelete` wraps in `<w:del>` with `<w:t>` → `<w:delText>` rename. When tracking is off, `criticInsert` flattens to plain text (CriticMarkup's "accepted" view) and `criticDelete` drops entirely. Both behaviors are determined once at lens construction via `document.isTrackChangesEnabled()` — there's no per-call override.
+Robustness is the contract: markers that don't balance, and spans whose attributes parse to nothing, **degrade to their literal text** — never a throw, never lost content. `inlineCode` (and every non-text node) is an opaque atom, so code spans (`` `{++x++}` ``) are excluded for free. Any unexpected failure restores the original children array.
+
+When `<w:trackChanges/>` is on, `criticInsert` wraps its (now possibly multi-run, formatted) content in `<w:ins>`; `criticDelete` wraps in `<w:del>` with **every descendant** `<w:t>` → `<w:delText>` (recursive rename — deleted content can nest hyperlinks/formatted runs, and a bare `<w:t>` inside `<w:del>` is invalid OOXML). When tracking is off, `criticInsert` flattens to plain runs (CriticMarkup's "accepted" view, formatting preserved) and `criticDelete` drops entirely. Decided once at lens construction via `document.isTrackChangesEnabled()` — no per-call override.
+
+## Run-formatting encoding: hybrid HTML (the read↔import contract)
+
+Run-level formatting with no native markdown syntax is emitted as **HTML a markdown reader actually renders** — not Pandoc `[text]{…}` spans, which show literal brackets in GitHub / VS Code / Obsidian. `read --markdown` emits it (via `wrapRunFormatting` in [cli/read/markdown.ts](../../cli/read/markdown.ts)) and the import walker parses it back (via `gatherHtmlSpans` in [inline-surgery.ts](inline-surgery.ts), which converts each tag to a `bracketedSpan` the inline walker already overlays). **The tag → property mapping is the contract; keep `wrapRunFormatting` and `gatherHtmlSpans`/`applyCssStyle` in sync.** `read --ast` is the lossless format; markdown is the human/agent comprehension format.
+
+Three carriers — semantic tags (render everywhere, incl. GitHub), `<span style>` (CSS-expressible props; render in editors/browsers; GitHub strips `style`), and `data-*` attributes (OOXML-only props CSS can't say; ignored by renderers, kept in source so markdown stays lossless too):
+
+| Run prop | Emitted as | Notes |
+| --- | --- | --- |
+| highlight | `<mark>` / `<mark data-highlight="green">` | bare `<mark>` = yellow; other of the 16 names via `data-highlight` (enum-validated; **no hex** — use shade) |
+| superscript / subscript | `<sup>` / `<sub>` | run-level only — math is `$…$` |
+| underline | `<u>` / `<u data-underline="double" data-underline-color="FF0000">` | bare `<u>` = single; all 18 `ST_Underline` styles + color via `data-*` |
+| color (hex) | `<span style="color:#FF0000">` | |
+| shade (bg hex) | `<span style="background-color:#FFE599">` | `<w:shd w:fill>` — arbitrary hex |
+| theme color | `<span data-color-theme="accent1" data-color-theme-tint= data-color-theme-shade=>` | `<w:color w:themeColor/…>` — CSS has no theme concept, so `data-*` only (byte-exact) |
+| font | `<span style="font-family:Arial">` | quoted when it has spaces (`'Times New Roman'`); literal fonts only (theme fonts inherit) |
+| size | `<span style="font-size:12pt">` | `<w:sz>` half-points; **omitted when it equals the document baseline** (see below) |
+| smallCaps / allCaps | `<span style="font-variant:small-caps">` / `text-transform:uppercase` | |
+
+bold/italic/strike/links/code stay native markdown (`**`/`*`/`~~`/`[](…)`/`` ` ``). Wrappers nest innermost→outermost `<span>` → `<u>` → `<sup>`/`<sub>` → `<mark>`, a fixed order `gatherHtmlSpans` reverses. The `<w:rPr>` emitter is still duplicated across `core/blocks.tsx::RunProperties` (AST→XML) and `inline.tsx::RunProperties` (markdown→XML); both MUST emit identical child order (CT_RPr §17.3.2.28) — enforced by the convergence test in [tests/cli/run-formatting-roundtrip.test.ts](../../../tests/cli/run-formatting-roundtrip.test.ts).
+
+**Document baseline note.** A leading `<!-- docx:base font="Arial" size="8pt" -->` (`formatBaseNote`) declares the dominant font/size across the doc (a >50%-of-text majority); `read` then omits those from every matching run so the body reads clean instead of repeating `font-family:Arial` on every span. `parseDocBaseNote` strips it on import and seeds every run with it (`WalkContext.baselineFormat`), so `read → create` restores the omitted values. The note carries only true per-run dominants — a `read`-side docDefaults size fallback still suppresses the default size, but isn't declared (the importer's own `docDefaults` reconstruct it; declaring it would stamp explicit sizes on runs that never had one). Footnote bodies are excluded from the seed (their smaller size comes from FootnoteText, not the body baseline). Black (`000000`/`auto`) and the `text1`/`dark1` theme are dropped as noise (the universal default).
+
+**Enum validation is on every ingress.** `highlight`/`underline`/`vertAlign` are closed OOXML enums; an out-of-range value would make Word silently drop schema-invalid XML, so both the import path (`inline.tsx::validateSpanFormatting` → `MarkdownImportError` USAGE — fed by both HTML and legacy-Pandoc spans) AND the `--runs` JSON path (`cli/parse-helpers.ts::parseRunsArg` → USAGE fail) validate against the shared sets in [@core/run-formatting](../run-formatting.ts). Hex colors / theme tokens / font names pass through unvalidated (Word degrades unknowns gracefully).
+
+**Metacharacters are HTML-escaped — content is never lost or corrupted (invariant II).** Wrapped run text has `& < > [ ]` escaped to entities (`&#91;` etc., decoded back by remark) so it can't break a tag or re-tokenize as link syntax; attribute values are escaped (`&quot;` etc.) so a crafted font name with a `"` can't close the attribute early and inject a sibling. So unlike the old Pandoc spans (which had to DROP formatting on metacharacter text), HTML keeps both the text AND its formatting. Unmatched/unknown HTML degrades safely: the inline walker drops a raw `html` node, so an unrecognized tag loses its formatting but keeps its content. Legacy Pandoc `[text]{…}` spans are still parsed on import for backward compatibility, but no longer emitted.
 
 ## Adding an mdast node type
 

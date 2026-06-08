@@ -21,6 +21,7 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	resolveBlockRangeOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -45,6 +46,8 @@ Locator (required):
                     \`docx info locators\`.
 
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
+  --track           Record this deletion as a tracked change even when the
+                    document's track-changes toggle is off (OFF by default).
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
   -v, --verbose     Print the success ack JSON (default: silent on success)
@@ -103,7 +106,7 @@ async function commitRangeDelete(
 	const rangeRef = await resolveBlockRangeOrFail(document, opts.locator);
 	if (typeof rangeRef === "number") return rangeRef;
 
-	const tracked = document.isTrackChangesEnabled();
+	const tracked = resolveTracked(document, opts.trackFlag);
 	if (tracked) {
 		try {
 			assertParagraphOnlyTrackedRange(rangeRef);
@@ -160,6 +163,7 @@ async function parseAndValidateOptions(
 		filePath,
 		locator,
 		authorFlag: parsed.values.author as string | undefined,
+		trackFlag: Boolean(parsed.values.track),
 		outputPath: parsed.values.output as string | undefined,
 		dryRun: Boolean(parsed.values["dry-run"]),
 	};
@@ -168,6 +172,7 @@ async function parseAndValidateOptions(
 const OPTION_SPEC = {
 	at: { type: "string" },
 	author: { type: "string" },
+	track: { type: "boolean" },
 	output: { type: "string", short: "o" },
 	"dry-run": { type: "boolean" },
 	verbose: { type: "boolean", short: "v" },
@@ -178,6 +183,7 @@ type ValidatedOptions = {
 	filePath: string;
 	locator: string;
 	authorFlag?: string;
+	trackFlag: boolean;
 	outputPath?: string;
 	dryRun: boolean;
 };
@@ -198,7 +204,7 @@ async function commitSectionDelete(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	const trackingOn = document.isTrackChangesEnabled();
+	const trackingOn = resolveTracked(document, opts.trackFlag);
 	const owningParagraph = trackingOn
 		? findContainingParagraph(document.documentTree, blockRef.node)
 		: null;
@@ -237,7 +243,7 @@ async function commitBlockDelete(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	if (document.isTrackChangesEnabled()) {
+	if (resolveTracked(document, opts.trackFlag)) {
 		if (blockRef.node.tag !== "w:p") {
 			return fail(
 				"TRACKED_CHANGE_CONFLICT",

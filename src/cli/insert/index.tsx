@@ -20,12 +20,14 @@ import {
 	fail,
 	openOrFail,
 	resolveBlockOrFail,
+	resolveTracked,
 	respond,
 	respondMinted,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { runInsertBatch } from "./batch";
 
 const ANCHOR_FORMS = describeForms(
 	["paragraph", "table", "section", "cellParagraph"],
@@ -36,6 +38,8 @@ const HELP = `docx insert — insert a block (paragraph, table, image, …) at a
 
 Usage:
   docx insert FILE (--after | --before) LOCATOR <content> [options]
+  docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read
+  docx insert FILE --batch -          [options]   # read JSONL from stdin
 
 Locator (one required) — where to place the new block, relative to:
   --after LOCATOR   Insert after the block at LOCATOR
@@ -99,6 +103,16 @@ Section options (only with --section):
   --columns N       Number of columns for the section ending at this boundary
   --type T          continuous | nextPage | evenPage | oddPage | nextColumn
 
+Agent tip: VERIFY LAYOUT VISUALLY: \`docx read\` shows text and structure as
+Markdown, but NOT how the page actually looks — multi-column sections, page
+breaks, image sizing, and where content lands on the page do not appear there.
+After inserting layout-affecting content (--section/--columns, --page-break,
+--image, --table), render the document to images and look at them:
+  docx render FILE --out pages/      # writes page-001.png, page-002.png, …
+Read the PNGs, check the layout reads the way you intended (columns balanced, no
+stray blank page, figure sized sensibly), and adjust placement + re-render until
+it looks right. Don't assume a section/column insert looks good without seeing it.
+
 Table options (only with --table):
   --rows N          Number of rows (required, >= 1)
   --cols N          Number of columns (required, >= 1)
@@ -112,6 +126,9 @@ Image options (only with --image):
   --alt TEXT        Alt text / description for the image
   --width INCHES    Display width in inches (default: native pixel size at 96dpi)
   --height INCHES   Display height in inches (default: scales to preserve aspect)
+  --caption TEXT    Add a caption paragraph below the figure in Word's built-in
+                    "Caption" style (kept with the image; shows in a Table of
+                    Figures). You supply the label, e.g. "Figure 1: Revenue".
 
 Code options (only with --code / --code-file):
   --language LANG   Syntax-highlight using lowlight (highlight.js). One of the
@@ -124,6 +141,8 @@ Code options (only with --code / --code-file):
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
+  --track           Record this insertion as a tracked change even when the
+                    document's track-changes toggle is off (OFF by default).
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be inserted; do not write the file
   -v, --verbose     Print the full success ack JSON
@@ -152,10 +171,34 @@ Examples:
   docx insert doc.docx --after p3 --markdown $'# Heading\\n\\n- a\\n- b'
   docx insert doc.docx --after p3 --markdown-file README.md
   cat draft.md | docx insert doc.docx --after p3 --markdown-file -
+  docx insert doc.docx --batch additions.jsonl
+
+Batch JSONL example (keys mirror the flags; one insert per line):
+  {"after": "p3", "text": "New clause.", "style": "Heading2"}
+  {"before": "p0", "text": "ALERT", "color": "CC0000", "bold": true}
+  {"after": "p5", "markdown": "## Summary\\n\\n- point a\\n- point b"}
 `;
 
 export async function run(args: string[]): Promise<number> {
-	const opts = await parseAndValidateOptions(args);
+	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	if (typeof parsed === "number") return parsed;
+
+	if (parsed.values.help) {
+		await writeStdout(HELP);
+		return EXIT.OK;
+	}
+
+	setVerboseAck(Boolean(parsed.values.verbose));
+
+	const filePath = parsed.positionals[0];
+	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
+
+	const batchInput = parsed.values.batch as string | undefined;
+	if (batchInput !== undefined) {
+		return runInsertBatch(filePath, batchInput, parsed.values);
+	}
+
+	const opts = await buildSingleShotOptions(filePath, parsed.values);
 	if (typeof opts === "number") return opts;
 
 	const document = await openOrFail(opts.filePath);
@@ -170,7 +213,11 @@ export async function run(args: string[]): Promise<number> {
 			blockRef,
 			opts.spec,
 			opts.paragraphOptions,
-			{ placement: opts.placement.mode, authorFlag: opts.authorFlag },
+			{
+				placement: opts.placement.mode,
+				authorFlag: opts.authorFlag,
+				track: resolveTracked(document, opts.trackFlag),
+			},
 		);
 	} catch (error) {
 		if (error instanceof InsertError) {
@@ -236,26 +283,14 @@ async function commitInsert(
 	return EXIT.OK;
 }
 
-async function parseAndValidateOptions(
-	args: string[],
+async function buildSingleShotOptions(
+	filePath: string,
+	values: RawValues,
 ): Promise<ValidatedOptions | number> {
-	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
-	if (typeof parsed === "number") return parsed;
-
-	if (parsed.values.help) {
-		await writeStdout(HELP);
-		return EXIT.OK;
-	}
-
-	setVerboseAck(Boolean(parsed.values.verbose));
-
-	const filePath = parsed.positionals[0];
-	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
-
-	const placement = await parseTargetPlacement(parsed.values);
+	const placement = await parseTargetPlacement(values);
 	if (typeof placement === "number") return placement;
 
-	const spec = await chooseContentSpec(parsed.values);
+	const spec = await chooseContentSpec(values);
 	if (typeof spec === "number") return spec;
 
 	// Markdown spec carries its own block styling (heading levels, list
@@ -263,7 +298,7 @@ async function parseAndValidateOptions(
 	// dropped. Reject them up front instead.
 	if (spec.kind === "markdown") {
 		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
-			(flag) => parsed.values[flag] !== undefined,
+			(flag) => values[flag] !== undefined,
 		);
 		if (conflict) {
 			return fail(
@@ -274,7 +309,7 @@ async function parseAndValidateOptions(
 		}
 	}
 
-	const paragraphOptions = await parseParagraphOptions(parsed.values);
+	const paragraphOptions = await parseParagraphOptions(values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
 
 	return {
@@ -282,15 +317,17 @@ async function parseAndValidateOptions(
 		placement,
 		spec,
 		paragraphOptions,
-		authorFlag: parsed.values.author as string | undefined,
-		outputPath: parsed.values.output as string | undefined,
-		dryRun: Boolean(parsed.values["dry-run"]),
+		authorFlag: values.author as string | undefined,
+		trackFlag: Boolean(values.track),
+		outputPath: values.output as string | undefined,
+		dryRun: Boolean(values["dry-run"]),
 	};
 }
 
 const OPTION_SPEC = {
 	after: { type: "string" },
 	before: { type: "string" },
+	batch: { type: "string" },
 	text: { type: "string" },
 	runs: { type: "string" },
 	"page-break": { type: "boolean" },
@@ -309,6 +346,7 @@ const OPTION_SPEC = {
 	alt: { type: "string" },
 	width: { type: "string" },
 	height: { type: "string" },
+	caption: { type: "string" },
 	code: { type: "string" },
 	"code-file": { type: "string" },
 	language: { type: "string" },
@@ -326,6 +364,7 @@ const OPTION_SPEC = {
 	italic: { type: "boolean" },
 	url: { type: "string" },
 	author: { type: "string" },
+	track: { type: "boolean" },
 	output: { type: "string", short: "o" },
 	"dry-run": { type: "boolean" },
 	verbose: { type: "boolean", short: "v" },
@@ -338,11 +377,12 @@ type ValidatedOptions = {
 	spec: InsertSpec;
 	paragraphOptions: ParagraphOptions;
 	authorFlag?: string;
+	trackFlag: boolean;
 	outputPath?: string;
 	dryRun: boolean;
 };
 
-async function parseTargetPlacement(
+export async function parseTargetPlacement(
 	values: RawValues,
 ): Promise<{ mode: "after" | "before"; locator: string } | number> {
 	const after = values.after as string | undefined;
@@ -357,7 +397,7 @@ async function parseTargetPlacement(
 	return { mode: "before", locator: before as string };
 }
 
-type RawValues = ReturnType<typeof parseArgs>["values"];
+export type RawValues = ReturnType<typeof parseArgs>["values"];
 
 /** The mutually-exclusive content flags, each with the sub-flags that only
  * make sense alongside it. Drives both the "exactly one content flag" check
@@ -368,7 +408,7 @@ type RawValues = ReturnType<typeof parseArgs>["values"];
  *  styling (heading levels, list numbering, code-block fences, …). We
  *  reject explicitly so the agent doesn't silently lose their intent.
  *  `--text` / `--runs` etc. still accept these. */
-const MARKDOWN_INCOMPATIBLE_FLAGS = [
+export const MARKDOWN_INCOMPATIBLE_FLAGS = [
 	"style",
 	"alignment",
 	"task",
@@ -386,7 +426,7 @@ const CONTENT_KINDS = [
 		flag: "table",
 		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
 	},
-	{ flag: "image", subFlags: ["alt", "width", "height"] },
+	{ flag: "image", subFlags: ["alt", "width", "height", "caption"] },
 	{ flag: "code", subFlags: ["language"] },
 	{ flag: "code-file", subFlags: ["language"] },
 	{ flag: "equation", subFlags: ["display"] },
@@ -398,7 +438,7 @@ const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
 	", ",
 );
 
-async function chooseContentSpec(
+export async function chooseContentSpec(
 	values: RawValues,
 ): Promise<InsertSpec | number> {
 	const present = CONTENT_KINDS.filter(
@@ -526,6 +566,7 @@ async function parseImageFlags(values: RawValues): Promise<
 			alt?: string;
 			widthInches?: number;
 			heightInches?: number;
+			caption?: string;
 	  }
 	| number
 > {
@@ -537,10 +578,14 @@ async function parseImageFlags(values: RawValues): Promise<
 		alt?: string;
 		widthInches?: number;
 		heightInches?: number;
+		caption?: string;
 	} = { src };
 
 	const alt = values.alt as string | undefined;
 	if (alt !== undefined) out.alt = alt;
+
+	const caption = values.caption as string | undefined;
+	if (caption !== undefined) out.caption = caption;
 
 	const widthRaw = values.width as string | undefined;
 	if (widthRaw !== undefined) {
@@ -700,7 +745,7 @@ async function parseTableFlags(values: RawValues): Promise<
 	return out;
 }
 
-async function parseParagraphOptions(
+export async function parseParagraphOptions(
 	values: RawValues,
 ): Promise<ParagraphOptions | number> {
 	const out: ParagraphOptions = {};

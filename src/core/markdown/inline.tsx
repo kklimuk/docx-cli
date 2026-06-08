@@ -13,10 +13,11 @@ import { latexToOmml } from "../equation";
 import { Image } from "../image";
 import { w } from "../jsx";
 import type { NullableXmlNode, XmlNode } from "../parser";
+import { firstInvalidRunFormat, type RunFormatEnums } from "../run-formatting";
 import type { TrackedMeta } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
-import type { CriticDelete, CriticInsert } from "./critic";
 import { MarkdownImportError } from "./errors";
+import type { CriticDelete, CriticInsert } from "./inline-surgery";
 
 /** Pre-resolved image entry the lens populates by walking the mdast tree
  * once before the synchronous OOXML emit. Inline image runs read from this
@@ -65,6 +66,12 @@ export type WalkContext = {
 	 *  The lens preallocates an author/date pair so all tracked nodes from
 	 *  one import share metadata. */
 	mintTrackedMeta?: () => TrackedMeta;
+	/** Document baseline run formatting from a `<!-- docx:base … -->` note (see
+	 *  `parseDocBaseNote`). Seeds every run so font/size that `read` omitted come
+	 *  back explicit — the read↔create round-trip. Undefined for hand-authored
+	 *  markdown / fragments with no note. NOT applied to footnote bodies (their
+	 *  smaller size comes from the FootnoteText style, not the body baseline). */
+	baselineFormat?: InlineFormat;
 };
 
 /** Walk a sequence of phrasing nodes into `<w:p>`-child siblings: `<w:r>`,
@@ -76,8 +83,9 @@ export function walkInline(
 	ctx: WalkContext,
 ): XmlNode[] {
 	const out: XmlNode[] = [];
+	const seed = ctx.baselineFormat ?? EMPTY_FORMAT;
 	for (const node of nodes) {
-		for (const child of walkPhrasing(node, ctx, EMPTY_FORMAT)) out.push(child);
+		for (const child of walkPhrasing(node, ctx, seed)) out.push(child);
 	}
 	return out;
 }
@@ -96,6 +104,19 @@ type InlineFormat = {
 	strike?: boolean;
 	code?: boolean;
 	hyperlinkId?: string;
+	color?: string;
+	colorTheme?: string;
+	colorThemeTint?: string;
+	colorThemeShade?: string;
+	highlight?: string;
+	shade?: string;
+	underline?: string;
+	underlineColor?: string;
+	vertAlign?: string;
+	smallCaps?: boolean;
+	allCaps?: boolean;
+	font?: string;
+	sizeHalfPoints?: number;
 };
 
 const EMPTY_FORMAT: InlineFormat = Object.freeze({});
@@ -107,7 +128,7 @@ function walkPhrasing(
 ): XmlNode[] {
 	switch (node.type) {
 		case "text":
-			return [textRunNode(node.value, format)];
+			return textWithBreaks(node.value, format);
 		case "strong":
 			return node.children.flatMap((child) =>
 				walkPhrasing(child, ctx, { ...format, bold: true }),
@@ -131,6 +152,15 @@ function walkPhrasing(
 			];
 		case "link":
 			return wrapHyperlink(node, ctx, format);
+		case "bracketedSpan":
+			// Overlay the span's run-formatting onto the inherited format and
+			// recurse, exactly like strong/emphasis. Enum-valued attributes
+			// (highlight, underline) are validated up front so a typo surfaces as
+			// a clean USAGE error rather than silently-dropped OOXML.
+			validateSpanFormatting(node.attributes);
+			return node.children.flatMap((child) =>
+				walkPhrasing(child, ctx, { ...format, ...node.attributes }),
+			);
 		case "image":
 			return [inlineImageRun(node, ctx)];
 		case "html":
@@ -170,29 +200,110 @@ function textRunNode(text: string, format: InlineFormat): XmlNode {
 	);
 }
 
+/** Build runs for a text node, turning a newline (a markdown "soft break")
+ *  into a real line break `<w:br/>` and a tab into `<w:tab/>`. This keeps
+ *  line-per-line source — verse, addresses, signature blocks — line-per-line in
+ *  the document. It deliberately deviates from CommonMark (which renders a soft
+ *  break as a space); `read` emits a newline back for `<w:br/>` so the
+ *  round-trip is stable. */
+function textWithBreaks(value: string, format: InlineFormat): XmlNode[] {
+	if (!value.includes("\n") && !value.includes("\t")) {
+		return [textRunNode(value, format)];
+	}
+	const out: XmlNode[] = [];
+	for (const segment of value.split(/(\n|\t)/)) {
+		if (segment === "") continue;
+		if (segment === "\n") {
+			out.push(
+				<w.r>
+					<RunProperties format={format} />
+					<w.br />
+				</w.r>,
+			);
+		} else if (segment === "\t") {
+			out.push(
+				<w.r>
+					<RunProperties format={format} />
+					<w.tab />
+				</w.r>,
+			);
+		} else {
+			out.push(textRunNode(segment, format));
+		}
+	}
+	return out;
+}
+
 function RunProperties({ format }: { format: InlineFormat }): NullableXmlNode {
 	if (
 		!format.bold &&
 		!format.italic &&
 		!format.strike &&
 		!format.code &&
-		!format.hyperlinkId
+		!format.hyperlinkId &&
+		!format.color &&
+		!format.colorTheme &&
+		!format.highlight &&
+		!format.shade &&
+		!format.underline &&
+		!format.vertAlign &&
+		!format.smallCaps &&
+		!format.allCaps &&
+		!format.font &&
+		format.sizeHalfPoints === undefined
 	) {
 		return null;
 	}
-	// `runStyle` schema order is `<w:rStyle>` first. When both Code and
-	// Hyperlink would apply (e.g. ``[`code`](url)``), Code wins — it carries
-	// the visually-stronger semantics; the surrounding `<w:hyperlink>`
-	// wrapper still routes the click. Word/LibreOffice render this with a
-	// monospace blue underlined run via the inheritance chain.
+	// Child order mirrors `core/blocks.tsx::RunProperties` (CT_RPr §17.3.2.28):
+	// rStyle → rFonts → b → i → caps → smallCaps → strike → color → sz →
+	// highlight → u → shd → vertAlign. The two emitters MUST stay byte-identical
+	// for the fields they share. When both Code and Hyperlink would apply (e.g.
+	// ``[`code`](url)``), Code wins — it carries the visually-stronger semantics;
+	// the `<w:hyperlink>` wrapper still routes the click.
 	return (
 		<w.rPr>
 			{format.code && <w.rStyle w-val="Code" />}
 			{format.hyperlinkId && !format.code && <w.rStyle w-val="Hyperlink" />}
+			{format.font && <w.rFonts w-ascii={format.font} w-hAnsi={format.font} />}
 			{format.bold && <w.b />}
 			{format.italic && <w.i />}
+			{format.allCaps && <w.caps />}
+			{format.smallCaps && <w.smallCaps />}
 			{format.strike && <w.strike />}
+			{(format.color || format.colorTheme) && (
+				<w.color
+					w-val={format.color ?? "auto"}
+					w-themeColor={format.colorTheme}
+					w-themeTint={format.colorThemeTint}
+					w-themeShade={format.colorThemeShade}
+				/>
+			)}
+			{format.sizeHalfPoints !== undefined && (
+				<w.sz w-val={String(format.sizeHalfPoints)} />
+			)}
+			{format.highlight && <w.highlight w-val={format.highlight} />}
+			{format.underline && (
+				<w.u w-val={format.underline} w-color={format.underlineColor} />
+			)}
+			{format.shade && (
+				<w.shd w-val="clear" w-color="auto" w-fill={format.shade} />
+			)}
+			{format.vertAlign && <w.vertAlign w-val={format.vertAlign} />}
 		</w.rPr>
+	);
+}
+
+/** Reject enum-valued span attributes Word would silently drop, so the author
+ * gets a clear error instead of vanished formatting. Hex color / theme tokens /
+ * font names pass through unvalidated (Word degrades those gracefully). Shares
+ * the enum sets with the `--runs` JSON path via `@core/run-formatting`. */
+function validateSpanFormatting(attributes: RunFormatEnums): void {
+	const invalid = firstInvalidRunFormat(attributes);
+	if (!invalid) return;
+	throw new MarkdownImportError(
+		"USAGE",
+		`Invalid ${invalid.field} "${invalid.value}" in a [text]{…} span`,
+		`Use ${invalid.valid}.`,
 	);
 }
 
@@ -335,9 +446,14 @@ function wrapTracked(
 	ctx: WalkContext,
 	format: InlineFormat,
 ): XmlNode[] {
-	const runs = [textRunNode(node.value, format)];
+	// `node.children` is the phrasing content between the markers — walk it so
+	// formatted and straddling content (`{++**bold**++}`) keeps its runs rather
+	// than flattening to a single plain run.
+	const runs = node.children.flatMap((child) =>
+		walkPhrasing(child, ctx, format),
+	);
 	if (!ctx.tracked) {
-		// Tracking off: insertions splat as plain text (the "accepted" view);
+		// Tracking off: insertions splat as plain runs (the "accepted" view);
 		// deletions drop entirely (their visible content is removed).
 		if (kind === "ins") return runs;
 		return [];
@@ -350,12 +466,18 @@ function wrapTracked(
 	}
 	const meta = ctx.mintTrackedMeta();
 	if (kind === "ins") return [<Ins meta={meta}>{runs}</Ins>];
-	// `<w:del>` requires `<w:t>` → `<w:delText>`. Inline the rename rather
-	// than re-walking — runs here are always plain `<w:r><w:t/></w:r>`.
-	for (const run of runs) {
-		for (const child of run.children) {
-			if (child.tag === "w:t") child.tag = "w:delText";
-		}
-	}
+	// `<w:del>` requires every descendant `<w:t>` → `<w:delText>` (a `<w:t>`
+	// inside `<w:del>` is invalid OOXML — Word reports "unreadable content").
+	// Content can now nest (hyperlinks, formatted runs), so recurse.
+	renameTextToDelText(runs);
 	return [<Del meta={meta}>{runs}</Del>];
+}
+
+/** Recursively rename every descendant `<w:t>` to `<w:delText>` — needed when
+ * wrapping walked runs in `<w:del>`, where plain `<w:t>` is invalid. */
+function renameTextToDelText(nodes: XmlNode[]): void {
+	for (const node of nodes) {
+		if (node.tag === "w:t") node.tag = "w:delText";
+		if (node.children.length > 0) renameTextToDelText(node.children);
+	}
 }

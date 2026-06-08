@@ -7,8 +7,10 @@ import {
 	type Locator,
 	locatorToBlockTarget,
 	parseLocator,
+	resolveAuthor,
 } from "@core";
 import { type FindView, findTextSpans } from "@core/find";
+import { readJsonlObjects } from "../parse-helpers";
 import {
 	type ErrorCode,
 	EXIT,
@@ -151,8 +153,9 @@ export async function run(args: string[]): Promise<number> {
 	const batchInput = parsed.values.batch as string | undefined;
 	const text = parsed.values.text as string | undefined;
 	const occurrenceRaw = parsed.values.occurrence as string | undefined;
-	const defaultAuthor =
-		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
+	const defaultAuthor = resolveAuthor(
+		parsed.values.author as string | undefined,
+	);
 	const outputPath = parsed.values.output as string | undefined;
 	const dryRun = Boolean(parsed.values["dry-run"]);
 	const wantCurrent = Boolean(parsed.values.current);
@@ -196,7 +199,7 @@ export async function run(args: string[]): Promise<number> {
 			);
 		}
 		try {
-			rawEntries = await readJsonlEntries(batchInput);
+			rawEntries = (await readJsonlObjects(batchInput)) as RawEntry[];
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return fail("USAGE", `Failed to read batch: ${message}`);
@@ -475,35 +478,4 @@ function resolveAnchorEntry(
 		author,
 		locatorString,
 	};
-}
-
-async function readJsonlEntries(source: string): Promise<RawEntry[]> {
-	const raw =
-		source === "-"
-			? await new Response(Bun.stdin.stream()).text()
-			: await Bun.file(source).text();
-	const entries: RawEntry[] = [];
-	const lines = raw.split("\n");
-	for (let index = 0; index < lines.length; index++) {
-		const lineRaw = lines[index];
-		if (lineRaw === undefined) continue;
-		const line = lineRaw.trim();
-		if (line.length === 0) continue;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			throw new Error(`line ${index + 1}: invalid JSON (${message})`);
-		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			Array.isArray(parsed)
-		) {
-			throw new Error(`line ${index + 1}: expected a JSON object`);
-		}
-		entries.push(parsed as RawEntry);
-	}
-	return entries;
 }

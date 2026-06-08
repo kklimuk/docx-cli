@@ -15,6 +15,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -68,6 +69,7 @@ export async function run(args: string[]): Promise<number> {
 			at: { type: "string" },
 			widths: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -135,7 +137,7 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const tracking = document.isTrackChangesEnabled();
+	const tracking = resolveTracked(document, parsed.values.track);
 	const author = parsed.values.author as string | undefined;
 	// Snapshot the prior grid columns before resizing so a tracked width change
 	// is reversible (reject restores the prior <w:tblGrid> from the snapshot).

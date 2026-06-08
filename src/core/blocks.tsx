@@ -25,9 +25,7 @@ export function Paragraph({
 		text?: string;
 		runs?: Run[];
 	}): XmlNode {
-	const resolvedRuns: Run[] = runs ?? [
-		{ type: "text", text: text ?? "", ...formatting },
-	];
+	const resolvedRuns: Run[] = runs ?? textToRuns(text ?? "", formatting);
 	return (
 		<w.p>
 			<ParagraphProperties options={{ style, alignment, list }} />
@@ -44,6 +42,30 @@ export function Paragraph({
 	);
 }
 
+/** Turn a `text` prop into runs, mapping an embedded newline to a `<w:br/>`
+ *  line break and a tab to `<w:tab/>` (run-level formatting rides on each text
+ *  segment). This keeps line-per-line `--text` — verse, addresses, signature
+ *  blocks — line-per-line in the document instead of collapsing to one wrapped
+ *  line (Word swallows a literal `\n` inside `<w:t>`). Mirrors `textWithBreaks`
+ *  on the markdown-import side; `read` emits a newline/tab back so it round-trips.
+ *  Plain single-line text returns one run, byte-identical to before. */
+function textToRuns(
+	text: string,
+	formatting: Partial<EmittableTextFormatting>,
+): Run[] {
+	if (!text.includes("\n") && !text.includes("\t")) {
+		return [{ type: "text", text, ...formatting }];
+	}
+	const runs: Run[] = [];
+	for (const segment of text.split(/(\n|\t)/)) {
+		if (segment === "") continue;
+		if (segment === "\n") runs.push({ type: "break", kind: "line" });
+		else if (segment === "\t") runs.push({ type: "tab" });
+		else runs.push({ type: "text", text: segment, ...formatting });
+	}
+	return runs;
+}
+
 export type ParagraphOptions = {
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
@@ -54,10 +76,15 @@ export type ParagraphOptions = {
 type EmittableTextFormatting = Pick<
 	TextRun,
 	| "color"
+	| "colorTheme"
+	| "colorThemeTint"
+	| "colorThemeShade"
 	| "highlight"
+	| "shade"
 	| "bold"
 	| "italic"
 	| "underline"
+	| "underlineColor"
 	| "strike"
 	| "font"
 	| "sizeHalfPoints"
@@ -212,38 +239,64 @@ function TextRunElement({ run }: { run: TextRun }): XmlNode {
 	);
 }
 
+// The fields whose presence means "emit a `<w:rPr>`". Deliberately excludes
+// `colorThemeTint`/`colorThemeShade` (modify a `<w:color>`, never standalone)
+// and `underlineColor` (rides on `<w:u>`) — including them would emit a stray
+// empty `<w:rPr/>` for a run that carries only a dependent modifier.
 const FORMATTING_KEYS = [
-	"color",
-	"highlight",
+	"runStyle",
+	"font",
 	"bold",
 	"italic",
-	"underline",
+	"allCaps",
+	"smallCaps",
 	"strike",
-	"font",
+	"color",
+	"colorTheme",
 	"sizeHalfPoints",
-	"runStyle",
+	"highlight",
+	"underline",
+	"shade",
+	"vertAlign",
 ] as const satisfies readonly (keyof TextRun)[];
 
 function RunProperties({ run }: { run: TextRun }): NullableXmlNode {
 	const isEmpty = FORMATTING_KEYS.every((key) => run[key] == null);
 	if (isEmpty) return null;
-	// `<w:rStyle>` comes FIRST in <w:rPr> per ECMA-376 §17.3.2.28 (CT_RPr child
-	// order: rStyle → rFonts → b → i → strike → color → sz → highlight → u → …).
-	// Word and LibreOffice both tolerate other orderings, but matching the
-	// schema keeps validators happy and round-trips minimal-diff against Word.
+	// `<w:rPr>` children follow CT_RPr order (ECMA-376 §17.3.2.28):
+	// rStyle → rFonts → b → i → caps → smallCaps → strike → color → sz →
+	// highlight → u → shd → vertAlign. Kept byte-identical to the markdown-import
+	// emitter in `core/markdown/inline.tsx`.
+	// Word/LibreOffice tolerate other orderings, but matching the schema keeps
+	// validators happy, minimizes the round-trip diff against Word, and keeps
+	// this emitter byte-identical to the markdown-import `RunProperties` in
+	// `core/markdown/inline.tsx` — the two MUST converge.
 	return (
 		<w.rPr>
 			{run.runStyle && <w.rStyle w-val={run.runStyle} />}
-			{run.color && <w.color w-val={run.color} />}
-			{run.highlight && <w.highlight w-val={run.highlight} />}
+			{run.font && <w.rFonts w-ascii={run.font} w-hAnsi={run.font} />}
 			{run.bold && <w.b />}
 			{run.italic && <w.i />}
-			{run.underline && <w.u w-val={run.underline} />}
+			{run.allCaps && <w.caps />}
+			{run.smallCaps && <w.smallCaps />}
 			{run.strike && <w.strike />}
-			{run.font && <w.rFonts w-ascii={run.font} w-hAnsi={run.font} />}
+			{(run.color || run.colorTheme) && (
+				<w.color
+					w-val={run.color ?? "auto"}
+					w-themeColor={run.colorTheme}
+					w-themeTint={run.colorThemeTint}
+					w-themeShade={run.colorThemeShade}
+				/>
+			)}
 			{run.sizeHalfPoints !== undefined && (
 				<w.sz w-val={String(run.sizeHalfPoints)} />
 			)}
+			{run.highlight && <w.highlight w-val={run.highlight} />}
+			{run.underline && (
+				<w.u w-val={run.underline} w-color={run.underlineColor} />
+			)}
+			{run.shade && <w.shd w-val="clear" w-color="auto" w-fill={run.shade} />}
+			{run.vertAlign && <w.vertAlign w-val={run.vertAlign} />}
 		</w.rPr>
 	);
 }

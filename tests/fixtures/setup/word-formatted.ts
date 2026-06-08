@@ -27,6 +27,11 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *       — exercises the regression where Word-produced run splits inside
  *         a word would shred tokens during diff alignment, producing
  *         spurious del+ins pairs for words that are actually unchanged
+ *   p4: every run-level rPr property the CLI emits (direct + theme color,
+ *       highlight, shading fill, underline plain/styled/colored, super/
+ *       subscript, small/all caps, custom font, custom size). Absorbed from
+ *       the former run-formatting.docx fixture; appended last so p0-p3 stay
+ *       byte-stable. This is the run-formatting LibreOffice round-trip surface.
  *
  * Built by dogfooding the CLI's `--runs` JSON path; doubles as a smoke
  * test for `create` + `insert --runs`.
@@ -85,6 +90,43 @@ const p3Runs = JSON.stringify([
 	{ type: "text", text: "lawed.", italic: true },
 ]);
 await cli("insert", out, "--after", "p2", "--runs", p3Runs);
+
+// p4: every run-level rPr property the CLI emits through core/blocks.tsx —
+// direct + theme color, named highlight, shading fill, underline (plain +
+// styled + colored), super/subscript, small/all caps, a custom font, a custom
+// size. Absorbed verbatim from the former run-formatting.docx fixture so this
+// one doc carries both the edit-preservation layout (p0-p3) and the full
+// run-formatting round-trip surface. Appended as a trailing paragraph so the
+// p0-p3 locators edit-span/edit-formatting hard-pin do not shift.
+const p4Runs = JSON.stringify([
+	{ type: "text", text: "color ", color: "FF0000" },
+	{
+		type: "text",
+		text: "theme ",
+		color: "4472C4",
+		colorTheme: "accent1",
+		colorThemeTint: "99",
+	},
+	{ type: "text", text: "highlight ", highlight: "yellow" },
+	{ type: "text", text: "shade ", shade: "FFE599" },
+	{ type: "text", text: "underline ", underline: "single" },
+	{
+		type: "text",
+		text: "wavy ",
+		underline: "wavyDouble",
+		underlineColor: "FF0000",
+	},
+	{ type: "text", text: "x", sizeHalfPoints: 22 },
+	{ type: "text", text: "2", vertAlign: "superscript" },
+	{ type: "text", text: " plus H", sizeHalfPoints: 22 },
+	{ type: "text", text: "2", vertAlign: "subscript" },
+	{ type: "text", text: "O ", sizeHalfPoints: 22 },
+	{ type: "text", text: "smallcaps ", smallCaps: true },
+	{ type: "text", text: "allcaps ", allCaps: true },
+	{ type: "text", text: "courier ", font: "Courier New" },
+	{ type: "text", text: "big", sizeHalfPoints: 36 },
+]);
+await cli("insert", out, "--after", "p3", "--runs", p4Runs);
 
 const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {

@@ -423,18 +423,21 @@ describe("edit --at eqN --equation", () => {
 		// confirm --display flips inline → display via the cached `latex`.
 		const workspace = tempWorkspace("eq-edit-cell-display");
 		const docPath = join(workspace, "out.docx");
+		// tables-mutations.docx's t2 is the clean, unmerged 2×3 autofit table
+		// (absorbed from the former tables.docx fixture); its t0/t1 are merged
+		// and tracked, so the clean equation host is t2:r0c0:p0.
 		const tablesFixture = join(
 			import.meta.dir,
 			"..",
 			"fixtures",
-			"tables.docx",
+			"tables-mutations.docx",
 		);
 		copyFileSync(tablesFixture, docPath);
 		await runCli(
 			"insert",
 			docPath,
 			"--after",
-			"t0:r0c0:p0",
+			"t2:r0c0:p0",
 			"--equation",
 			"x^2",
 		);

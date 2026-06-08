@@ -10,17 +10,21 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { runReplaceBatch } from "./batch";
 
 const HELP = `docx replace — substitute text spans (sed for docx)
 
 Usage:
   docx replace FILE PATTERN REPLACEMENT [options]
+  docx replace FILE --batch FILE.jsonl [options]   # a sed-script, one read
+  docx replace FILE --batch -          [options]   # read JSONL from stdin
 
 Options:
   --regex           treat PATTERN as a JavaScript regular expression
@@ -28,6 +32,8 @@ Options:
   --all             replace every match (default: just the first)
   --limit N         replace at most N matches (in document order)
   --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
+  --track           record substitutions as tracked changes even when the
+                    document's track-changes toggle is off (OFF by default)
   --current         operate on the raw concatenation (both ins and del text)
   --baseline        operate on the pre-change text (skip ins/moveTo)
                     (--current and --baseline are mutually exclusive; default:
@@ -72,17 +78,25 @@ Examples:
   docx replace doc.docx "TODO|FIXME" "DONE" --regex --all
   docx replace doc.docx "(\\w+) (\\w+)" "$2 $1" --regex --all
   docx replace doc.docx "wordy phrase" "tighter phrase" --all --dry-run
+  docx replace doc.docx --batch edits.jsonl
+
+Batch JSONL example (one substitution per line, applied in order):
+  {"pattern": "Q2", "replacement": "Q3", "all": true}
+  {"pattern": "FY24", "replacement": "FY25"}
+  {"pattern": "(\\\\w+)@old\\\\.com", "replacement": "$1@new.com", "regex": true, "all": true}
 `;
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
+			batch: { type: "string" },
 			regex: { type: "boolean" },
 			"ignore-case": { type: "boolean" },
 			all: { type: "boolean" },
 			limit: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
 			exact: { type: "boolean" },
@@ -103,9 +117,22 @@ export async function run(args: string[]): Promise<number> {
 	setVerboseAck(Boolean(parsed.values.verbose));
 
 	const path = parsed.positionals[0];
+	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
+
+	const batchInput = parsed.values.batch as string | undefined;
+	if (batchInput !== undefined) {
+		if (parsed.positionals.length > 1) {
+			return fail(
+				"USAGE",
+				"--batch reads pattern/replacement from the JSONL file; don't also pass them as positionals",
+				HELP,
+			);
+		}
+		return runReplaceBatch(path, batchInput, parsed.values);
+	}
+
 	const pattern = parsed.positionals[1];
 	const replacement = parsed.positionals[2];
-	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 	if (pattern == null) return fail("USAGE", "Missing PATTERN argument", HELP);
 	if (replacement == null) {
 		return fail("USAGE", "Missing REPLACEMENT argument", HELP);
@@ -228,13 +255,15 @@ export async function run(args: string[]): Promise<number> {
 	});
 
 	const authorFlag = parsed.values.author as string | undefined;
-	const tracked: TrackedReplaceOptions | undefined =
-		document.isTrackChangesEnabled()
-			? {
-					meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
-					allocator: new TrackChanges(document).createAllocator(),
-				}
-			: undefined;
+	const tracked: TrackedReplaceOptions | undefined = resolveTracked(
+		document,
+		parsed.values.track,
+	)
+		? {
+				meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
+				allocator: new TrackChanges(document).createAllocator(),
+			}
+		: undefined;
 
 	const regexFlags = ignoreCase ? "i" : "";
 	for (const match of reversed) {

@@ -15,6 +15,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -36,7 +37,7 @@ Target:
 
 Optional:
   --author NAME        Author for tracked deletions (default: $DOCX_AUTHOR
-                       env, fallback "docx-cli"). Ignored when tracking off.
+                       env, fallback "Reviewer"). Ignored when tracking off.
   -o, --output PATH    Write to PATH instead of overwriting FILE.
   --dry-run            Print what would be removed; do not write the file.
   -v, --verbose        Print the success ack JSON (default: silent on success).
@@ -65,6 +66,7 @@ export async function runDeleteNote(
 		{
 			at: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -118,7 +120,7 @@ export async function runDeleteNote(
 		return EXIT.OK;
 	}
 
-	const tracked = document.isTrackChangesEnabled();
+	const tracked = resolveTracked(document, parsed.values.track);
 	if (tracked) {
 		const allocator = new TrackChanges(document).createAllocator();
 		const author = resolveAuthor(parsed.values.author as string | undefined);

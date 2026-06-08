@@ -68,6 +68,7 @@ export async function run(args: string[]): Promise<number> {
 			size: { type: "string" },
 			color: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -149,6 +150,7 @@ export async function run(args: string[]): Promise<number> {
 		buildGrid(tableNode).rows[0]?.cells[0]?.node,
 		`table borders set (${style})`,
 		parsed.values.author as string | undefined,
+		parsed.values.track as boolean | undefined,
 	);
 
 	await document.save(outputPath);

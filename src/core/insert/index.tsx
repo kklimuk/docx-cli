@@ -16,9 +16,10 @@ import {
 import { w } from "../jsx";
 import { MarkdownImport, MarkdownImportError } from "../markdown";
 import type { XmlNode } from "../parser";
-import { SentinelSectionParagraph } from "../sections";
+import { getPageContentWidthEmu, SentinelSectionParagraph } from "../sections";
 import { BlankTable, type TableBorders, type TableLayout } from "../table";
-import { TrackChanges } from "../track-changes";
+import { type RevisionAllocator, TrackChanges } from "../track-changes";
+import { inheritFormattingFromAnchor } from "./inherit";
 
 /** Cross-cutting lens over "insert a block (of any kind) at a target location."
  * Stateless — `new Insert(document).paragraph(blockRef, spec, …)` builds the
@@ -34,7 +35,15 @@ export class Insert {
 		blockRef: BlockReference,
 		spec: InsertSpec,
 		paragraphOptions: ParagraphOptions,
-		opts: { placement: "before" | "after"; authorFlag?: string },
+		opts: {
+			placement: "before" | "after";
+			authorFlag?: string;
+			track?: boolean;
+			/** Shared revision-id allocator so a multi-entry `insert --batch` (which
+			 *  builds every block before splicing any) keeps tracked-change w:ids
+			 *  unique across entries. Omit for single-shot — one is made per call. */
+			allocator?: RevisionAllocator;
+		},
 	): Promise<XmlNode[]> {
 		// `--task` / `--list` paragraph: resolve the list numId (inherit from the
 		// anchor if it's already a list, else allocate fresh of the requested
@@ -67,7 +76,19 @@ export class Insert {
 		}
 		const blocks = Array.isArray(built) ? built : [built];
 
-		if (this.document.isTrackChangesEnabled()) {
+		// Blend plain inserted content into the surrounding document by inheriting
+		// the anchor paragraph's run formatting (and style, when safe) for runs
+		// that didn't bring their own. Only text-bearing inserts blend; structural
+		// inserts (table/image/section/break/code/equation) keep their own shape.
+		if (
+			spec.kind === "text" ||
+			spec.kind === "runs" ||
+			spec.kind === "markdown"
+		) {
+			inheritFormattingFromAnchor(blocks, blockRef.node);
+		}
+
+		if (opts.track ?? this.document.isTrackChangesEnabled()) {
 			// Tables under tracking would require per-row <w:trPr><w:ins/> wrappers
 			// (ECMA-376 §17.13.5) — deferred. Reject cleanly so the agent knows to
 			// toggle tracking off, insert, then back on.
@@ -81,8 +102,13 @@ export class Insert {
 				}
 			}
 			const trackChanges = new TrackChanges(this.document);
+			// One allocator for ALL blocks of this insert (and shared across a
+			// whole `insert --batch` when the caller passes one) so revision ids
+			// stay unique — the blocks aren't spliced yet, so a per-block allocator
+			// would re-scan the same tree max and mint duplicate w:ids.
+			const allocator = opts.allocator ?? trackChanges.createAllocator();
 			for (const block of blocks) {
-				trackChanges.applyInsertion(block, opts.authorFlag);
+				trackChanges.applyInsertion(block, opts.authorFlag, allocator);
 			}
 		}
 
@@ -117,6 +143,7 @@ export type InsertSpec =
 			alt?: string;
 			widthInches?: number;
 			heightInches?: number;
+			caption?: string;
 	  }
 	| { kind: "code"; content: string; language?: string }
 	| { kind: "equation"; latex: string; display: boolean }
@@ -258,7 +285,7 @@ async function buildImageParagraph(
 	document: Document,
 	spec: Extract<InsertSpec, { kind: "image" }>,
 	paragraphOptions: ParagraphOptions,
-): Promise<XmlNode> {
+): Promise<XmlNode | XmlNode[]> {
 	let source: ImageSource;
 	try {
 		source = await loadImageSource(spec.src);
@@ -269,10 +296,14 @@ async function buildImageParagraph(
 		throw error;
 	}
 
-	const extent = computeExtentEmu(source, {
-		widthInches: spec.widthInches,
-		heightInches: spec.heightInches,
-	});
+	const extent = computeExtentEmu(
+		source,
+		{
+			widthInches: spec.widthInches,
+			heightInches: spec.heightInches,
+		},
+		getPageContentWidthEmu(document),
+	);
 	if (!extent) {
 		throw new InsertError(
 			"USAGE",
@@ -293,17 +324,29 @@ async function buildImageParagraph(
 	);
 
 	const { style, alignment } = paragraphOptions;
-	return (
+	const hasCaption = spec.caption !== undefined && spec.caption.length > 0;
+	const imageParagraph = (
 		<w.p>
-			{style || alignment ? (
+			{style || alignment || hasCaption ? (
 				<w.pPr>
 					{style ? <w.pStyle w-val={style} /> : null}
+					{/* Keep the figure with its caption across a page break. */}
+					{hasCaption ? <w.keepNext /> : null}
 					{alignment ? <w.jc w-val={alignment} /> : null}
 				</w.pPr>
 			) : null}
 			{imageRun}
 		</w.p>
 	);
+
+	if (!hasCaption) return imageParagraph;
+
+	// A native Word caption: a paragraph in the built-in "Caption" style placed
+	// directly under the figure. Provisioning the style is what lets it show up
+	// in a Table of Figures and read as a real caption, not just italic text.
+	document.ensureStyles().ensureStyle("Caption");
+	const captionParagraph = <Paragraph text={spec.caption} style="Caption" />;
+	return [imageParagraph, captionParagraph];
 }
 
 function buildTextParagraph(

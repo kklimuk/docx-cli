@@ -15,6 +15,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -45,7 +46,7 @@ Body (exactly one required):
 
 Optional:
   --author NAME        Author for tracked attribution (default: $DOCX_AUTHOR
-                       env, fallback "docx-cli"). Ignored when tracking off.
+                       env, fallback "Reviewer"). Ignored when tracking off.
   -o, --output PATH    Write to PATH instead of overwriting FILE.
   --dry-run            Print what would change; do not write the file.
   -v, --verbose        Print the success ack JSON (default: silent on success).
@@ -85,6 +86,7 @@ export async function runEditNote(
 			markdown: { type: "string" },
 			"markdown-file": { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -162,7 +164,7 @@ export async function runEditNote(
 		return EXIT.OK;
 	}
 
-	const tracked = document.isTrackChangesEnabled();
+	const tracked = resolveTracked(document, parsed.values.track);
 	const isRichBody = text === undefined;
 	if (tracked && isRichBody) {
 		return fail(

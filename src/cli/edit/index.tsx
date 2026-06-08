@@ -1,14 +1,19 @@
 import {
 	type BlockRangeReference,
 	type BlockReference,
+	CLEARABLE_ATTRS,
 	type Document,
 	describeForms,
 	Edit,
 	EditError,
+	type Locator,
+	locatorToBlockTarget,
 	MarkdownImport,
 	MarkdownImportError,
 	type ParagraphContentSpec,
+	parseLocator,
 	type Run,
+	resolveClearTags,
 	type SectionType,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
@@ -30,15 +35,25 @@ import {
 	openOrFail,
 	resolveBlockOrFail,
 	resolveBlockRangeOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { runEditBatch } from "./batch";
 
 const AT_FORMS = describeForms(
-	["paragraph", "blockRange", "cellParagraph", "section", "equation"],
+	[
+		"paragraph",
+		"span",
+		"blockRange",
+		"cellParagraph",
+		"cellSpan",
+		"section",
+		"equation",
+	],
 	"                      ",
 );
 
@@ -46,13 +61,18 @@ const HELP = `docx edit — replace a paragraph (or paragraph range), a section,
 
 Usage:
   docx edit FILE --at LOCATOR <content> [options]
+  docx edit FILE --batch FILE.jsonl [options]   # many edits, one read
+  docx edit FILE --batch -          [options]   # read JSONL from stdin
 
 Locator (required):
   --at LOCATOR      What to edit. One of:
 ${AT_FORMS}
                     pN / pN-pM take paragraph content (below); sN takes
                     --columns/--type; eqN takes --equation/--display/--inline.
-                    See \`docx info locators\`.
+                    A character span (pN:S-E, or a cell paragraph
+                    tN:rRcC:pK:S-E) replaces just those characters with --text,
+                    inheriting the existing run's formatting — paste a locator
+                    straight from \`docx find\`. See \`docx info locators\`.
 
 Paragraph content (one required for paragraph / range locators):
   --text TEXT       Replace with a single-run paragraph
@@ -68,6 +88,11 @@ Paragraph content (one required for paragraph / range locators):
                     parses to.
   --markdown-file PATH  Same as --markdown, but read content from PATH
                     (use "-" for stdin).
+  --clear ATTRS     Strip run formatting in place, keeping the text. ATTRS is a
+                    comma list of: bold, italic, strike, underline, highlight,
+                    shade, color, font, size, vertalign, caps, smallcaps, style
+                    — or "all". Works on a whole paragraph (pN) or a span
+                    (pN:S-E). Pairs with \`docx find --highlight\`. (Not tracked.)
   --task STATE      Flip a task-list item's checkbox state in place ("checked" or
                     "unchecked"). Requires a single paragraph locator that is
                     already a GFM task list item (has a leading <w14:checkbox/>
@@ -108,8 +133,21 @@ Formatting (single-paragraph --text only):
   apply uniformly to the new paragraph. Range edits (pN-pM) always rewrite
   the span wholesale; per-word formatting preservation is not applied.
 
+Batch (--batch PATH | -):
+  Apply many edits from one read — no need to re-read between changes. Each
+  JSONL line is one edit: { "at": LOCATOR, <one content field> }. Content is
+  "text", "clear", "markdown", "runs", "code", or "task"; whole-paragraph
+  entries may also carry "style"/"alignment"/"color"/"bold"/"italic"/"author".
+  All locators address the document AS READ. A paragraph takes one whole-
+  paragraph edit OR several non-overlapping spans (applied right-to-left so
+  offsets stay valid). Range (pN-pM), section (sN), and equation (eqN) edits
+  run one at a time, not in a batch. Don't mix --batch with --at/--text/etc.
+
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
+  --track           Record this edit as a tracked change even when the
+                    document's track-changes toggle is off (it is OFF by
+                    default — check with \`docx track-changes list FILE\`).
   --no-formatting   Replace with a single fresh run; do not preserve rPr
                     on unchanged words
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -124,16 +162,45 @@ Output:
   \`docx read FILE --ast\` (equation ids appear on EquationRun nodes).
 
 Examples:
+  docx find doc.docx "fill in state"            # → p4:25-38
+  docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
+  docx edit doc.docx --at p4:25-38 --clear highlight   # un-highlight that span
+  docx edit doc.docx --at p2 --clear all               # strip all run formatting
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
   docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
   docx edit doc.docx --at p2-p5 --text "Rewrite this section as one paragraph."
   docx edit doc.docx --at p3-p7 --code-file new-snippet.go --language go
   docx edit doc.docx --at s0 --columns 2 --type continuous
   docx edit doc.docx --at eq0 --equation "x = \\\\frac{-b}{2a}" --display
+  docx edit doc.docx --batch fills.jsonl            # fill many spans at once
+
+Batch JSONL example (one edit per line):
+  {"at": "p4:25-38", "text": "Delaware"}
+  {"at": "t0:r1c2:p0", "text": "$4.2M"}
+  {"at": "p9", "clear": "highlight"}
+  {"at": "p1", "markdown": "## Revised heading"}
 `;
 
 export async function run(args: string[]): Promise<number> {
-	const opts = await parseAndValidateOptions(args);
+	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	if (typeof parsed === "number") return parsed;
+
+	if (parsed.values.help) {
+		await writeStdout(HELP);
+		return EXIT.OK;
+	}
+
+	setVerboseAck(Boolean(parsed.values.verbose));
+
+	const filePath = parsed.positionals[0];
+	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
+
+	const batchInput = parsed.values.batch as string | undefined;
+	if (batchInput !== undefined) {
+		return runEditBatch(filePath, batchInput, parsed.values);
+	}
+
+	const opts = await validateSingleShotOptions(filePath, parsed.values);
 	if (typeof opts === "number") return opts;
 
 	const document = await openOrFail(opts.filePath);
@@ -159,6 +226,11 @@ export async function run(args: string[]): Promise<number> {
 		return commitEquationEdit(document, opts.spec, opts);
 	}
 
+	// Character-span locator (`pN:S-E` or a cell paragraph `tN:rRcC:pK:S-E`):
+	// edit just those characters in place, inheriting the run's formatting.
+	const spanTarget = spanLocatorTarget(opts.locator);
+	if (spanTarget) return commitSpanEdit(document, spanTarget, opts);
+
 	const blockRef = await resolveBlockOrFail(document, opts.locator);
 	if (typeof blockRef === "number") return blockRef;
 
@@ -167,6 +239,82 @@ export async function run(args: string[]): Promise<number> {
 
 function isBlockRangeLocator(locator: string): boolean {
 	return /^p\d+-p\d+$/.test(locator);
+}
+
+/** A `--at` value that addresses a character span within one paragraph
+ *  (`pN:S-E` or a cell paragraph `tN:rRcC:pK:S-E`) → `{blockId, span}`.
+ *  Returns null for any other locator (whole block, range, entity), which
+ *  falls through to the block-edit path. */
+function spanLocatorTarget(
+	locator: string,
+): { blockId: string; span: { start: number; end: number } } | null {
+	let parsed: Locator;
+	try {
+		parsed = parseLocator(locator);
+	} catch {
+		return null;
+	}
+	const target = locatorToBlockTarget(parsed);
+	if (!target?.span) return null;
+	return { blockId: target.blockId, span: target.span };
+}
+
+/** Span edit: replace the addressed characters in place via the Edit lens.
+ *  v1 accepts only `--text` (the replacement inherits the existing run's
+ *  rPr); formatting/paragraph flags belong to whole-paragraph edits. */
+async function commitSpanEdit(
+	document: Document,
+	spanTarget: { blockId: string; span: { start: number; end: number } },
+	opts: ValidatedOptions,
+): Promise<number> {
+	const spec = opts.spec;
+	if (spec.kind !== "text" && spec.kind !== "clear") {
+		return fail(
+			"USAGE",
+			"A character-span locator (pN:S-E) supports --text or --clear. Use a whole-paragraph locator (pN) for --markdown/--runs/--code.",
+			HELP,
+		);
+	}
+	if (spec.kind === "text") {
+		if (spec.format.color || spec.format.bold || spec.format.italic) {
+			return fail(
+				"USAGE",
+				"--color/--bold/--italic aren't supported on a character span — the replacement inherits the existing run's formatting. Edit the whole paragraph (pN) to set uniform run formatting.",
+				HELP,
+			);
+		}
+		if (spec.paragraphOptions.style || spec.paragraphOptions.alignment) {
+			return fail(
+				"USAGE",
+				"--style/--alignment apply to a whole paragraph, not a character span (pN:S-E).",
+				HELP,
+			);
+		}
+	}
+
+	const blockRef = await resolveBlockOrFail(document, spanTarget.blockId);
+	if (typeof blockRef === "number") return blockRef;
+
+	if (opts.dryRun) return respondDryRun(opts);
+
+	try {
+		if (spec.kind === "clear") {
+			new Edit(document).clearFormatting(blockRef, spanTarget.span, spec.tags);
+		} else {
+			new Edit(document).span(blockRef, spanTarget.span, spec.text, {
+				authorFlag: opts.authorFlag,
+				track: resolveTracked(document, opts.trackFlag),
+			});
+		}
+	} catch (error) {
+		if (error instanceof EditError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	await document.save(opts.outputPath);
+	return emitEditAck(opts);
 }
 
 /** Single-block edit: section / task / paragraph dispatch through the Edit
@@ -179,13 +327,15 @@ async function commitBlockEdit(
 ): Promise<number> {
 	if (opts.dryRun) return respondDryRun(opts);
 
+	const track = resolveTracked(document, opts.trackFlag);
 	try {
 		const edit = new Edit(document);
 		if (opts.spec.kind === "section") {
-			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag });
+			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag, track });
 		} else if (opts.spec.kind === "task") {
 			edit.taskToggle(blockRef, opts.spec.checked, {
 				authorFlag: opts.authorFlag,
+				track,
 			});
 		} else if (
 			opts.spec.kind === "text" ||
@@ -195,11 +345,17 @@ async function commitBlockEdit(
 			edit.paragraph(blockRef, opts.spec, {
 				authorFlag: opts.authorFlag,
 				noFormatting: opts.noFormatting,
+				track,
 			});
 		} else if (opts.spec.kind === "markdown") {
 			const resolved = await resolveMarkdownBlocks(document, opts.spec);
 			if (typeof resolved === "number") return resolved;
-			edit.paragraph(blockRef, resolved, { authorFlag: opts.authorFlag });
+			edit.paragraph(blockRef, resolved, {
+				authorFlag: opts.authorFlag,
+				track,
+			});
+		} else if (opts.spec.kind === "clear") {
+			edit.clearFormatting(blockRef, null, opts.spec.tags);
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
 		}
@@ -265,6 +421,7 @@ async function commitRangeEdit(
 	try {
 		new Edit(document).range(rangeRef, spec, {
 			authorFlag: opts.authorFlag,
+			track: resolveTracked(document, opts.trackFlag),
 		});
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -326,42 +483,31 @@ async function commitEquationEdit(
 	return emitEditAck(opts);
 }
 
-async function parseAndValidateOptions(
-	args: string[],
+async function validateSingleShotOptions(
+	filePath: string,
+	values: RawValues,
 ): Promise<ValidatedOptions | number> {
-	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
-	if (typeof parsed === "number") return parsed;
-
-	if (parsed.values.help) {
-		await writeStdout(HELP);
-		return EXIT.OK;
-	}
-
-	setVerboseAck(Boolean(parsed.values.verbose));
-
-	const filePath = parsed.positionals[0];
-	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
-
-	const locator = parsed.values.at as string | undefined;
+	const locator = values.at as string | undefined;
 	if (!locator) return fail("USAGE", "Missing --at LOCATOR", HELP);
 
-	const paragraphOptions = await parseParagraphOptions(parsed.values);
+	const paragraphOptions = await parseParagraphOptions(values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
 
 	const isSectionLocator = /^s\d+$/.test(locator);
 	const spec = isSectionLocator
-		? await validateSectionEdit(parsed.values)
-		: await validateParagraphEdit(parsed.values, paragraphOptions);
+		? await validateSectionEdit(values)
+		: await validateParagraphEdit(values, paragraphOptions);
 	if (typeof spec === "number") return spec;
 
 	return {
 		filePath,
 		locator,
 		spec,
-		authorFlag: parsed.values.author as string | undefined,
-		outputPath: parsed.values.output as string | undefined,
-		dryRun: Boolean(parsed.values["dry-run"]),
-		noFormatting: Boolean(parsed.values["no-formatting"]),
+		authorFlag: values.author as string | undefined,
+		trackFlag: Boolean(values.track),
+		outputPath: values.output as string | undefined,
+		dryRun: Boolean(values["dry-run"]),
+		noFormatting: Boolean(values["no-formatting"]),
 	};
 }
 
@@ -373,12 +519,14 @@ const MARKDOWN_INCOMPATIBLE_FLAGS = ["style", "alignment"] as const;
 
 const OPTION_SPEC = {
 	at: { type: "string" },
+	batch: { type: "string" },
 	text: { type: "string" },
 	runs: { type: "string" },
 	code: { type: "string" },
 	"code-file": { type: "string" },
 	markdown: { type: "string" },
 	"markdown-file": { type: "string" },
+	clear: { type: "string" },
 	language: { type: "string" },
 	task: { type: "string" },
 	equation: { type: "string" },
@@ -392,6 +540,7 @@ const OPTION_SPEC = {
 	bold: { type: "boolean" },
 	italic: { type: "boolean" },
 	author: { type: "string" },
+	track: { type: "boolean" },
 	"no-formatting": { type: "boolean" },
 	output: { type: "string", short: "o" },
 	"dry-run": { type: "boolean" },
@@ -404,6 +553,9 @@ type ValidatedOptions = {
 	locator: string;
 	spec: EditSpec;
 	authorFlag?: string;
+	/** `--track`: force tracked emission for this command even if the document's
+	 *  global track-changes toggle is off. */
+	trackFlag: boolean;
 	outputPath?: string;
 	dryRun: boolean;
 	/** Opt-out of word-level formatting preservation. When true, --text
@@ -432,6 +584,7 @@ type EditSpec =
 			paragraphOptions: ParagraphOptions;
 	  }
 	| { kind: "task"; checked: boolean }
+	| { kind: "clear"; tags: Set<string> }
 	| {
 			kind: "equation";
 			locator: string;
@@ -479,6 +632,48 @@ async function validateParagraphEdit(
 			"--columns and --type require a section locator (sN)",
 			HELP,
 		);
+	}
+
+	// `--clear` strips formatting in place; it's its own content kind, mutually
+	// exclusive with anything that replaces the paragraph's content.
+	const clearFlag = values.clear as string | undefined;
+	if (clearFlag !== undefined) {
+		const conflicting =
+			[
+				"text",
+				"runs",
+				"code",
+				"code-file",
+				"markdown",
+				"markdown-file",
+				"task",
+				"equation",
+			].some((flag) => values[flag] !== undefined) ||
+			values.display === true ||
+			values.inline === true;
+		if (conflicting) {
+			return fail(
+				"USAGE",
+				"--clear only strips formatting; don't combine it with content flags (--text/--markdown/--runs/…)",
+				HELP,
+			);
+		}
+		const names = clearFlag
+			.split(",")
+			.map((name) => name.trim().toLowerCase())
+			.filter(Boolean);
+		if (names.length === 0) {
+			return fail("USAGE", "--clear needs an attribute name, or 'all'", HELP);
+		}
+		const tags = resolveClearTags(names);
+		if (!tags) {
+			return fail(
+				"USAGE",
+				`--clear: unknown attribute in "${clearFlag}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
+				HELP,
+			);
+		}
+		return { kind: "clear", tags };
 	}
 	const text = values.text as string | undefined;
 	const runsJson = values.runs as string | undefined;

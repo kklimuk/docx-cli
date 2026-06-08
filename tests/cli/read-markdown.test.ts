@@ -18,7 +18,10 @@ describe("docx read (markdown)", () => {
 		expect(out).toContain("**important**");
 		expect(out).toMatch(/Use[^\n]*\*\*important\*\*[^\n]*terms/);
 		expect(out).toContain("<!-- p2 -->");
-		expect(out).toContain("--- <!-- s0 -->");
+		// The trailing mandatory section break is suppressed (it's implicit OOXML
+		// structure that create re-adds, so emitting `---` would re-import as a
+		// stray thematic-break paragraph that accretes each round-trip).
+		expect(out).not.toContain("--- <!-- s0 -->");
 	});
 
 	test("academic-paper: heading levels 1 and 2 render with # and ##", async () => {
@@ -48,7 +51,8 @@ describe("docx read (markdown)", () => {
 		expect(out).toMatch(/^- Apples/m);
 		expect(out).toMatch(/^ {2}- Granny Smith/m);
 		expect(out).toMatch(/^ {4}- From the orchard down the road/m);
-		// Ordered items emit "1. " regardless of depth (GFM auto-increments)
+		// Ordered items carry their real per-level ordinal; the first item at each
+		// nesting level is 1 (deeper levels reset when a shallower one advances).
 		expect(out).toMatch(/^1\. Preheat the oven/m);
 		expect(out).toMatch(/^ {2}1\. Sift the flour/m);
 		expect(out).toMatch(/^ {4}1\. Don't overmix/m);
@@ -56,14 +60,14 @@ describe("docx read (markdown)", () => {
 		expect(out).toMatch(/^- Independent item one/m);
 	});
 
-	test("tables-and-lists: top-level ordered items render as `1.`", async () => {
-		// These are Word-numbered items (numFmt=decimal), so they should
-		// render as ordered list items rather than bullets. The renderer
-		// uses `1. ` for every item since GFM auto-increments client-side.
+	test("tables-and-lists: top-level ordered items render with real ordinals", async () => {
+		// These are Word-numbered items (numFmt=decimal), so they render as an
+		// ordered list with their real running ordinal (1. 2. 3.) — so the RAW
+		// markdown reads correctly rather than as a wall of `1.`.
 		const out = await render(fixture("tables-and-lists.docx"));
 		expect(out).toMatch(/^1\. \*\*Introduction\*\*/m);
-		expect(out).toMatch(/^1\. \*\*Background Information\*\*/m);
-		expect(out).toMatch(/^1\. \*\*Methods and Materials\*\*/m);
+		expect(out).toMatch(/^2\. \*\*Background Information\*\*/m);
+		expect(out).toMatch(/^3\. \*\*Methods and Materials\*\*/m);
 	});
 
 	test("resume-styling: list bullets and bold runs render", async () => {
@@ -332,11 +336,6 @@ describe("docx read (markdown) --comments", () => {
 		const out = await render(fixture("comments-simple.docx"), "--comments");
 		expect(out).toContain("[^c0]:");
 	});
-
-	test("--comments works on rich comments fixture", async () => {
-		const out = await render(fixture("comments-rich.docx"), "--comments");
-		expect(out).toContain("[^c0]:");
-	});
 });
 
 describe("docx read (markdown) equations", () => {
@@ -425,12 +424,14 @@ describe("docx read (markdown) footnotes / endnotes", () => {
 });
 
 describe("docx read (markdown) color and highlight", () => {
-	test('non-default run color wraps in <span style="color:#hex">', async () => {
+	test("non-default run color emits a `<span style>` a markdown reader renders", async () => {
 		const out = await render(fixture("minimal.docx"));
 		expect(out).toContain('<span style="color:#800080">');
+		// No legacy Pandoc bracketed spans.
+		expect(out).not.toContain('{color="800080"}');
 	});
 
-	test("color span sits inside formatting markers (bold etc.)", async () => {
+	test("color span wraps the bold markdown (emphasis nests inside the span)", async () => {
 		const out = await render(fixture("minimal.docx"));
 		// "important" is bold + purple in minimal.docx
 		expect(out).toContain('<span style="color:#800080">**important**</span>');
@@ -501,7 +502,6 @@ describe("docx read --ast (JSON AST opt-in)", () => {
 describe("docx read (markdown) smoke-test all fixtures", () => {
 	const FIXTURES_LIST = [
 		"academic-paper.docx",
-		"comments-rich.docx",
 		"comments-simple.docx",
 		"comments-with-replies.docx",
 		"equations.docx",

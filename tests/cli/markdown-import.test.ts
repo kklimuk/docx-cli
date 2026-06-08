@@ -515,6 +515,153 @@ describe("docx insert --markdown — CriticMarkup", () => {
 	});
 });
 
+describe("docx insert --markdown — inline-surgery (straddle fix + spans)", () => {
+	test("FIXED TRAP: {++**bold**++} under tracking wraps a bold run in <w:ins>", async () => {
+		// The whole reason for the inline-surgery rewrite. Previously `{++` and
+		// `++}` lived in sibling text nodes around the `strong`, so no critic
+		// node formed and the markers leaked as literal text. Now the markers are
+		// matched across the `strong` sibling, producing a `<w:ins>` whose run
+		// carries `<w:b/>`.
+		const docPath = join(tempWorkspace("md-straddle-ins"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Before {++**bold**++} after.",
+			"--author",
+			"Test",
+		);
+
+		const documentXml = await readPart(docPath, "word/document.xml");
+		// A single <w:ins> wrapping a run that is bold and contains "bold".
+		expect(documentXml).toMatch(
+			/<w:ins[^>]*>[\s\S]*?<w:b\s*\/>[\s\S]*?bold[\s\S]*?<\/w:ins>/,
+		);
+		// The markers themselves must NOT survive as literal text.
+		expect(documentXml).not.toContain("{++");
+		expect(documentXml).not.toContain("++}");
+	});
+
+	test("straddle with nested emphasis: {++pre *em* post++} keeps the *em* run (markers gone)", async () => {
+		// Tracking OFF isolates the straddle fix: the criticInsert must form
+		// (markers consumed) AND keep the inner emphasis. The OLD text-split
+		// plugin couldn't match markers straddling the `emphasis` node, so it
+		// leaked `{++pre`/`post++}` as literal text.
+		const docPath = join(tempWorkspace("md-straddle-em"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Edit {++pre *em* post++} done.",
+		);
+
+		const blocks = await readBlocks(docPath);
+		const runs = (blocks.find((b) => b.id === "p1")?.runs ?? []).filter(
+			(r) => r.type === "text",
+		);
+		expect(runs.map((r) => r.text).join("")).toBe("Edit pre em post done.");
+		expect(runs.find((r) => r.italic)?.text).toBe("em");
+	});
+
+	test("formatted tracked DELETE: {--**gone**--} → <w:del> with <w:delText> (not <w:t>) on the bold run", async () => {
+		// Risk: a <w:t> inside <w:del> is invalid OOXML (Word "unreadable
+		// content"). The delText rename must recurse through the nested bold run.
+		const docPath = join(tempWorkspace("md-straddle-del"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Keep {--**gone**--} text.",
+			"--author",
+			"Test",
+		);
+
+		const documentXml = await readPart(docPath, "word/document.xml");
+		expect(documentXml).toMatch(
+			/<w:del[^>]*>[\s\S]*?<w:b\s*\/>[\s\S]*?<w:delText[^>]*>gone<\/w:delText>[\s\S]*?<\/w:del>/,
+		);
+		// No bare <w:t> carrying the deleted text (would be invalid inside <w:del>).
+		expect(documentXml).not.toMatch(/<w:t[^>]*>gone<\/w:t>/);
+	});
+
+	test("bracketed span [plain]{color=...} applies the color to just that run", async () => {
+		const docPath = join(tempWorkspace("md-span-color"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			'A [plain]{color="FF0000"} word.',
+		);
+
+		const runs = ((await readBlocks(docPath)).find((b) => b.id === "p1")
+			?.runs ?? []) as Array<{ type: string; text?: string; color?: string }>;
+		const text = runs.filter((r) => r.type === "text");
+		expect(text.map((r) => r.text).join("")).toBe("A plain word.");
+		expect(text.find((r) => r.color === "FF0000")?.text).toBe("plain");
+	});
+
+	test("degrade: unbalanced {++ with no close survives as literal text, no <w:ins>, no throw", async () => {
+		const docPath = join(tempWorkspace("md-degrade"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Unbalanced {++ no close here.",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const blocks = await readBlocks(docPath);
+		const text = (blocks.find((b) => b.id === "p1")?.runs ?? [])
+			.filter((r) => r.type === "text")
+			.map((r) => r.text)
+			.join("");
+		expect(text).toBe("Unbalanced {++ no close here.");
+		const documentXml = await readPart(docPath, "word/document.xml");
+		expect(documentXml).not.toContain("<w:ins ");
+	});
+
+	test("code-span exclusion: `{++x++}` stays a literal inline-code run, no critic node", async () => {
+		// Tracking OFF so the only `<w:ins>` that could appear would come from a
+		// (wrongly) parsed critic node inside the code span. The tokenizer treats
+		// `inlineCode` as an opaque atom, so the markers stay literal.
+		const docPath = join(tempWorkspace("md-codespan"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Literal `{++x++}` here.",
+		);
+
+		const blocks = await readBlocks(docPath);
+		const code = (blocks.find((b) => b.id === "p1")?.runs ?? []).find(
+			(r) => r.runStyle === "Code",
+		);
+		expect(code?.text).toBe("{++x++}");
+		const documentXml = await readPart(docPath, "word/document.xml");
+		expect(documentXml).not.toContain("<w:ins ");
+	});
+});
+
 describe("docx edit --markdown", () => {
 	test("single-paragraph replace: pN ← parsed blocks (untracked)", async () => {
 		const docPath = join(tempWorkspace("md-edit-single"), "out.docx");

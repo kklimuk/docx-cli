@@ -22,12 +22,12 @@ const CORE_FIXTURES = [
 	"tables-mutations.docx", // tables + merges + tracked-table revisions (richest)
 	"images.docx", // inserted media parts + inline <w:drawing> picture
 	"footnotes-mutations.docx", // footnotes/endnotes parts authored from scratch
-	"code-blocks.docx", // CodeBlock paragraphs + Code rStyle + lowlight colors
 	"task-lists.docx", // SDT <w14:checkbox> inside list paragraphs (GFM tasks)
 	"task-lists-web.docx", // Word-for-Web shape: Wingdings ☐ bullet + strike-for-done
 	"task-lists-tracked.docx", // tracked checkbox toggles inside SDT content controls
 	"equations.docx", // OMML coverage: <m:f> <m:rad> <m:nary> <m:lim> <m:acc> <m:d> <m:m> <m:eqArr> <m:bar> <m:box> + 70+ formulas (statistics, engineering, chemistry)
-	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`)
+	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`) + CodeBlock/Code rStyle/lowlight colors (incl. 6E7781 comment token, formerly code-blocks.docx)
+	"word-formatted.docx", // run-level rPr (color/themeColor, shd, u@color, vertAlign, smallCaps, caps; p4) + bold/italic edit-preservation layout (p0-p3); absorbed run-formatting.docx
 ] as const;
 
 const EXTRA_FIXTURES = [
@@ -42,8 +42,6 @@ const EXTRA_FIXTURES = [
 	"transparent-wrappers.docx",
 	"sections.docx",
 	"normalize-query.docx",
-	"word-formatted.docx",
-	"tables.docx",
 ] as const;
 
 const FIXTURES = Bun.env.DOCX_LO_ALL

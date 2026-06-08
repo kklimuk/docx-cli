@@ -1,4 +1,4 @@
-import { Comments, CommentsError } from "@core";
+import { Comments, CommentsError, resolveAuthor } from "@core";
 import {
 	EXIT,
 	fail,
@@ -20,7 +20,7 @@ Required:
   --text TEXT       Reply body
 
 Optional:
-  --author NAME     Author name (default: $DOCX_AUTHOR)
+  --author NAME     Author name (default: $DOCX_AUTHOR, else "Reviewer")
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be added; do not write the file
   -v, --verbose     Print the full success ack JSON
@@ -73,8 +73,7 @@ export async function run(args: string[]): Promise<number> {
 	const parentNumericId = parentInput.startsWith("c")
 		? parentInput.slice(1)
 		: parentInput;
-	const author =
-		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
+	const author = resolveAuthor(parsed.values.author as string | undefined);
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {

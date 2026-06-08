@@ -25,10 +25,11 @@ import {
 import { w } from "../jsx";
 import { NoteBody, noteConfig, TrackedNoteBody } from "../notes";
 import { XmlNode } from "../parser";
+import { getPageContentWidthEmu } from "../sections";
 import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
-import { remarkCriticMarkup } from "./critic";
 import { MarkdownImportError } from "./errors";
 import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
+import { parseDocBaseNote, remarkInlineSurgery } from "./inline-surgery";
 import { walkRoot } from "./walker";
 
 /** Cross-cutting lens over "import this markdown source into the document."
@@ -61,7 +62,13 @@ export class MarkdownImport {
 			stripImages?: boolean;
 		} = {},
 	): Promise<XmlNode[]> {
-		const tree = parseToMdast(source);
+		// A leading `<!-- docx:base … -->` note (emitted by `read`) declares the
+		// document's ubiquitous font/size; strip it off and seed every run with it
+		// so `read → create` restores what read omitted. Absent for hand-authored
+		// markdown and for fragments piped into insert/edit (those blend via the
+		// target doc's own formatting instead).
+		const base = parseDocBaseNote(source);
+		const tree = parseToMdast(base ? base.body : source);
 		if (options.stripImages) stripImageNodes(tree);
 
 		const tracked = this.document.isTrackChangesEnabled();
@@ -74,6 +81,7 @@ export class MarkdownImport {
 			imageCache: new Map(),
 			definitions: collectDefinitions(tree),
 			relationships: options.relationships ?? this.document.relationships,
+			baselineFormat: base?.format,
 		};
 
 		if (tracked) {
@@ -104,9 +112,9 @@ function parseToMdast(source: string): Root {
 		.use(remarkParse)
 		.use(remarkGfm)
 		.use(remarkMath)
-		.use(remarkCriticMarkup);
+		.use(remarkInlineSurgery);
 	const tree = processor.parse(source);
-	// `runSync` applies the transformer plugins (remarkCriticMarkup is the only
+	// `runSync` applies the transformer plugins (remarkInlineSurgery is the only
 	// transformer in our pipeline; remarkParse/Gfm/Math register parser
 	// extensions that already ran during `.parse`). It returns the same tree
 	// mutated in place; we cast back to `Root` because unified's typing keeps
@@ -265,6 +273,9 @@ function buildRichNoteBody(
 	const noteCtx: WalkContext = {
 		...ctx,
 		relationships: notesView.ensureRelationships(),
+		// The body baseline (e.g. 8pt) must not leak into footnote runs — their
+		// smaller size comes from the FootnoteText style, not per-run formatting.
+		baselineFormat: undefined,
 	};
 	const leadingSpace = (
 		<w.r>
@@ -406,7 +417,11 @@ async function loadAndRegisterImage(
 		}
 		throw error;
 	}
-	const extent = computeExtentEmu(source, {});
+	const extent = computeExtentEmu(
+		source,
+		{},
+		getPageContentWidthEmu(ctx.document),
+	);
 	if (!extent) {
 		throw new MarkdownImportError(
 			"USAGE",
@@ -467,7 +482,11 @@ async function tryReuseImageByHash(
 	const source: ImageSource = await loadImageSource(
 		`data:${existing.contentType};base64,${Buffer.from(bytes).toString("base64")}`,
 	);
-	const extent = computeExtentEmu(source, {});
+	const extent = computeExtentEmu(
+		source,
+		{},
+		getPageContentWidthEmu(ctx.document),
+	);
 	if (!extent) {
 		throw new MarkdownImportError(
 			"IMAGE_SOURCE",

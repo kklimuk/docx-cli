@@ -1,4 +1,8 @@
 import { isSectionType, type Run, type SectionType } from "@core";
+import {
+	firstInvalidRunFormat,
+	type RunFormatEnums,
+} from "@core/run-formatting";
 import { fail } from "./respond";
 
 /** Parse `--task` value into a boolean (checked) or null if unrecognized.
@@ -31,7 +35,28 @@ export async function parseRunsArg(json: string): Promise<Run[] | number> {
 	if (!Array.isArray(parsed)) {
 		return fail("USAGE", "--runs must be a JSON array of Run objects");
 	}
-	return parsed as Run[];
+	const runs = parsed as Run[];
+	// Enum-valued run formatting (highlight/underline/vertAlign) must be valid
+	// or Word writes schema-invalid XML and silently drops it. The markdown
+	// `[text]{attrs}` path validates the same way; this closes the gap for the
+	// raw `--runs` ingress (shared sets in `@core/run-formatting`).
+	for (const run of runs) {
+		if (
+			run !== null &&
+			typeof run === "object" &&
+			(run as { type?: unknown }).type === "text"
+		) {
+			const invalid = firstInvalidRunFormat(run as RunFormatEnums);
+			if (invalid) {
+				return fail(
+					"USAGE",
+					`Invalid ${invalid.field} "${invalid.value}" in a --runs text run`,
+					`Use ${invalid.valid}.`,
+				);
+			}
+		}
+	}
+	return runs;
 }
 
 type RawValues = Record<
@@ -89,17 +114,19 @@ export function normalizeAndDedupCommentIds(rawIds: string[]): string[] {
 	return ordered;
 }
 
-/** Read a JSONL file (or stdin via `-`) and return the `id` field of each
- *  entry. Each line must be `{"id": "cN"}`; empty lines skipped, malformed
- *  entries throw with line context so the caller can surface the failure
- *  via `fail("USAGE", ...)`. Shared by `comments delete --batch` and
- *  `comments resolve --batch`. */
-export async function readJsonlIds(source: string): Promise<string[]> {
+/** Read a JSONL file (or stdin via `-`) into one parsed object per non-empty
+ *  line. Each line must be a JSON object (not an array/scalar); empty lines are
+ *  skipped, malformed lines throw with line context so the caller can surface
+ *  the failure via `fail("USAGE", ...)`. Shared by every `--batch` ingress
+ *  (`comments add/delete/resolve`, `edit`, `insert`, `replace`). */
+export async function readJsonlObjects(
+	source: string,
+): Promise<Record<string, unknown>[]> {
 	const raw =
 		source === "-"
 			? await new Response(Bun.stdin.stream()).text()
 			: await Bun.file(source).text();
-	const ids: string[] = [];
+	const objects: Record<string, unknown>[] = [];
 	const lines = raw.split("\n");
 	for (let index = 0; index < lines.length; index++) {
 		const lineRaw = lines[index];
@@ -120,9 +147,21 @@ export async function readJsonlIds(source: string): Promise<string[]> {
 		) {
 			throw new Error(`line ${index + 1}: expected a JSON object`);
 		}
-		const entry = parsed as { id?: string };
+		objects.push(parsed as Record<string, unknown>);
+	}
+	return objects;
+}
+
+/** Read a JSONL file (or stdin via `-`) and return the `id` field of each
+ *  entry. Each line must be `{"id": "cN"}`; malformed entries throw with line
+ *  context. Shared by `comments delete --batch` and `comments resolve --batch`. */
+export async function readJsonlIds(source: string): Promise<string[]> {
+	const objects = await readJsonlObjects(source);
+	const ids: string[] = [];
+	for (let index = 0; index < objects.length; index++) {
+		const entry = objects[index] as { id?: unknown };
 		if (typeof entry.id !== "string" || entry.id.length === 0) {
-			throw new Error(`line ${index + 1}: missing "id"`);
+			throw new Error(`entry ${index}: missing "id"`);
 		}
 		ids.push(entry.id);
 	}

@@ -47,9 +47,11 @@ export {
 	CommentsError,
 } from "./comments";
 export {
+	CLEARABLE_ATTRS,
 	Edit,
 	EditError,
 	type ParagraphContentSpec,
+	resolveClearTags,
 } from "./edit";
 export {
 	Insert,

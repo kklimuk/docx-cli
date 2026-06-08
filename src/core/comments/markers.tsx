@@ -401,6 +401,75 @@ function flushAtCurrentOffset(
 	}
 }
 
+export type ParagraphCommentMarker = { id: string; kind: "start" | "end" };
+
+/** Snapshot the comment range markers (`<w:commentRangeStart>` /
+ *  `<w:commentRangeEnd>`) and reference runs that live directly inside
+ *  `paragraph`, **removing them** from the paragraph. Used by `edit` to lift a
+ *  paragraph's comment anchors out of the way before its content is rebuilt,
+ *  so they can be re-placed afterward instead of collapsing to a zero-length
+ *  range (the bug where editing a commented paragraph orphaned the comment).
+ *  Returns one entry per marker (a fully-enclosed comment yields a `start` and
+ *  an `end`; a cross-paragraph half yields just one). */
+export function extractCommentMarkers(
+	paragraph: XmlNode,
+): ParagraphCommentMarker[] {
+	const found: ParagraphCommentMarker[] = [];
+	function walk(node: XmlNode): void {
+		const kept: XmlNode[] = [];
+		for (const child of node.children) {
+			if (child.tag === "w:commentRangeStart") {
+				const id = child.getAttribute("w:id");
+				if (id) found.push({ id, kind: "start" });
+				continue;
+			}
+			if (child.tag === "w:commentRangeEnd") {
+				const id = child.getAttribute("w:id");
+				if (id) found.push({ id, kind: "end" });
+				continue;
+			}
+			if (child.tag === "w:r" && runHasCommentReference(child)) continue;
+			if (isRunBearingWrapper(child.tag)) walk(child);
+			kept.push(child);
+		}
+		node.children = kept;
+	}
+	walk(paragraph);
+	return found;
+}
+
+function runHasCommentReference(run: XmlNode): boolean {
+	return run.children.some((child) => child.tag === "w:commentReference");
+}
+
+/** Re-place comment markers snapshotted by {@link extractCommentMarkers} so they
+ *  bracket `paragraph`'s (rebuilt) content: each `start` re-anchors to the
+ *  paragraph start, each `end` to the paragraph end — so a comment that was on
+ *  the paragraph now spans the new content rather than collapsing. Returns the
+ *  ids that could NOT be re-anchored because the new paragraph has no text
+ *  (caller should mark those comments resolved). Offsets use the `current`
+ *  view so the range covers all runs regardless of tracked-change wrappers. */
+export function reanchorCommentMarkers(
+	paragraph: XmlNode,
+	markers: ParagraphCommentMarker[],
+	view: FindView = "current",
+): string[] {
+	if (markers.length === 0) return [];
+	const total = paragraphTextLength(paragraph, view);
+	if (total === 0) return [...new Set(markers.map((marker) => marker.id))];
+	const specs: MarkerSpec[] = markers.map((marker) =>
+		marker.kind === "start"
+			? { offset: 0, node: commentRangeStartMarker(marker.id) }
+			: {
+					offset: total,
+					node: commentRangeEndMarker(marker.id),
+					follower: commentReferenceRun(marker.id),
+				},
+	);
+	placeMarkersInParagraph(paragraph, specs, view);
+	return [];
+}
+
 export type CommentBodyOptions = {
 	id: string;
 	author: string;

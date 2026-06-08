@@ -1,8 +1,24 @@
 import type { Document } from "../ast/document";
 import type { BlockRangeReference, BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
-import { Paragraph, type ParagraphOptions } from "../blocks";
+import {
+	applyParagraphOptionsInPlace,
+	Paragraph,
+	type ParagraphOptions,
+} from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
+import { Comments } from "../comments";
+import { clearFormatting as clearRunFormatting } from "./clear-formatting";
+
+export { CLEARABLE_ATTRS, resolveClearTags } from "./clear-formatting";
+
+import {
+	extractCommentMarkers,
+	type ParagraphCommentMarker,
+	paragraphTextLength,
+	reanchorCommentMarkers,
+} from "../comments/markers";
+import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
 import type { XmlNode } from "../parser";
 import { applyColumns, applySectionType, wrapSectPrChange } from "../sections";
 import { flipCheckboxTracked, flipCheckboxUntracked } from "../task-list";
@@ -32,7 +48,7 @@ export class Edit {
 	section(
 		blockRef: BlockReference,
 		spec: { columns?: number; sectionType?: SectionType },
-		opts: { authorFlag?: string } = {},
+		opts: { authorFlag?: string; track?: boolean } = {},
 	): void {
 		if (blockRef.node.tag !== "w:sectPr") {
 			throw new EditError(
@@ -40,7 +56,7 @@ export class Edit {
 				`Section locator did not resolve to a section break`,
 			);
 		}
-		if (this.document.isTrackChangesEnabled()) {
+		if (opts.track ?? this.document.isTrackChangesEnabled()) {
 			wrapSectPrChange(
 				blockRef.node,
 				new TrackChanges(this.document).mintMeta(opts.authorFlag),
@@ -53,7 +69,7 @@ export class Edit {
 	taskToggle(
 		blockRef: BlockReference,
 		checked: boolean,
-		opts: { authorFlag?: string } = {},
+		opts: { authorFlag?: string; track?: boolean } = {},
 	): void {
 		if (blockRef.node.tag !== "w:p") {
 			throw new EditError(
@@ -61,7 +77,7 @@ export class Edit {
 				"--task requires a paragraph locator; got a non-paragraph block",
 			);
 		}
-		const tracked = this.document.isTrackChangesEnabled();
+		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
 		const ok = tracked
 			? flipCheckboxTracked(
 					blockRef.node,
@@ -81,7 +97,7 @@ export class Edit {
 	paragraph(
 		blockRef: BlockReference,
 		spec: ParagraphContentSpec,
-		opts: { authorFlag?: string; noFormatting?: boolean } = {},
+		opts: { authorFlag?: string; noFormatting?: boolean; track?: boolean } = {},
 	): void {
 		const targetIndex = blockRef.parent.indexOf(blockRef.node);
 		if (targetIndex === -1) {
@@ -98,7 +114,12 @@ export class Edit {
 			this.document.ensureStyles().ensureReferencedRunStyles(spec.runs);
 		}
 
-		const tracked = this.document.isTrackChangesEnabled();
+		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
+
+		// Lift any comment range markers out of the old paragraph BEFORE its
+		// content is rebuilt, so they can be re-anchored to the new content
+		// instead of collapsing to a zero-length range (the orphaned-comment bug).
+		const commentMarkers = extractCommentMarkers(blockRef.node);
 
 		if (canPreserveFormatting(spec, opts.noFormatting ?? false)) {
 			applyFormattingPreservingEdit(
@@ -109,6 +130,7 @@ export class Edit {
 				opts.authorFlag,
 				tracked,
 			);
+			this.reanchorComments(blockRef.node, commentMarkers);
 			return;
 		}
 
@@ -116,6 +138,17 @@ export class Edit {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 		const newParagraphs = buildNewParagraphs(spec);
+		inheritParagraphStyleIfPlain(
+			blockRef.node,
+			newParagraphs,
+			spec.paragraphOptions.style,
+		);
+		const anchorTarget = newParagraphs[0];
+		if (anchorTarget?.tag === "w:p") {
+			this.reanchorComments(anchorTarget, commentMarkers);
+		} else {
+			this.resolveComments(commentMarkers);
+		}
 
 		if (tracked) {
 			applyTrackedRangeReplace(
@@ -136,6 +169,95 @@ export class Edit {
 		}
 	}
 
+	/** Character-span replace: `pN:S-E` (or a cell paragraph `tN:rRcC:pK:S-E`).
+	 * Replaces exactly the text in `[start, end)` with `replacement`, leaving the
+	 * paragraph's `<w:pPr>` and every other run untouched. The replacement run
+	 * inherits the `<w:rPr>` of the run at the span start (so font/size/color/etc.
+	 * survive) — this is the keystone that lets `find → edit --at <span>` work
+	 * without rewriting the whole paragraph. Reuses `replaceSpanInParagraph`, the
+	 * same machinery `replace` uses; under tracking the cut is `<w:del>` and the
+	 * replacement `<w:ins>`. Offsets are accepted-view, matching `find`'s output. */
+	span(
+		blockRef: BlockReference,
+		span: { start: number; end: number },
+		replacement: string,
+		opts: { authorFlag?: string; track?: boolean } = {},
+	): void {
+		if (blockRef.node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"A character-span locator (pN:S-E) edits text inside a paragraph; this locator does not resolve to a paragraph.",
+			);
+		}
+		const length = paragraphTextLength(blockRef.node, "accepted");
+		if (span.end > length) {
+			throw new EditError(
+				"INVALID_LOCATOR",
+				`Span ${span.start}-${span.end} is out of range (the paragraph has ${length} characters)`,
+				'Run `docx find FILE "phrase"` to get an exact span locator.',
+			);
+		}
+		const tracked: TrackedReplaceOptions | undefined =
+			(opts.track ?? this.document.isTrackChangesEnabled())
+				? {
+						meta: {
+							author: resolveAuthor(opts.authorFlag),
+							date: resolveDate(),
+						},
+						allocator: new TrackChanges(this.document).createAllocator(),
+					}
+				: undefined;
+		replaceSpanInParagraph(
+			blockRef.node,
+			span,
+			replacement,
+			tracked,
+			"accepted",
+		);
+	}
+
+	/** Re-place the comment markers snapshotted before an edit so they bracket
+	 *  the rebuilt paragraph; any comment whose anchor text is entirely gone
+	 *  (empty new paragraph) is marked resolved instead. */
+	private reanchorComments(
+		paragraph: XmlNode,
+		markers: ParagraphCommentMarker[],
+	): void {
+		if (markers.length === 0) return;
+		const orphaned = reanchorCommentMarkers(paragraph, markers, "current");
+		this.resolveComments(
+			markers.filter((marker) => orphaned.includes(marker.id)),
+		);
+	}
+
+	/** Mark the comments behind these markers resolved (used when an edit
+	 *  removes the anchor's content and there's nothing left to bracket). */
+	private resolveComments(markers: ParagraphCommentMarker[]): void {
+		const ids = [...new Set(markers.map((marker) => marker.id))].filter((id) =>
+			this.document.comments?.findById(id),
+		);
+		if (ids.length > 0) new Comments(this.document).resolve(ids, true);
+	}
+
+	/** Strip run-level formatting (the `tags` set names `<w:rPr>` child elements)
+	 *  from a whole paragraph (`span` null) or just the runs overlapping a
+	 *  character span — keeping the text. The inverse of authoring formatting;
+	 *  pairs with `find --highlight … | edit --clear highlight`. Mutates rPr in
+	 *  place so unmodelled run properties survive. */
+	clearFormatting(
+		blockRef: BlockReference,
+		span: { start: number; end: number } | null,
+		tags: Set<string>,
+	): void {
+		if (blockRef.node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"--clear requires a paragraph or character-span locator",
+			);
+		}
+		clearRunFormatting(blockRef.node, span, tags);
+	}
+
 	/** Range replace: `pN-pM`. No formatting preservation (Word's empirical
 	 * model for paragraph-range replace is "del all old, ins all new"; no
 	 * cross-paragraph LCS, and we match it). Rejects tracked ranges that span
@@ -145,7 +267,7 @@ export class Edit {
 	range(
 		rangeRef: BlockRangeReference,
 		spec: ParagraphContentSpec,
-		opts: { authorFlag?: string } = {},
+		opts: { authorFlag?: string; track?: boolean } = {},
 	): void {
 		this.document
 			.ensureStyles()
@@ -157,7 +279,7 @@ export class Edit {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 
-		const tracked = this.document.isTrackChangesEnabled();
+		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
 		if (tracked) {
 			try {
 				assertParagraphOnlyTrackedRange(rangeRef);
@@ -231,6 +353,7 @@ type TextFormatting = {
  * err.hint)` directly — no cast, full type-check coverage. */
 export type EditErrorCode =
 	| "USAGE"
+	| "INVALID_LOCATOR"
 	| "BLOCK_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT";
 
@@ -256,6 +379,10 @@ function canPreserveFormatting(
 ): spec is Extract<ParagraphContentSpec, { kind: "text" }> {
 	if (noFormatting) return false;
 	if (spec.kind !== "text") return false;
+	// Multi-line text becomes a paragraph with <w:br/>/<w:tab/> runs (built via
+	// `Paragraph`); the word-level preserve diff has no notion of those, so route
+	// it to the fresh-run builder instead of leaking a literal \n into a <w:t>.
+	if (spec.text.includes("\n") || spec.text.includes("\t")) return false;
 	const format = spec.format;
 	if (format.color || format.bold || format.italic) return false;
 	return true;
@@ -290,6 +417,32 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 		return spec.blocks;
 	}
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
+}
+
+/** Decision 2 (style preservation): when a whole-paragraph edit replaces a
+ *  paragraph with a single PLAIN paragraph (no explicit `--style`, and the new
+ *  content didn't set its own `<w:pStyle>` — e.g. `--markdown "Q3 Title"` on a
+ *  Heading, or `--runs`/`--text --bold`), inherit the old paragraph's style so
+ *  re-titling a heading keeps it a heading. `--text` without overrides already
+ *  preserves style via the formatting-preserving path; this covers the other
+ *  paths. Markdown that carries its own block style (a `#` heading, a list) sets
+ *  `<w:pStyle>` itself, so the guard below leaves it alone. */
+function inheritParagraphStyleIfPlain(
+	oldParagraph: XmlNode,
+	newParagraphs: XmlNode[],
+	explicitStyle: string | undefined,
+): void {
+	if (explicitStyle) return;
+	if (newParagraphs.length !== 1) return;
+	const newParagraph = newParagraphs[0];
+	if (!newParagraph || newParagraph.tag !== "w:p") return;
+	if (newParagraph.findChild("w:pPr")?.findChild("w:pStyle")) return;
+	const oldStyle = oldParagraph
+		.findChild("w:pPr")
+		?.findChild("w:pStyle")
+		?.getAttribute("w:val");
+	if (!oldStyle) return;
+	applyParagraphOptionsInPlace(newParagraph.children, { style: oldStyle });
 }
 
 function makeMetaMinter(

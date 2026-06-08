@@ -18,6 +18,7 @@ export type BaselineStyleId =
 	| "CodeBlock"
 	| "ListParagraph"
 	| "QuoteListParagraph"
+	| "Caption"
 	| "Hyperlink"
 	| "FootnoteReference"
 	| "FootnoteText"
@@ -95,6 +96,28 @@ export class StylesView {
 		return root
 			.findChildren("w:style")
 			.find((child) => child.getAttribute("w:styleId") === styleId);
+	}
+
+	/** Default run font size in half-points, from `<w:docDefaults><w:rPrDefault>`
+	 * (falling back to the Normal style's run properties). `read` uses it as the
+	 * baseline size when no stronger per-run majority emerges, so a Word doc that
+	 * stamps an explicit `<w:sz>` matching the default on most runs still reads
+	 * clean (the note declares it once; the runs omit it). */
+	defaultSizeHalfPoints(): number | undefined {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return undefined;
+		const docDefault = root
+			.findChild("w:docDefaults")
+			?.findChild("w:rPrDefault")
+			?.findChild("w:rPr")
+			?.findChild("w:sz")
+			?.getAttribute("w:val");
+		if (docDefault) return Number(docDefault);
+		const normal = this.getStyle("Normal")
+			?.findChild("w:rPr")
+			?.findChild("w:sz")
+			?.getAttribute("w:val");
+		return normal ? Number(normal) : undefined;
 	}
 
 	/** Ensure the named baseline style is defined. Seeds `Normal` first so any
@@ -234,6 +257,7 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 	CodeBlock: () => <CodeBlockStyle />,
 	ListParagraph: () => <ListParagraphStyle />,
 	QuoteListParagraph: () => <QuoteListParagraphStyle />,
+	Caption: () => <CaptionStyle />,
 	Hyperlink: () => <HyperlinkStyle />,
 	FootnoteReference: () => <FootnoteReferenceStyle />,
 	FootnoteText: () => <FootnoteTextStyle />,
@@ -399,6 +423,30 @@ function QuoteListParagraphStyle(): XmlNode {
 			<w.qFormat />
 			<w.rPr>
 				<w.i />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function CaptionStyle(): XmlNode {
+	// Word's built-in "caption" paragraph style — the one Insert Caption applies
+	// under figures/tables. Italic, smaller (9pt), accent-blue text, with a touch
+	// of spacing. A caption-styled paragraph is what makes a figure label show up
+	// in a Table of Figures, so emitting this (rather than ad-hoc italic text) is
+	// what makes `--caption` produce a native, reference-able caption.
+	return (
+		<w.style w-type="paragraph" w-styleId="Caption">
+			<w.name w-val="caption" />
+			<w.basedOn w-val="Normal" />
+			<w.next w-val="Normal" />
+			<w.qFormat />
+			<w.pPr>
+				<w.spacing w-before="0" w-after="200" />
+			</w.pPr>
+			<w.rPr>
+				<w.i />
+				<w.color w-val="44546A" w-themeColor="text2" />
+				<w.sz w-val="18" />
 			</w.rPr>
 		</w.style>
 	);

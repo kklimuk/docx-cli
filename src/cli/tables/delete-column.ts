@@ -12,6 +12,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	resolveTracked,
 	respond,
 	respondAck,
 	setVerboseAck,
@@ -58,6 +59,7 @@ export async function run(args: string[]): Promise<number> {
 		{
 			at: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -118,7 +120,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const tracking = document.isTrackChangesEnabled();
+	const tracking = resolveTracked(document, parsed.values.track);
 	const outputPath = parsed.values.output as string | undefined;
 
 	if (parsed.values["dry-run"]) {

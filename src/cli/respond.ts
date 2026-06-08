@@ -159,6 +159,19 @@ export async function openOrFail(path: string): Promise<Document | number> {
 	}
 }
 
+/** Resolve whether one mutating command should emit tracked changes. The
+ *  per-command `--track` flag forces tracking on for that command regardless
+ *  of the document's global `<w:trackChanges/>` setting; without the flag, the
+ *  global setting decides. Every mutator (edit/insert/delete/replace, the note
+ *  verbs, images delete, the tables verbs) resolves through this one helper so
+ *  `--track` behaves identically everywhere. */
+export function resolveTracked(
+	document: Document,
+	trackFlag: unknown,
+): boolean {
+	return Boolean(trackFlag) || document.isTrackChangesEnabled();
+}
+
 export async function resolveBlockOrFail(
 	document: Document,
 	locator: string,

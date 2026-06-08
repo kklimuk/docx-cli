@@ -1,0 +1,610 @@
+import {
+	type BlockReference,
+	CLEARABLE_ATTRS,
+	type Document,
+	Edit,
+	EditError,
+	LocatorParseError,
+	LocatorResolveError,
+	locatorToBlockTarget,
+	MarkdownImport,
+	MarkdownImportError,
+	parseLocator,
+	type Run,
+	resolveClearTags,
+} from "@core";
+import type { ParagraphOptions } from "@core/blocks";
+import type { XmlNode } from "@core/parser";
+import {
+	firstInvalidRunFormat,
+	type RunFormatEnums,
+} from "@core/run-formatting";
+import { parseTaskFlag, readJsonlObjects } from "../parse-helpers";
+import {
+	type ErrorCode,
+	EXIT,
+	fail,
+	openOrFail,
+	resolveTracked,
+	respond,
+	respondAck,
+} from "../respond";
+
+type RawValues = Record<
+	string,
+	string | boolean | (string | boolean)[] | undefined
+>;
+
+/** `docx edit --batch FILE.jsonl`: apply many edits from one read. Each JSONL
+ *  line is `{ at, <one content field> }` — content is `text`, `clear`,
+ *  `markdown`, `runs`, `code`, or `task` (plus per-entry `style`/`alignment`/
+ *  `color`/`bold`/`italic`/`author`). All entries resolve against the document
+ *  AS READ — we hold live node refs, so an edit to one paragraph never
+ *  invalidates another's locator. Same-paragraph spans apply in descending
+ *  offset order (so earlier offsets stay valid); a paragraph may take one
+ *  whole-paragraph edit OR several non-overlapping spans, not both. Range
+ *  (pN-pM), section (sN), and equation (eqN) edits are done one at a time. */
+export async function runEditBatch(
+	filePath: string,
+	batchSource: string,
+	values: RawValues,
+): Promise<number> {
+	const conflicting = SINGLE_SHOT_FLAGS.find(
+		(flag) => values[flag] !== undefined && values[flag] !== false,
+	);
+	if (conflicting) {
+		return fail(
+			"USAGE",
+			`--batch reads each edit from the JSONL file; don't also pass --${conflicting} on the CLI`,
+			"Put per-entry fields (at, text, clear, markdown, runs, code, task, style, …) on each JSONL line.",
+		);
+	}
+
+	const authorFlag = values.author as string | undefined;
+	const trackFlag = Boolean(values.track);
+	const outputPath = values.output as string | undefined;
+	const dryRun = Boolean(values["dry-run"]);
+	const noFormatting = Boolean(values["no-formatting"]);
+
+	let rawEntries: Record<string, unknown>[];
+	try {
+		rawEntries = await readJsonlObjects(batchSource);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail("USAGE", `Failed to read batch: ${message}`);
+	}
+	if (rawEntries.length === 0) return fail("USAGE", "Batch file is empty");
+
+	const document = await openOrFail(filePath);
+	if (typeof document === "number") return document;
+
+	const track = resolveTracked(document, trackFlag);
+
+	let resolved: ResolvedEntry[];
+	try {
+		resolved = [];
+		for (let index = 0; index < rawEntries.length; index++) {
+			const raw = rawEntries[index];
+			if (raw === undefined) continue;
+			resolved.push(
+				await resolveEntry(document, raw, index, {
+					authorFlag,
+					noFormatting,
+					track,
+				}),
+			);
+		}
+	} catch (error) {
+		if (error instanceof EntryError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	let ordered: ResolvedEntry[];
+	try {
+		ordered = orderEntries(resolved);
+	} catch (error) {
+		if (error instanceof EntryError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	if (dryRun) {
+		await respond({
+			operation: "edit",
+			dryRun: true,
+			path: filePath,
+			batch: resolved.map((entry) => ({ locator: entry.locatorString })),
+			...(outputPath ? { output: outputPath } : {}),
+		});
+		return EXIT.OK;
+	}
+
+	for (const entry of ordered) {
+		try {
+			entry.apply();
+		} catch (error) {
+			if (error instanceof EditError) {
+				return fail(
+					error.code,
+					`entry ${entry.index} (${entry.locatorString}): ${error.message}`,
+					error.hint,
+				);
+			}
+			throw error;
+		}
+	}
+
+	await document.save(outputPath);
+
+	await respondAck({
+		ok: true,
+		operation: "edit",
+		path: outputPath ?? filePath,
+		count: resolved.length,
+		batch: resolved.map((entry) => ({ locator: entry.locatorString })),
+	});
+	return EXIT.OK;
+}
+
+/** Single-shot flags that have no meaning under `--batch` (each entry carries
+ *  its own). Booleans default to `false` from parseArgs, so the caller checks
+ *  `!== false` too. */
+const SINGLE_SHOT_FLAGS = [
+	"at",
+	"text",
+	"runs",
+	"code",
+	"code-file",
+	"markdown",
+	"markdown-file",
+	"clear",
+	"task",
+	"equation",
+	"display",
+	"inline",
+	"columns",
+	"type",
+	"style",
+	"alignment",
+	"color",
+	"bold",
+	"italic",
+] as const;
+
+const CONTENT_KEYS = [
+	"text",
+	"clear",
+	"markdown",
+	"runs",
+	"code",
+	"task",
+] as const;
+
+type EntryOptions = {
+	authorFlag?: string;
+	noFormatting: boolean;
+	track: boolean;
+};
+
+type ResolvedEntry = {
+	index: number;
+	locatorString: string;
+	/** The target paragraph node — entries are grouped by it to detect
+	 *  conflicting edits on one paragraph and to order same-paragraph spans. */
+	node: XmlNode;
+	span: { start: number; end: number } | null;
+	/** Performs the mutation via the `Edit` lens. Throws `EditError`. */
+	apply: () => void;
+};
+
+/** Validate one JSONL entry and produce its `apply` closure. Markdown content
+ *  is pre-built here (async) so `apply` stays synchronous. Throws `EntryError`
+ *  with the entry index for any malformed input. */
+async function resolveEntry(
+	document: Document,
+	raw: Record<string, unknown>,
+	index: number,
+	opts: EntryOptions,
+): Promise<ResolvedEntry> {
+	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
+	if (present.length === 0) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}`,
+		);
+	}
+	if (present.length > 1) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
+		);
+	}
+	const kind = present[0] as (typeof CONTENT_KEYS)[number];
+
+	const at = raw.at;
+	if (typeof at !== "string" || at.length === 0) {
+		throw new EntryError("USAGE", `entry ${index}: "at" is required`);
+	}
+	if (/^s\d+$/.test(at)) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: section edits (${at}) aren't supported in --batch`,
+			"Edit sections individually with `docx edit --at sN`.",
+		);
+	}
+	if (/^eq\d+$/.test(at)) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: equation edits (${at}) aren't supported in --batch`,
+			"Edit equations individually with `docx edit --at eqN`.",
+		);
+	}
+	try {
+		parseLocator(at);
+	} catch (error) {
+		if (error instanceof LocatorParseError) {
+			throw new EntryError(
+				"INVALID_LOCATOR",
+				`entry ${index}: ${error.message}`,
+			);
+		}
+		throw error;
+	}
+	const target = locatorToBlockTarget(parseLocator(at));
+	if (!target) {
+		throw new EntryError(
+			"INVALID_LOCATOR",
+			`entry ${index}: "${at}" is not a paragraph, span, or cell-paragraph locator`,
+			"Batch edits address pN, pN:S-E, or tN:rRcC:pK[:S-E]. Edit ranges (pN-pM), sections (sN), and equations (eqN) one at a time.",
+		);
+	}
+
+	let blockRef: BlockReference;
+	try {
+		blockRef = document.body.resolveBlock(target.blockId);
+	} catch (error) {
+		if (error instanceof LocatorResolveError) {
+			throw new EntryError(
+				"BLOCK_NOT_FOUND",
+				`entry ${index}: ${error.message}`,
+			);
+		}
+		throw error;
+	}
+
+	const span = target.span ?? null;
+	const apply = await buildApply(
+		document,
+		raw,
+		index,
+		kind,
+		blockRef,
+		span,
+		opts,
+	);
+	return { index, locatorString: at, node: blockRef.node, span, apply };
+}
+
+/** Build the mutation closure for an entry once its locator is resolved. Spans
+ *  accept only `text`/`clear`; whole paragraphs accept every content kind. */
+async function buildApply(
+	document: Document,
+	raw: Record<string, unknown>,
+	index: number,
+	kind: (typeof CONTENT_KEYS)[number],
+	blockRef: BlockReference,
+	span: { start: number; end: number } | null,
+	opts: EntryOptions,
+): Promise<() => void> {
+	const author = typeof raw.author === "string" ? raw.author : opts.authorFlag;
+
+	if (span) {
+		if (kind === "text") {
+			const text = requireString(raw.text, index, "text");
+			rejectSpanFormatFlags(raw, index);
+			return () =>
+				new Edit(document).span(blockRef, span, text, {
+					authorFlag: author,
+					track: opts.track,
+				});
+		}
+		if (kind === "clear") {
+			const tags = resolveClearOrThrow(raw.clear, index);
+			return () => new Edit(document).clearFormatting(blockRef, span, tags);
+		}
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: a character span (${raw.at}) supports only "text" or "clear"`,
+			"Use a whole-paragraph locator (pN) for markdown/runs/code/task.",
+		);
+	}
+
+	if (kind === "text") {
+		const text = requireString(raw.text, index, "text");
+		const format = readTextFormat(raw, index);
+		const paragraphOptions = readParagraphOptions(raw, index);
+		return () =>
+			new Edit(document).paragraph(
+				blockRef,
+				{ kind: "text", text, format, paragraphOptions },
+				{
+					authorFlag: author,
+					noFormatting: opts.noFormatting,
+					track: opts.track,
+				},
+			);
+	}
+	if (kind === "clear") {
+		const tags = resolveClearOrThrow(raw.clear, index);
+		return () => new Edit(document).clearFormatting(blockRef, null, tags);
+	}
+	if (kind === "task") {
+		const taskRaw = requireString(raw.task, index, "task");
+		const checked = parseTaskFlag(taskRaw);
+		if (checked === null) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: "task" must be "checked" or "unchecked", got "${taskRaw}"`,
+			);
+		}
+		return () =>
+			new Edit(document).taskToggle(blockRef, checked, {
+				authorFlag: author,
+				track: opts.track,
+			});
+	}
+	if (kind === "runs") {
+		const runs = readRuns(raw.runs, index);
+		const paragraphOptions = readParagraphOptions(raw, index);
+		return () =>
+			new Edit(document).paragraph(
+				blockRef,
+				{ kind: "runs", runs, paragraphOptions },
+				{ authorFlag: author, track: opts.track },
+			);
+	}
+	if (kind === "code") {
+		const content = requireString(raw.code, index, "code");
+		const language =
+			typeof raw.language === "string" ? raw.language : undefined;
+		const paragraphOptions = readParagraphOptions(raw, index);
+		return () =>
+			new Edit(document).paragraph(
+				blockRef,
+				{
+					kind: "code",
+					content,
+					...(language ? { language } : {}),
+					paragraphOptions,
+				},
+				{ authorFlag: author, track: opts.track },
+			);
+	}
+	// kind === "markdown" — pre-build blocks now so apply stays synchronous.
+	const source = requireString(raw.markdown, index, "markdown");
+	const paragraphOptions = readParagraphOptions(raw, index);
+	let blocks: XmlNode[];
+	try {
+		blocks = await new MarkdownImport(document).blocks(source);
+	} catch (error) {
+		if (error instanceof MarkdownImportError) {
+			throw new EntryError(
+				error.code,
+				`entry ${index}: ${error.message}`,
+				error.hint,
+			);
+		}
+		throw error;
+	}
+	return () =>
+		new Edit(document).paragraph(
+			blockRef,
+			{ kind: "markdown-blocks", blocks, paragraphOptions },
+			{ authorFlag: author, track: opts.track },
+		);
+}
+
+/** Group entries by their target paragraph and resolve same-paragraph
+ *  conflicts: a paragraph takes one whole-paragraph edit OR several
+ *  non-overlapping spans applied in descending offset order. Cross-paragraph
+ *  ordering is irrelevant — we hold live node refs, so editing one paragraph
+ *  never shifts another's. Throws `EntryError` on a conflict. */
+function orderEntries(resolved: ResolvedEntry[]): ResolvedEntry[] {
+	const groups = new Map<XmlNode, ResolvedEntry[]>();
+	const order: XmlNode[] = [];
+	for (const entry of resolved) {
+		let group = groups.get(entry.node);
+		if (!group) {
+			group = [];
+			groups.set(entry.node, group);
+			order.push(entry.node);
+		}
+		group.push(entry);
+	}
+
+	const out: ResolvedEntry[] = [];
+	for (const node of order) {
+		const group = groups.get(node);
+		if (!group) continue;
+		if (group.length === 1) {
+			const only = group[0];
+			if (only) out.push(only);
+			continue;
+		}
+		const indices = group.map((entry) => entry.index).join(", ");
+		const whole = group.find((entry) => entry.span === null);
+		if (whole) {
+			throw new EntryError(
+				"USAGE",
+				`entries ${indices} target the same paragraph (${whole.locatorString})`,
+				"A paragraph takes one whole-paragraph edit, or several non-overlapping spans — not both.",
+			);
+		}
+		// Descending start so an earlier-offset edit doesn't shift a later one.
+		const sorted = [...group].sort(
+			(left, right) => (right.span?.start ?? 0) - (left.span?.start ?? 0),
+		);
+		for (let position = 0; position < sorted.length - 1; position++) {
+			const current = sorted[position]?.span;
+			const next = sorted[position + 1]?.span;
+			if (current && next && next.end > current.start) {
+				throw new EntryError(
+					"USAGE",
+					`entries ${indices} have overlapping spans on the same paragraph`,
+					"Coalesce them into one span edit.",
+				);
+			}
+		}
+		out.push(...sorted);
+	}
+	return out;
+}
+
+function requireString(value: unknown, index: number, field: string): string {
+	if (typeof value !== "string") {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "${field}" must be a string`,
+		);
+	}
+	return value;
+}
+
+function rejectSpanFormatFlags(
+	raw: Record<string, unknown>,
+	index: number,
+): void {
+	if (
+		raw.color !== undefined ||
+		raw.bold !== undefined ||
+		raw.italic !== undefined
+	) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: --color/--bold/--italic aren't supported on a character span — the replacement inherits the run's formatting`,
+		);
+	}
+	if (raw.style !== undefined || raw.alignment !== undefined) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: style/alignment apply to a whole paragraph, not a character span`,
+		);
+	}
+}
+
+function readTextFormat(
+	raw: Record<string, unknown>,
+	index: number,
+): { color?: string; bold?: boolean; italic?: boolean } {
+	const out: { color?: string; bold?: boolean; italic?: boolean } = {};
+	if (raw.color !== undefined) {
+		if (typeof raw.color !== "string") {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: "color" must be a hex string`,
+			);
+		}
+		out.color = raw.color;
+	}
+	if (raw.bold !== undefined) out.bold = Boolean(raw.bold);
+	if (raw.italic !== undefined) out.italic = Boolean(raw.italic);
+	return out;
+}
+
+function readParagraphOptions(
+	raw: Record<string, unknown>,
+	index: number,
+): ParagraphOptions {
+	const out: ParagraphOptions = {};
+	if (raw.style !== undefined) {
+		if (typeof raw.style !== "string") {
+			throw new EntryError("USAGE", `entry ${index}: "style" must be a string`);
+		}
+		out.style = raw.style;
+	}
+	if (raw.alignment !== undefined) {
+		const alignment = raw.alignment;
+		if (
+			alignment !== "left" &&
+			alignment !== "center" &&
+			alignment !== "right" &&
+			alignment !== "justify"
+		) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: invalid "alignment" — use left, center, right, or justify`,
+			);
+		}
+		out.alignment = alignment;
+	}
+	return out;
+}
+
+function readRuns(value: unknown, index: number): Run[] {
+	if (!Array.isArray(value)) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "runs" must be a JSON array of Run objects`,
+		);
+	}
+	for (const run of value) {
+		if (
+			run !== null &&
+			typeof run === "object" &&
+			(run as { type?: unknown }).type === "text"
+		) {
+			const invalid = firstInvalidRunFormat(run as RunFormatEnums);
+			if (invalid) {
+				throw new EntryError(
+					"USAGE",
+					`entry ${index}: invalid ${invalid.field} "${invalid.value}" in a run`,
+					`Use ${invalid.valid}.`,
+				);
+			}
+		}
+	}
+	return value as Run[];
+}
+
+function resolveClearOrThrow(value: unknown, index: number): Set<string> {
+	if (typeof value !== "string") {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "clear" must be a comma list of attributes or "all"`,
+		);
+	}
+	const names = value
+		.split(",")
+		.map((name) => name.trim().toLowerCase())
+		.filter(Boolean);
+	if (names.length === 0) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "clear" needs an attribute name, or "all"`,
+		);
+	}
+	const tags = resolveClearTags(names);
+	if (!tags) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: unknown attribute in "${value}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
+		);
+	}
+	return tags;
+}
+
+/** Per-entry validation failure. `code` is a CLI `ErrorCode` so the caller can
+ *  `fail(err.code, …)` directly, matching the `comments add --batch` pattern. */
+class EntryError extends Error {
+	constructor(
+		public code: ErrorCode,
+		message: string,
+		public hint?: string,
+	) {
+		super(message);
+		this.name = "EntryError";
+	}
+}

@@ -450,6 +450,10 @@ const EMU_PER_INCH = 914400;
 export function computeExtentEmu(
 	source: { pixelWidth?: number; pixelHeight?: number },
 	overrides: { widthInches?: number; heightInches?: number },
+	/** Clamp the result so its width never exceeds the page's content width
+	 *  (page width − margins), preserving aspect ratio. Applied ONLY when no
+	 *  explicit `widthInches` is given — an explicit --width is always honored. */
+	maxWidthEmu?: number,
 ): { widthEmu: number; heightEmu: number } | null {
 	const { pixelWidth, pixelHeight } = source;
 	const aspect =
@@ -488,5 +492,19 @@ export function computeExtentEmu(
 	}
 
 	if (widthEmu === undefined || heightEmu === undefined) return null;
+
+	// Default-sized image wider than the page content area → scale down to fit,
+	// preserving aspect. Skipped when the caller set an explicit width.
+	if (
+		widthOverride === undefined &&
+		maxWidthEmu !== undefined &&
+		maxWidthEmu > 0 &&
+		widthEmu > maxWidthEmu
+	) {
+		const scale = maxWidthEmu / widthEmu;
+		widthEmu = maxWidthEmu;
+		heightEmu = Math.round(heightEmu * scale);
+	}
+
 	return { widthEmu, heightEmu };
 }

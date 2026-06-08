@@ -243,4 +243,21 @@ describe("preserve unknown elements — invariant tests", () => {
 		// contributes nothing to offset; "there" starts at 3.
 		expect(payload.matches[0]?.locator).toBe("p0:3-8");
 	});
+
+	test("replace preserves an UNMODELED run property (<w:emboss>) in the rPr", async () => {
+		// We now model <w:shd> and <w:color w:themeColor> etc., but a run property
+		// we don't model (e.g. <w:emboss>) must still survive a mutation untouched
+		// — the AST is a view; existing runs are mutated in place, never re-emitted
+		// through the RunProperties emitter.
+		const docPath = await buildFixture(
+			`<w:p><w:r><w:rPr><w:emboss/></w:rPr><w:t>embossed</w:t></w:r></w:p>`,
+			"preserve-emboss",
+		);
+
+		await runCli("replace", docPath, "embossed", "EMBOSSED");
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain("<w:emboss/>");
+		expect(xml).toContain("EMBOSSED");
+	});
 });

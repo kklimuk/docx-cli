@@ -65,6 +65,7 @@ export async function run(args: string[]): Promise<number> {
 		{
 			at: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -154,6 +155,7 @@ export async function run(args: string[]): Promise<number> {
 		cellAt(grid.rows[r1] as GridRow, c1)?.node,
 		`cells merged (r${r1}c${c1}-r${r2}c${c2})`,
 		parsed.values.author as string | undefined,
+		parsed.values.track as boolean | undefined,
 	);
 
 	await document.save(outputPath);

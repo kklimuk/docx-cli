@@ -10,7 +10,7 @@ Usage:
 Options:
   --json       Print as a JSON Schema document (this is the default — emitted
                when neither --ts nor --json is passed)
-  --ts         Print TypeScript type source (read live from src/core/ast/types.ts)
+  --ts         Print TypeScript type source (from src/core/ast/types.ts, embedded at build time)
   -h, --help   Show this help
 
 Examples:
@@ -95,11 +95,19 @@ const JSON_SCHEMA = {
 				type: { const: "text" },
 				text: { type: "string" },
 				color: { type: "string" },
+				colorTheme: { type: "string" },
+				colorThemeTint: { type: "string" },
+				colorThemeShade: { type: "string" },
 				highlight: { type: "string" },
+				shade: { type: "string" },
 				bold: { type: "boolean" },
 				italic: { type: "boolean" },
 				underline: { type: "string" },
+				underlineColor: { type: "string" },
 				strike: { type: "boolean" },
+				vertAlign: { type: "string" },
+				smallCaps: { type: "boolean" },
+				allCaps: { type: "boolean" },
 				font: { type: "string" },
 				sizeHalfPoints: { type: "number" },
 				runStyle: { type: "string" },

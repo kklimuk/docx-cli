@@ -85,6 +85,7 @@ Open `mnda-filled.docx` in Word: tracked changes and comments appear in the revi
 docx read    FILE [--from LOC] [--to LOC] [--accepted | --baseline | --current] [--comments]
 docx read    FILE --ast                  # JSON-AST instead of Markdown (disables the markdown-only flags)
 docx find    FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current | --baseline] [--exact] [--json]
+docx find    FILE (--highlight COLOR|any | --color HEX | --bold | --italic | --underline) [--all] [--json]   # find by formatting (no QUERY)
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
@@ -100,25 +101,37 @@ docx info schema   [--ts]
 docx info locators [--json]
 ```
 
-### Mutate (change FILE in place; `--dry-run`, `-o PATH`, `-v` everywhere)
+### Mutate (change FILE in place; `--dry-run`, `-v` everywhere; `-o PATH` on every mutator except `create`, whose positional FILE is already the output)
 
 ```sh
-docx create FILE [--title T] [--author A] [--text "..." | --from PATH.md]
+docx create FILE [--title T] [--author A] [--text "..." | --from PATH.md | --from -] [--force]
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
-docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN-pM | sN | eqN
+docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
-docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact]
+docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 
+# Batch — apply many changes from ONE read (no re-reading between edits). Keys
+# on each JSONL line mirror the command's flags; all locators address the doc as
+# read. insert/edit also accept --batch - to read JSONL from stdin.
+docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs|code|task>, style?, … }
+docx insert  FILE --batch additions.jsonl   # { after|before, <content>, style?, color?, … }
+docx replace FILE --batch script.jsonl      # { pattern, replacement, regex?, all?, limit?, … } applied in order
+
+# All four of insert/edit/delete/replace accept --track to record that one
+# invocation as a tracked change even when the doc's track-changes toggle is off.
+#
 # insert/edit content selectors (run "docx insert --help" / "docx edit --help" for the full list):
 #   --text "..." [--style NAME] [--alignment A] [--color HEX] [--bold] [--italic] [--url URL]
+#       (a newline in --text becomes a line break <w:br/>, a tab becomes <w:tab/> — verse/addresses stay line-per-line)
 #   --runs '[{"type":"text","text":"X","bold":true}]'
-#   --markdown "..." | --markdown-file PATH        # GFM + math + CriticMarkup → one or more blocks
+#   --markdown "..." | --markdown-file PATH        # GFM + math + CriticMarkup + inline HTML formatting → blocks
 #   --code "..." | --code-file PATH [--language LANG]
-#   --equation "x^2 + y^2" [--display|--inline]
+#   --equation "x^2 + y^2" [--display]   (insert; edit also accepts --inline)
+#   --clear bold,italic,highlight,color,size,font,…|all   (edit; strip run formatting, keep text)
 #   --task checked|unchecked | --list bullet|ordered [--list-level N]   (insert)
 #   --task checked|unchecked                                            (edit, flip in place)
 #   --table --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (insert)
-#   --image SRC [--alt T] [--width IN] [--height IN]   (insert; SRC = path, data: URI, or http(s) URL)
+#   --image SRC [--alt T] [--width IN] [--height IN] [--caption "Figure 1: …"]   (insert; SRC = path, data: URI, or http(s) URL; --caption adds a Word "Caption"-styled line under the figure)
 #   --page-break | --column-break | --section [--columns N] [--type T]   (insert)
 
 docx comments add     FILE --at LOCATOR --text "..." [--author NAME] [--current | --baseline]
@@ -227,7 +240,7 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
 | Form | Accepted by |
 | ---- | ----------- |
 | `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks) | `read --from/--to`, `insert --after/--before`, `wc`, `comments add` |
-| `pN`, `pN-pM`, `sN`, `eqN` | `edit --at` |
+| `pN`, `pN:S-E`, `pN-pM`, `sN`, `eqN`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range) |
 | `pN`, `pN-pM`, `tN`, `sN` | `delete --at` |
 | `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans) | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results |
 | `pN[:offset]` (point) | `footnotes/endnotes add --at` |
@@ -265,7 +278,7 @@ docx read doc.docx --current                       # → CriticMarkup {++ins++}[
 docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 ```
 
-`read` has three tracked-change views: default **`current`** shows CriticMarkup with `[^tcN]` footnotes; **`--accepted`** drops subtractive edits and inlines additive ones (the post-accept document); **`--baseline`** does the reverse (the pre-change document). `find`, `replace`, `wc`, and `comments add` honor the same `--accepted`/`--baseline`/`--current` flags so offsets stay consistent across commands. Add `--comments` to `read` to append `[^cN]` footnotes for comment spans.
+`read` has three tracked-change views: default **`--accepted`** renders clean text — drops subtractive edits and inlines additive ones (the post-accept document); **`--current`** shows CriticMarkup with `[^tcN]` footnotes; **`--baseline`** does the reverse of accepted (the pre-change document). `find`, `replace`, `wc`, and `comments add` honor the same `--accepted`/`--baseline`/`--current` flags so offsets stay consistent across commands. Add `--comments` to `read` to append `[^cN]` footnotes for comment spans.
 
 ## How It Works
 
@@ -275,11 +288,13 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 
 **Span-aware comments & hyperlinks.** `comments add --at p3:5-20` (and `hyperlinks add`) find the runs containing offsets 5 and 20, split them at the boundaries (preserving `<w:rPr>` on both halves), and insert markers between the slices. Comments authored by older tools that lack `w14:paraId` (required by `commentsExtended.xml`) get a fresh paraId injected automatically on resolve/reply.
 
-**Tracked changes.** With `<w:trackChanges/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `docx-cli`). `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image *deletion* is honest removal — it wraps a real `<w:del>`).
+**Tracked changes.** With `<w:trackChanges/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `Reviewer`); pass `--track` to one of those commands (or the `tables` verbs / `images delete`) to track just that invocation even when the doc toggle is off. `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image *deletion* is honest removal — it wraps a real `<w:del>`).
 
 **Rich content.** Images insert from a path, `data:` URI, or `http(s)` URL (bounded fetch; HEIC→JPEG transcode; SVG sanitized; non-public/metadata addresses refused at every redirect hop). Equations round-trip OOXML `<m:oMath>` ↔ LaTeX (reconstructed, not legacy plaintext) — authored via temml (LaTeX→MathML) plus an in-house MathML→OMML adapter, no LGPL deps. Code blocks emit one `CodeBlock`-styled paragraph per line with optional lowlight syntax highlighting (37 bundled languages); they collapse back to a GFM fenced block on read. GFM task lists round-trip Word's checkbox content control (and the Word-for-Web Wingdings-glyph variant), surfacing as `taskState` in the AST. Tables operate on a merge-aware logical grid so `gridSpan`/`vMerge` cells map onto physical `<w:tc>`, and structural edits refuse to bisect an existing merge.
 
-**Markdown dialect.** `create --from`, `insert/edit --markdown`, and the note bodies all parse the same GFM + math + CriticMarkup dialect (remark + remark-gfm + remark-math), composing the existing OOXML emitters. `read` emits a compatible dialect, so the read → edit → write loop round-trips (lossless for paragraphs, lists, and nested blockquotes; code/tables/math/headings inside a blockquote intentionally escape to top level on import).
+**Markdown dialect.** `create --from`, `insert/edit --markdown`, and the note bodies all parse the same GFM + math + CriticMarkup + inline-HTML-formatting dialect (remark + remark-gfm + remark-math + an in-house inline-surgery transform), composing the existing OOXML emitters. `read` emits a compatible dialect, so the read → edit → write loop round-trips (lossless for paragraphs, lists, and nested blockquotes; code/tables/math/headings inside a blockquote intentionally escape to top level on import). `read --ast` is the fully lossless JSON form.
+
+**Run formatting beyond bold/italic.** Properties markdown has no native syntax for — text color, theme color, highlight, shading, underline (all 18 styles + color), super/subscript, small/all caps, font, and size — are emitted as the **HTML a markdown reader actually renders**, so the output looks right in GitHub, VS Code, Obsidian, and browsers (Pandoc `[text]{…}` spans render as literal brackets in all of those). `read` emits semantic tags where they exist — `<mark>overdue</mark>`, `<sup>x</sup>`, `<sub>2</sub>` — a `<span style="color:#C00000">…</span>` for the CSS-expressible properties, and `data-*` attributes for the OOXML-only ones CSS can't express (theme colors, underline styles); `insert/edit --markdown` parses them back losslessly, and a leading `<!-- docx:base font="Arial" size="8pt" -->` note declares the document's dominant font/size once so the body isn't buried in per-run repetition. Bold/italic/strike/code/links stay native (`**`/`*`/`~~`/`` ` ``/`[](…)`). Because the inline-surgery transform scans whole sibling sequences, a CriticMarkup marker or span can straddle other formatting — `{++**bold insertion**++}` is tracked correctly. An invalid enum value (e.g. a bogus highlight name) fails with a clear error rather than silently vanishing. Inserted plain content inherits the surrounding paragraph's font/size so it blends in.
 
 **Visual verification.** `docx render` is the only command that needs an external runtime: it drives Microsoft Word (macOS via `osascript`, Windows via PowerShell COM — the ground-truth renderer) or LibreOffice (`soffice`, cross-platform) to produce a PDF, then rasterizes in-process via the bundled `@hyzyla/pdfium` WASM package — no poppler/pdftoppm/ImageMagick needed. Agents that consume PNGs use this to verify edits, diff accept/reject before-vs-after, or generate screenshots.
 

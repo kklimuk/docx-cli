@@ -17,6 +17,13 @@ import { $ } from "bun";
  * (column delete). Keeping them unaccepted is the point: the LibreOffice
  * round-trip then validates that Word's table-revision XML survives a
  * load/save.
+ *
+ * Table t2 (clean, unmerged 2×3 autofit): the equation-in-cell regression
+ * host absorbed from the former tables.docx fixture — a stable, unmerged
+ * `t2:r0c0:p0` for inserting an equation and toggling --display. Inserted
+ * while track-changes is OFF (before t1's tracked edits) so it carries no
+ * revision markers, and the generator turns track-changes back OFF at the
+ * end so the untracked equation edit in equations.test.ts applies directly.
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -76,11 +83,45 @@ await cli(
 	"--cols",
 	"2",
 );
+
+// t2 — clean, unmerged 2×3 autofit table (the equation-in-cell regression
+// host migrated from the deleted tables.docx). Inserted while track-changes
+// is still OFF so the cell carries no revision markers and `t2:r0c0:p0` is a
+// stable insert target.
+await cli(
+	"insert",
+	out,
+	"--after",
+	"t1",
+	"--text",
+	"Equation host (clean cell)",
+	"--style",
+	"Heading2",
+); // p1
+await cli(
+	"insert",
+	out,
+	"--after",
+	"p1",
+	"--table",
+	"--rows",
+	"2",
+	"--cols",
+	"3",
+); // t2 (clean autofit)
+
 await cli("track-changes", out, "on");
 await cli("tables", "insert-row", out, "--at", "t1", "--cells", "added,row"); // rowIns
 await cli("tables", "insert-column", out, "--at", "t1", "--position", "1"); // cellIns + tblGridChange
 await cli("tables", "delete-row", out, "--at", "t1:r0"); // rowDel
 await cli("tables", "delete-column", out, "--at", "t1:c2"); // cellDel (per row)
+
+// Restore the document toggle to OFF (the tracked-table revision markers from
+// the four edits above persist — `track-changes off` only clears the settings
+// flag). This keeps t2's cell a direct-edit target so the untracked
+// `edit --display` in equations.test.ts flips display without being recorded
+// as a tracked change.
+await cli("track-changes", out, "off");
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);

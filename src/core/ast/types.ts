@@ -103,11 +103,27 @@ export type TextRun = {
 	type: "text";
 	text: string;
 	color?: string;
+	/** Theme-color reference + tint/shade modifiers from `<w:color>`, kept as raw
+	 *  hex/token strings so they round-trip byte-exact alongside the `color`
+	 *  fallback hex. */
+	colorTheme?: string;
+	colorThemeTint?: string;
+	colorThemeShade?: string;
 	highlight?: string;
+	/** Run shading fill (`<w:shd w:fill>`) — arbitrary hex background, distinct
+	 *  from the 16-name `highlight` enum. */
+	shade?: string;
 	bold?: boolean;
 	italic?: boolean;
 	underline?: string;
+	/** Underline color (`<w:u w:color>`), when not the default `auto`. */
+	underlineColor?: string;
 	strike?: boolean;
+	/** Vertical alignment (`<w:vertAlign>`): "superscript" | "subscript". */
+	vertAlign?: string;
+	/** Small-caps (`<w:smallCaps>`) and all-caps (`<w:caps>`) effects. */
+	smallCaps?: boolean;
+	allCaps?: boolean;
 	font?: string;
 	sizeHalfPoints?: number;
 	/** Character style applied via <w:rStyle> (e.g., "Code" for inline code,

@@ -16,6 +16,7 @@ import {
 	buildUntrackedRuns,
 	diffTokens,
 	extractOldTokens,
+	paragraphMarkRunRpr,
 	tokenize,
 } from "./preserve-formatting";
 
@@ -37,9 +38,13 @@ export function applyFormattingPreservingEdit(
 	const newTokens = tokenize(newText);
 	const ops = diffTokens(oldTokens, newTokens);
 
+	// When there's no run-level neighbor to inherit from (filling an empty
+	// paragraph/cell), fall back to the paragraph-mark rPr so the new text picks
+	// up the cell's declared font/size — matching how Word fills empty styled cells.
+	const fallbackRpr = paragraphMarkRunRpr(paragraph);
 	const runChildren = tracked
-		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag))
-		: buildUntrackedRuns(ops);
+		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag), fallbackRpr)
+		: buildUntrackedRuns(ops, fallbackRpr);
 
 	const { nonRuns } = partitionParagraphRuns(paragraph);
 	applyParagraphOptionsInPlace(nonRuns, paragraphOptions);

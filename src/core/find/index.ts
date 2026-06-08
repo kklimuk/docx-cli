@@ -63,6 +63,82 @@ export function findTextSpans(
 	return result;
 }
 
+/** Filter for `find` by run-level formatting (the inverse workflow of
+ *  `edit --clear`): locate the spans carrying a given highlight/color/style so
+ *  an agent can strip or re-style them. `highlight: "any"` matches any
+ *  highlight color; a specific name matches that color. */
+export type RunFormatFilter = {
+	highlight?: string;
+	color?: string;
+	bold?: boolean;
+	italic?: boolean;
+	underline?: boolean;
+};
+
+/** Return the span locators of runs whose formatting matches `filter`.
+ *  Adjacent matching runs coalesce into one span. Offsets are in the same
+ *  accepted-view coordinate space as `findTextSpans`, so results paste straight
+ *  into `edit --at <span> --clear …` / `comments add --at`. */
+export function findFormattedSpans(
+	doc: Body,
+	filter: RunFormatFilter,
+	view: FindView = "accepted",
+): TextMatch[] {
+	const out: TextMatch[] = [];
+	for (const block of iterateBlocks(doc.blocks)) {
+		if (block.type !== "paragraph") continue;
+		let offset = 0;
+		let spanStart: number | null = null;
+		let spanText = "";
+		const flush = (end: number): void => {
+			if (spanStart !== null && spanText.length > 0) {
+				out.push({ blockId: block.id, start: spanStart, end, text: spanText });
+			}
+			spanStart = null;
+			spanText = "";
+		};
+		for (const run of block.runs) {
+			if (run.type !== "text") {
+				flush(offset);
+				continue;
+			}
+			if (!isRunVisibleInView(run.trackedChange?.kind, view)) continue;
+			if (runMatchesFilter(run, filter)) {
+				if (spanStart === null) spanStart = offset;
+				spanText += run.text;
+			} else {
+				flush(offset);
+			}
+			offset += run.text.length;
+		}
+		flush(offset);
+	}
+	return out;
+}
+
+function runMatchesFilter(
+	run: Extract<Paragraph["runs"][number], { type: "text" }>,
+	filter: RunFormatFilter,
+): boolean {
+	if (filter.bold && run.bold !== true) return false;
+	if (filter.italic && run.italic !== true) return false;
+	if (filter.underline && !run.underline) return false;
+	if (filter.highlight !== undefined) {
+		if (!run.highlight) return false;
+		if (
+			filter.highlight !== "any" &&
+			run.highlight.toLowerCase() !== filter.highlight.toLowerCase()
+		) {
+			return false;
+		}
+	}
+	if (filter.color !== undefined) {
+		const runColor = (run.color ?? "").toLowerCase().replace(/^#/, "");
+		if (runColor !== filter.color.toLowerCase().replace(/^#/, "")) return false;
+	}
+	return true;
+}
+
 type SpanMatch = { start: number; end: number; text: string };
 type Matcher = (paragraphText: string) => SpanMatch[];
 

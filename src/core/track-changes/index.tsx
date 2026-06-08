@@ -116,8 +116,12 @@ export class TrackChanges {
 	 * `<w:ins>` and mark its paragraph break inserted — the tracked form of
 	 * an `insert`. Accept keeps the content; reject removes the whole
 	 * paragraph. */
-	applyInsertion(paragraph: XmlNode, authorFlag?: string): void {
-		const mintMeta = this.metaMinter(authorFlag);
+	applyInsertion(
+		paragraph: XmlNode,
+		authorFlag?: string,
+		allocator?: RevisionAllocator,
+	): void {
+		const mintMeta = this.metaMinter(authorFlag, allocator);
 		paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => (
 			<Ins meta={mintMeta()}>{runs}</Ins>
 		));
@@ -140,11 +144,17 @@ export class TrackChanges {
 	}
 
 	/** A revision-meta minter backed by one allocator + a fixed author/date —
-	 * for operations that emit several coupled revisions in one call. */
-	private metaMinter(authorFlag?: string): () => TrackedMeta {
-		const allocator = this.createAllocator();
+	 * for operations that emit several coupled revisions in one call. Pass a
+	 * shared `allocator` to keep ids monotonic across SEVERAL calls (e.g. every
+	 * block of a multi-paragraph insert, or every entry of an `insert --batch`)
+	 * — without it each call re-scans the same un-mutated tree and collides. */
+	private metaMinter(
+		authorFlag?: string,
+		allocator?: RevisionAllocator,
+	): () => TrackedMeta {
+		const alloc = allocator ?? this.createAllocator();
 		const base = { author: resolveAuthor(authorFlag), date: resolveDate() };
-		return () => ({ ...base, revisionId: allocator.next() });
+		return () => ({ ...base, revisionId: alloc.next() });
 	}
 }
 
@@ -182,7 +192,7 @@ export function wrapContiguousTrackable(
 export function resolveAuthor(authorFlag?: string): string {
 	if (authorFlag) return authorFlag;
 	if (Bun.env.DOCX_AUTHOR) return Bun.env.DOCX_AUTHOR;
-	return "docx-cli";
+	return "Reviewer";
 }
 
 export function resolveDate(): string {

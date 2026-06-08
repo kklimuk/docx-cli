@@ -271,7 +271,10 @@ function isWhitespaceOnly(text: string): boolean {
  *  edit: only kept + inserted tokens, in NEW order, grouped into runs by
  *  shared rPr. Inserted tokens inherit rPr per the rules in
  *  `inheritedRprForInsert`. */
-export function buildUntrackedRuns(ops: DiffOp[]): XmlNode[] {
+export function buildUntrackedRuns(
+	ops: DiffOp[],
+	fallbackRpr: XmlNode | null = null,
+): XmlNode[] {
 	const flow: Array<{ text: string; rPr: XmlNode | null }> = [];
 	for (let index = 0; index < ops.length; index++) {
 		const op = ops[index];
@@ -281,7 +284,7 @@ export function buildUntrackedRuns(ops: DiffOp[]): XmlNode[] {
 			flow.push({ text: op.old.text, rPr: cloneOrNull(op.old.rPr) });
 			continue;
 		}
-		const inherited = inheritedRprForInsert(ops, index);
+		const inherited = inheritedRprForInsert(ops, index, fallbackRpr);
 		flow.push({ text: op.text, rPr: cloneOrNull(inherited) });
 	}
 	return groupAndEmitPlainRuns(flow);
@@ -301,7 +304,11 @@ export function buildUntrackedRuns(ops: DiffOp[]): XmlNode[] {
  *   4. If the group has no deletes (pure insertion), inherit from the
  *      adjacent keep — backward first, then forward.
  *   5. Null when neither side has a keep (entire paragraph is insertion). */
-function inheritedRprForInsert(ops: DiffOp[], index: number): XmlNode | null {
+function inheritedRprForInsert(
+	ops: DiffOp[],
+	index: number,
+	fallbackRpr: XmlNode | null,
+): XmlNode | null {
 	let groupStart = index;
 	while (groupStart > 0) {
 		const prev = ops[groupStart - 1];
@@ -349,7 +356,11 @@ function inheritedRprForInsert(ops: DiffOp[], index: number): XmlNode | null {
 		const op = ops[cursor];
 		if (op?.kind === "keep") return op.old.rPr;
 	}
-	return null;
+	// Nothing run-level to inherit from (the common case: filling an empty
+	// paragraph/cell). Fall back to the paragraph-mark rPr — the formatting Word
+	// applies when you type into an empty styled cell. Null when even that is
+	// absent (truly unformatted paragraph).
+	return fallbackRpr;
 }
 
 /** For a token-level edit, build the paragraph children for a TRACKED
@@ -360,6 +371,7 @@ function inheritedRprForInsert(ops: DiffOp[], index: number): XmlNode | null {
 export function buildTrackedRuns(
 	ops: DiffOp[],
 	mintMeta: () => TrackedMeta,
+	fallbackRpr: XmlNode | null = null,
 ): XmlNode[] {
 	const grouping: Array<{
 		kind: "keep" | "insert" | "delete";
@@ -376,7 +388,7 @@ export function buildTrackedRuns(
 			continue;
 		}
 		if (op.kind === "insert") {
-			const inherited = inheritedRprForInsert(ops, index);
+			const inherited = inheritedRprForInsert(ops, index, fallbackRpr);
 			pushOpTo(grouping, "insert", {
 				text: op.text,
 				rPr: cloneOrNull(inherited),
@@ -484,6 +496,37 @@ function emitDeletedRun(text: string, rPr: XmlNode | null): XmlNode {
 
 function cloneOrNull(node: XmlNode | null): XmlNode | null {
 	return node ? node.clone() : null;
+}
+
+/** The tracked-change / property-change markers that CT_ParaRPr permits at the
+ *  front of a paragraph-mark `<w:rPr>` but that are INVALID inside a run's
+ *  `<w:rPr>` (CT_RPr): all four revision markers plus the rPr-change snapshot.
+ *  Strip every one when reusing the paragraph-mark rPr as a run rPr, or Word
+ *  silently drops the whole (schema-invalid) run. */
+const PARA_MARK_ONLY_RPR_CHILDREN = new Set([
+	"w:ins",
+	"w:del",
+	"w:moveFrom",
+	"w:moveTo",
+	"w:rPrChange",
+]);
+
+/** The run formatting a paragraph declares on its paragraph mark
+ *  (`<w:pPr><w:rPr>`), as a clean run-rPr: a clone with the paragraph-mark-only
+ *  children stripped (the four `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>`
+ *  revision markers and `<w:rPrChange>`, all invalid inside a `<w:r>`). Word
+ *  uses this rPr for text typed into
+ *  an otherwise-empty paragraph/cell, so it's the right fallback when there's no
+ *  run-level neighbor to inherit from. Null when absent or empty after stripping. */
+export function paragraphMarkRunRpr(paragraph: XmlNode): XmlNode | null {
+	const rPr = paragraph.findChild("w:pPr")?.findChild("w:rPr");
+	if (!rPr) return null;
+	const clone = rPr.clone();
+	clone.children = clone.children.filter(
+		(child) => !PARA_MARK_ONLY_RPR_CHILDREN.has(child.tag),
+	);
+	if (clone.children.length === 0) return null;
+	return clone;
 }
 
 function rPrEqual(a: XmlNode | null, b: XmlNode | null): boolean {

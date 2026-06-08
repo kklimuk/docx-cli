@@ -62,6 +62,7 @@ export async function run(args: string[]): Promise<number> {
 		{
 			at: { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -158,6 +159,7 @@ export async function run(args: string[]): Promise<number> {
 		anchor.node,
 		`cell unmerged (r${target.row}c${target.col})`,
 		parsed.values.author as string | undefined,
+		parsed.values.track as boolean | undefined,
 	);
 
 	await document.save(outputPath);

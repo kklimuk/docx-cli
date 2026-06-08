@@ -131,6 +131,7 @@ export async function run(args: string[]): Promise<number> {
 			to,
 			view,
 			showComments,
+			defaultSizeHalfPoints: docView.styles?.defaultSizeHalfPoints(),
 		});
 		await writeStdout(rendered);
 		return EXIT.OK;

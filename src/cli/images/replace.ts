@@ -23,7 +23,7 @@ Usage:
 
 Required:
   --at imgN         image id to replace (e.g. img0)
-  --with PATH       New image file (any image MIME type)
+  --with PATH       New image file (format keyed off the file extension: png/jpg/gif/bmp/tiff/emf/wmf)
 
 Optional:
   --author NAME     Author for the audit comment when track-changes is on

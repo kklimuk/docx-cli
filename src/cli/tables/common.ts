@@ -1,6 +1,7 @@
 import { type Document, resolveAuthor, resolveDate } from "@core";
 import { Comments } from "@core/comments";
 import type { XmlNode } from "@core/parser";
+import { resolveTracked } from "../respond";
 
 /** Record a cell merge / unmerge under track-changes. Word applies table-cell
  * merges immediately even with tracking on — it does NOT emit a revision marker
@@ -17,8 +18,9 @@ export function noteStructuralChange(
 	anchorCell: XmlNode | undefined,
 	message: string,
 	authorFlag: string | undefined,
+	trackFlag?: boolean,
 ): void {
-	if (!document.isTrackChangesEnabled()) return;
+	if (!resolveTracked(document, trackFlag)) return;
 	const paragraph = anchorCell?.findChild("w:p");
 	if (!paragraph) return;
 	new Comments(document).addAudit(

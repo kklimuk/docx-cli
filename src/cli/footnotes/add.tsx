@@ -1,6 +1,7 @@
 import { type Document, describeForms, MarkdownImport, type Run } from "@core";
 import type { NotesView } from "@core/ast/document/notes";
 import { RunElement } from "@core/blocks";
+import { findTextSpans } from "@core/find";
 import {
 	insertNoteReferenceAtOffset,
 	NoteBody,
@@ -24,6 +25,7 @@ import {
 	fail,
 	openOrFail,
 	resolveBlockOrFail,
+	resolveTracked,
 	respond,
 	respondMinted,
 	setVerboseAck,
@@ -47,13 +49,17 @@ Usage:
   docx ${verb} add FILE --at LOCATOR --runs JSON [options]
   docx ${verb} add FILE --at LOCATOR --markdown TEXT [options]
 
-Anchor:
+Anchor (one required):
   --at LOCATOR         Where to anchor the reference. One of:
 ${ANCHOR_FORMS}
                        Append the reference at the END of the paragraph, OR add
                        a single 0-based character offset to insert at a point:
                        pN:offset or tN:rRcC:pK:offset (note-specific point form;
                        there is no S-E span here). See \`docx info locators\`.
+  --anchor PHRASE      Find PHRASE (same matcher as \`docx find\`) and drop the
+                       reference right AFTER it — no character-offset math.
+                       Errors if it matches more than once without --occurrence.
+  --occurrence N       With --anchor: pick the Nth match (1-indexed, default 1).
 
 Body (exactly one required):
   --text TEXT          ${capitalize(kind)} body text (single paragraph).
@@ -63,7 +69,7 @@ Body (exactly one required):
 
 Optional:
   --author NAME        Author for tracked attribution (default: $DOCX_AUTHOR
-                       env, fallback "docx-cli"). Ignored when tracking off.
+                       env, fallback "Reviewer"). Ignored when tracking off.
   -o, --output PATH    Write to PATH instead of overwriting FILE.
   --dry-run            Print what would be added; do not write the file.
   -v, --verbose        Print the success ack JSON (default: prints the new id).
@@ -77,6 +83,7 @@ Output:
 
 Examples:
   docx ${verb} add doc.docx --at p3 --text "See p.42 for the long form."
+  docx ${verb} add doc.docx --anchor "$4.2M in Q3 revenue" --text "Source: audited close."
   docx ${verb} add doc.docx --at p0:12 --text "Citation needed."
   docx ${verb} add doc.docx --at t0:r1c2:p0 --text "Cell-anchored note."
   docx ${verb} add doc.docx --at p3 --runs '[{"type":"text","text":"Bold","bold":true}]'
@@ -105,11 +112,14 @@ export async function runAddNote(
 		args,
 		{
 			at: { type: "string" },
+			anchor: { type: "string" },
+			occurrence: { type: "string" },
 			text: { type: "string" },
 			runs: { type: "string" },
 			markdown: { type: "string" },
 			"markdown-file": { type: "string" },
 			author: { type: "string" },
+			track: { type: "boolean" },
 			output: { type: "string", short: "o" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -131,8 +141,15 @@ export async function runAddNote(
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", help);
 
-	const anchorInput = parsed.values.at as string | undefined;
-	if (!anchorInput) return fail("USAGE", "Missing --at LOCATOR", help);
+	const atInput = parsed.values.at as string | undefined;
+	const anchorPhrase = parsed.values.anchor as string | undefined;
+	const anchorCount = (atInput ? 1 : 0) + (anchorPhrase ? 1 : 0);
+	if (anchorCount === 0) {
+		return fail("USAGE", "Specify --at LOCATOR or --anchor PHRASE", help);
+	}
+	if (anchorCount > 1) {
+		return fail("USAGE", "--at and --anchor are mutually exclusive", help);
+	}
 
 	const text = parsed.values.text as string | undefined;
 	const runsJson = parsed.values.runs as string | undefined;
@@ -159,19 +176,62 @@ export async function runAddNote(
 		);
 	}
 
-	const anchor = parseAnchor(anchorInput);
-	if (!anchor) {
-		return fail(
-			"INVALID_LOCATOR",
-			`--at expects pN[:offset] or tN:rRcC:pK[:offset], got "${anchorInput}"`,
-			help,
-		);
-	}
-
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	const paragraphRef = await resolveBlockOrFail(document, anchor.blockId);
+	// Resolve the anchor to a { blockId, offset? }. `--anchor PHRASE` finds the
+	// phrase (same matcher as `docx find`) and drops the reference right AFTER
+	// it — no character-offset arithmetic. `--at` keeps the explicit locator.
+	let blockId: string;
+	let offset: number | undefined;
+	let anchorLabel: string;
+	if (anchorPhrase !== undefined) {
+		const occurrenceRaw = parsed.values.occurrence as string | undefined;
+		const occurrence = occurrenceRaw === undefined ? 1 : Number(occurrenceRaw);
+		if (!Number.isInteger(occurrence) || occurrence < 1) {
+			return fail(
+				"USAGE",
+				`--occurrence must be a positive integer (1-indexed), got "${occurrenceRaw}"`,
+			);
+		}
+		const matches = findTextSpans(document.body, anchorPhrase).matches;
+		if (matches.length === 0) {
+			return fail(
+				"MATCH_NOT_FOUND",
+				`anchor not found: ${JSON.stringify(anchorPhrase)}`,
+			);
+		}
+		if (matches.length > 1 && occurrenceRaw === undefined) {
+			return fail(
+				"USAGE",
+				`anchor matches ${matches.length} times; pass --occurrence N (1..${matches.length}) to disambiguate`,
+			);
+		}
+		const match = matches[occurrence - 1];
+		if (!match) {
+			return fail(
+				"MATCH_NOT_FOUND",
+				`only ${matches.length} match(es) for anchor; --occurrence ${occurrence} is out of range`,
+			);
+		}
+		blockId = match.blockId;
+		offset = match.end; // reference mark goes after the matched phrase
+		anchorLabel = `${match.blockId}:${match.end}`;
+	} else {
+		const anchor = parseAnchor(atInput as string);
+		if (!anchor) {
+			return fail(
+				"INVALID_LOCATOR",
+				`--at expects pN[:offset] or tN:rRcC:pK[:offset], got "${atInput}"`,
+				help,
+			);
+		}
+		blockId = anchor.blockId;
+		offset = anchor.offset;
+		anchorLabel = atInput as string;
+	}
+
+	const paragraphRef = await resolveBlockOrFail(document, blockId);
 	if (typeof paragraphRef === "number") return paragraphRef;
 
 	const existingNotes =
@@ -188,12 +248,12 @@ export async function runAddNote(
 			path,
 			...(outputPath ? { output: outputPath } : {}),
 			id: idLabel,
-			at: anchorInput,
+			at: anchorLabel,
 		});
 		return EXIT.OK;
 	}
 
-	const tracked = document.isTrackChangesEnabled();
+	const tracked = resolveTracked(document, parsed.values.track);
 	const isRichBody = text === undefined;
 	if (tracked && isRichBody) {
 		return fail(
@@ -248,7 +308,7 @@ export async function runAddNote(
 		: baseRun;
 
 	const targetOffset =
-		anchor.offset ?? sumRunBearingTextLength(paragraphRef.node.children);
+		offset ?? sumRunBearingTextLength(paragraphRef.node.children);
 
 	try {
 		insertNoteReferenceAtOffset(paragraphRef.node, targetOffset, referenceRun);
@@ -293,7 +353,7 @@ export async function runAddNote(
 		operation: `${kind}s.add`,
 		path: outputPath ?? path,
 		id: idLabel,
-		at: anchorInput,
+		at: anchorLabel,
 	});
 	return EXIT.OK;
 }

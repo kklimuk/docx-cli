@@ -1,4 +1,10 @@
-import { type FindView, findTextSpans, type TextMatch } from "@core/find";
+import {
+	type FindView,
+	findFormattedSpans,
+	findTextSpans,
+	type RunFormatFilter,
+	type TextMatch,
+} from "@core/find";
 import {
 	EXIT,
 	fail,
@@ -12,9 +18,19 @@ const HELP = `docx find — locate text spans and return their locators
 
 Usage:
   docx find FILE QUERY [options]
+  docx find FILE --highlight COLOR|any [--all]   # find by formatting (no QUERY)
 
-Required positional:
-  QUERY             literal substring (or regex if --regex)
+Positional:
+  QUERY             literal substring (or regex if --regex). Omit it when using
+                    a formatting filter below.
+
+Formatting filters (alternative to QUERY — locate runs by formatting, the
+inverse of \`edit --clear\`; pair with \`edit --at <span> --clear\`):
+  --highlight C     runs highlighted color C (a name like "yellow", or "any")
+  --color HEX       runs with text color HEX (e.g. FF0000)
+  --bold            bold runs
+  --italic          italic runs
+  --underline       underlined runs
 
 Options:
   --regex           treat QUERY as a JavaScript regular expression
@@ -52,6 +68,9 @@ Examples:
   docx find doc.docx "fox"
   docx find doc.docx "Action Item:" --all
   docx find doc.docx "TODO|FIXME" --regex --ignore-case
+  docx find doc.docx --highlight yellow --all     # every yellow-highlighted span
+  docx find doc.docx --highlight any --all | while read s; do \\
+    docx edit doc.docx --at "$s" --clear highlight; done
   docx comments add doc.docx --at "$(docx find doc.docx fox | head -1)" --text "..."
 `;
 
@@ -66,6 +85,11 @@ export async function run(args: string[]): Promise<number> {
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
 			exact: { type: "boolean" },
+			highlight: { type: "string" },
+			color: { type: "string" },
+			bold: { type: "boolean" },
+			italic: { type: "boolean" },
+			underline: { type: "boolean" },
 			json: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 		},
@@ -81,7 +105,34 @@ export async function run(args: string[]): Promise<number> {
 	const path = parsed.positionals[0];
 	const query = parsed.positionals[1];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
-	if (query == null) return fail("USAGE", "Missing QUERY argument", HELP);
+
+	// Formatting filters (highlight/color/bold/italic/underline) are an
+	// alternative to a text QUERY — they locate runs by their formatting (the
+	// inverse of `edit --clear`).
+	const formatFilter: RunFormatFilter = {};
+	if (parsed.values.highlight !== undefined)
+		formatFilter.highlight = parsed.values.highlight as string;
+	if (parsed.values.color !== undefined)
+		formatFilter.color = parsed.values.color as string;
+	if (parsed.values.bold) formatFilter.bold = true;
+	if (parsed.values.italic) formatFilter.italic = true;
+	if (parsed.values.underline) formatFilter.underline = true;
+	const hasFormatFilter = Object.keys(formatFilter).length > 0;
+
+	if (query == null && !hasFormatFilter) {
+		return fail(
+			"USAGE",
+			"Missing QUERY (or a --highlight/--color/--bold/--italic/--underline filter)",
+			HELP,
+		);
+	}
+	if (query != null && hasFormatFilter) {
+		return fail(
+			"USAGE",
+			"Pass a text QUERY or formatting filters (--highlight/--color/...), not both",
+			HELP,
+		);
+	}
 
 	const ignoreCase = Boolean(parsed.values["ignore-case"]);
 	const useRegex = Boolean(parsed.values.regex);
@@ -109,20 +160,26 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	let result: ReturnType<typeof findTextSpans>;
-	try {
-		result = findTextSpans(document.body, query, {
-			regex: useRegex,
-			ignoreCase,
-			view: findView,
-			exact,
-		});
-	} catch (matcherError) {
-		const message =
-			matcherError instanceof Error
-				? matcherError.message
-				: String(matcherError);
-		return fail("USAGE", `Invalid query: ${message}`);
+	let result: ReturnType<typeof findTextSpans> = { matches: [] };
+	if (hasFormatFilter) {
+		result = {
+			matches: findFormattedSpans(document.body, formatFilter, findView),
+		};
+	} else if (query != null) {
+		try {
+			result = findTextSpans(document.body, query, {
+				regex: useRegex,
+				ignoreCase,
+				view: findView,
+				exact,
+			});
+		} catch (matcherError) {
+			const message =
+				matcherError instanceof Error
+					? matcherError.message
+					: String(matcherError);
+			return fail("USAGE", `Invalid query: ${message}`);
+		}
 	}
 
 	const allMatches = result.matches;

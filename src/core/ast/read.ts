@@ -752,6 +752,18 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 	if (colorNode) {
 		const value = colorNode.getAttribute("w:val");
 		if (value && value !== "auto") run.color = value;
+		// Theme color: `w:val` is the resolved fallback hex (may be "auto"),
+		// `w:themeColor` the live reference, tint/shade the byte modifiers (kept
+		// as raw strings so re-emit is byte-exact). Tint/shade only modify a
+		// theme color — meaningless without one, so capture them only alongside.
+		const themeColor = colorNode.getAttribute("w:themeColor");
+		if (themeColor) {
+			run.colorTheme = themeColor;
+			const themeTint = colorNode.getAttribute("w:themeTint");
+			if (themeTint) run.colorThemeTint = themeTint;
+			const themeShade = colorNode.getAttribute("w:themeShade");
+			if (themeShade) run.colorThemeShade = themeShade;
+		}
 	}
 
 	const highlightNode = runProperties.findChild("w:highlight");
@@ -760,16 +772,38 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		if (value && value !== "none") run.highlight = value;
 	}
 
+	const shadeNode = runProperties.findChild("w:shd");
+	if (shadeNode) {
+		const fill = shadeNode.getAttribute("w:fill");
+		if (fill && fill !== "auto") run.shade = fill;
+	}
+
 	if (runProperties.findChild("w:b")) run.bold = true;
 	if (runProperties.findChild("w:i")) run.italic = true;
 
 	const underlineNode = runProperties.findChild("w:u");
 	if (underlineNode) {
 		const value = underlineNode.getAttribute("w:val");
-		if (value && value !== "none") run.underline = value;
+		// Underline color only matters with an underline pattern — capture it
+		// only alongside one so it never becomes an orphan attribute.
+		if (value && value !== "none") {
+			run.underline = value;
+			const underlineColor = underlineNode.getAttribute("w:color");
+			if (underlineColor && underlineColor !== "auto") {
+				run.underlineColor = underlineColor;
+			}
+		}
 	}
 
 	if (runProperties.findChild("w:strike")) run.strike = true;
+
+	const vertAlignNode = runProperties.findChild("w:vertAlign");
+	if (vertAlignNode) {
+		const value = vertAlignNode.getAttribute("w:val");
+		if (value && value !== "baseline") run.vertAlign = value;
+	}
+	if (runProperties.findChild("w:smallCaps")) run.smallCaps = true;
+	if (runProperties.findChild("w:caps")) run.allCaps = true;
 
 	const fontNode = runProperties.findChild("w:rFonts");
 	if (fontNode) {

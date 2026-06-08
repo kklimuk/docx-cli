@@ -254,12 +254,19 @@ describe("docx read --markdown for code blocks", () => {
 
 		const result = await runCli("read", docPath);
 		const md = result.stdout;
-		// Three lines wrapped in one fenced block; locator comments on fences.
-		expect(md).toContain("```<!-- p1 -->");
+		// Three lines wrapped in one fenced block. Locator comments sit on their
+		// OWN lines bracketing the fence — never glued to a fence line, which
+		// would break a downstream markdown parser (CommonMark/markdown-it).
 		expect(md).toContain("function foo() {");
 		expect(md).toContain("  return 42;");
 		expect(md).toContain("}");
-		expect(md).toContain("``` <!-- p3 -->");
+		expect(md).toContain("<!-- p1 -->");
+		expect(md).toContain("<!-- p3 -->");
+		// The fence lines themselves are clean: no comment glued to an opening
+		// info string, no content after a closing fence.
+		expect(md).toMatch(/<!-- p1 -->\n```\n/); // open locator, then a bare fence
+		expect(md).toMatch(/\n```\n<!-- p3 -->/); // bare close fence, then locator
+		expect(md).not.toMatch(/```[^\n]*<!--/); // never a comment on a fence line
 	});
 
 	test("--language LANG round-trips to a tagged GFM fence", async () => {
@@ -276,9 +283,52 @@ describe("docx read --markdown for code blocks", () => {
 			"typescript",
 		);
 		const md = (await runCli("read", docPath)).stdout;
-		// Fence opens with the language tag recovered from the pStyle suffix.
-		expect(md).toContain("```typescript<!-- p1 -->");
+		// Fence opens with the language tag recovered from the pStyle suffix —
+		// on a CLEAN info-string line (no locator glued to it, which would make a
+		// parser read the language as `typescript<!--` and lose highlighting).
+		expect(md).toContain("```typescript\n");
+		expect(md).not.toContain("```typescript<!--");
+		expect(md).toMatch(/<!-- p1 -->\n```typescript/);
 		expect(md).toContain("function foo() {");
+	});
+
+	test("read-output code fence re-imports with its language intact (parse-validity)", async () => {
+		// The regression that the string-shape assertions above missed: emitting
+		// the locator ON the fence line corrupts the language id, so re-parsing
+		// `read --markdown` output (what a downstream tool — or our own importer —
+		// does) recovers the WRONG language. Round-trip read→import→read and
+		// assert the fenced language survives.
+		const docPath = join(tempWorkspace("code-fence-reparse"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--code",
+			"const x = 1;\nconst y = 2;",
+			"--language",
+			"typescript",
+		);
+
+		// Feed read --markdown back through create --from, then read again.
+		const ws = tempWorkspace("code-fence-reparse-rt");
+		const mdPath = join(ws, "doc.md");
+		await Bun.write(mdPath, (await runCli("read", docPath)).stdout);
+		const dst = join(ws, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+
+		const reread = (await runCli("read", dst)).stdout;
+		// The language tag must survive the round-trip — a corrupted info string
+		// would re-import as a bare/garbled CodeBlock and lose it.
+		expect(reread).toContain("```typescript\n");
+		expect(reread).toContain("const x = 1;");
+		const blocks = (
+			(await runCli("read", dst, "--ast")).parsed as {
+				blocks: Array<{ style?: string }>;
+			}
+		).blocks;
+		expect(blocks.some((b) => b.style === "CodeBlock-typescript")).toBe(true);
 	});
 
 	test("token colors are stripped from the fenced rendering (source survives)", async () => {

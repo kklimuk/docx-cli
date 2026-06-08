@@ -1,7 +1,39 @@
+import type { Document } from "./ast/document";
 import type { SectionType } from "./ast/types";
 import { w } from "./jsx";
-import type { XmlNode } from "./parser";
+import { XmlNode } from "./parser";
 import type { TrackedMeta } from "./track-changes";
+
+const EMU_PER_TWIP = 635;
+/** US Letter (12240 twip) with 1″ (1440 twip) margins → 6.5″ content width. */
+const DEFAULT_CONTENT_WIDTH_EMU = (12240 - 1440 - 1440) * EMU_PER_TWIP;
+
+/** Page content width in EMU (page width − left/right margins), read from the
+ *  document's trailing `<w:sectPr>` (`<w:pgSz>`/`<w:pgMar>`, in twips). Falls
+ *  back to US-Letter-with-1″-margins when section properties are absent or
+ *  malformed. Used to clamp inserted images so they don't spill into margins. */
+export function getPageContentWidthEmu(document: Document): number {
+	const root = XmlNode.findRoot(document.documentTree, "w:document");
+	const body = root?.findChild("w:body");
+	const sectPr = body?.children
+		.filter((child) => child.tag === "w:sectPr")
+		.pop();
+	const width = Number(sectPr?.findChild("w:pgSz")?.getAttribute("w:w"));
+	const pgMar = sectPr?.findChild("w:pgMar");
+	const left = Number(pgMar?.getAttribute("w:left"));
+	const right = Number(pgMar?.getAttribute("w:right"));
+	if (
+		!Number.isFinite(width) ||
+		!Number.isFinite(left) ||
+		!Number.isFinite(right)
+	) {
+		return DEFAULT_CONTENT_WIDTH_EMU;
+	}
+	const contentTwips = width - left - right;
+	return contentTwips > 0
+		? contentTwips * EMU_PER_TWIP
+		: DEFAULT_CONTENT_WIDTH_EMU;
+}
 
 export type SectionProperties = {
 	columns?: number;

@@ -3,6 +3,7 @@ import { fail, writeStdout } from "../respond";
 type CommandFn = (args: string[]) => Promise<number>;
 
 const SUBCOMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
+	add: () => import("./add"),
 	delete: () => import("./delete"),
 	extract: () => import("./extract"),
 	list: () => import("./list"),
@@ -15,6 +16,7 @@ Usage:
   docx images <verb> FILE [options]
 
 Verbs:
+  add      Insert an image (alias for \`docx insert --image\`)
   list     Print image manifest as JSON
   extract  Dump image bytes to a directory
   replace  Swap an image's bytes

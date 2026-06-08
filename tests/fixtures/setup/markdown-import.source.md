@@ -161,6 +161,7 @@ no highlighting.
 
 ```typescript
 function add(a: number, b: number): number {
+	// returns the sum
 	return a + b;
 }
 ```

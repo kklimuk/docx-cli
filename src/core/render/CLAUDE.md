@@ -101,7 +101,7 @@ This pattern (build-time asset + path import + runtime `Bun.file(arrayBuffer)`) 
 
 ## Output is JSON ack via `respond()` (always-print)
 
-The page list is essential output the agent can't reconstruct, so we call `respond()` directly (always prints) rather than `respondAck()` (gated on `--verbose`). Same pattern as `comments add --batch` printing minted ids unconditionally. The `--verbose` flag is currently unused but kept reserved for future signal-to-noise expansions.
+The page list is essential output the agent can't reconstruct, so we call `respond()` directly (always prints) rather than `respondAck()` (gated on `--verbose`). Same pattern as `comments add --batch` printing minted ids unconditionally. `--verbose` switches the output from the bare page-path list to the full JSON ack (`{ok, operation, path, engine, output, pages}`).
 
 ## Adding a new engine
 

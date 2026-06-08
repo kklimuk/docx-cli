@@ -28,7 +28,20 @@ export type MarkdownOptions = {
 	to?: string;
 	view?: MarkdownView;
 	showComments?: boolean;
+	/** Document default run size in half-points (from styles `docDefaults`).
+	 *  Used as the baseline size when no stronger per-run majority emerges, so a
+	 *  doc that stamps the default `<w:sz>` on most runs still reads clean. */
+	defaultSizeHalfPoints?: number;
 };
+
+/** Document-wide run formatting so ubiquitous it reads as noise: the dominant
+ *  font and size across all body + table runs. `read` emits it once as a
+ *  `<!-- docx:base … -->` note and omits it from every matching run; the markdown
+ *  importer parses the note back and re-applies it per-run, so `read → create`
+ *  round-trips. A value only becomes a baseline when it covers a majority of the
+ *  document's text — otherwise the document has no single baseline and every
+ *  run keeps its explicit formatting. */
+export type RunFormatBaseline = { font?: string; sizeHalfPoints?: number };
 
 export class MarkdownLocatorError extends Error {
 	constructor(
@@ -48,10 +61,16 @@ type CommentIndex = {
 
 type RenderContext = {
 	options: MarkdownOptions;
+	baseline: RunFormatBaseline;
 	commentIndex: CommentIndex;
 	referencedFootnoteIds: Set<string>;
 	referencedEndnoteIds: Set<string>;
 	referencedTrackedChanges: Map<string, TrackedChange>;
+	/** Running count of ordered-list items seen, keyed by `${numId}:${level}`, so
+	 *  each item renders its real ordinal (1. 2. 3.) instead of a uniform `1.` —
+	 *  the raw markdown reads correctly, not as a wall of `1.` (a renderer would
+	 *  auto-increment, but the raw text an agent/human reads would not). */
+	orderedCounters: Map<string, number>;
 };
 
 export function renderMarkdown(
@@ -59,15 +78,27 @@ export function renderMarkdown(
 	options: MarkdownOptions = {},
 ): string {
 	const blocks = sliceBlocks(doc.blocks, options.from, options.to);
+	const dominant = detectFormatBaseline(blocks);
+	// Suppression falls back to the document default size, so a doc that stamps
+	// the default `<w:sz>` on most runs still reads clean. The NOTE, though,
+	// carries only true per-run dominants — the document default is reconstructed
+	// from the importer's own `docDefaults`, so re-declaring it would make import
+	// stamp explicit sizes on runs that never had one (a round-trip drift).
+	const baseline: RunFormatBaseline = {
+		font: dominant.font,
+		sizeHalfPoints: dominant.sizeHalfPoints ?? options.defaultSizeHalfPoints,
+	};
 	const commentIndex = options.showComments
 		? buildCommentIndex(blocks, options)
 		: emptyCommentIndex();
 	const ctx: RenderContext = {
 		options,
+		baseline,
 		commentIndex,
 		referencedFootnoteIds: new Set(),
 		referencedEndnoteIds: new Set(),
 		referencedTrackedChanges: new Map(),
+		orderedCounters: new Map(),
 	};
 
 	const parts: string[] = [];
@@ -78,10 +109,19 @@ export function renderMarkdown(
 			cursor++;
 			continue;
 		}
+		// The trailing mandatory section break is implicit OOXML structure that
+		// `create`/`insert` re-add automatically. Rendering it as `---` would
+		// re-import as a stray thematic-break paragraph that accretes on every
+		// read → create → read cycle, so suppress the final section break.
+		if (block.type === "sectionBreak" && cursor === blocks.length - 1) {
+			cursor++;
+			continue;
+		}
 		// Collapse a run of CodeBlock paragraphs into one fenced GFM block.
 		// Walk forward as long as adjacent blocks are CodeBlock paragraphs;
-		// emit one ```...``` for the group. Locator comments live on the fence
-		// (start/end) rather than per-line, so the block reads cleanly.
+		// emit one ```...``` for the group. Locator comments go on their own
+		// lines bracketing the fence (not on the fence lines, which would corrupt
+		// the language id and break fence-closing), so the block reads cleanly.
 		if (isCodeBlockParagraph(block)) {
 			let lookahead = cursor + 1;
 			while (lookahead < blocks.length) {
@@ -119,7 +159,69 @@ export function renderMarkdown(
 	if (trackedChangeDefs.length > 0) definitions.push(trackedChangeDefs);
 	if (definitions.length > 0) parts.push(definitions.join("\n"));
 	if (parts.length === 0) return "";
-	return `${parts.join("\n\n")}\n`;
+	// The base note rides at the very top so the importer reads it before any
+	// content — it declares the document's dominant font/size, which `read` then
+	// omits from every matching run below.
+	const baseNote = formatBaseNote(dominant);
+	const head = baseNote ? `${baseNote}\n\n` : "";
+	return `${head}${parts.join("\n\n")}\n`;
+}
+
+/** The dominant font and size across all body + table runs, each reported only
+ * when it covers a majority of the document's rendered text (weighted by
+ * character count). A clear majority is what makes omitting it from every run
+ * legible rather than lossy; below the threshold the document has no single
+ * baseline and every run keeps its explicit formatting. */
+function detectFormatBaseline(blocks: Block[]): RunFormatBaseline {
+	const fontChars = new Map<string, number>();
+	const sizeChars = new Map<number, number>();
+	let total = 0;
+	for (const paragraph of flattenParagraphs(blocks)) {
+		for (const run of paragraph.runs) {
+			if (run.type !== "text") continue;
+			const length = run.text.length;
+			if (length === 0) continue;
+			total += length;
+			if (run.font)
+				fontChars.set(run.font, (fontChars.get(run.font) ?? 0) + length);
+			if (run.sizeHalfPoints !== undefined) {
+				sizeChars.set(
+					run.sizeHalfPoints,
+					(sizeChars.get(run.sizeHalfPoints) ?? 0) + length,
+				);
+			}
+		}
+	}
+	if (total === 0) return {};
+	return {
+		font: majorityKey(fontChars, total),
+		sizeHalfPoints: majorityKey(sizeChars, total),
+	};
+}
+
+/** The map key whose accumulated weight exceeds half the total, or undefined
+ * when no single key does. */
+function majorityKey<K>(counts: Map<K, number>, total: number): K | undefined {
+	for (const [key, weight] of counts) {
+		if (weight * 2 > total) return key;
+	}
+	return undefined;
+}
+
+/** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare.
+ * The attribute spelling matches the `[text]{…}` span contract so the importer
+ * parses it with the same `parseAttrs` — `size` in points, `font` verbatim. */
+function formatBaseNote(baseline: RunFormatBaseline): string {
+	const pairs: string[] = [];
+	// Escape via `htmlAttr` (same sink as every span attribute) so a pathological
+	// font value (a `"`, `>`, or `-->`) can't break the comment's quoting or close
+	// the note early. Normal font names have no metacharacters, so this is a no-op
+	// for real documents.
+	if (baseline.font) pairs.push(htmlAttr("font", baseline.font));
+	if (baseline.sizeHalfPoints !== undefined) {
+		pairs.push(htmlAttr("size", `${baseline.sizeHalfPoints / 2}pt`));
+	}
+	return pairs.length > 0 ? `<!-- docx:base ${pairs.join(" ")} -->` : "";
 }
 
 function emptyCommentIndex(): CommentIndex {
@@ -214,7 +316,8 @@ function isCodeBlockParagraph(block: Block): block is Paragraph {
  *  formatting (the colors lowlight applied on insert) gets stripped — the
  *  fenced rendering loses syntax-highlighting fidelity but stays a faithful
  *  source code representation, which is the right trade-off for a markdown
- *  view. Locator comments mark the fence start/end rather than each line.
+ *  view. Locator comments sit on their own lines bracketing the fence (open id
+ *  before, close id after) — never on the fence lines themselves.
  *  The language tag on the opening fence comes from the first paragraph's
  *  `CodeBlock-LANG` pStyle suffix (or empty for the bare `CodeBlock`).
  *
@@ -252,22 +355,29 @@ function renderCodeBlockGroup(
 	const firstId = paragraphs[0]?.id ?? "";
 	const lastId = paragraphs[paragraphs.length - 1]?.id ?? firstId;
 	const language = codeBlockLanguageFromStyleId(paragraphs[0]?.style) ?? "";
-	const openComment = `<!-- ${firstId} -->`;
-	const closeComment = firstId === lastId ? "" : ` <!-- ${lastId} -->`;
-	return [
-		`\`\`\`${language}${openComment}`,
-		...lines,
-		`\`\`\`${closeComment}`,
-	].join("\n");
+	// Locator comments go on their OWN lines, never on the fence lines. Gluing
+	// one to the opening info string (` ```ts<!--p--> `) corrupts the language
+	// id (the parser — and our own importer — reads `ts<!--` as the language);
+	// putting one after the closing fence on the same line (` ``` <!--p--> `)
+	// violates CommonMark (a closing fence may be followed only by spaces), so
+	// the block never closes. The opening locator precedes the fence; the
+	// closing locator (only when the group spans >1 source paragraph) follows it.
+	const parts = [`<!-- ${firstId} -->`, `\`\`\`${language}`, ...lines, "```"];
+	if (firstId !== lastId) parts.push(`<!-- ${lastId} -->`);
+	return parts.join("\n");
 }
 
 function renderParagraph(
 	paragraph: Paragraph,
 	ctx: RenderContext,
 ): string | null {
-	const body = renderRuns(paragraph.id, paragraph.runs, ctx);
-	if (body.length === 0) return null;
-	const prefix = paragraphPrefix(paragraph);
+	const rendered = renderRuns(paragraph.id, paragraph.runs, ctx);
+	if (rendered.length === 0) return null;
+	const prefix = paragraphPrefix(paragraph, orderedOrdinal(paragraph, ctx));
+	// Trim trailing spaces/tabs (not newlines) so the single space separating
+	// the body from its ` <!-- pN -->` locator doesn't accumulate one extra
+	// space on every read → create → read cycle.
+	const body = rendered.replace(/[ \t]+$/, "");
 	// Display equations need to be on their own line for KaTeX-based renderers
 	// (Obsidian, VS Code preview, etc.) to recognize `$$…$$` as display math.
 	// Putting the locator after a space on the same line confuses the parser
@@ -287,7 +397,26 @@ function isDisplayEquationOnly(body: string): boolean {
 	return !inner.includes("$$");
 }
 
-function paragraphPrefix(paragraph: Paragraph): string {
+/** The 1-based ordinal for an ordered-list paragraph, counting items per
+ * `${numId}:${level}` across the document (Word numbers a list continuously by
+ * numId). Bumping a level resets all deeper levels so a nested sub-list restarts.
+ * Returns 1 for non-ordered paragraphs (unused by the caller). */
+function orderedOrdinal(paragraph: Paragraph, ctx: RenderContext): number {
+	if (!paragraph.list?.ordered) return 1;
+	const { numId, level } = paragraph.list;
+	const key = `${numId}:${level}`;
+	const next = (ctx.orderedCounters.get(key) ?? 0) + 1;
+	ctx.orderedCounters.set(key, next);
+	for (const existing of ctx.orderedCounters.keys()) {
+		const [keyNumId, keyLevel] = existing.split(":");
+		if (keyNumId === String(numId) && Number(keyLevel) > level) {
+			ctx.orderedCounters.delete(existing);
+		}
+	}
+	return next;
+}
+
+function paragraphPrefix(paragraph: Paragraph, ordinal: number): string {
 	// Blockquote prefix comes before everything else. `> ` repeats per
 	// nesting depth; the AST reader fills `quoteDepth` from `pStyle="Quote"`
 	// / `pStyle="QuoteListParagraph"` plus the paragraph's `<w:ind w:left>`
@@ -302,9 +431,10 @@ function paragraphPrefix(paragraph: Paragraph): string {
 	}
 	if (paragraph.list) {
 		const indent = "  ".repeat(paragraph.list.level);
-		// GFM ordered-list numbering auto-increments client-side; using `1. `
-		// for every item is the idiomatic representation.
-		const marker = paragraph.list.ordered ? "1. " : "- ";
+		// Emit the real ordinal (1. 2. 3.) so the RAW markdown reads correctly —
+		// a uniform `1.` only auto-increments once a renderer displays it, leaving
+		// the text an agent/human reads as a confusing wall of `1.`.
+		const marker = paragraph.list.ordered ? `${ordinal}. ` : "- ";
 		const task =
 			paragraph.taskState === "checked"
 				? "[x] "
@@ -357,7 +487,7 @@ function renderRuns(
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
 			const segmentRuns = segment.map((entry) => entry.run as TextRun);
-			out += renderTextSegment(segmentRuns, view);
+			out += renderTextSegment(segmentRuns, view, ctx.baseline);
 			if (view === "current") {
 				for (const segmentRun of segmentRuns) {
 					if (segmentRun.trackedChange) {
@@ -385,7 +515,11 @@ function renderRuns(
 			const extension = extensionForImageMime(run.contentType) ?? "bin";
 			out += `![${alt}](${run.hash}.${extension})`;
 		} else if (run.type === "break") {
-			if (run.kind === "line") out += "<br>";
+			// A line break renders as a real newline so verse/line-structured
+			// text round-trips (import maps a soft newline back to <w:br/>). In
+			// table cells, escapeCell converts these newlines to <br> so the
+			// markdown table stays one row per record.
+			if (run.kind === "line") out += "\n";
 		} else if (run.type === "tab") {
 			out += "\t";
 		} else if (run.type === "equation") {
@@ -438,8 +572,18 @@ function sameDecoration(a: TextRun, b: TextRun): boolean {
 		(a.italic ?? false) === (b.italic ?? false) &&
 		(a.strike ?? false) === (b.strike ?? false) &&
 		(a.underline ?? "") === (b.underline ?? "") &&
+		(a.underlineColor ?? "") === (b.underlineColor ?? "") &&
 		(a.color ?? "") === (b.color ?? "") &&
+		(a.colorTheme ?? "") === (b.colorTheme ?? "") &&
+		(a.colorThemeTint ?? "") === (b.colorThemeTint ?? "") &&
+		(a.colorThemeShade ?? "") === (b.colorThemeShade ?? "") &&
 		(a.highlight ?? "") === (b.highlight ?? "") &&
+		(a.shade ?? "") === (b.shade ?? "") &&
+		(a.font ?? "") === (b.font ?? "") &&
+		(a.sizeHalfPoints ?? 0) === (b.sizeHalfPoints ?? 0) &&
+		(a.vertAlign ?? "") === (b.vertAlign ?? "") &&
+		(a.smallCaps ?? false) === (b.smallCaps ?? false) &&
+		(a.allCaps ?? false) === (b.allCaps ?? false) &&
 		(a.runStyle ?? "") === (b.runStyle ?? "") &&
 		a.hyperlink?.id === b.hyperlink?.id &&
 		a.trackedChange?.id === b.trackedChange?.id &&
@@ -460,27 +604,49 @@ function sameCommentSet(
 	return true;
 }
 
-function renderTextSegment(runs: TextRun[], view: MarkdownView): string {
+function renderTextSegment(
+	runs: TextRun[],
+	view: MarkdownView,
+	baseline: RunFormatBaseline,
+): string {
 	const text = runs.map((run) => run.text).join("");
 	if (text.length === 0) return "";
 	const first = runs[0];
 	if (!first) return "";
-	let out = text;
+	// An HTML formatting wrapper requires the text to be HTML-escaped so `< & >`
+	// in the content can't break a `<span>`/`<mark>`; a plain run (native markdown
+	// only, or nothing) is left byte-exact so ordinary prose round-trips.
+	// Markdown emphasis around whitespace-only text (`** **`) mis-parses — a
+	// reader pairs the two `**` and bolds everything between them. So a blank run
+	// carries its emphasis as unambiguous HTML tags (`<b>`/`<i>`/`<s>`) instead,
+	// which both renders correctly AND round-trips (consistent with the
+	// underline/highlight/color a blank run already keeps via the wrapper below).
+	const isBlank = text.trim().length === 0;
+	const wrap = needsHtmlWrap(first, baseline) || isBlank;
+	let out = wrap ? escapeHtmlText(text) : text;
 	// Backticks INSIDE other formatting per GFM precedence — `**`x`**` is bold
 	// code; `**x**` inside backticks would be literal asterisks. Skip Code runs
 	// inside a fenced code block (callers strip runStyle on those — see
 	// `renderCodeBlockGroup`); this branch handles `runStyle: "Code"` only when
-	// it's still meaningful (inline code spans in a normal paragraph).
+	// it's still meaningful (inline code spans in a normal paragraph). Code spans
+	// on whitespace are valid (backticks have no flanking rule), so no split.
 	if (first.runStyle === "Code") out = `\`${out}\``;
-	if (first.bold) out = `**${out}**`;
-	if (first.italic) out = `*${out}*`;
-	if (first.strike) out = `~~${out}~~`;
-	if (first.underline) out = `<u>${out}</u>`;
-	const color = colorAttrFor(first.color);
-	if (color) out = `<span style="color:${color}">${out}</span>`;
-	const highlight = highlightCssFor(first.highlight);
-	if (highlight)
-		out = `<span style="background-color:${highlight}">${out}</span>`;
+	if (isBlank) {
+		if (first.bold) out = `<b>${out}</b>`;
+		if (first.italic) out = `<i>${out}</i>`;
+		if (first.strike) out = `<s>${out}</s>`;
+	} else {
+		if (first.bold) out = `**${out}**`;
+		if (first.italic) out = `*${out}*`;
+		if (first.strike) out = `~~${out}~~`;
+	}
+	// Everything else (color, highlight, shading, underline, super/sub, caps,
+	// font, size, theme color) rides in HTML so a real markdown reader renders
+	// it: semantic tags where they exist (<mark>/<sup>/<sub>/<u>), a `<span
+	// style>` for the CSS-expressible props, and `data-*` attributes for the
+	// OOXML-only bits CSS can't say. The import side parses these back;
+	// `read --ast` is the lossless format. See `wrapRunFormatting`.
+	if (wrap) out = wrapRunFormatting(out, first, baseline);
 	if (first.hyperlink) {
 		const target = first.hyperlink.url ?? `#${first.hyperlink.anchor ?? ""}`;
 		out = `[${out}](${target})`;
@@ -502,20 +668,147 @@ function criticMarkerFor(kind: TrackedChange["kind"]): "++" | "--" {
 	return "--";
 }
 
-function colorAttrFor(value: string | undefined): string | null {
-	if (!value) return null;
-	const lowered = value.toLowerCase();
-	if (lowered === "auto") return null;
-	if (/^[0-9a-f]{6}$/.test(lowered)) return `#${lowered}`;
-	return value;
+/** Whether a run carries formatting beyond native markdown (bold/italic/strike/
+ * code/link) — i.e. whether it needs an HTML wrapper. When false the run stays
+ * plain markdown and its text isn't HTML-escaped. */
+function needsHtmlWrap(run: TextRun, baseline: RunFormatBaseline): boolean {
+	return Boolean(
+		(run.color && !isDefaultColor(run.color)) ||
+			(run.colorTheme && !isDefaultThemeColor(run)) ||
+			run.shade ||
+			(run.font && run.font !== baseline.font) ||
+			(run.sizeHalfPoints !== undefined &&
+				run.sizeHalfPoints !== baseline.sizeHalfPoints) ||
+			run.smallCaps ||
+			run.allCaps ||
+			run.underline ||
+			run.vertAlign === "superscript" ||
+			run.vertAlign === "subscript" ||
+			run.highlight,
+	);
 }
 
-/** Map an OOXML highlight value (`yellow`/`darkBlue`/...) to a CSS color. The
- * names match CSS color keywords once camelCase is folded to lowercase. */
-function highlightCssFor(value: string | undefined): string | null {
-	if (!value) return null;
-	if (value === "none") return null;
-	return value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+/** Wrap already-markdown-formatted text in the HTML that carries a run's
+ * non-native formatting, innermost → outermost: `<span style + data-*>` (color,
+ * font, size, caps, shade, theme color) → `<u>` (underline) → `<sup>`/`<sub>`
+ * (vertical align) → `<mark>` (highlight). The nesting order is fixed so the
+ * importer (`gatherHtmlSpans` in `core/markdown/inline-surgery.ts`) reverses it
+ * deterministically — this pairing is the read↔import contract. CSS-expressible
+ * props go in `style`; OOXML-only ones (theme color, underline style) ride as
+ * `data-*` attributes a renderer ignores but the importer reads. */
+function wrapRunFormatting(
+	body: string,
+	run: TextRun,
+	baseline: RunFormatBaseline,
+): string {
+	const styles: string[] = [];
+	const attrs: string[] = [];
+	// Black / "auto" is the universal default — emitting it says nothing.
+	if (run.color && !isDefaultColor(run.color))
+		styles.push(`color:#${run.color}`);
+	if (run.shade) styles.push(`background-color:#${run.shade}`);
+	// Font and size matching the document baseline are declared once in the
+	// `<!-- docx:base … -->` note and omitted here (round-trip safe — the importer
+	// re-applies them); a run that deviates keeps its value.
+	if (run.font && run.font !== baseline.font) {
+		styles.push(`font-family:${cssFontFamily(run.font)}`);
+	}
+	if (
+		run.sizeHalfPoints !== undefined &&
+		run.sizeHalfPoints !== baseline.sizeHalfPoints
+	) {
+		styles.push(`font-size:${run.sizeHalfPoints / 2}pt`);
+	}
+	if (run.smallCaps) styles.push("font-variant:small-caps");
+	if (run.allCaps) styles.push("text-transform:uppercase");
+	if (run.colorTheme && !isDefaultThemeColor(run)) {
+		attrs.push(htmlAttr("data-color-theme", run.colorTheme));
+		if (run.colorThemeTint) {
+			attrs.push(htmlAttr("data-color-theme-tint", run.colorThemeTint));
+		}
+		if (run.colorThemeShade) {
+			attrs.push(htmlAttr("data-color-theme-shade", run.colorThemeShade));
+		}
+	}
+	let out = body;
+	if (styles.length > 0 || attrs.length > 0) {
+		// `style` and `data-*` values are HTML-attribute-escaped so a crafted font
+		// name (e.g. one containing `"`) can't close the attribute early and inject
+		// a sibling attribute — the importer decodes the entity back verbatim.
+		const stylePart =
+			styles.length > 0 ? ` ${htmlAttr("style", styles.join(";"))}` : "";
+		const attrPart = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+		out = `<span${stylePart}${attrPart}>${out}</span>`;
+	}
+	if (run.underline === "single") {
+		out = `<u>${out}</u>`;
+	} else if (run.underline) {
+		const color = run.underlineColor
+			? ` ${htmlAttr("data-underline-color", run.underlineColor)}`
+			: "";
+		out = `<u ${htmlAttr("data-underline", run.underline)}${color}>${out}</u>`;
+	}
+	if (run.vertAlign === "superscript") out = `<sup>${out}</sup>`;
+	else if (run.vertAlign === "subscript") out = `<sub>${out}</sub>`;
+	if (run.highlight) {
+		// `<mark>` defaults to yellow; carry any other named highlight in a
+		// data attribute (the importer reads it back to the exact OOXML name).
+		const named =
+			run.highlight === "yellow"
+				? ""
+				: ` ${htmlAttr("data-highlight", run.highlight)}`;
+		out = `<mark${named}>${out}</mark>`;
+	}
+	return out;
+}
+
+/** An HTML attribute `key="value"` with the value escaped so it can't terminate
+ * the attribute early or inject a sibling (`"`, `&`, `<`, `>`). remark decodes
+ * the entities back, so the value round-trips verbatim. */
+function htmlAttr(key: string, value: string): string {
+	const escaped = value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
+	return `${key}="${escaped}"`;
+}
+
+/** Black (`000000`) or `auto` — the universal default text color, which carries
+ * no information when stamped explicitly on a run. */
+function isDefaultColor(color: string): boolean {
+	const normalized = color.toLowerCase();
+	return normalized === "000000" || normalized === "auto";
+}
+
+/** `text1`/`dark1` with no tint/shade is the default dark-text theme slot
+ * (black) — the theme-color equivalent of an explicit `000000`. */
+function isDefaultThemeColor(run: TextRun): boolean {
+	return (
+		(run.colorTheme === "text1" || run.colorTheme === "dark1") &&
+		!run.colorThemeTint &&
+		!run.colorThemeShade
+	);
+}
+
+/** A CSS `font-family` value — quote names containing whitespace so the
+ * declaration stays valid (`font-family:'Times New Roman'`). */
+function cssFontFamily(font: string): string {
+	return /\s/.test(font) ? `'${font}'` : font;
+}
+
+/** Escape the characters that would break an HTML wrapper's text content or
+ * re-tokenize as markdown link syntax once split across tags (`[ ]`). Applied
+ * only to runs that ARE wrapped — plain markdown text stays byte-exact. remark
+ * decodes these entities back to characters on import, so it's lossless. `&`
+ * goes first so the entities we introduce aren't double-escaped. */
+function escapeHtmlText(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\[/g, "&#91;")
+		.replace(/\]/g, "&#93;");
 }
 
 function renderTable(table: Table, ctx: RenderContext): string | null {
@@ -562,9 +855,11 @@ function renderCell(cell: TableCell, ctx: RenderContext): string {
 	const parts: string[] = [];
 	for (const block of cell.blocks) {
 		if (block.type === "paragraph") {
-			const body = renderRuns(block.id, block.runs, ctx);
-			if (body.length === 0) continue;
-			parts.push(`${body} <!-- ${block.id} -->`);
+			const rendered = renderRuns(block.id, block.runs, ctx);
+			if (rendered.length === 0) continue;
+			// Trim trailing spaces/tabs so the locator separator doesn't grow
+			// each round-trip (newlines become <br> via escapeCell).
+			parts.push(`${rendered.replace(/[ \t]+$/, "")} <!-- ${block.id} -->`);
 			continue;
 		}
 		if (block.type === "table") {
@@ -582,7 +877,9 @@ function renderNestedTable(table: Table, ctx: RenderContext): string {
 }
 
 function escapeCell(text: string): string {
-	return text.replace(/\|/g, "\\|");
+	// Table cells are single-line in GFM: a real newline (from a <w:br/> run or
+	// a multi-paragraph cell) must become <br> so the row stays intact.
+	return text.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 }
 
 function sanitizeAltText(text: string): string {
