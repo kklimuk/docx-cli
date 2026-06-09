@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" width="360" height="280">
+	<title>Frontispiece</title>
+	<rect x="0" y="0" width="360" height="280" fill="#f7f3ea"/>
+	<!-- double art-deco border -->
+	<rect x="16" y="16" width="328" height="248" fill="none" stroke="#2f3b3a" stroke-width="3"/>
+	<rect x="24" y="24" width="312" height="232" fill="none" stroke="#2f3b3a" stroke-width="1"/>
+	<!-- corner squares -->
+	<g fill="#2f3b3a">
+		<rect x="20" y="20" width="6" height="6"/>
+		<rect x="334" y="20" width="6" height="6"/>
+		<rect x="20" y="254" width="6" height="6"/>
+		<rect x="334" y="254" width="6" height="6"/>
+	</g>
+	<!-- art-deco sunburst rising from the horizon -->
+	<g stroke="#2f3b3a" stroke-width="2">
+		<line x1="180" y1="210" x2="180" y2="70"/>
+		<line x1="180" y1="210" x2="140" y2="84"/>
+		<line x1="180" y1="210" x2="220" y2="84"/>
+		<line x1="180" y1="210" x2="104" y2="110"/>
+		<line x1="180" y1="210" x2="256" y2="110"/>
+		<line x1="180" y1="210" x2="76" y2="146"/>
+		<line x1="180" y1="210" x2="284" y2="146"/>
+	</g>
+	<!-- horizon arcs -->
+	<g fill="none" stroke="#2f3b3a" stroke-width="1.5">
+		<path d="M96 210 A 84 84 0 0 1 264 210"/>
+		<path d="M120 210 A 60 60 0 0 1 240 210"/>
+	</g>
+	<line x1="60" y1="210" x2="300" y2="210" stroke="#2f3b3a" stroke-width="2"/>
+	<!-- monogram -->
+	<text x="180" y="245" text-anchor="middle" font-family="Georgia, serif" font-size="18" fill="#2f3b3a" letter-spacing="3">T · S · E</text>
+</svg>

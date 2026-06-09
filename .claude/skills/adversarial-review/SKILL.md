@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: "Run the weak-agent (Haiku) adversarial test harness against docx-cli. Spawns Haiku agents to perform real document tasks over six bundled .docx fixtures (form-fill, legal review, invoice, mail-merge, résumé, contract preservation) plus two authoring tasks (papers report, T. S. Eliot poetry journal), renders every result with Word, judges them, measures the Haiku tool economy (docx-cli vs other calls), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
+description: "Run the weak-agent (Haiku) adversarial test harness against docx-cli. Spawns Haiku agents to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, judges them, measures the Haiku tool economy (docx-cli vs other calls), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
 allowed-tools: Bash, Read, Write, Glob, Workflow
 ---
 
@@ -12,13 +12,42 @@ workflow (`.claude/workflows/adversarial-review.js`), which fans out one Haiku a
 per scenario, renders every output with Microsoft Word, grades each against
 ground-truth criteria, and synthesizes a prioritized improvement report.
 
-The scenarios live in the workflow; their inputs (real .docx fixtures + task data)
-are **bundled with this skill** under `fixtures/` — the `.docx` files at
-`.claude/skills/adversarial-review/fixtures/*.docx` and the task data at
-`.claude/skills/adversarial-review/fixtures/assets/`. The skill is therefore
-self-contained and travels with its test corpus. To change what gets tested, edit
-those files. (Heavy, ephemeral run outputs — edited docx, renders, the report — are
-dumped to `./tmp/docx-adversarial-review/<ts>/`, never into the repo.)
+The test corpus is **bundled with this skill** under `scenarios/`, one folder per
+scenario, named after its key (`scenarios/mnda/`, `scenarios/loi/`, …). Each scenario
+folder is self-describing and holds everything that scenario needs:
+
+- `task.md` — the task **and** the resolution criteria it's judged against,
+- `brief.md` — the detailed brief (the data to enter, step-by-step instructions),
+- the fixture `.docx` to work on (edit scenarios only; authoring scenarios create
+  their output fresh),
+- `assets/` — any additional inputs (data files, images; empty for most edit
+  scenarios).
+
+The workflow's `SCENARIOS` manifest holds only the per-scenario **routing** metadata
+(key, bucket label, `edit`/`author` kind, the doc filename, whether to render a
+baseline); the actual task/brief/fixture/assets all live in the folder. The skill is
+therefore self-contained and travels with its test corpus. To change what a scenario
+tests, edit the files in its folder. (Heavy, ephemeral run outputs — edited docx,
+renders, reviews, the report — are dumped to `./tmp/docx-adversarial-review/<ts>/`,
+never into the repo.)
+
+Each run produces, under the timestamped run dir, **one result folder per scenario**
+(named after its key) plus the run-level report and metrics:
+
+```
+<RUN_DIR>/
+  REPORT.md            ← synthesized report (+ appended measured metrics)
+  haiku-metrics.md     ← measured per-Haiku-agent tokens/time/tool split
+  haiku-metrics.json
+  benchmark.json       ← self-reported tool economy
+  <key>/               ← one per scenario; the worked-on copy lives here
+    task.md  brief.md  assets/
+    <doc>.docx         ← the edited/authored document
+    renders/output/    ← the Word-rendered PNGs the judge looked at
+    renders/baseline/  ← pristine before-render (baseline scenarios only, e.g. psa)
+    review.md          ← the judge's saved review for this task (written in-run)
+    metrics.json       ← this task's measured tokens/time/tool split (written post-run by haiku-metrics)
+```
 
 ## Steps
 
@@ -35,7 +64,7 @@ fails.
 ```bash
 REPO="$(git rev-parse --show-toplevel)"
 cd "$REPO"
-FIXTURES="$REPO/.claude/skills/adversarial-review/fixtures"   # this skill's bundled corpus
+SCENARIOS_DIR="$REPO/.claude/skills/adversarial-review/scenarios"   # this skill's bundled corpus (one folder per scenario)
 
 # Word must be installed (this harness renders with Word, not LibreOffice).
 test -d "/Applications/Microsoft Word.app" || echo "WARNING: Microsoft Word not found — render phase will fail."
@@ -67,15 +96,16 @@ working tree — stop and fix it before running. Do not proceed on a stale binar
 
 ### 2. Make an isolated run workspace (under ./tmp/)
 
-Create an empty timestamped `./tmp/` run dir. **Do NOT copy the fixtures here** — the
-workflow's **Stage** phase copies *only the active scenarios' inputs* from the pristine
-`$FIXTURES` into `$RUN_DIR` (scoped to `only`), so originals stay untouched, the repo
-stays clean, and a single-scenario run doesn't drag the whole corpus along:
+Create an empty timestamped `./tmp/` run dir. **Do NOT copy the scenarios here** — the
+workflow's **Stage** phase copies *only the active scenarios' folders* from the pristine
+`$SCENARIOS_DIR` into `$RUN_DIR`, one subfolder per scenario (`$RUN_DIR/<key>/`), so
+originals stay untouched, the repo stays clean, and a single-scenario run doesn't drag
+the whole corpus along:
 
 ```bash
 TS="$(date +%Y.%m.%d-%H%M%S)"
 RUN_DIR="./tmp/docx-adversarial-review/$TS"
-mkdir -p "$RUN_DIR"   # empty; the workflow's Stage phase seeds it from $FIXTURES (scoped to `only`)
+mkdir -p "$RUN_DIR"   # empty; the workflow's Stage phase seeds one subfolder per active scenario from $SCENARIOS_DIR
 echo "RUN_DIR=$RUN_DIR"
 ```
 
@@ -90,17 +120,19 @@ Workflow({
   args: {
     runDir: "<RUN_DIR from step 2>",
     binary: "<BINARY from step 1>",
-    fixturesDir: "<FIXTURES from step 1>",
+    scenariosDir: "<SCENARIOS_DIR from step 1>",
     only: <optional scenario filter — see below>
   }
 })
 ```
 
-`only` restricts the run to a subset of scenarios (omit it to run all 8). To run a
+`only` restricts the run to a subset of scenarios (omit it to run all 6). To run a
 **single task**, pass its key as a plain string — `only: "mnda"`. It also accepts an
 array (`only: ["mnda", "loi"]`) or a comma/space-separated string (`only: "mnda,loi"`);
-all three are normalized to the same list, so use whichever is convenient. Unknown
-keys abort the run with a "No scenarios matched" error listing the valid keys.
+all three are normalized to the same list, so use whichever is convenient. The keys are
+the folder names under `$SCENARIOS_DIR` (run `ls "$SCENARIOS_DIR"` if you need to
+confirm them); unknown keys abort the run with a "No scenarios matched" error listing
+the valid ones.
 
 > Use `scriptPath`, NOT `name: "adversarial-review"`. Launching by name resolves to a
 > copy cached at session start, so any edit to the workflow made during the session is
@@ -112,15 +144,14 @@ When the tool returns, **note the `Transcript dir:` path it prints** — call it
 `TRANSCRIPT_DIR` (it looks like `…/subagents/workflows/wf_<id>`). You need it in
 step 4 to measure per-agent tokens and time.
 
-**Scenario keys** (omit `only` to run all 8):
-`mnda`, `loi`, `invoice`, `psa`, `business-letter`, `resume`, `papers-report`,
-`eliot-journal`.
+**Scenario keys** (omit `only` to run all 6):
+`mnda`, `invoice`, `resume`, `contract-markup`, `contract-finalize`, `eliot-journal`.
 
 If the user passed scenario keys as arguments to this skill (e.g.
 `/adversarial-review mnda loi` or `mnda,loi`), parse them into the `only` array.
 Otherwise run everything.
 
-The run is heavy (8 Haiku agents, serial Word rendering, 8 judges + a synthesis pass);
+The run is heavy (6 Haiku agents, serial Word rendering, 6 judges + a synthesis pass);
 it can take many minutes. Watch live progress with `/workflows`.
 
 ### 4. Save the report + measure the Haiku metrics
@@ -141,8 +172,10 @@ Two more steps add the _measured_ numbers:
    bun "$REPO/.claude/skills/adversarial-review/scripts/haiku-metrics.ts" \
      "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" >> "$RUN_DIR/REPORT.md"
    ```
-   This appends the measured "Haiku tool & cost economy" table to REPORT.md and writes
-   `$RUN_DIR/haiku-metrics.json`. Token cost is reported as **effective input**
+   This appends the measured "Haiku tool & cost economy" table to REPORT.md, writes
+   `$RUN_DIR/haiku-metrics.json` (run-level), and drops each scenario's measured row
+   into `$RUN_DIR/<key>/metrics.json` so every per-task folder is self-contained.
+   Token cost is reported as **effective input**
    (cache-weighted: fresh input + cache write ×1.25 + cache read ×0.1) plus **output**,
    kept separate — NOT a single "total tokens", because cache reads are ~10× cheaper
    than fresh input and lumping them in overstates cost. The raw cache split is in the
@@ -153,13 +186,14 @@ Two more steps add the _measured_ numbers:
    artifacts live:
    - `<RUN_DIR>/REPORT.md` — findings + scoreboard + per-task merits/demerits + measured metrics table
    - `<RUN_DIR>/haiku-metrics.json` and `benchmark.json` — the raw numbers
-   - `<RUN_DIR>/render/<key>/` — the Word-rendered PNGs the judges looked at
-   - `<RUN_DIR>/*.docx`, `report.docx`, `journal.docx` — the weak agents' actual outputs
+   - `<RUN_DIR>/<key>/` — one folder per scenario, each holding that task's worked-on
+     `.docx`, its `renders/` (the Word PNGs the judge looked at), `review.md` (the
+     judge's saved review), and `metrics.json` (that task's measured tokens/time/tool split)
 
 ## Notes
 
 - This harness is **re-runnable**: each invocation rebuilds the binary (mandatory),
-  stages a fresh `./tmp/` run dir, and never mutates the bundled `fixtures/`.
+  stages a fresh `./tmp/` run dir, and never mutates the bundled `scenarios/`.
 - The headline **benchmark metric** is the Haiku tool economy — docx-cli calls vs
   other tool calls (self-reported per agent, aggregated by the workflow). A high
   non-docx share, or a lot of docx calls for a simple task, is a friction signal.
@@ -168,6 +202,10 @@ Two more steps add the _measured_ numbers:
   benign shell commands they and the render step use (`mkdir`, `cp`, `ls`, `cat`) are
   NOT yet allowlisted — if you get prompted, add them via the `update-config` skill or
   run with edits allowed. See `.claude/settings.local.json`.
-- To add or change a scenario, edit `SCENARIOS` in the workflow
-  (`.claude/workflows/adversarial-review.js`) and add the corresponding data under
-  this skill's `fixtures/assets/`.
+- To add a scenario, create a folder under this skill's `scenarios/<key>/` holding
+  `task.md` (task + resolution criteria), `brief.md` (detailed instructions), the
+  fixture `.docx` (edit scenarios only), and an `assets/` folder, then add a routing
+  entry to `SCENARIOS` in the workflow (`.claude/workflows/adversarial-review.js`):
+  `{ key, bucket, kind, doc, baseline }`. To change what an existing scenario tests,
+  edit the files in its folder — the task/brief/fixture/assets all live there, not in
+  the workflow.

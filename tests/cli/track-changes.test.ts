@@ -38,6 +38,30 @@ describe("docx track-changes", () => {
 		expect(xml).not.toContain("<w:trackChanges/>");
 	});
 
+	test("accepts verb-first order (track-changes on FILE), matching list/accept/reject", async () => {
+		const workspace = tempWorkspace("verb-first");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "hi");
+
+		// Canonical verb-first order: `on` before FILE.
+		const on = await runCli("track-changes", "on", docPath);
+		expect(on.parsed).toMatchObject({
+			ok: true,
+			operation: "track-changes",
+			mode: "on",
+		});
+		expect(
+			await (await Pkg.open(docPath)).readText("word/settings.xml"),
+		).toContain("<w:trackChanges/>");
+
+		// Legacy FILE-first order still works (back-compat).
+		const off = await runCli("track-changes", docPath, "off");
+		expect(off.parsed).toMatchObject({ mode: "off", previouslyOn: true });
+		expect(
+			await (await Pkg.open(docPath)).readText("word/settings.xml"),
+		).not.toContain("<w:trackChanges/>");
+	});
+
 	test("rejects invalid mode", async () => {
 		const workspace = tempWorkspace("invalid");
 		const docPath = join(workspace, "out.docx");

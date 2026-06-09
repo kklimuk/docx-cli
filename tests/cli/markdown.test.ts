@@ -1290,6 +1290,18 @@ async function readText(docPath: string): Promise<string> {
 	return (await runCli("read", docPath)).stdout;
 }
 
+/** Write `md` to a fresh workspace, rebuild a .docx from it via `create --from`,
+ * and return its formatted blocks — the read → import half of the round-trip, so
+ * a test can assert escaped Markdown decodes back to the original run text. */
+async function roundTripBlocks(label: string, md: string): Promise<FmtBlock[]> {
+	const ws = tempWorkspace(label);
+	const mdPath = join(ws, "doc.md");
+	await Bun.write(mdPath, md);
+	const dst = join(ws, "rt.docx");
+	await runCli("create", dst, "--from", mdPath);
+	return readFmtBlocks(dst);
+}
+
 /** The runs covering every Phase-1 attribute, one run per variant. */
 const SAMPLE_RUNS: TextRunAst[] = [
 	{ type: "text", text: "red", color: "FF0000" },
@@ -1496,10 +1508,10 @@ describe("run formatting — invariant II (unsupported ≠ broken)", () => {
 		expect(joined).toContain("See [note]{TODO fixme} later.");
 	});
 
-	test("a formatted run whose text contains markup metacharacters keeps its formatting", async () => {
-		// `[ ] { }` in run text used to force DROPPING the span (Pandoc's `[…]{…}`
-		// couldn't escape them). HTML escapes them (`&#91;` etc.), so the formatting
-		// is kept AND the text round-trips byte-exact — strictly better than before.
+	test("a formatted run with inert metacharacters keeps its formatting and stays clean", async () => {
+		// `] { }` here form no construct (no `](`, no CriticMarkup), so they're
+		// left byte-clean — the run keeps its color via the <span>, no `\` noise,
+		// and the text round-trips. (Escaping only fires for chars that WOULD parse.)
 		const src = join(tempWorkspace("rf-bracket-src"), "out.docx");
 		await runCli("create", src, "--text", "Intro.");
 		await runCli(
@@ -1512,24 +1524,139 @@ describe("run formatting — invariant II (unsupported ≠ broken)", () => {
 		);
 
 		const md = (await runCli("read", src)).stdout;
-		// Formatting is now preserved (HTML can escape the metacharacters).
 		expect(md).toContain("color:#FF0000");
-		// The literal `]` is entity-escaped so it can't re-tokenize as link syntax.
-		expect(md).not.toContain("a]{x}b");
+		// Inert metacharacters are NOT escaped (they parse as nothing).
+		expect(md).toContain("a]{x}b");
 
-		const ws = tempWorkspace("rf-bracket-rt");
-		const mdPath = join(ws, "doc.md");
-		await Bun.write(mdPath, md);
-		const dst = join(ws, "rt.docx");
-		await runCli("create", dst, "--from", mdPath);
-
-		// Round-trip: text byte-exact AND the color survived.
-		const runs = (await readFmtBlocks(dst))
+		const runs = (await roundTripBlocks("rf-bracket-rt", md))
 			.flatMap((b) => b.runs ?? [])
 			.filter((r) => r.type === "text");
 		expect(runs.map((r) => r.text ?? "").join("")).toContain("a]{x}b");
 		const colored = runs.find((r) => (r.text ?? "").includes("a]{x}b"));
 		expect(colored?.color).toBe("FF0000");
+	});
+
+	test("a symmetric delimiter is escaped only when it can pair (lone stays clean)", async () => {
+		// remark eats a paired `$…$` as math (KaTeX does too in a preview) — the
+		// reported bug — but a LONE `$` is inert. Escape only the pair, leaving
+		// prices like `$5` byte-clean. Counting is paragraph-wide, so a `$` in one
+		// run pairs with one past a `<mark>` in another (the exact psa shape).
+		async function readRuns(label: string, runs: object[]): Promise<string> {
+			const doc = join(tempWorkspace(label), "out.docx");
+			await runCli("create", doc, "--text", "Intro.");
+			await runCli(
+				"insert",
+				doc,
+				"--after",
+				"p0",
+				"--runs",
+				JSON.stringify(runs),
+			);
+			return (await runCli("read", doc)).stdout;
+		}
+
+		const pairedMd = await readRuns("md-paired", [
+			{ type: "text", text: "at least $" },
+			{ type: "text", text: "amount", highlight: "yellow" },
+			{ type: "text", text: " and $" },
+			{ type: "text", text: "more", highlight: "yellow" },
+		]);
+		expect(pairedMd).toContain("at least \\$");
+		expect(pairedMd).toContain("and \\$");
+		expect(pairedMd).not.toMatch(/[^\\]\$/); // no bare `$` left to open math
+
+		const loneMd = await readRuns("md-lone", [
+			{ type: "text", text: "a price of $5 today" },
+		]);
+		expect(loneMd).toContain("price of $5 today"); // lone `$` left clean
+
+		// Both round-trip byte-exact.
+		const pairedText = (await roundTripBlocks("md-paired-rt", pairedMd))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(pairedText).toContain("at least $amount and $more");
+		const loneText = (await roundTripBlocks("md-lone-rt", loneMd))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(loneText).toContain("a price of $5 today");
+	});
+
+	test("brackets are escaped only when link-forming — checkboxes/placeholders stay clean", async () => {
+		async function readRuns(label: string, text: string): Promise<string> {
+			const doc = join(tempWorkspace(label), "out.docx");
+			await runCli("create", doc, "--text", "Intro.");
+			await runCli(
+				"insert",
+				doc,
+				"--after",
+				"p0",
+				"--runs",
+				JSON.stringify([{ type: "text", text }]),
+			);
+			return (await runCli("read", doc)).stdout;
+		}
+
+		// A `[ x ]` checkbox / `[Fill in …]` placeholder forms no link → left clean.
+		const inert = await readRuns(
+			"brk-inert",
+			"[ x ] done [Fill in amount] here",
+		);
+		expect(inert).toContain("[ x ] done [Fill in amount] here");
+		expect(inert).not.toContain("\\[");
+		const inertText = (await roundTripBlocks("brk-inert-rt", inert))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(inertText).toContain("[ x ] done [Fill in amount] here");
+
+		// `[word](target)` WOULD be consumed into a hyperlink on import, so its
+		// link delimiters are escaped (the parser flags them as a `link` node); the
+		// round-trip proves it stayed literal text instead of becoming a hyperlink.
+		const link = await readRuns("brk-link", "see [word](target) literally");
+		expect(link).toContain("\\[word\\]\\(target\\)");
+		const linkText = (await roundTripBlocks("brk-link-rt", link))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(linkText).toContain("see [word](target) literally");
+	});
+
+	test("brackets inside a wide paired-$ math span are left clean (only the $ escape)", async () => {
+		// Two `$` pair into one `inlineMath` span; escaping the boundary `$` breaks
+		// it, so a `[opt]` that fell between them needn't be touched. (This is the
+		// psa shape — placeholders sitting between two dollar-amount fields.)
+		const src = join(tempWorkspace("md-mathspan"), "out.docx");
+		await runCli("create", src, "--text", "Intro.");
+		await runCli(
+			"insert",
+			src,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([{ type: "text", text: "from $5 to [opt] and $9 total" }]),
+		);
+		const md = (await runCli("read", src)).stdout;
+		expect(md).toContain("from \\$5 to [opt] and \\$9 total");
+		const text = (await roundTripBlocks("md-mathspan-rt", md))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(text).toContain("from $5 to [opt] and $9 total");
+	});
+
+	test("an inline code span rides verbatim — its metacharacters are never escaped", async () => {
+		// `runStyle: "Code"` text is literal between backticks, so it's excluded from
+		// the escape parse entirely; `$`/`*`/`[` inside it stay byte-exact.
+		const ws = tempWorkspace("md-code");
+		const mdPath = join(ws, "doc.md");
+		await Bun.write(mdPath, "Code span: `$5 and *x* and [y]` end.\n");
+		const src = join(ws, "code.docx");
+		await runCli("create", src, "--from", mdPath);
+		const md = (await runCli("read", src)).stdout;
+		expect(md).toContain("`$5 and *x* and [y]`");
+		expect(md).not.toContain("\\$");
 	});
 
 	test("--runs with an invalid highlight enum fails loud (matches the markdown path)", async () => {

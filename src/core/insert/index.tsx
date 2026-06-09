@@ -97,7 +97,7 @@ export class Insert {
 					throw new InsertError(
 						"TRACKED_CHANGE_CONFLICT",
 						"Inserting a table while track-changes is on is not supported",
-						"Run `docx track-changes FILE off`, insert the table, then `track-changes on`.",
+						"Run `docx track-changes off FILE`, insert the table, then `track-changes on FILE`.",
 					);
 				}
 			}

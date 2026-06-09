@@ -1,12 +1,12 @@
 export const meta = {
 	name: "adversarial-review",
 	description:
-		"Weak-agent (Haiku) adversarial test of docx-cli: 8 scenarios over real fixtures + authoring tasks, rendered with Word, judged, and synthesized into a prioritized ergonomics report.",
+		"Weak-agent (Haiku) adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, rendered with Word, judged, and synthesized into a prioritized ergonomics report.",
 	phases: [
 		{
 			title: "Stage",
 			detail:
-				"copy only the active scenarios' inputs from fixtures into the run dir",
+				"copy each active scenario's folder (task.md, brief.md, fixture, assets/) into its own run-dir subfolder",
 		},
 		{
 			title: "Exercise",
@@ -21,7 +21,7 @@ export const meta = {
 		{
 			title: "Judge",
 			detail:
-				"a strong agent grades each render + the Haiku transcript, firing as soon as that render is done",
+				"a strong agent grades each render + the Haiku transcript, writes a review.md into the scenario's result folder, firing as soon as that render is done",
 		},
 		{
 			title: "Synthesize",
@@ -31,132 +31,87 @@ export const meta = {
 };
 
 // ---------------------------------------------------------------------------
-// args, injected by the skill: { runDir, binary, fixturesDir, only? }
-//   runDir       — absolute /tmp dir holding a working COPY of the fixtures (docx + assets/)
-//   binary       — absolute path to the freshly-built dist/docx
-//   fixturesDir  — absolute path to the PRISTINE bundled fixtures (for render baselines)
-//   only         — optional scenario filter: run just these key(s). Accepts an
-//                  array (["mnda","loi"]), a single key ("mnda" — the natural way
-//                  to run ONE task), or a comma/space-separated string ("mnda,loi").
+// args, injected by the skill: { runDir, binary, scenariosDir, only? }
+//   runDir        — absolute /tmp dir; the workflow stages one subfolder PER
+//                   active scenario into it (<runDir>/<key>/…) and that subfolder
+//                   doubles as the scenario's result folder.
+//   binary        — absolute path to the freshly-built dist/docx
+//   scenariosDir  — absolute path to the PRISTINE bundled scenarios dir. Each
+//                   scenario is a folder named after its key, containing task.md
+//                   (task + resolution criteria), brief.md (detailed instructions),
+//                   the fixture .docx (edit scenarios only), and assets/ (extra
+//                   inputs). Also the source of render baselines.
+//   only          — optional scenario filter: run just these key(s). Accepts an
+//                   array (["mnda","loi"]), a single key ("mnda" — the natural way
+//                   to run ONE task), or a comma/space-separated string ("mnda,loi").
 // ---------------------------------------------------------------------------
 // The runtime delivers `args` as a JSON STRING (not the parsed object the tool
 // docs imply), so parse it if needed. Accept an already-parsed object too.
 const parsedArgs = typeof args === "string" ? JSON.parse(args) : args || {};
-const { runDir, binary, fixturesDir } = parsedArgs;
+const { runDir, binary, scenariosDir } = parsedArgs;
 const only = normalizeOnly(parsedArgs.only);
-if (!runDir || !binary || !fixturesDir) {
+if (!runDir || !binary || !scenariosDir) {
 	throw new Error(
-		"adversarial-review requires args { runDir, binary, fixturesDir }",
+		"adversarial-review requires args { runDir, binary, scenariosDir }",
 	);
 }
 
+// Orchestration manifest, keyed by scenario folder name. The CONTENT of each
+// scenario — its task, resolution criteria, brief, fixture, and extra assets —
+// lives in `<scenariosDir>/<key>/` (task.md, brief.md, the .docx, assets/), NOT
+// here. This manifest holds only what the workflow needs to ROUTE each scenario:
+//   key       — folder name; also the result-folder name under runDir.
+//   bucket    — human label for the scenario's category (prompt headers, scoreboard).
+//   kind      — "edit" (work a staged copy of `doc` in place) | "author" (create `doc` fresh).
+//   doc       — the .docx filename inside the scenario folder. For edit scenarios
+//               it is the pristine fixture (staged + edited in place AND, when
+//               baseline, rendered as the before). For author scenarios it does
+//               NOT exist in the scenario folder — the agent creates it in the run dir.
+//   baseline  — render the pristine `doc` as a before/after comparison (edit only).
 const SCENARIOS = [
 	{
 		key: "mnda",
-		bucket: "Form filling + highlight removal",
+		bucket: "Form filling + highlight removal + font fidelity",
 		kind: "edit",
-		work: "mnda.docx",
-		fixture: "mnda.docx",
-		brief: "assets/mnda-deal.md",
-		out: "mnda.docx",
-		baseline: false,
-		task: "Fill out the MNDA cover page from the deal sheet and REMOVE every yellow highlight (the placeholders were highlighted; once filled, no highlight should remain anywhere). Edit the file in place.",
-		criteria:
-			"Cover-page placeholders replaced with the real party names, dates, term (2y), confidentiality term (3y), Delaware governing law / New Castle County jurisdiction; signature table populated for both parties; ZERO yellow highlight left in the document. Changes must be visible via `docx read`.",
-	},
-	{
-		key: "loi",
-		bucket: "Comments + tracked changes (legal review)",
-		kind: "edit",
-		work: "loi.docx",
-		fixture: "loi.docx",
-		brief: "assets/loi-review.md",
-		out: "loi.docx",
-		baseline: false,
-		task: "Act as counsel for the Customer. With tracked changes ON, delete the four unwanted alternative Confidentiality clauses (keep only the plain 'Mutual' one) as tracked deletions, and leave anchored comments on the unfilled blanks, the kept clause, and the one-sided investor-disclosure carve-out.",
-		criteria:
-			"Tracked changes enabled; the 4 redundant confidentiality variants removed as tracked deletions (redlines still visible, not silently gone); the 'Mutual' variant kept; comments anchored to the relevant text for the blanks, the kept clause, and the investor carve-out. `docx comments list` and `docx track-changes list` should reflect this.",
+		doc: "mnda.docx",
+		// Baseline: this is the in-place-preservation fidelity test, so render the
+		// pristine doc as a "before" and diff it against the filled "after".
+		baseline: true,
 	},
 	{
 		key: "invoice",
-		bucket: "Table editing + embedded-image preservation",
+		bucket: "Table editing + restructure + image replace",
 		kind: "edit",
-		work: "invoice.docx",
-		fixture: "invoice.docx",
-		brief: "assets/invoice-data.md",
-		out: "invoice.docx",
+		doc: "invoice.docx",
 		baseline: false,
-		task: "Fill the invoice's three tables with the supplied company/customer details, three line items, and totals. Keep the layout, the embedded logo image, and the formatting intact.",
-		criteria:
-			"All placeholder cells (company, customer, Item 1/2/3, $0.00 amounts, dates, invoice #) replaced with the supplied values; the three tables still well-formed; the embedded logo image still present (the doc has two media images). Totals match the data sheet. Changes visible via `docx read`.",
-	},
-	{
-		key: "psa",
-		bucket: "Formatting + unmodeled-structure preservation",
-		kind: "edit",
-		work: "professional-services-agreement.docx",
-		fixture: "professional-services-agreement.docx",
-		brief: "assets/psa-preservation.md",
-		out: "professional-services-agreement.docx",
-		baseline: true,
-		task: "With tracked changes ON, make ONLY two surgical edits — fill the 'Payment Period' cell ('30 days from Customer's receipt of invoice') and the 'Invoice Period' cell ('Monthly') — and leave the entire rest of this large, heavily-formatted contract (drafting notes, checkboxes, 10 headers/footers, attached Standard Terms) untouched.",
-		criteria:
-			"`docx track-changes list` shows EXACTLY the two intended tracked edits and nothing else. Before/after renders are visually identical everywhere except those two cells. All gray drafting notes, checkboxes, every header/footer, and the full Standard Terms part survive unchanged. This is the core in-place-mutation fidelity test.",
-	},
-	{
-		key: "business-letter",
-		bucket: "Editing / mail-merge (real-world use case)",
-		kind: "edit",
-		work: "business-letter.docx",
-		fixture: "business-letter.docx",
-		brief: "assets/business-letter-brief.md",
-		out: "business-letter.docx",
-		baseline: false,
-		task: "Replace every {{Mustache}} token in the letter with the supplied real value so it reads as a finished, signable letter. Leave no {{ }} tokens behind; preserve the bold/colored runs around amounts and the sender name and the two enclosure bullets.",
-		criteria:
-			"Every {{token}} replaced with the correct value from the brief; no mustache tokens remain; bold/colored runs and enclosure bullets preserved. Changes visible via `docx read`.",
 	},
 	{
 		key: "resume",
 		bucket: "Styling fidelity + drawing preservation",
 		kind: "edit",
-		work: "resume.docx",
-		fixture: "resume.docx",
-		brief: "assets/resume-candidate.md",
-		out: "resume.docx",
+		doc: "resume.docx",
 		baseline: false,
-		task: "Fill the Harvard résumé template for the supplied candidate, preserving heading styles, the right-aligning tab stops on dates, and the bullet lists. Remove the bracketed [Note: ...] helper text. Leave the [drawing] element alone.",
-		criteria:
-			"Name, contact, education, experience, leadership filled from the candidate sheet; [Note: ...] helpers gone; section headings keep their Heading style; dates still right-align at the tab; the [drawing] element survives. Render should look like a clean résumé.",
 	},
-	{  
-		key: "papers-report",
-		bucket: "Authoring: sections, headings, citations, embedded figure",
-		kind: "author",
-		brief: "assets/papers/report-brief.md",
-		assets: [
-			"assets/papers/paper-1.md",
-			"assets/papers/paper-2.md",
-			"assets/papers/paper-3.md",
-			"assets/papers/figure-1.png",
-		],
-		out: "report.docx",
+	{
+		key: "contract-markup",
+		bucket: "Legal review: redlining + commenting",
+		kind: "edit",
+		doc: "contract.docx",
 		baseline: false,
-		task: "Author a NEW report.docx literature review from the three papers: title + intro, one styled-heading section per paper with an in-text citation, a Comparison section that EMBEDS figure-1.png with a caption, and a References list.",
-		criteria:
-			"report.docx exists with real heading styles, three paper summaries each carrying an (Author, year) citation, the figure-1.png chart actually embedded and rendering, a caption, and a references section. Multi-section structure renders cleanly.",
+	},
+	{
+		key: "contract-finalize",
+		bucket: "Legal review: accept/reject + resolve comments",
+		kind: "edit",
+		doc: "contract-redlined.docx",
+		baseline: false,
 	},
 	{
 		key: "eliot-journal",
-		bucket: "Authoring: Markdown, multi-column sections, verse",
+		bucket: "Authoring: columns, verse, footnotes, links, figure",
 		kind: "author",
-		brief: "assets/eliot-journal-brief.md",
-		assets: ["assets/eliot-poems.md"],
-		out: "journal.docx",
+		doc: "journal.docx",
 		baseline: false,
-		task: "Author a NEW journal.docx T. S. Eliot poetry reader: a single-column title section, a TWO-COLUMN body section holding the poems with their titles as headings and verse line breaks preserved, and a closing single-column colophon section.",
-		criteria:
-			"journal.docx exists; a two-column section actually holds the poems (verify via `docx read --ast` sectPr columns or the render showing side-by-side columns); poem titles are headings; verse line breaks are preserved (lines NOT collapsed into one paragraph); title and colophon are single-column.",
 	},
 ];
 
@@ -188,13 +143,13 @@ const STAGE_SCHEMA = {
 	properties: {
 		staged: {
 			type: "array",
-			description: "Destination paths that now exist after copying.",
+			description: "Scenario result folders that now exist after copying.",
 			items: { type: "string" },
 		},
 		missing: {
 			type: "array",
 			description:
-				"Destinations whose source was absent or whose copy failed — each as 'src -> dst'.",
+				"Anything that didn't land — a scenario whose folder failed to copy, or a required file (task.md, brief.md, the fixture) absent in the destination. One human-readable line each.",
 			items: { type: "string" },
 		},
 	},
@@ -318,17 +273,22 @@ const VERDICT_SCHEMA = {
 };
 
 // ---------------------------------------------------------------------------
-// Phase 0 — Stage (one agent). Copy ONLY the active scenarios' inputs from the
-// pristine fixtures into the run workspace. SCENARIOS is the single source of
-// truth for what each scenario needs, so a single-scenario run stages just that
-// scenario's files instead of the whole corpus. The skill only makes the empty
-// run dir; the copy lives here because workflow scripts can't touch the
-// filesystem, so it runs in an agent. Runs BEFORE the exercise token snapshot
-// below, so it doesn't pollute the Haiku token measurement.
+// Phase 0 — Stage (one agent). Copy ONLY the active scenarios' folders from the
+// pristine scenarios dir into the run workspace, one result folder per scenario
+// (<runDir>/<key>/). Each scenario folder is self-describing (task.md, brief.md,
+// the fixture, assets/), so staging is a plain recursive folder copy — no per-file
+// manifest. The skill only makes the empty run dir; the copy lives here because
+// workflow scripts can't touch the filesystem, so it runs in an agent. Runs BEFORE
+// the exercise token snapshot below, so it doesn't pollute the Haiku measurement.
 // ---------------------------------------------------------------------------
 phase("Stage");
-const stageCopies = buildStageCopies(active, fixturesDir, runDir);
-const stageResult = await agent(stagePrompt(stageCopies), {
+const stageTargets = active.map((scenario) => ({
+	key: scenario.key,
+	srcDir: `${scenariosDir}/${scenario.key}`,
+	dstDir: `${runDir}/${scenario.key}`,
+	requireDoc: scenario.kind === "edit" ? scenario.doc : null,
+}));
+const stageResult = await agent(stagePrompt(stageTargets), {
 	label: "stage:inputs",
 	phase: "Stage",
 	agentType: "general-purpose",
@@ -337,11 +297,11 @@ const stageResult = await agent(stagePrompt(stageCopies), {
 const stageMissing = (stageResult && stageResult.missing) || [];
 if (stageMissing.length) {
 	throw new Error(
-		`Staging failed — these inputs never landed in the run dir:\n  ${stageMissing.join("\n  ")}\nCheck that the fixtures exist under ${fixturesDir}.`,
+		`Staging failed — these inputs never landed in the run dir:\n  ${stageMissing.join("\n  ")}\nCheck that the scenario folders exist under ${scenariosDir}.`,
 	);
 }
 log(
-	`Staged ${stageCopies.length} input file(s) for ${active.length} scenario(s): ${active.map((scenario) => scenario.key).join(", ")}`,
+	`Staged ${active.length} scenario folder(s): ${active.map((scenario) => scenario.key).join(", ")}`,
 );
 
 // ---------------------------------------------------------------------------
@@ -357,7 +317,7 @@ log(
 // Trade-off: because render/judge now overlap the exercises, we no longer isolate
 // the Haiku token cost with a budget.spent() window (other models run in the same
 // span). Accurate per-agent tokens + wall-clock time come from the skill's
-// transcript pass (scripts/haiku-metrics.py); the self-reported docx/other tool
+// transcript pass (scripts/haiku-metrics.ts); the self-reported docx/other tool
 // split below is independent of this and unaffected.
 // ---------------------------------------------------------------------------
 phase("Exercise");
@@ -411,7 +371,7 @@ log(
 // Tool economy — Haiku agents only, split docx-cli vs everything else. The headline
 // benchmark metric: how much of a weak agent's effort docx-cli absorbs versus how
 // much it spends working around the tool. (docx/other counts are self-reported per
-// agent; the skill's haiku-metrics.py pass produces the accurate transcript-measured
+// agent; the skill's haiku-metrics.ts pass produces the accurate transcript-measured
 // counts, tokens, and per-agent time for the report.)
 const benchmark = buildBenchmark(exercises);
 log(
@@ -449,17 +409,11 @@ return { report, runDir, binary, exercises, verdicts, benchmark };
 // ===========================================================================
 
 function exercisePrompt(scenario) {
-	const briefPath = `${runDir}/${scenario.brief}`;
-	const extraAssets = (scenario.assets || [])
-		.map((relativePath) => `${runDir}/${relativePath}`)
-		.filter((path) => path !== briefPath);
+	const dir = `${runDir}/${scenario.key}`;
 	const workLine =
 		scenario.kind === "edit"
-			? `Your working document (already a private copy — edit it IN PLACE, do NOT use -o/--output):\n  ${runDir}/${scenario.work}`
-			: `You are authoring from scratch. Create your output at EXACTLY this path:\n  ${runDir}/${scenario.out}`;
-	const assetLines = [briefPath, ...extraAssets]
-		.map((path) => `  ${path}`)
-		.join("\n");
+			? `Your working document (already a private copy — edit it IN PLACE, do NOT use -o/--output):\n  ${dir}/${scenario.doc}`
+			: `You are authoring from scratch. Create your output at EXACTLY this path:\n  ${dir}/${scenario.doc}`;
 
 	return `You are stress-testing **docx-cli**, a command-line tool that lets agents read, edit, and comment on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent (think Haiku): you have NOT used this tool before. Discover everything you need from the tool's own help — do not assume flags.
 
@@ -473,18 +427,20 @@ Start by orienting yourself:
 
 ${workLine}
 
-Read these files for your task data and instructions (use the Read tool):
-${assetLines}
+Everything you need is in YOUR scenario folder:
+  ${dir}
+Read these with the Read tool before you start:
+  ${dir}/task.md     — your task and the resolution criteria it will be judged against
+  ${dir}/brief.md    — the detailed brief: the data to enter and step-by-step instructions
+  ${dir}/assets/     — any additional input files (data, images). \`ls\` it; if it holds files, Read them. It may be empty.
 
 ## Your task — ${scenario.bucket}  (scenario: ${scenario.key})
-${scenario.task}
-
-Follow the detailed brief in ${briefPath}.
+Read ${dir}/task.md and ${dir}/brief.md, then carry the task out on the working document above.
 
 ## Rules
-- STAY ON YOUR FILE. The only document you touch is the working file above; the only other files you read are the asset files listed above. Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories), and do NOT copy files in from elsewhere. The workspace contains other scenarios' look-alike fixtures and earlier run outputs that are NOT yours — touching them corrupts the test and wastes calls. If something seems missing, re-read the working file; don't go hunting.
+- STAY IN YOUR SCENARIO FOLDER. The only document you touch is the working file above; the only other files you read live under ${dir} (task.md, brief.md, assets/). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories), and do NOT copy files in from elsewhere. The run workspace contains OTHER scenarios' folders with look-alike fixtures that are NOT yours — touching them corrupts the test and wastes calls. If something seems missing, re-read your working file; don't go hunting.
 - Use ONLY the docx-cli executable above for document operations. Do NOT hand-edit the XML, unzip the .docx, or reach for any other docx library. The whole point is to test THIS tool.
-- You MAY use the Read tool on the asset files and on any images, and run \`${binary} read <file>\` to inspect your progress.
+- You MAY use the Read tool on your task.md / brief.md / assets, and run \`${binary} read <file>\` to inspect your progress.
 - Locators (p0, t0:r1c2:p0, sN, etc.) shift after structural edits — re-read when needed. Prefer batch operations where the tool offers them.
 - If a command fails or confuses you, try at most ~3 reasonable alternatives, then RECORD it as friction and move on. Do not loop forever on one step.
 - Make a genuine, complete attempt. Finish the task if you can.
@@ -494,23 +450,18 @@ Return the structured result. Be brutally honest — surfacing rough edges is th
 - completed: yes | partial | no
 - summary: one short paragraph of what you actually accomplished.
 - docxCommands: EVERY docx-cli invocation you ran, in order, each with outcome (ok | error | confusing) and a brief note (especially WHY something errored or confused you). This is measured — be complete and accurate.
-- otherToolCalls: the exact integer count of every NON-docx tool call you made (reading the brief/asset files, ls, cat, any non-docx shell). Do NOT count docx-cli runs here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into docx-cli versus working around it, so count carefully.
+- otherToolCalls: the exact integer count of every NON-docx tool call you made (reading the task/brief/asset files, ls, cat, any non-docx shell). Do NOT count docx-cli runs here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into docx-cli versus working around it, so count carefully.
 - deadEnds: wrong turns, retries, things you expected to work but didn't.
 - frictions: concrete "what could have been easier?" points, each with severity (blocker | major | minor) and a suggested fix. Include discoverability gaps (couldn't find the right command/flag), confusing output, and anything that made a weak agent likely to fail.
-- outputPath: the absolute path to the .docx you produced.`;
+- outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
 }
 
-function renderPrompt(targets) {
-	const lines = targets
-		.map((target) => {
-			const base = target.baseline
-				? `\n    ALSO render the pristine baseline ${target.baseline} into ${runDir}/render/${target.key}/baseline/`
-				: "";
-			return `  - key "${target.key}": render ${target.output} into ${runDir}/render/${target.key}/output/${base}`;
-		})
-		.join("\n");
+function renderPrompt(target) {
+	const baselineLine = target.baselineDoc
+		? `\n  ALSO render the pristine baseline ${target.baselineDoc} into ${target.baselineOutDir}`
+		: "";
 
-	return `You are the RENDER step of an evaluation harness. Render each finished .docx to page PNGs using docx-cli's render command, driven by Microsoft **Word**.
+	return `You are the RENDER step of an evaluation harness. Render the finished .docx to page PNGs using docx-cli's render command, driven by Microsoft **Word**.
 
 The CLI executable:
   ${binary}
@@ -520,15 +471,24 @@ Command shape (confirm with \`${binary} render --help\`):
 
 ⚠️ CRITICAL: Render STRICTLY ONE AT A TIME (sequentially). The Word engine drives a single Word application instance and concurrent renders corrupt each other. Never background a render or start a second before the first returns.
 
-Create output directories with \`mkdir -p\` as needed. Render these targets:
-${lines}
+Create output directories with \`mkdir -p\` as needed. Render this target (key "${target.key}"):
+  render ${target.output} into ${target.outDir}${baselineLine}
 
-For each target, capture the produced PNG page paths (the render command prints them). If a render fails, capture the error text and move on to the next target — do not retry more than once.
+Capture the produced PNG page paths (the render command prints them). If a render fails, capture the error text and move on — do not retry more than once.
 
-Return the structured result: for every key, whether it rendered, the list of output page PNG paths, the list of baseline page PNG paths (empty if none), and any error text.`;
+Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether it rendered, the list of output page PNG paths, the list of baseline page PNG paths (empty if none), and any error text.`;
 }
 
 function judgePrompt(scenario, exercise, render) {
+	const dir = `${runDir}/${scenario.key}`;
+	const outputPath =
+		(exercise && exercise.outputPath) || `${dir}/${scenario.doc}`;
+	const reviewPath = `${dir}/review.md`;
+	const docxCommands = (exercise && exercise.docxCommands) || [];
+	const otherToolCalls = (exercise && exercise.otherToolCalls) || 0;
+	const docxErrors = docxCommands.filter(
+		(command) => command.outcome === "error" || command.outcome === "confusing",
+	).length;
 	const exerciseJson = exercise
 		? JSON.stringify(
 				{
@@ -537,6 +497,15 @@ function judgePrompt(scenario, exercise, render) {
 					frictions: exercise.frictions,
 					deadEnds: exercise.deadEnds,
 					outputPath: exercise.outputPath,
+					// Self-reported tool economy — the docx-cli call log (each with its
+					// outcome) plus the non-docx call count. The judge uses this to GROUND
+					// its agent-struggle assessment, not to penalize a correct output.
+					toolEconomy: {
+						docxCalls: docxCommands.length,
+						docxErrorsOrConfusing: docxErrors,
+						otherToolCalls,
+						docxCommands,
+					},
 				},
 				null,
 				2,
@@ -551,11 +520,9 @@ function judgePrompt(scenario, exercise, render) {
 	return `You are a STRICT evaluator judging whether docx-cli let a weak (Haiku) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.
 
 ## Scenario: ${scenario.key} — ${scenario.bucket}
-Task given to the weak agent:
-${scenario.task}
-
-## Ground-truth success criteria (what "correct" means)
-${scenario.criteria}
+The task given to the weak agent AND the ground-truth resolution criteria are both in:
+  ${dir}/task.md
+READ that file first — it defines what the agent was asked to do and what "correct" means. (The detailed brief the agent followed is ${dir}/brief.md if you need it.)
 
 ## The weak agent's self-report
 ${exerciseJson}
@@ -564,14 +531,21 @@ ${exerciseJson}
 ${renderLine}
 
 ## How to judge
-1. READ the output page PNG(s) with the Read tool and look at them critically — does the document actually accomplish the task and look right (layout, no leftover placeholders/highlights, tables intact, figure present, columns present, etc.)?
-2. Run \`${binary} read ${exercise && exercise.outputPath ? exercise.outputPath : `${runDir}/${scenario.out}`}\` to confirm the changes SURVIVE THE WRITE→READ LOOP — this is docx-cli's core invariant; an edit that isn't retrievable on the next read is a failure. Use \`--ast\` if you need structure (e.g. section columns, tracked changes), and \`${binary} track-changes list\` / \`${binary} comments list\` where the scenario calls for them.
-3. ${scenario.baseline ? "Compare the BASELINE renders against the OUTPUT renders: confirm ONLY the intended cells changed and all other formatting/headers/footers/structure is preserved." : "Cross-check the render against the criteria."}
-4. Separate two questions: did the AGENT struggle (a UX problem) vs. is the TOOL broken (a bug)? Both matter.
+1. READ ${dir}/task.md for the task + resolution criteria.
+2. READ the output page PNG(s) with the Read tool and look at them critically — does the document actually accomplish the task and look right (layout, no leftover placeholders/highlights, tables intact, figure present, columns present, etc.)?
+3. Run \`${binary} read ${outputPath}\` to confirm the changes SURVIVE THE WRITE→READ LOOP — this is docx-cli's core invariant; an edit that isn't retrievable on the next read is a failure. Use \`--ast\` if you need structure (e.g. section columns, tracked changes), and \`${binary} track-changes list\` / \`${binary} comments list\` where the scenario calls for them.
+4. ${scenario.baseline ? "Compare the BASELINE renders against the OUTPUT renders: confirm ONLY the intended cells changed and all other formatting/headers/footers/structure is preserved." : "Cross-check the render against the criteria."}
+5. Weigh the agent's TOOL ECONOMY (in the self-report's \`toolEconomy\`: the docx-cli call log with each call's outcome, plus the non-docx call count). Use it to GROUND your agent-struggle read — many calls or several \`error\`/\`confusing\` outcomes on a simple task is a UX signal; cite the specific commands that errored. IMPORTANT: this informs the agent-struggle / UX dimension ONLY. Do NOT downgrade \`taskSuccess\`, \`rendersCorrectly\`, or \`formattingPreserved\` because the agent thrashed — those are judged purely from the render + the write→read loop. A correct output reached via a painful path is still a task SUCCESS with a UX demerit.
+6. Separate two questions: did the AGENT struggle (a UX problem) vs. is the TOOL broken (a bug)? Both matter.
 
 The CLI executable for your verification commands: ${binary}
 
-Return the structured verdict. Record BOTH sides for this task:
+## Write your review to disk
+After you've judged, WRITE a human-readable Markdown review to EXACTLY this path (use the Write tool):
+  ${reviewPath}
+The review must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Tool economy** section (the self-reported docx-cli call count, how many errored/confused, the non-docx call count, and a one-line read on whether the path to the result was smooth or a slog — naming the specific commands that tripped the agent up). This file is the saved judge's review for this task — make it complete and self-contained. (A precise, transcript-measured per-task metrics file lands next to it after the run; your Tool economy section is the qualitative read on the self-reported numbers.)
+
+Then return the structured verdict. Record BOTH sides for this task:
 - merits: what went right (what the tool made easy, what the agent got correct, parts of the output that are well-formed). Always list at least one if anything worked.
 - defects: the demerits — concrete, evidence-backed failures (cite what you saw in the render or read output), each with a severity.`;
 }
@@ -612,43 +586,30 @@ Write a thorough, prioritized Markdown report with these sections:
 Cite scenario keys throughout and quote agent friction verbatim where it's illuminating. Return the COMPLETE report as your final message — it will be saved to disk and shown to the maintainer.`;
 }
 
-// Build the scoped copy list for staging: for each active scenario, the input
-// files it needs (its source docx for edit scenarios, its brief, and any extra
-// assets), as { src in fixtures } -> { dst in run dir } preserving relative paths.
-// Deduped by destination so a brief shared across scenarios is copied once.
-function buildStageCopies(scenarios, fixturesRoot, runRoot) {
-	const seen = new Set();
-	const copies = [];
-	const add = (relativeSrc, relativeDst) => {
-		if (!relativeSrc || seen.has(relativeDst)) return;
-		seen.add(relativeDst);
-		copies.push({
-			src: `${fixturesRoot}/${relativeSrc}`,
-			dst: `${runRoot}/${relativeDst}`,
-		});
-	};
-	for (const scenario of scenarios) {
-		// edit scenarios get a private working copy of their source docx; authoring
-		// scenarios create their output fresh, so they need no docx staged.
-		if (scenario.kind === "edit") add(scenario.fixture, scenario.work);
-		add(scenario.brief, scenario.brief);
-		for (const asset of scenario.assets || []) add(asset, asset);
-	}
-	return copies;
-}
+// Build the stage agent's prompt: for each active scenario, recursively copy its
+// pristine folder into its own run-dir subfolder, then verify the required inputs
+// landed. The scenario folder is the unit of staging — task.md, brief.md, the
+// fixture, and assets/ all travel together.
+function stagePrompt(targets) {
+	const lines = targets
+		.map((target) => {
+			const docLine = target.requireDoc
+				? `\n      then verify these exist in the destination: ${target.dstDir}/task.md, ${target.dstDir}/brief.md, ${target.dstDir}/${target.requireDoc}`
+				: `\n      then verify these exist in the destination: ${target.dstDir}/task.md, ${target.dstDir}/brief.md   (authoring scenario — no fixture .docx)`;
+			return `  - "${target.key}": \`mkdir -p ${target.dstDir}\` then copy the FOLDER CONTENTS: \`cp -R ${target.srcDir}/. ${target.dstDir}/\`${docLine}`;
+		})
+		.join("\n");
 
-function stagePrompt(copies) {
-	const lines = copies.map((copy) => `  ${copy.src}  ->  ${copy.dst}`).join("\n");
-	return `You are the STAGE step of an evaluation harness. Copy EXACTLY the listed source files to their destination paths and nothing else — this seeds an isolated run workspace with only the inputs the selected scenarios need.
+	return `You are the STAGE step of an evaluation harness. Seed an isolated run workspace by copying EXACTLY the listed scenario folders to their destinations and nothing else. Each scenario is a self-contained folder (task.md, brief.md, the fixture .docx, assets/); copy the whole folder so its inputs travel together.
 
-Copies (source  ->  destination):
+Scenario folders to stage:
 ${lines}
 
-For each pair: \`mkdir -p\` the destination's PARENT directory, then \`cp\` the source file to the destination. Sources are pristine fixtures — never edit them. Do not copy any files beyond this list. Do not retry a failed copy more than once.
+For each scenario: \`mkdir -p\` the destination, then \`cp -R <srcDir>/. <dstDir>/\` to copy the folder contents (the trailing \`/.\` copies the CONTENTS, including the assets/ subfolder). Sources are pristine — never edit them. Do not copy any folders beyond this list. Do not retry a failed copy more than once.
 
 Return the structured result:
-- staged: the destination paths that now exist (verify each with a test/ls before listing it).
-- missing: any pair, formatted "src -> dst", whose source file was absent or whose copy failed. Empty array if everything copied.`;
+- staged: the destination folders that now exist with their required files present (verify each file with a test/ls before listing the folder).
+- missing: one human-readable line for anything that didn't land — a scenario whose copy failed, or a required file (task.md / brief.md / the fixture) absent in the destination, formatted like "key: <what is missing>". Empty array if everything copied.`;
 }
 
 // Aggregate the Haiku tool economy from the exercise self-reports: docx-cli calls
@@ -672,7 +633,7 @@ function buildBenchmark(exerciseResults) {
 	const otherCalls = perScenario.reduce((acc, row) => acc + row.otherCalls, 0);
 	const totalCalls = docxCalls + otherCalls;
 	return {
-		note: "Haiku exercise agents only. Tool counts are self-reported; the skill's haiku-metrics.py pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).",
+		note: "Haiku exercise agents only. Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).",
 		perScenario,
 		totals: {
 			scenarios: perScenario.length,
@@ -709,17 +670,22 @@ function serializeRender(thunk) {
 	return run;
 }
 
-// Render ONE scenario's output (plus its baseline, if any) and return that
-// scenario's render record. Reuses the multi-target render prompt/schema with a
-// single target and pulls the one row back out, so a failed render degrades to a
-// rendered:false record the judge can still handle rather than rejecting.
+// Render ONE scenario's output (plus its baseline, if any) into that scenario's
+// result folder (<runDir>/<key>/renders/{output,baseline}/) and return the render
+// record. A failed render degrades to a rendered:false record the judge can still
+// handle rather than rejecting.
 function renderOne(scenario) {
+	const dir = `${runDir}/${scenario.key}`;
 	const target = {
 		key: scenario.key,
-		output: `${runDir}/${scenario.out}`,
-		baseline: scenario.baseline ? `${fixturesDir}/${scenario.fixture}` : null,
+		output: `${dir}/${scenario.doc}`,
+		outDir: `${dir}/renders/output/`,
+		baselineDoc: scenario.baseline
+			? `${scenariosDir}/${scenario.key}/${scenario.doc}`
+			: null,
+		baselineOutDir: scenario.baseline ? `${dir}/renders/baseline/` : null,
 	};
-	return agent(renderPrompt([target]), {
+	return agent(renderPrompt(target), {
 		label: `render:${scenario.key}`,
 		phase: "Render",
 		agentType: "general-purpose",

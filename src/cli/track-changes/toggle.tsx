@@ -14,9 +14,10 @@ import {
 const HELP = `docx track-changes — toggle the document's tracked-changes mode
 
 Usage:
-  docx track-changes FILE on|off [options]
+  docx track-changes on|off FILE [options]
 
-Toggle only sets (on) or clears (off) the <w:trackChanges/> flag in
+The verb comes first (like list/accept/reject); the legacy "FILE on|off" order
+still works. Toggle only sets (on) or clears (off) the <w:trackChanges/> flag in
 word/settings.xml — nothing else. It does not author any <w:ins>/<w:del>
 markers, and existing markers are unaffected by the toggle itself.
 
@@ -37,8 +38,8 @@ Output:
   mode, previouslyOn}. Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
-  docx track-changes doc.docx on
-  docx track-changes doc.docx off
+  docx track-changes on doc.docx
+  docx track-changes off doc.docx
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -58,17 +59,21 @@ export async function run(args: string[]): Promise<number> {
 
 	setVerboseAck(Boolean(parsed.values.verbose));
 
-	const path = parsed.positionals[0];
-	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
-
-	const mode = parsed.positionals[1];
+	// Accept either order: the canonical `track-changes on FILE` (verb-first, like
+	// list/accept/reject) or the legacy `track-changes FILE on`. Whichever positional
+	// is the on/off mode is the mode; the other is the path.
+	const [first, second] = parsed.positionals;
+	const modeFirst = first === "on" || first === "off";
+	const mode = modeFirst ? first : second;
+	const path = modeFirst ? second : first;
 	if (mode !== "on" && mode !== "off") {
 		return fail(
 			"USAGE",
-			`Expected "on" or "off", got: ${mode ?? "<nothing>"}`,
+			`Expected "on" or "off" (e.g. \`docx track-changes on FILE\`), got: ${parsed.positionals.join(" ") || "<nothing>"}`,
 			HELP,
 		);
 	}
+	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;

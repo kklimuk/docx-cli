@@ -12,7 +12,9 @@
  *
  * <transcript_dir> is the "Transcript dir" printed when the workflow was launched
  * (…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
- * <run_dir>/haiku-metrics.json, and prints the Markdown table to stdout.
+ * <run_dir>/haiku-metrics.json (the run-level aggregate), drops each scenario's
+ * measured row into <run_dir>/<key>/metrics.json (so each per-task result folder is
+ * self-contained), and prints the Markdown table to stdout.
  */
 
 const USAGE = `Usage:
@@ -20,16 +22,15 @@ const USAGE = `Usage:
 
 <transcript_dir> is the "Transcript dir" printed when the workflow was launched
 (…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
-<run_dir>/haiku-metrics.json, and prints the Markdown table to stdout.`;
+<run_dir>/haiku-metrics.json, drops each scenario's row into <run_dir>/<key>/metrics.json,
+and prints the Markdown table to stdout.`;
 
 const FILE_TO_KEY: Record<string, string> = {
 	"mnda.docx": "mnda",
-	"loi.docx": "loi",
 	"invoice.docx": "invoice",
-	"professional-services-agreement.docx": "psa",
-	"business-letter.docx": "business-letter",
 	"resume.docx": "resume",
-	"report.docx": "papers-report",
+	"contract.docx": "contract-markup",
+	"contract-redlined.docx": "contract-finalize",
 	"journal.docx": "eliot-journal",
 };
 
@@ -417,6 +418,18 @@ async function main(): Promise<void> {
 	const outJson = `${runDir}/haiku-metrics.json`;
 	await Bun.write(outMd, document);
 	await Bun.write(outJson, JSON.stringify({ perScenario: rows, totals }, null, 2));
+
+	// Per-task: drop each classified scenario's measured row into its result folder,
+	// so <run_dir>/<key>/ is self-contained alongside the docx, renders/, and review.md.
+	for (const row of rows) {
+		if (!row.scenario) {
+			continue;
+		}
+		await Bun.write(
+			`${runDir}/${row.scenario}/metrics.json`,
+			JSON.stringify(row, null, 2),
+		);
+	}
 
 	// stdout is appended to REPORT.md by the skill — emit the SECTION (## …), not the
 	// titled standalone doc, so it slots in cleanly as a sub-section.

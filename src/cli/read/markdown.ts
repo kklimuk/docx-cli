@@ -22,6 +22,7 @@ import {
 	isCodeBlockStyleId,
 } from "@core/code-block";
 import { extensionForImageMime } from "@core/image/formats";
+import { inlineEscapeMask } from "@core/markdown";
 import {
 	emuToInches,
 	formatNote,
@@ -530,7 +531,12 @@ function renderParagraph(
 	paragraph: Paragraph,
 	ctx: RenderContext,
 ): string | null {
-	const rendered = renderRuns(paragraph.id, paragraph.runs, ctx);
+	const view = ctx.options.view ?? "accepted";
+	const mask = inlineEscapeMask(
+		paragraphContent(paragraph.runs, view),
+		hasEquationRun(paragraph.runs),
+	);
+	const rendered = renderRuns(paragraph.id, paragraph.runs, ctx, mask, 0);
 	if (rendered.length === 0) return null;
 	const prefix = paragraphPrefix(paragraph, orderedOrdinal(paragraph, ctx));
 	// Trim trailing spaces/tabs (not newlines) so the single space separating
@@ -654,6 +660,8 @@ function renderRuns(
 	paragraphId: string,
 	runs: Run[],
 	ctx: RenderContext,
+	mask: boolean[],
+	baseOffset: number,
 ): string {
 	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
@@ -664,6 +672,11 @@ function renderRuns(
 
 	let out = "";
 	let cursor = 0;
+	// Where the next non-code text run sits in the escape `mask` (which spans the
+	// whole pairing scope — the paragraph, or for a cell, every paragraph in it).
+	// Code runs and non-text runs aren't in the parsed content, so they don't
+	// advance it — see `paragraphContent`.
+	let contentCursor = baseOffset;
 	while (cursor < visibleEntries.length) {
 		const entry = visibleEntries[cursor];
 		if (!entry) {
@@ -681,7 +694,21 @@ function renderRuns(
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
 			const segmentRuns = segment.map((entry) => entry.run as TextRun);
-			out += renderTextSegment(segmentRuns, view, ctx.baseline);
+			out += renderTextSegment(
+				segmentRuns,
+				view,
+				ctx.baseline,
+				mask,
+				contentCursor,
+			);
+			// Inline code is excluded from the parsed content (literal in backticks),
+			// so only non-code segments advance the mask cursor.
+			if (segmentRuns[0]?.runStyle !== "Code") {
+				contentCursor += segmentRuns.reduce(
+					(sum, segmentRun) => sum + segmentRun.text.length,
+					0,
+				);
+			}
 			if (view === "current") {
 				for (const segmentRun of segmentRuns) {
 					if (segmentRun.trackedChange) {
@@ -805,14 +832,13 @@ function renderTextSegment(
 	runs: TextRun[],
 	view: MarkdownView,
 	baseline: RunFormatBaseline,
+	mask: boolean[],
+	offset: number,
 ): string {
 	const text = runs.map((run) => run.text).join("");
 	if (text.length === 0) return "";
 	const first = runs[0];
 	if (!first) return "";
-	// An HTML formatting wrapper requires the text to be HTML-escaped so `< & >`
-	// in the content can't break a `<span>`/`<mark>`; a plain run (native markdown
-	// only, or nothing) is left byte-exact so ordinary prose round-trips.
 	// Markdown emphasis around whitespace-only text (`** **`) mis-parses — a
 	// reader pairs the two `**` and bolds everything between them. So a blank run
 	// carries its emphasis as unambiguous HTML tags (`<b>`/`<i>`/`<s>`) instead,
@@ -820,14 +846,21 @@ function renderTextSegment(
 	// underline/highlight/color a blank run already keeps via the wrapper below).
 	const isBlank = text.trim().length === 0;
 	const wrap = needsHtmlWrap(first, baseline) || isBlank;
-	let out = wrap ? escapeHtmlText(text) : text;
+	// Escape only the characters the importer's parser would CONSUME as markup —
+	// `mask` is the per-character verdict from `inlineEscapeMask`, so a paired `$`
+	// or a link-forming `[` is escaped while an inert `[ x ]` checkbox or a lone
+	// `$5` stays byte-clean. remark decodes the escapes on import, so the text
+	// round-trips exact. Inline code is the exception: markdown isn't parsed
+	// between backticks, so its text rides verbatim (and was left out of `mask`).
+	const isCode = first.runStyle === "Code";
+	let out = isCode ? text : applyEscapeMask(text, mask, offset);
 	// Backticks INSIDE other formatting per GFM precedence — `**`x`**` is bold
 	// code; `**x**` inside backticks would be literal asterisks. Skip Code runs
 	// inside a fenced code block (callers strip runStyle on those — see
 	// `renderCodeBlockGroup`); this branch handles `runStyle: "Code"` only when
 	// it's still meaningful (inline code spans in a normal paragraph). Code spans
 	// on whitespace are valid (backticks have no flanking rule), so no split.
-	if (first.runStyle === "Code") out = `\`${out}\``;
+	if (isCode) out = `\`${out}\``;
 	if (isBlank) {
 		if (first.bold) out = `<b>${out}</b>`;
 		if (first.italic) out = `<i>${out}</i>`;
@@ -982,18 +1015,43 @@ function cssFontFamily(font: string): string {
 	return /\s/.test(font) ? `'${font}'` : font;
 }
 
-/** Escape the characters that would break an HTML wrapper's text content or
- * re-tokenize as markdown link syntax once split across tags (`[ ]`). Applied
- * only to runs that ARE wrapped — plain markdown text stays byte-exact. remark
- * decodes these entities back to characters on import, so it's lossless. `&`
- * goes first so the entities we introduce aren't double-escaped. */
-function escapeHtmlText(text: string): string {
-	return text
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/\[/g, "&#91;")
-		.replace(/\]/g, "&#93;");
+/** Backslash-escape `text` per a precomputed `mask` (from `inlineEscapeMask`) —
+ * `mask[offset + i]` decides character `i`. `offset` is where this run's text
+ * sits in the scope-wide content the mask was built over (a paragraph, or a whole
+ * table cell), so a pair straddling a `<mark>` is escaped consistently. */
+function applyEscapeMask(
+	text: string,
+	mask: boolean[],
+	offset: number,
+): string {
+	let out = "";
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index];
+		if (char === undefined) continue;
+		out += mask[offset + index] ? `\\${char}` : char;
+	}
+	return out;
+}
+
+/** The text the escape mask is parsed over: every VISIBLE, non-code text run's
+ * text, concatenated in order. Inline code is excluded (literal between backticks,
+ * never escaped), as are non-text runs (images/equations/breaks aren't markdown
+ * content) — `renderRuns` advances the mask cursor by exactly this, so the offsets
+ * line up. A `<w:del>` hidden in the accepted view emits nothing, so it's skipped
+ * too: it can't pair with anything. */
+function paragraphContent(runs: Run[], view: MarkdownView): string {
+	let content = "";
+	for (const run of runs) {
+		if (run.type !== "text") continue;
+		if (run.runStyle === "Code") continue;
+		if (!isRunVisible(run, view)) continue;
+		content += run.text;
+	}
+	return content;
+}
+
+function hasEquationRun(runs: Run[]): boolean {
+	return runs.some((run) => run.type === "equation");
 }
 
 function renderTable(table: Table, ctx: RenderContext): string | null {
@@ -1073,9 +1131,30 @@ function rowToLine(cells: string[]): string {
 
 function renderCell(cell: TableCell, ctx: RenderContext): string {
 	const parts: string[] = [];
+	// A cell renders as ONE line, its paragraphs joined by `<br>`, so a pair can
+	// straddle paragraphs — a `$` alone in its own paragraph partnered across the
+	// `<br>`. Build the escape mask over the WHOLE cell's content with the
+	// paragraphs joined by `\n` (mimicking the `<br>` line boundary): math still
+	// pairs across a soft break (so the cross-paragraph `$` is escaped) but a
+	// link/reference can't form across it (so a `]` ending one paragraph won't
+	// fuse with a `(`/`[` opening the next into a phantom link). Each paragraph
+	// gets its base offset into that content — `+ 1` per paragraph for the `\n`.
+	const view = ctx.options.view ?? "accepted";
+	const cellParagraphs = cell.blocks.filter(
+		(block): block is Paragraph => block.type === "paragraph",
+	);
+	const cellContent = cellParagraphs
+		.map((paragraph) => paragraphContent(paragraph.runs, view))
+		.join("\n");
+	const hasEquation = cellParagraphs.some((paragraph) =>
+		hasEquationRun(paragraph.runs),
+	);
+	const mask = inlineEscapeMask(cellContent, hasEquation);
+	let baseOffset = 0;
 	for (const block of cell.blocks) {
 		if (block.type === "paragraph") {
-			const rendered = renderRuns(block.id, block.runs, ctx);
+			const rendered = renderRuns(block.id, block.runs, ctx, mask, baseOffset);
+			baseOffset += paragraphContent(block.runs, view).length + 1;
 			if (rendered.length === 0) continue;
 			// Trim trailing spaces/tabs so the locator separator doesn't grow
 			// each round-trip (newlines become <br> via escapeCell).

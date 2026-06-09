@@ -1,6 +1,6 @@
 # src/cli/track-changes
 
-`docx track-changes FILE on|off` toggles `<w:trackChanges/>` in settings.xml. `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them. The unwrap/delete logic lives in [apply.ts](apply.ts).
+`docx track-changes on|off FILE` toggles `<w:trackChanges/>` in settings.xml (the legacy `FILE on|off` order is still accepted). `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them. The unwrap/delete logic lives in [apply.ts](apply.ts).
 
 ## Track-changes is doc-level, not per-command
 

@@ -59,9 +59,9 @@ function shouldInjectVerbose(args: string[]): boolean {
 	if (!subverbs) return false;
 	const second = args[1];
 	if (second && subverbs.has(second)) return true;
-	// `track-changes FILE on|off` carries the verb in positional 2 — the
-	// dispatcher routes it to the toggle command. Look at args[2] for that
-	// shape specifically.
+	// `track-changes` toggle accepts both orders: `on|off FILE` (verb-first, already
+	// caught by the subverbs check above via args[1]) and the legacy `FILE on|off`
+	// (verb in positional 2) — catch the latter by looking at args[2].
 	if (first === "track-changes") {
 		const third = args[2];
 		if (third === "on" || third === "off") return true;

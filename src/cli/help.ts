@@ -27,7 +27,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Restructure tables — insert/delete rows & columns, merge/unmerge, set widths, borders
-  track-changes …  Toggle (FILE on|off); list / accept / reject revisions; "read" shows them as CriticMarkup
+  track-changes …  Toggle (on|off FILE); list / accept / reject revisions; "read" shows them as CriticMarkup
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
 
 It is highly recommended to run "docx info locators" and "docx info schema" (neither needs a FILE) to understand the addressing model and AST.
@@ -53,7 +53,7 @@ Environment:
   DOCX_CLI_NOW   Override the timestamp used for tracked changes (test only)
 
 Tracked changes (full detail: "docx track-changes --help"):
-  docx track-changes FILE on|off  ·  list  ·  accept/reject (--at tcN | --all)
+  docx track-changes on|off FILE  ·  list  ·  accept/reject (--at tcN | --all)
   With tracking on, edit/insert/delete/replace auto-emit <w:ins>/<w:del>
   (attributed via --author / $DOCX_AUTHOR); pass --track to any one of them (plus
   the tables verbs / images delete) to redline just that invocation. "docx read"

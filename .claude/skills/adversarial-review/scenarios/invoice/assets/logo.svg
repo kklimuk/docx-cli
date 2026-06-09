@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+	<title>Inkling</title>
+	<defs>
+		<!-- Hand-drawn distortion per camillovisini.com — turbulence type, R/G channel displacement -->
+		<filter id="hand-blob-g" x="-30%" y="-30%" width="160%" height="160%">
+			<feTurbulence type="turbulence" baseFrequency="0.032" numOctaves="2" seed="4" result="noise">
+				<animate attributeName="seed" values="1;2;3;4;5;6;7;8;1" dur="0.8s" repeatCount="indefinite"/>
+			</feTurbulence>
+			<feDisplacementMap in="SourceGraphic" in2="noise" scale="11" xChannelSelector="R" yChannelSelector="G"/>
+		</filter>
+		<radialGradient id="soak-g" cx="48%" cy="56%" r="62%">
+			<stop offset="0%" stop-color="#00694b" stop-opacity="0.16"/>
+			<stop offset="55%" stop-color="#00694b" stop-opacity="0.05"/>
+			<stop offset="100%" stop-color="#00694b" stop-opacity="0"/>
+		</radialGradient>
+	</defs>
+
+	<!-- paper soak halo (slight downward offset preserves the gravity-of-absorption asymmetry) -->
+	<ellipse cx="128" cy="132" rx="98" ry="84" fill="url(#soak-g)"/>
+
+	<!-- main ink mark, centered, slight tilt as if hand-placed -->
+	<g filter="url(#hand-blob-g)" transform="rotate(-9 128 128)">
+		<ellipse cx="128" cy="128" rx="58" ry="50" fill="#00694b"/>
+	</g>
+</svg>

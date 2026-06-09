@@ -196,7 +196,7 @@ docx tables merge         FILE --at tN:rR1cC1-rR2cC2
 docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
 
-docx track-changes FILE on|off
+docx track-changes on|off FILE
 docx track-changes accept FILE (--at tcN [--at tcM ...] | --all)
 docx track-changes reject FILE (--at tcN [--at tcM ...] | --all)
 ```

@@ -28,6 +28,13 @@ is ready to sign. Use the details below. The blanks you need to fill are the
 | Changes to Standard Terms    | None.                                                                          |
 | Date (both signature blocks) | **June 8, 2026**                                                               |
 
+## Preserve the formatting
+
+Only the highlighted placeholder values change (and the highlight itself is removed).
+Do **not** alter any fonts, sizes, colors, or styles: the Georgia title, the bold field
+labels, the small gray sub-labels, and the Arial body must look exactly as they do now.
+Fill each placeholder in place so the surrounding run formatting is untouched.
+
 ## What "done" looks like
 
 1. Every yellow-highlighted placeholder on the cover page is replaced with the
@@ -36,3 +43,5 @@ is ready to sign. Use the details below. The blanks you need to fill are the
    filled in for **both** parties.
 3. **No yellow highlighting remains anywhere in the document** — the placeholders
    were highlighted; once filled, the highlight must be gone.
+4. **Every font, size, and color is unchanged** — the only differences from the
+   original are the filled-in values and the removed highlight.

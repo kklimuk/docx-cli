@@ -133,6 +133,37 @@ describe("docx images", () => {
 		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
+	test("replace sanitizes an SVG replacement (strips script + animation)", async () => {
+		const ws = tempWorkspace("replace-svg-sanitize");
+		const doc = join(ws, "doc.docx");
+		await Bun.write(doc, Bun.file("tests/fixtures/large-mixed.docx"));
+		const evilSvg = join(ws, "evil.svg");
+		await Bun.write(
+			evilSvg,
+			'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" onload="alert(1)">' +
+				"<script>alert(2)</script>" +
+				'<rect width="20" height="20"><animate attributeName="x" values="0;1"/></rect>' +
+				"</svg>",
+		);
+		const result = await runCli(
+			"images",
+			"replace",
+			doc,
+			"--at",
+			"img0",
+			"--with",
+			evilSvg,
+		);
+		expect(result.exitCode).toBe(0);
+		const pkg = await Pkg.open(doc);
+		const svgPart = pkg.listParts().find((part) => part.endsWith(".svg"));
+		expect(svgPart).toBeDefined();
+		const svgText = await pkg.readText(svgPart as string);
+		expect(svgText).not.toContain("<script");
+		expect(svgText).not.toContain("onload");
+		expect(svgText).not.toContain("<animate");
+	});
+
 	test("replace returns image-not-found for unknown id", async () => {
 		const extractDir = join(workspace, "for-not-found");
 		mkdirSync(extractDir, { recursive: true });
@@ -418,11 +449,40 @@ describe("docx insert --image", () => {
 		expect((result.parsed as { code: string }).code).toBe("IMAGE_SOURCE");
 	});
 
-	test("an image with no parseable dimensions requires explicit sizing", async () => {
+	test("an SVG with width/height sizes itself — no --width needed", async () => {
 		const svg =
-			'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>';
+			'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"></svg>';
 		const svgUri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
-		const docPath = await newDoc("img-svg");
+		const docPath = await newDoc("img-svg-selfsize");
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			svgUri,
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await Pkg.open(docPath)).listParts()).toContain(
+			"word/media/image1.svg",
+		);
+		const list = (await runCli("images", "list", docPath)).parsed as Array<{
+			widthEmu?: number;
+			heightEmu?: number;
+		}>;
+		expect(list[0]?.widthEmu).toBeGreaterThan(0);
+		// 120×90 px → 4:3 aspect preserved in the <wp:extent>.
+		expect((list[0]?.widthEmu ?? 0) / (list[0]?.heightEmu ?? 1)).toBeCloseTo(
+			120 / 90,
+			1,
+		);
+	});
+
+	test("an SVG with no width/height/viewBox still requires explicit sizing", async () => {
+		const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+		const svgUri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+		const docPath = await newDoc("img-svg-nodims");
 
 		const noDims = await runCli(
 			"insert",
@@ -448,8 +508,9 @@ describe("docx insert --image", () => {
 			"2",
 		);
 		expect(withDims.exitCode).toBe(0);
-		const pkg = await Pkg.open(docPath);
-		expect(pkg.listParts()).toContain("word/media/image1.svg");
+		expect((await Pkg.open(docPath)).listParts()).toContain(
+			"word/media/image1.svg",
+		);
 	});
 
 	test("dry-run reports without writing a media part", async () => {

@@ -339,7 +339,66 @@ function readPixelDimensions(
 		return readJPEGDimensions(bytes);
 	}
 	if (extension === "gif") return readGIFDimensions(bytes);
-	// webp/bmp/tiff/svg: dimensions not parsed — caller falls back to overrides.
+	if (extension === "svg") return readSVGDimensions(bytes);
+	// webp/bmp/tiff: dimensions not parsed — caller falls back to overrides.
+	return undefined;
+}
+
+function readSVGDimensions(
+	bytes: Uint8Array,
+): { width: number; height: number } | undefined {
+	// SVG is text; the root <svg> tag (carrying width/height/viewBox) sits at the
+	// top, so decode a generous prefix and pull just the opening tag rather than
+	// parsing the whole document. Prefer absolute width/height; fall back to the
+	// viewBox's width/height. A "%"-only size has no intrinsic pixels → undefined,
+	// and the caller asks for --width/--height (same as webp/bmp/tiff).
+	const head = new TextDecoder().decode(bytes.subarray(0, 8192));
+	const open = head.match(/<svg\b[^>]*>/i);
+	if (!open) return undefined;
+	const tag = open[0];
+	const attr = (name: string): string | undefined => {
+		const match = tag.match(
+			new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, "i"),
+		);
+		return match ? (match[2] ?? match[3]) : undefined;
+	};
+	const toPixels = (raw: string | undefined): number | undefined => {
+		const match = raw?.trim().match(/^([0-9]*\.?[0-9]+)(px|pt|pc|in|cm|mm)?$/i);
+		if (!match) return undefined;
+		const value = Number(match[1]);
+		if (!(value > 0)) return undefined;
+		const perUnit: Record<string, number> = {
+			px: 1,
+			pt: 96 / 72,
+			pc: 16,
+			in: 96,
+			cm: 96 / 2.54,
+			mm: 96 / 25.4,
+		};
+		return value * (perUnit[(match[2] ?? "px").toLowerCase()] ?? 1);
+	};
+	const width = toPixels(attr("width"));
+	const height = toPixels(attr("height"));
+	if (width && height) {
+		return { width: Math.round(width), height: Math.round(height) };
+	}
+	const viewBox = attr("viewBox");
+	if (viewBox) {
+		const nums = viewBox
+			.trim()
+			.split(/[\s,]+/)
+			.map(Number);
+		const vbWidth = nums[2];
+		const vbHeight = nums[3];
+		if (
+			vbWidth !== undefined &&
+			vbHeight !== undefined &&
+			vbWidth > 0 &&
+			vbHeight > 0
+		) {
+			return { width: Math.round(vbWidth), height: Math.round(vbHeight) };
+		}
+	}
 	return undefined;
 }
 

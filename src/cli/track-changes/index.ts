@@ -3,7 +3,7 @@ import { fail, writeStdout } from "../respond";
 const HELP = `docx track-changes — manage tracked-changes
 
 Usage:
-  docx track-changes FILE on|off [options]
+  docx track-changes on|off FILE [options]
   docx track-changes list FILE [options]
   docx track-changes accept FILE (--at tcN | --all) [options]
   docx track-changes reject FILE (--at tcN | --all) [options]

@@ -1,8 +1,10 @@
 import { resolveAuthor, resolveDate } from "@core";
 import { Comments, findContainingParagraph } from "@core/comments";
 import {
+	ImageSourceError,
 	Images,
 	imageFormatForExtension,
+	loadImageSource,
 	SUPPORTED_IMAGE_FORMATS,
 } from "@core/image";
 import {
@@ -128,7 +130,19 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const bytes = new Uint8Array(await sourceFile.arrayBuffer());
+	// Route the replacement through the shared resolver (same as `insert --image`)
+	// so it gets the same safety: SVG sanitization (scripts/handlers/animation
+	// stripped), HEIC→JPEG transcode, and the SSRF guard on remote srcs. We keep
+	// the extension/MIME resolved above for part naming; only the bytes come back.
+	let bytes: Uint8Array;
+	try {
+		bytes = (await loadImageSource(sourcePath)).bytes;
+	} catch (error) {
+		if (error instanceof ImageSourceError) {
+			return fail("IMAGE_SOURCE", error.message);
+		}
+		throw error;
+	}
 	const originalMimeType = reference.contentType;
 
 	if (newPartName === originalPartName) {
