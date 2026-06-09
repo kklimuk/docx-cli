@@ -65,3 +65,5 @@ prd/
 
 # worktrees
 .worktrees/
+
+__pycache__
