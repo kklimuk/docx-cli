@@ -80,12 +80,68 @@ export function setVerboseAck(verbose: boolean): void {
 	verboseAck = verbose;
 }
 
-/** Mutating-command success ack: prints the full JSON payload only when
- *  `--verbose` is set. By default mutators are silent on success — agents rely
- *  on exit code 0. The payload is the one place `ok: true` is retained. */
+/** Mutating-command success ack. `--verbose` prints the full JSON payload (the
+ *  one place `ok: true` is retained); by default it prints a concise, text-first
+ *  confirmation line on stdout — what changed, and where. Exit code 0 is still
+ *  the machine signal, but a silent success forced (weak) agents to re-read just
+ *  to confirm the command took effect, so we echo a one-liner like every other
+ *  text-first command (read/find/wc). Mutators that mint a new handle use
+ *  `respondMinted` instead (the handle is their confirmation). */
 export async function respondAck(payload: unknown): Promise<void> {
-	if (!verboseAck) return;
-	await respond(payload);
+	if (verboseAck) {
+		await respond(payload);
+		return;
+	}
+	const line = summarizeAck(payload);
+	if (line) await writeStdout(`${line}\n`);
+}
+
+/** A one-line, text-first summary of a mutator ack: `<operation> <target>`,
+ *  where target is the most salient identifier the payload carries (a locator,
+ *  a count, an id, a table cell, …). Falls back to the operation alone. */
+function summarizeAck(payload: unknown): string | null {
+	if (!payload || typeof payload !== "object") return null;
+	const ack = payload as Record<string, unknown>;
+	const operation = typeof ack.operation === "string" ? ack.operation : null;
+	if (!operation) return null;
+	const target = ackTarget(ack);
+	return target ? `${operation} ${target}` : operation;
+}
+
+function ackTarget(ack: Record<string, unknown>): string | null {
+	const str = (value: unknown): string | null =>
+		typeof value === "string" && value.length > 0 ? value : null;
+	const num = (value: unknown): number | null =>
+		typeof value === "number" ? value : null;
+	const plural = (count: number, noun: string): string =>
+		`${count} ${noun}${count === 1 ? "" : "s"}`;
+
+	if (str(ack.locator)) return str(ack.locator);
+	const editCount = num(ack.count);
+	if (editCount !== null) return plural(editCount, "change");
+	const replaced = num(ack.replaced);
+	if (replaced !== null) return `${plural(replaced, "occurrence")} replaced`;
+	if (str(ack.id)) return str(ack.id);
+	if (str(ack.commentId)) return `comment ${ack.commentId}`;
+	if (str(ack.hyperlinkId)) {
+		const to = str(ack.to);
+		return `${ack.hyperlinkId}${to ? ` → ${to}` : ""}`;
+	}
+	if (str(ack.imageId)) return str(ack.imageId);
+	if (str(ack.table)) {
+		const position = num(ack.position);
+		return position !== null ? `${ack.table} (${position})` : str(ack.table);
+	}
+	const applied = Array.isArray(ack.applied)
+		? ack.applied.length
+		: num(ack.applied);
+	if (applied !== null) return plural(applied, "change");
+	if (str(ack.mode)) return `tracking ${ack.mode}`;
+	if (Array.isArray(ack.batch)) return plural(ack.batch.length, "change");
+	// Last resort: the path. Redundant for in-place edits (they win above via
+	// locator/id/count), but it's the salient new thing for `create`.
+	if (str(ack.path)) return str(ack.path);
+	return null;
 }
 
 /** Success output for a mutator that mints a new addressable handle the agent
@@ -210,12 +266,55 @@ export async function tryParseArgs(
 	help: string,
 ): Promise<ReturnType<typeof parseArgs> | number> {
 	try {
-		return parseArgs({ args, allowPositionals: true, options });
+		return parseArgs({
+			args: mergeDashLeadingValues(args, options),
+			allowPositionals: true,
+			options,
+		});
 	} catch (parseError) {
 		const message =
 			parseError instanceof Error ? parseError.message : String(parseError);
 		return await fail("USAGE", message, help);
 	}
+}
+
+/** `parseArgs` rejects `--text -$500.00` as "ambiguous" because the value starts
+ *  with `-` (it can't tell a negative/`-$` value from a flag). Agents hit this on
+ *  money, negative numbers, etc. Pre-merge `--flag value` → `--flag=value` when
+ *  `flag` is a declared string option and `value` is dash-LED but not flag-shaped
+ *  (a real flag has a letter right after the dashes; `-$`, `-5`, `-.5` do not). */
+function mergeDashLeadingValues(
+	args: string[],
+	options: ParseArgsOptions,
+): string[] {
+	const stringFlags = new Set(
+		Object.entries(options ?? {})
+			.filter(([, spec]) => spec?.type === "string")
+			.map(([name]) => name),
+	);
+	const flagShaped = (token: string): boolean => {
+		const match = token.match(/^-+(.)/);
+		return match ? /[a-zA-Z]/.test(match[1] ?? "") : false;
+	};
+	const out: string[] = [];
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === undefined) continue;
+		const next = args[index + 1];
+		if (
+			arg.startsWith("--") &&
+			!arg.includes("=") &&
+			stringFlags.has(arg.slice(2)) &&
+			next?.startsWith("-") &&
+			!flagShaped(next)
+		) {
+			out.push(`${arg}=${next}`);
+			index++;
+			continue;
+		}
+		out.push(arg);
+	}
+	return out;
 }
 
 export async function resolveBlockRangeOrFail(

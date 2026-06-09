@@ -146,6 +146,7 @@ docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit
 docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs|code|task>, style?, … }
 docx insert  FILE --batch additions.jsonl   # { after|before, <content>, style?, color?, … }
 docx replace FILE --batch script.jsonl      # { pattern, replacement, regex?, all?, limit?, … } applied in order
+docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (pN/tN/cell), resolved live-first
 
 # All four of insert/edit/delete/replace accept --track to record that one
 # invocation as a tracked change even when the doc's track-changes toggle is off.
@@ -221,7 +222,7 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 | Command class | Default stdout on success | `--verbose` |
 | ------------- | ------------------------- | ----------- |
 | **Mutator that mints a new handle** — `comments add`→`cN`, `comments reply`→`cN`, `footnotes/endnotes add`→`fnN`/`enN`, `hyperlinks add`→`linkN`, `insert`→the new `pN` | the bare locator(s), **one per line** (a multi-block `--markdown` insert prints several) | full `{ok:true,…}` ack |
-| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `tables *`, `track-changes accept/reject` & toggle | **silent** (exit `0`) | full `{ok:true,…}` ack |
+| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `tables *`, `track-changes accept/reject` & toggle | **one-line confirmation** — `<operation> <target>` (e.g. `edit t1:r0c1:p0`, `edit 7 changes`, `replace 0 occurrences replaced`) (exit `0`) | full `{ok:true,…}` ack |
 | `find` | matched span locators, one per line (no matches → nothing, exit `0`) | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
 | `wc` | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`) | `--json` → `{ words, scope, view, sections? }` |
 | `outline` | indented `LOCATOR⇥TEXT` tree (two spaces per level) | `--json` → nested `[{ id, locator, level, style, text, children }]` |

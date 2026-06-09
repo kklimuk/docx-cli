@@ -50,11 +50,11 @@ Optional:
                        env, fallback "Reviewer"). Ignored when tracking off.
   -o, --output PATH    Write to PATH instead of overwriting FILE.
   --dry-run            Print what would change; do not write the file.
-  -v, --verbose        Print the success ack JSON (default: silent on success).
+  -v, --verbose        Print the success ack JSON (default: a one-line confirmation).
   -h, --help           Show this help.
 
 Output:
-  Silent on success; --verbose prints {ok:true, operation, path, id}. Errors
+  Prints a one-line confirmation on success; --verbose prints {ok:true, operation, path, id}. Errors
   print {code, error, hint?} with a nonzero exit. Discover ids with
   \`docx ${verb} list FILE\`.
 

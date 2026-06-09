@@ -13,7 +13,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   read      FILE  Render as Markdown with pN locators; --from/--to to slice, --accepted (default)/--current/--baseline tracked views, --comments, --ast for JSON-AST
   edit      FILE  Replace or strip text/formatting at pN, pN:S-E, pN-pM, sN, eqN, or table-cell locators (--clear to strip formatting, --track to redline, --batch for many edits in one read)
   insert    FILE  Insert a paragraph, image, table, equation, code block, markdown, or structural break (--after/--before LOCATOR; --track; --batch for many inserts in one read)
-  delete    FILE  Remove a paragraph, range, table, or section break (--at LOCATOR; --track for tracked deletion)
+  delete    FILE  Remove a paragraph, range, table, or section break (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
   find      FILE [QUERY]  Find spans by text, OR by formatting (--highlight/--color/--bold/--italic/--underline); returns locators for --at
   replace   FILE PATTERN REPL  Substitute text spans, sed-style (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern script)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
@@ -33,44 +33,32 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
 It is highly recommended to run "docx info locators" and "docx info schema" (neither needs a FILE) to understand the addressing model and AST.
 Run "docx <command> --help" for command-specific help.
 
-VERIFY LAYOUT VISUALLY: "docx read" shows text/structure as Markdown but NOT how the
-page looks — multi-column sections, page breaks, image sizing, and where content lands
-on the page don't appear there. After authoring or inserting layout-affecting content,
-render to images and look: "docx render FILE --out pages/" writes page-001.png, … which
-you can read. Adjust and re-render until it looks right. (Note: a multi-column section's
-columns apply to the content BEFORE the section break, not after — see "docx insert --help".)
+BATCH MANY CHANGES IN ONE READ: filling a form or applying many edits? Don't go
+one-at-a-time — edit / insert / replace / delete and comments (add/resolve/delete)
+all take --batch FILE.jsonl (one JSON change per line; "-" reads stdin). Every locator
+addresses the document AS READ, so ids stay valid across the whole batch — one
+read, one write, no re-reading between changes. See "<command> --help".
+
+VERIFY LAYOUT VISUALLY — ONLY WHEN LAYOUT IS THE QUESTION: "docx read" is the source of
+truth for CONTENT, so if you filled text, replaced placeholders, edited cells, or added
+comments / tracked changes, "read" plus the write→read loop already prove it — do NOT
+render (each render spins up Word and is slow). Render only for what Markdown can't show:
+multi-column sections, page/section breaks, image sizing/placement, table geometry — and
+then ONCE at the end (not after every edit), or one final time if you're genuinely unsure
+it looks right: "docx render FILE --out pages/" writes page-001.png, … which you can read.
+(A multi-column section's columns apply to content BEFORE the break — see "docx insert --help".)
 
 Environment:
   DOCX_AUTHOR    Default author for comments and tracked-change attribution
   DOCX_CLI_NOW   Override the timestamp used for tracked changes (test only)
 
-Tracked changes:
-  Toggle:    docx track-changes FILE on|off
-  Inventory: docx track-changes list FILE  (JSON array of { id, kind, author,
-             date, revisionId, blockId, text }; sectPrChange entries also
-             include { prior, current } with the section properties on each
-             side of the edit)
-  Accept:    docx track-changes accept FILE (--at tcN | --all)
-  Reject:    docx track-changes reject FILE (--at tcN | --all)
-
-  When <w:trackChanges/> is set, insert/edit/delete/replace automatically emit
-  <w:ins>/<w:del> markers attributed via --author (or $DOCX_AUTHOR, or "Reviewer").
-  Pass --track to any insert/edit/delete/replace (and the tables verbs / images
-  delete) to record just that one invocation as tracked even when the toggle is
-  off; when the toggle is already on, tracking is automatic.
-  edit --at sN under tracking emits <w:sectPrChange> snapshots on the section.
-
-  Accept/reject handle: run-level ins/del/moveFrom/moveTo, sectPrChange
-  (snapshot drop or restore), paragraph-mark ins/del (accept-del merges with the
-  next paragraph; reject-ins removes the owning paragraph), the table-structural
-  revisions (rowIns/rowDel/cellIns/cellDel/tblGridChange/tblPrChange/tcPrChange),
-  and checkboxToggle. Out of scope: rPrChange / pPrChange formatting revisions.
-
-  "docx read" default view is --accepted (clean text: insertions inlined,
-  deletions dropped). Add --current for CriticMarkup:
-    {++inserted++}[^tcN]   {--deleted--}[^tcN]
-  with a [^tcN]: definition appendix; --baseline renders the pre-change text.
-  "docx wc" mirrors the same --accepted / --baseline / --current flags.
+Tracked changes (full detail: "docx track-changes --help"):
+  docx track-changes FILE on|off  ·  list  ·  accept/reject (--at tcN | --all)
+  With tracking on, edit/insert/delete/replace auto-emit <w:ins>/<w:del>
+  (attributed via --author / $DOCX_AUTHOR); pass --track to any one of them (plus
+  the tables verbs / images delete) to redline just that invocation. "docx read"
+  shows revisions as CriticMarkup with --current ({++ins++}/{--del--}), --baseline
+  for the pre-change text, or --accepted (default, clean); "docx wc" mirrors them.
 `;
 
 export async function printTopHelp(): Promise<void> {

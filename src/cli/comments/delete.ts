@@ -33,7 +33,7 @@ Optional:
   -h, --help          Show this help
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   batch:[{commentId}]}. Errors print {code, error, hint?} with a nonzero exit.
   Discover comment ids with \`docx comments list FILE\`.
 

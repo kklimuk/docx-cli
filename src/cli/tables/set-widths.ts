@@ -53,7 +53,7 @@ cell's <w:tcW>. Under track-changes the resize is recorded as a real revision
 accepted or rejected — matching what Word emits for a width change.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   layout, widths}. --dry-run prints the preview object (no ok field). Errors
   print {code, error, hint?} with a nonzero exit.
 

@@ -26,7 +26,7 @@ Optional:
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 Removes the inline drawing (and its containing run). If the underlying media
@@ -40,7 +40,7 @@ Image ids are positional and shift after a delete — re-read before the next
 mutation.
 
 Output:
-  Silent on success (exit 0) — delete mints no new id. --verbose prints
+  Prints a one-line confirmation on success (exit 0) — delete mints no new id. --verbose prints
   {ok:true, operation, path, imageId, partName, pruned}. Errors print
   {code, error, hint?} with a nonzero exit. Discover ids with
   \`docx images list FILE\`.

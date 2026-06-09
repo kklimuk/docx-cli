@@ -10,6 +10,10 @@
 
 The typed AST from `read` is a *view* over the parsed XML tree. Mutations operate on the underlying `XmlNode` references via `BlockReference.parent.splice(...)`. Anything we don't model survives because we never re-emit untouched regions. Only emit fresh XML for nodes we're inserting (via JSX) — never round-trip whole subtrees through the AST.
 
+## Splicing into an existing `<w:pPr>` — use `insertPprChildInOrder`, never `push`
+
+`<w:pPr>` children must follow CT_PPr order (ECMA-376 §17.3.1.26) or Word rejects the file with "unreadable content / repair." The classic break is appending `<w:jc>` (from `--alignment`) to the end of a pPr that already carries the trailing paragraph-mark `<w:rPr>` — `<w:jc>` lands *after* `<w:rPr>`, which is invalid. The `Paragraph`/`ParagraphProperties` builders emit in order from scratch, but any code that adds a child to an **already-built** pPr (the edit-in-place paths: `applyParagraphOptionsInPlace`, `inheritParagraphFormattingIfPlain`) must splice via `insertPprChildInOrder(pPr, child)` ([blocks.tsx](blocks.tsx), keyed on `PPR_CHILD_ORDER`) instead of `pPr.children.push(...)`. LibreOffice tolerates the misorder; Word (the canonical render target) does not.
+
 ## RUN_BEARING_WRAPPER_TAGS — the AST↔XML offset bridge
 
 Defined in [parser/run-ops.ts](parser/run-ops.ts). AST text and `find`'s offsets descend into every tag in this set; the XML-side walkers in [comments/markers.tsx](comments/markers.tsx), [find/replace-span.tsx](find/replace-span.tsx), and [hyperlinks/wrap.tsx](hyperlinks/wrap.tsx) all do the same via `isRunBearingWrapper(tag)` / `sumRunBearingTextLength(children)`. They must stay in sync — if the AST descends into a wrapper the XML walkers don't (or vice versa), `find → replace` / `find → comments add` misaligns by the wrapper's inner-text length. Current set: `<w:ins>`, `<w:del>`, `<w:moveFrom>`, `<w:moveTo>`, `<w:hyperlink>`, `<w:fldSimple>`, `<w:smartTag>`. Any tag NOT in the set is preserved by the catchall `push(child)` in every walker (see `tests/cli/invariants.test.ts`).

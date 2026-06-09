@@ -29,13 +29,16 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { runDeleteBatch } from "./batch";
 
 const HELP = `docx delete — remove a block at a locator
 
 Usage:
-  docx delete FILE [options]
+  docx delete FILE --at LOCATOR [options]
+  docx delete FILE --batch FILE.jsonl [options]   # remove many, one read
+  docx delete FILE --batch -          [options]   # read JSONL from stdin
 
-Locator (required):
+Locator (required, unless --batch):
   --at LOCATOR      What to remove. One of:
                     pN     paragraph (whole block, with all its runs)
                     pN-pM  contiguous paragraph range (delete as a unit)
@@ -46,12 +49,20 @@ Locator (required):
                     Discover ids with \`docx read FILE --ast\`. See
                     \`docx info locators\`.
 
+Batch (--batch PATH | -):
+  Remove many blocks from one read. Each JSONL line is { "at": LOCATOR } where
+  LOCATOR is a whole-block locator (pN, tN, or a cell paragraph tN:rRcC:pK).
+  All locators address the document AS READ — they're resolved to live node
+  refs before anything is removed, so deleting one never shifts another's id.
+  Range (pN-pM), section (sN), equation (eqN), and span (pN:S-E) deletes run
+  one at a time, not in a batch. Don't mix --batch with --at.
+
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   --track           Record this deletion as a tracked change even when the
                     document's track-changes toggle is off (OFF by default).
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would be removed; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 Tracked behavior:
@@ -64,18 +75,45 @@ Tracked behavior:
   not supported).
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   locator}. Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
   docx delete doc.docx --at p3
   docx delete doc.docx --at t0
   docx delete doc.docx --at s2
+  docx delete doc.docx --batch drop.jsonl   # {"at":"p26"} per line
 `;
 
 export async function run(args: string[]): Promise<number> {
-	const opts = await parseAndValidateOptions(args);
-	if (typeof opts === "number") return opts;
+	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	if (typeof parsed === "number") return parsed;
+	if (parsed.values.help) {
+		await writeStdout(HELP);
+		return EXIT.OK;
+	}
+	setVerboseAck(Boolean(parsed.values.verbose));
+
+	const filePath = parsed.positionals[0];
+	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
+
+	// `--batch FILE.jsonl`: remove many blocks from one read (resolve-first).
+	const batchSource = parsed.values.batch as string | undefined;
+	if (batchSource !== undefined) {
+		return runDeleteBatch(filePath, batchSource, parsed.values);
+	}
+
+	const locator = parsed.values.at as string | undefined;
+	if (!locator)
+		return fail("USAGE", "Missing --at LOCATOR (or --batch FILE)", HELP);
+	const opts: ValidatedOptions = {
+		filePath,
+		locator,
+		authorFlag: parsed.values.author as string | undefined,
+		trackFlag: Boolean(parsed.values.track),
+		outputPath: parsed.values.output as string | undefined,
+		dryRun: Boolean(parsed.values["dry-run"]),
+	};
 
 	const document = await openOrFail(opts.filePath);
 	if (typeof document === "number") return document;
@@ -141,37 +179,9 @@ async function commitRangeDelete(
 	return emitDeleteAck(opts);
 }
 
-async function parseAndValidateOptions(
-	args: string[],
-): Promise<ValidatedOptions | number> {
-	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
-	if (typeof parsed === "number") return parsed;
-
-	if (parsed.values.help) {
-		await writeStdout(HELP);
-		return EXIT.OK;
-	}
-
-	setVerboseAck(Boolean(parsed.values.verbose));
-
-	const filePath = parsed.positionals[0];
-	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
-
-	const locator = parsed.values.at as string | undefined;
-	if (!locator) return fail("USAGE", "Missing --at LOCATOR", HELP);
-
-	return {
-		filePath,
-		locator,
-		authorFlag: parsed.values.author as string | undefined,
-		trackFlag: Boolean(parsed.values.track),
-		outputPath: parsed.values.output as string | undefined,
-		dryRun: Boolean(parsed.values["dry-run"]),
-	};
-}
-
 const OPTION_SPEC = {
 	at: { type: "string" },
+	batch: { type: "string" },
 	author: { type: "string" },
 	track: { type: "boolean" },
 	...SAVE_FLAGS,

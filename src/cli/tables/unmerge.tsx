@@ -49,7 +49,7 @@ continuation cells. OOXML has no tracked-change construct for this, so under
 track-changes the change applies immediately with a [docx-cli] audit comment.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   cell}. --dry-run prints the preview object (no ok field). Errors print
   {code, error, hint?} with a nonzero exit.
 

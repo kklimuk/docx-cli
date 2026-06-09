@@ -62,7 +62,7 @@ flow on the page (balance, overflow). After setting columns, render and look:
 Adjust the range and re-render until the columns read the way you intended.
 
 Output:
-  Silent on success (exit 0); --verbose prints {ok:true, …}. Positional ids shift
+  Prints a one-line confirmation on success (exit 0); --verbose prints {ok:true, …}. Positional ids shift
   after a range wrap (two section breaks are inserted), so re-read before further
   edits. Errors print {code, error, hint?} + nonzero exit.
 
@@ -362,20 +362,24 @@ async function commit(
 			operation: "columns",
 			dryRun: true,
 			path: opts.filePath,
-			at: meta.at,
-			count: opts.count,
+			locator: meta.at,
+			columnCount: opts.count,
 			mode: meta.mode,
 			...(opts.outputPath ? { output: opts.outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 	await document.save(opts.outputPath);
+	// `locator` (not `count`) is the salient field: the generic ack summarizer
+	// reads `count` as a CHANGE tally and would print "columns 2 changes" for a
+	// 2-column layout. The locator yields the right one-liner ("columns p2-p4");
+	// the column count rides as `columnCount` for --verbose/JSON consumers.
 	await respondAck({
 		ok: true,
 		operation: "columns",
 		path: opts.outputPath ?? opts.filePath,
-		at: meta.at,
-		count: opts.count,
+		locator: meta.at,
+		columnCount: opts.count,
 		mode: meta.mode,
 	});
 	return EXIT.OK;

@@ -352,6 +352,58 @@ describe("insert --batch", () => {
 	});
 });
 
+describe("delete --batch", () => {
+	test("removes every targeted block, resolving live refs (ids never shift)", async () => {
+		const path = await docWithParagraphs("del-batch", [
+			"Alpha",
+			"Bravo",
+			"Charlie",
+			"Delta",
+			"Echo",
+		]);
+		const batch = await writeJsonl("del-batch-src", [
+			{ at: "p1" },
+			{ at: "p3" },
+		]);
+		const result = await runCli("delete", path, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { count: number }).count).toBe(2);
+		// p1 (Bravo) and p3 (Delta) gone; the rest intact despite the id shift.
+		expect(await paragraphTexts(path)).toEqual(["Alpha", "Charlie", "Echo"]);
+	});
+
+	test("rejects --at alongside --batch", async () => {
+		const path = await docWithParagraphs("del-batch-at", ["A", "B"]);
+		const batch = await writeJsonl("del-batch-at-src", [{ at: "p1" }]);
+		const result = await runCli("delete", path, "--batch", batch, "--at", "p0");
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+	});
+
+	test("rejects a range locator in a batch entry", async () => {
+		const path = await docWithParagraphs("del-batch-range", ["A", "B", "C"]);
+		const batch = await writeJsonl("del-batch-range-src", [{ at: "p0-p1" }]);
+		const result = await runCli("delete", path, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+	});
+
+	// Two entries hitting the same live node would, under tracking, push a second
+	// <w:del> into one CT_ParaRPr (schema-invalid) and double-merge on accept; even
+	// untracked it over-counts. Reject the duplicate up front like edit --batch.
+	test("rejects two entries that resolve to the same block", async () => {
+		const path = await docWithParagraphs("del-batch-dup", ["A", "B", "C"]);
+		const batch = await writeJsonl("del-batch-dup-src", [
+			{ at: "p1" },
+			{ at: "p1" },
+		]);
+		const result = await runCli("delete", path, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+		// Nothing removed — the reject happens before any mutation.
+		expect(await paragraphTexts(path)).toEqual(["A", "B", "C"]);
+	});
+});
+
 describe("--batch empty file → USAGE", () => {
 	test("a zero-entry batch file is rejected for edit / insert / replace", async () => {
 		const path = join(tempWorkspace("empty-batch"), "doc.docx");

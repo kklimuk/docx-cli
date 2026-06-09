@@ -103,7 +103,26 @@ function isAcceptedViewVisibleWrapper(tag: string): boolean {
 function collectRunText(run: XmlNode): string {
 	let out = "";
 	for (const child of run.children) {
-		if (child.tag === "w:t") out += child.collectText();
+		if (child.tag === "w:t") {
+			out += child.collectText();
+			continue;
+		}
+		// Represent in-run tabs/line-breaks as the same literal characters the new
+		// text carries, so old and new tokenize identically. Otherwise a `<w:tab/>`
+		// in its own run glues the surrounding words into one old token
+		// ("University" + "Cambridge,") that can never match the new split tokens —
+		// turning a verbatim re-type of a tabbed line into a spurious del+reinsert
+		// under tracking. `runContentChildren` re-emits these from the same chars.
+		if (child.tag === "w:tab") {
+			out += "\t";
+			continue;
+		}
+		// Only the default text-wrapping break is a newline; page/column breaks
+		// aren't text the agent retypes, so leave them out (and out of the diff).
+		if (child.tag === "w:br") {
+			const type = child.getAttribute("w:type");
+			if (type === undefined || type === "textWrapping") out += "\n";
+		}
 	}
 	return out;
 }
@@ -477,20 +496,40 @@ function groupAndEmitDeletedRuns(
 }
 
 function emitPlainRun(text: string, rPr: XmlNode | null): XmlNode {
-	return (
-		<w.r>
-			{rPr}
-			<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
-		</w.r>
-	);
+	return <w.r>{[rPr, ...runContentChildren(text, false)]}</w.r>;
 }
 
 function emitDeletedRun(text: string, rPr: XmlNode | null): XmlNode {
-	return (
-		<w.r>
-			{rPr}
-			<w.delText {...{ "xml:space": "preserve" }}>{text}</w.delText>
-		</w.r>
+	return <w.r>{[rPr, ...runContentChildren(text, true)]}</w.r>;
+}
+
+/** Split a token's text on tabs/newlines into `<w:t>`/`<w:delText>` segments
+ *  plus `<w:tab/>` / `<w:br/>` elements, all destined for ONE `<w:r>` so the
+ *  diff's per-token rPr (e.g. bold on a name, regular on the tabbed-over date)
+ *  rides along. Without this, a tab in `--text` would land as a literal char
+ *  inside `<w:t>` (Word ignores it) — which is why `--text` with a tab used to
+ *  bypass this whole formatting-preserving path and flatten the run. Mirrors
+ *  `textToRuns` in blocks.tsx, but keeps everything in the rPr-bearing run. */
+function runContentChildren(text: string, deleted: boolean): XmlNode[] {
+	if (!/[\n\r\t]/.test(text)) {
+		return [textSegment(text, deleted)];
+	}
+	const out: XmlNode[] = [];
+	for (const segment of text.split(/(\r\n|\r|\n|\t)/)) {
+		if (segment === "") continue;
+		if (segment === "\t") out.push(<w.tab />);
+		else if (segment === "\n" || segment === "\r" || segment === "\r\n") {
+			out.push(<w.br />);
+		} else out.push(textSegment(segment, deleted));
+	}
+	return out;
+}
+
+function textSegment(text: string, deleted: boolean): XmlNode {
+	return deleted ? (
+		<w.delText {...{ "xml:space": "preserve" }}>{text}</w.delText>
+	) : (
+		<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
 	);
 }
 

@@ -40,7 +40,7 @@ When track-changes is on, an audit comment is anchored to the surviving text
 since OOXML has no native tracked-change form for hyperlink removal.
 
 Output:
-  Silent on success (exit 0) — delete mints no new id. --verbose prints
+  Prints a one-line confirmation on success (exit 0) — delete mints no new id. --verbose prints
   {ok:true, operation, path, hyperlinkId, from}. A --dry-run prints a bare
   preview object. Errors print {code, error, hint?} with a nonzero exit.
   Discover ids with \`docx hyperlinks list FILE\`.

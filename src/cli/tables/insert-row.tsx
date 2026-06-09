@@ -54,7 +54,7 @@ When track-changes is on, the new row is wrapped as a tracked insertion
 (<w:trPr><w:ins/>) — accept keeps it, reject removes it.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   position, tracked}. --dry-run prints the preview object (no ok field). Errors
   print {code, error, hint?} with a nonzero exit.
 

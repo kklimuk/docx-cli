@@ -4,7 +4,7 @@ import { Pkg } from "@core/ast/document/package";
 import { clearFormatting, resolveClearTags } from "@core/edit/clear-formatting";
 import { XmlNode } from "@core/parser";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture } from "./helpers";
+import { freshFixture, readDocumentXml } from "./helpers";
 
 const FIXTURE = "tests/fixtures/word-formatted.docx";
 // Layout (built by tests/fixtures/setup/word-formatted.ts):
@@ -91,6 +91,36 @@ describe("docx edit --text — formatting preservation (default)", () => {
 			.map((run) => run.text ?? "")
 			.join("");
 		expect(flat).toBe("Bold then italic then ordinary.");
+	});
+
+	test("an embedded tab keeps run formatting and emits a real <w:tab/>", async () => {
+		// Regression: a leading bold span followed by a tab (the canonical
+		// resume "**Name**⇥City" line). The tab used to bypass the
+		// formatting-preserve path, flattening the whole paragraph into one
+		// rPr-less run — bold AND the run's font fell back to docDefaults
+		// (Times New Roman). Now the tab rides inside its run as <w:tab/> and
+		// the surrounding rPr survives.
+		const docPath = await freshCopy("preserve-tab");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--text",
+			"Bold then italic\tthen plain.",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readParagraph(docPath, "p2");
+		const bold = runs.find((run) => run.text === "Bold");
+		expect(bold?.bold).toBe(true);
+		const italic = runs.find((run) => run.text === "italic");
+		expect(italic?.italic).toBe(true);
+
+		// The tab is a real <w:tab/> element, not a literal "\t" leaked into <w:t>.
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain("<w:tab/>");
+		expect(xml).not.toMatch(/<w:t[ >][^<]*\t/);
 	});
 
 	test("--no-formatting reverts to a single fresh run", async () => {
@@ -694,6 +724,40 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 		expect((await runCli("outline", docPath)).stdout).toContain("New Title");
 	});
 
+	test("a fresh-run replace (--bold) keeps the paragraph's direct alignment", async () => {
+		const docPath = await docFrom("align-keep", "Centered Title\n");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Centered Title",
+					"--alignment",
+					"center",
+				)
+			).exitCode,
+		).toBe(0);
+		// --bold forces the fresh-run path (not the in-place preserve path); the
+		// direct <w:jc> must still survive, not just the style.
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"New Title",
+					"--bold",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain('<w:jc w:val="center"');
+	});
+
 	test("--markdown that sets its own block style wins (## → Heading2)", async () => {
 		const docPath = await docFrom("md-override", "# Big\n");
 		expect(
@@ -892,6 +956,12 @@ describe("find formatting filters + edit --clear", () => {
 		expect((await locators(path, "--highlight", "any")).length).toBe(3);
 	});
 
+	test("bare --highlight (no color) means any color", async () => {
+		const path = await clearDoc("find-hl-bare");
+		// `locators` passes `--highlight` with no value; it should match any color.
+		expect((await locators(path, "--highlight")).length).toBe(3);
+	});
+
 	test("find --color FF0000 returns the colored span", async () => {
 		const path = await clearDoc("find-color");
 		const found = await locators(path, "--color", "FF0000");
@@ -927,6 +997,126 @@ describe("find formatting filters + edit --clear", () => {
 		const result = await runCli("edit", path, "--at", "p0", "--clear", "bogus");
 		expect(result.exitCode).toBe(2);
 		expect((result.parsed as { code: string }).code).toBe("USAGE");
+	});
+});
+
+// The form-fill + un-highlight move: fill a placeholder AND strip its highlight in
+// ONE op (so it's not two passes, and the targeted clear doesn't nuke font size the
+// way `--clear all` would). Drives the mnda call count down.
+describe("edit content + --clear combined (fill then strip)", () => {
+	const FILLED = "Fill the state and the county; keep this bold word.";
+
+	test("single op: --text + --clear highlight fills then strips ONLY highlight", async () => {
+		const path = await clearDoc("combo-single");
+		expect((await locators(path, "--highlight", "any")).length).toBe(3);
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0",
+			"--text",
+			FILLED,
+			"--clear",
+			"highlight",
+		);
+		expect(result.exitCode).toBe(0);
+		// highlight gone, but the red color survives — targeted, not `--clear all`.
+		expect((await locators(path, "--highlight", "any")).length).toBe(0);
+		expect((await locators(path, "--color", "FF0000")).length).toBe(1);
+		expect((await runCli("read", path)).stdout).toContain(
+			"Fill the state and the county",
+		);
+	});
+
+	test("batch: one {at,text,clear} entry fills and strips in a single entry", async () => {
+		const path = await clearDoc("combo-batch");
+		const batch = join(tempWorkspace("combo-batch-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", text: FILLED, clear: "highlight" })}\n`,
+		);
+		expect((await runCli("edit", path, "--batch", batch)).exitCode).toBe(0);
+		expect((await locators(path, "--highlight", "any")).length).toBe(0);
+		expect((await locators(path, "--color", "FF0000")).length).toBe(1);
+	});
+
+	test("single op: --text + --clear on a SPAN fills then strips that span", async () => {
+		// `find --highlight` returns span locators, so this is the natural one-shot.
+		const path = await clearDoc("combo-span");
+		expect((await locators(path, "--highlight", "yellow")).length).toBe(3);
+		const [span] = await locators(path, "--highlight", "yellow");
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			span ?? "p0:0-4",
+			"--text",
+			"Texas",
+			"--clear",
+			"highlight",
+		);
+		expect(result.exitCode).toBe(0);
+		// exactly the edited span lost its highlight (3 → 2); text replaced
+		expect((await locators(path, "--highlight", "yellow")).length).toBe(2);
+		expect((await runCli("read", path)).stdout).toContain("Texas");
+	});
+
+	test("batch: a span entry may combine content + clear", async () => {
+		const path = await clearDoc("combo-span-batch");
+		const [span] = await locators(path, "--highlight", "yellow");
+		const batch = join(tempWorkspace("combo-span-batch-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: span ?? "p0:0-4", text: "Texas", clear: "highlight" })}\n`,
+		);
+		expect((await runCli("edit", path, "--batch", batch)).exitCode).toBe(0);
+		expect((await locators(path, "--highlight", "yellow")).length).toBe(2);
+	});
+
+	test("--clear is repeatable: --clear highlight --clear color accumulates", async () => {
+		const path = await clearDoc("clear-repeat");
+		expect((await locators(path, "--highlight", "any")).length).toBe(3);
+		expect((await locators(path, "--color", "FF0000")).length).toBe(1);
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0",
+			"--clear",
+			"highlight",
+			"--clear",
+			"color",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await locators(path, "--highlight", "any")).length).toBe(0);
+		expect((await locators(path, "--color", "FF0000")).length).toBe(0);
+	});
+
+	test("batch: clear accepts an array of attrs", async () => {
+		const path = await clearDoc("clear-array");
+		const batch = join(tempWorkspace("clear-array-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", clear: ["highlight", "color"] })}\n`,
+		);
+		expect((await runCli("edit", path, "--batch", batch)).exitCode).toBe(0);
+		expect((await locators(path, "--highlight", "any")).length).toBe(0);
+		expect((await locators(path, "--color", "FF0000")).length).toBe(0);
+	});
+
+	test("--text accepts a leading-dash value (e.g. -$500.00), no --text= needed", async () => {
+		// parseArgs would reject `--text -$500.00` as ambiguous; we pre-merge it.
+		const docPath = await docFrom("dash-value", "placeholder\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"-$500.00",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain("-$500.00");
 	});
 });
 

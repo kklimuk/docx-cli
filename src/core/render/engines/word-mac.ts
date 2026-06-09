@@ -1,4 +1,13 @@
-import { existsSync, rmSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type RenderEngine, RenderEngineError } from "./types";
@@ -46,28 +55,37 @@ export const wordMacEngine: RenderEngine = {
 				"	close d saving no",
 				"end tell",
 			].join("\n");
-			const proc = Bun.spawn(["osascript", "-e", script], {
-				stdout: "pipe",
-				stderr: "pipe",
+			// Serialize the Word automation across processes. Word for Mac drives a
+			// SINGLE app instance and the script grabs `active document`, so two
+			// concurrent renders race on which document is active — one silently
+			// exports the OTHER doc's pages with a success exit code (verified). An
+			// advisory lock makes concurrent `docx render` invocations QUEUE instead
+			// of corrupt. Only the open→save→close window needs it; staging the docx
+			// and moving the PDF out use per-pid-unique paths and are race-free.
+			await withRenderLock(async () => {
+				const proc = Bun.spawn(["osascript", "-e", script], {
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const exit = await proc.exited;
+				if (exit !== 0) {
+					const stderr = await new Response(proc.stderr).text();
+					throw new RenderEngineError(
+						"RENDER_FAILED",
+						`Word for Mac failed (exit ${exit}): ${stderr.trim() || "(no stderr)"}`,
+						"If this is the first run, macOS may have prompted for Automation permission. Grant it under System Settings → Privacy & Security → Automation, then retry.",
+					);
+				}
+				const stagedFile = Bun.file(stagedPdf);
+				if (!(await stagedFile.exists())) {
+					throw new RenderEngineError(
+						"RENDER_FAILED",
+						"Word reported success but produced no PDF at the staged path",
+						`Expected: ${stagedPdf}`,
+					);
+				}
+				await Bun.write(outputPdf, stagedFile);
 			});
-			const exit = await proc.exited;
-			if (exit !== 0) {
-				const stderr = await new Response(proc.stderr).text();
-				throw new RenderEngineError(
-					"RENDER_FAILED",
-					`Word for Mac failed (exit ${exit}): ${stderr.trim() || "(no stderr)"}`,
-					"If this is the first run, macOS may have prompted for Automation permission. Grant it under System Settings → Privacy & Security → Automation, then retry.",
-				);
-			}
-			const stagedFile = Bun.file(stagedPdf);
-			if (!(await stagedFile.exists())) {
-				throw new RenderEngineError(
-					"RENDER_FAILED",
-					"Word reported success but produced no PDF at the staged path",
-					`Expected: ${stagedPdf}`,
-				);
-			}
-			await Bun.write(outputPdf, stagedFile);
 		} finally {
 			rmSync(stagedDocx, { force: true });
 			rmSync(stagedPdf, { force: true });
@@ -95,4 +113,89 @@ let monotonic = 0;
 function stamp(): string {
 	monotonic += 1;
 	return String(monotonic);
+}
+
+/** A holder older than this is presumed crashed and its lock is stolen, so a dead
+ * render can't deadlock the queue. A single Word render takes seconds, never
+ * minutes, so this is generous enough to never steal a live holder's lock. */
+const RENDER_LOCK_STALE_MS = 5 * 60 * 1000;
+
+/** Serialize the Word automation across processes via an advisory lock file. Word
+ * for Mac is a single app instance whose AppleScript `active document` is global,
+ * so concurrent renders silently corrupt each other. We gate the open→save→close
+ * window on an exclusive-create lock: exactly one process wins `open(…, "wx")`;
+ * the rest wait and retry until it's released (or stolen if stale). */
+async function withRenderLock<T>(critical: () => Promise<T>): Promise<T> {
+	const lockPath = join(containerDocumentsDir(), ".docx-cli-render.lock");
+	// A token unique to THIS acquisition (pid + monotonic). We only ever delete a
+	// lock whose contents still match it, so a holder whose lock was stolen as
+	// stale can't delete the thief's fresh lock on the way out.
+	const token = `${process.pid}:${stamp()}`;
+	await acquireRenderLock(lockPath, token);
+	try {
+		return await critical();
+	} finally {
+		releaseRenderLock(lockPath, token);
+	}
+}
+
+async function acquireRenderLock(
+	lockPath: string,
+	token: string,
+): Promise<void> {
+	for (;;) {
+		try {
+			// "wx" = create exclusively; throws EEXIST if another holder has it.
+			const fd = openSync(lockPath, "wx");
+			writeSync(fd, token);
+			closeSync(fd);
+			return;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			if (renderLockIsStale(lockPath)) stealStaleLock(lockPath, token);
+			else await Bun.sleep(150);
+		}
+	}
+}
+
+/** Atomically steal a presumed-dead lock. `rename` is atomic on POSIX, so if
+ *  two waiters both see the same stale lock, exactly one wins the rename (moving
+ *  the inode aside) and the other gets ENOENT — preventing the blind-`rmSync`
+ *  race where both delete and both then win `openSync('wx')`, driving the single
+ *  Word instance concurrently. The winner clears the stolen file; the lock is
+ *  then free and the next `openSync('wx')` (by anyone) re-establishes a single
+ *  owner. Loser/ENOENT just loops. */
+function stealStaleLock(lockPath: string, token: string): void {
+	const stealPath = `${lockPath}.steal.${token}`;
+	try {
+		renameSync(lockPath, stealPath);
+	} catch {
+		// Someone else stole/released it first — just retry the acquire loop.
+		return;
+	}
+	rmSync(stealPath, { force: true });
+}
+
+/** Release only if the lock still holds OUR token. If it was stolen as stale and
+ *  re-created by another process, the token differs and we leave it alone. */
+function releaseRenderLock(lockPath: string, token: string): void {
+	try {
+		if (readFileSync(lockPath, "utf8") === token) {
+			rmSync(lockPath, { force: true });
+		}
+	} catch {
+		// Already gone (stolen/released) — nothing to do.
+	}
+}
+
+/** True if the lock is older than the stale threshold (holder presumed dead) or
+ * vanished between the failed acquire and this check (already free). Uses the wall
+ * clock — this runs in the CLI process, not the workflow sandbox that bans
+ * Date.now(); see the note on `stamp()` above. */
+function renderLockIsStale(lockPath: string): boolean {
+	try {
+		return Date.now() - statSync(lockPath).mtimeMs > RENDER_LOCK_STALE_MS;
+	} catch {
+		return true;
+	}
 }

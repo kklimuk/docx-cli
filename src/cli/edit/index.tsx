@@ -15,6 +15,7 @@ import {
 	type Run,
 	resolveClearTags,
 	type SectionType,
+	type XmlNode,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import {
@@ -92,8 +93,15 @@ Paragraph content (one required for paragraph / range locators):
   --clear ATTRS     Strip run formatting in place, keeping the text. ATTRS is a
                     comma list of: bold, italic, strike, underline, highlight,
                     shade, color, font, size, vertalign, caps, smallcaps, style
-                    — or "all". Works on a whole paragraph (pN) or a span
+                    — or "all". Repeatable: \`--clear highlight --clear underline\`
+                    accumulates (same as \`--clear highlight,underline\`).
+                    Works on a whole paragraph (pN) or a span
                     (pN:S-E). Pairs with \`docx find --highlight\`. (Not tracked.)
+                    Can RIDE ALONG with content (whole paragraph OR span):
+                    \`--text "Delaware" --clear highlight\` fills then strips the
+                    highlight in ONE call — the form-fill + un-highlight move,
+                    and the natural \`find --highlight | edit\` one-shot. Prefer
+                    this over \`--clear all\`, which also drops the font size.
   --task STATE      Flip a task-list item's checkbox state in place ("checked" or
                     "unchecked"). Requires a single paragraph locator that is
                     already a GFM task list item (has a leading <w14:checkbox/>
@@ -137,12 +145,18 @@ Formatting (single-paragraph --text only):
 Batch (--batch PATH | -):
   Apply many edits from one read — no need to re-read between changes. Each
   JSONL line is one edit: { "at": LOCATOR, <one content field> }. Content is
-  "text", "clear", "markdown", "runs", "code", or "task"; whole-paragraph
-  entries may also carry "style"/"alignment"/"color"/"bold"/"italic"/"author".
+  "text", "markdown", "runs", "code", or "task"; whole-paragraph entries may
+  also carry "style"/"alignment"/"color"/"bold"/"italic"/"author". An entry may
+  ALSO carry "clear" alongside its content — whole paragraph OR span — to fill
+  then strip formatting in one entry ({ "at": p, "text": "...", "clear": "highlight" })
+  — the form-fill + un-highlight move; "clear" alone (no content) is also valid.
   All locators address the document AS READ. A paragraph takes one whole-
   paragraph edit OR several non-overlapping spans (applied right-to-left so
   offsets stay valid). Range (pN-pM), section (sN), and equation (eqN) edits
   run one at a time, not in a batch. Don't mix --batch with --at/--text/etc.
+  Tip: a value reaches docx-cli verbatim through the JSONL file — no shell in the
+  way — so prefer --batch for money ($1,250.00), regex, or other shell-special
+  text. (A bare --text value may also start with "-"; it no longer needs "=".)
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
@@ -153,11 +167,11 @@ General options:
                     on unchanged words
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 Output:
-  Silent on success (exit 0) — the edited locator is unchanged, so there's
+  Prints a one-line confirmation on success (exit 0) — the edited locator is unchanged, so there's
   nothing to mint. --verbose prints {ok:true, operation, path, locator}.
   Errors print {code, error, hint?} with a nonzero exit. Discover ids with
   \`docx read FILE --ast\` (equation ids appear on EquationRun nodes).
@@ -166,6 +180,7 @@ Examples:
   docx find doc.docx "fill in state"            # → p4:25-38
   docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
   docx edit doc.docx --at p4:25-38 --clear highlight   # un-highlight that span
+  docx edit doc.docx --at p4 --text "Delaware" --clear highlight  # fill + un-highlight
   docx edit doc.docx --at p2 --clear all               # strip all run formatting
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
   docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
@@ -179,6 +194,7 @@ Batch JSONL example (one edit per line):
   {"at": "p4:25-38", "text": "Delaware"}
   {"at": "t0:r1c2:p0", "text": "$4.2M"}
   {"at": "p9", "clear": "highlight"}
+  {"at": "t1:r1c1:p0", "text": "June 8, 2026", "clear": "highlight"}
   {"at": "p1", "markdown": "## Revised heading"}
 `;
 
@@ -302,10 +318,24 @@ async function commitSpanEdit(
 		if (spec.kind === "clear") {
 			new Edit(document).clearFormatting(blockRef, spanTarget.span, spec.tags);
 		} else {
-			new Edit(document).span(blockRef, spanTarget.span, spec.text, {
+			const edit = new Edit(document);
+			edit.span(blockRef, spanTarget.span, spec.text, {
 				authorFlag: opts.authorFlag,
 				track: resolveTracked(document, opts.trackFlag),
 			});
+			// Combined `--text … --clear highlight` on a span: strip the named
+			// formatting from the JUST-REPLACED range (offsets shift to the new
+			// text length). This is the `find --highlight | edit` one-shot.
+			if (opts.clearTags) {
+				edit.clearFormattingNode(
+					blockRef.node,
+					{
+						start: spanTarget.span.start,
+						end: spanTarget.span.start + spec.text.length,
+					},
+					opts.clearTags,
+				);
+			}
 		}
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -331,6 +361,10 @@ async function commitBlockEdit(
 	const track = resolveTracked(document, opts.trackFlag);
 	try {
 		const edit = new Edit(document);
+		// The paragraph node the content edit produced — a combined `--clear`
+		// strips formatting from THIS node afterward (it may be a freshly spliced
+		// node, not the original blockRef).
+		let resultNode: XmlNode | null = null;
 		if (opts.spec.kind === "section") {
 			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag, track });
 		} else if (opts.spec.kind === "task") {
@@ -338,12 +372,13 @@ async function commitBlockEdit(
 				authorFlag: opts.authorFlag,
 				track,
 			});
+			resultNode = blockRef.node;
 		} else if (
 			opts.spec.kind === "text" ||
 			opts.spec.kind === "runs" ||
 			opts.spec.kind === "code"
 		) {
-			edit.paragraph(blockRef, opts.spec, {
+			resultNode = edit.paragraph(blockRef, opts.spec, {
 				authorFlag: opts.authorFlag,
 				noFormatting: opts.noFormatting,
 				track,
@@ -351,7 +386,7 @@ async function commitBlockEdit(
 		} else if (opts.spec.kind === "markdown") {
 			const resolved = await resolveMarkdownBlocks(document, opts.spec);
 			if (typeof resolved === "number") return resolved;
-			edit.paragraph(blockRef, resolved, {
+			resultNode = edit.paragraph(blockRef, resolved, {
 				authorFlag: opts.authorFlag,
 				track,
 			});
@@ -359,6 +394,11 @@ async function commitBlockEdit(
 			edit.clearFormatting(blockRef, null, opts.spec.tags);
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
+		}
+		// Combined content + `--clear`: strip the named formatting from the
+		// post-edit paragraph (e.g. `--text "June 8, 2026" --clear highlight`).
+		if (opts.clearTags && resultNode) {
+			edit.clearFormattingNode(resultNode, null, opts.clearTags);
 		}
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -500,6 +540,16 @@ async function validateSingleShotOptions(
 		: await validateParagraphEdit(values, paragraphOptions);
 	if (typeof spec === "number") return spec;
 
+	// `--clear` combined with content (spec is a content kind, not clear-alone):
+	// apply the content edit, then strip these tags. The dispatch reads
+	// opts.clearTags after committing the content.
+	let clearTags: Set<string> | undefined;
+	if (values.clear !== undefined && spec.kind !== "clear") {
+		const parsed = await parseClearTagsOrFail(values.clear as string[]);
+		if (typeof parsed === "number") return parsed;
+		clearTags = parsed;
+	}
+
 	return {
 		filePath,
 		locator,
@@ -509,6 +559,7 @@ async function validateSingleShotOptions(
 		outputPath: values.output as string | undefined,
 		dryRun: Boolean(values["dry-run"]),
 		noFormatting: Boolean(values["no-formatting"]),
+		...(clearTags ? { clearTags } : {}),
 	};
 }
 
@@ -527,7 +578,9 @@ const OPTION_SPEC = {
 	"code-file": { type: "string" },
 	markdown: { type: "string" },
 	"markdown-file": { type: "string" },
-	clear: { type: "string" },
+	// Repeatable: `--clear highlight --clear underline` accumulates, and each
+	// value may itself be a comma list (`--clear highlight,underline`).
+	clear: { type: "string", multiple: true },
 	language: { type: "string" },
 	task: { type: "string" },
 	equation: { type: "string" },
@@ -559,6 +612,11 @@ type ValidatedOptions = {
 	/** Opt-out of word-level formatting preservation. When true, --text
 	 *  produces a single fresh `<w:r>` with no rPr (today's behavior). */
 	noFormatting: boolean;
+	/** `--clear` riding along with a content flag (e.g. `--text X --clear
+	 *  highlight`): apply the content edit, THEN strip these rPr tags. Whole-
+	 *  paragraph locators only. Undefined when --clear isn't combined with
+	 *  content (clear-alone is the `{kind:"clear"}` spec instead). */
+	clearTags?: Set<string>;
 };
 
 type EditSpec =
@@ -620,6 +678,32 @@ async function validateSectionEdit(
 	return { kind: "section", ...sectionFlags };
 }
 
+/** Parse a `--clear` value (comma list of attrs, or "all") into the rPr tag set,
+ *  or return a `fail()` exit code. Shared by the clear-alone spec and the
+ *  combined content+clear path. */
+async function parseClearTagsOrFail(
+	clearFlag: string | string[],
+): Promise<Set<string> | number> {
+	// Accept a single value, a comma list, repeated --clear flags, or any mix.
+	const raw = Array.isArray(clearFlag) ? clearFlag : [clearFlag];
+	const names = raw
+		.flatMap((entry) => entry.split(","))
+		.map((name) => name.trim().toLowerCase())
+		.filter(Boolean);
+	if (names.length === 0) {
+		return fail("USAGE", "--clear needs an attribute name, or 'all'", HELP);
+	}
+	const tags = resolveClearTags(names);
+	if (!tags) {
+		return fail(
+			"USAGE",
+			`--clear: unknown attribute in "${raw.join(",")}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
+			HELP,
+		);
+	}
+	return tags;
+}
+
 async function validateParagraphEdit(
 	values: RawValues,
 	paragraphOptions: ParagraphOptions,
@@ -632,46 +716,41 @@ async function validateParagraphEdit(
 		);
 	}
 
-	// `--clear` strips formatting in place; it's its own content kind, mutually
-	// exclusive with anything that replaces the paragraph's content.
-	const clearFlag = values.clear as string | undefined;
+	// `--clear` strips run formatting. It may stand ALONE (its own content kind)
+	// or RIDE ALONG with a content flag — `--text X --clear highlight` fills the
+	// paragraph then strips the highlight in one call (the canonical form-fill +
+	// un-highlight move; targeted, so it won't nuke font size the way `all` does).
+	// Combined-with-content is handled by the caller (it sets opts.clearTags after
+	// the content edit); here we only return the clear-alone spec.
+	const clearFlag = values.clear as string[] | undefined;
 	if (clearFlag !== undefined) {
-		const conflicting =
-			[
-				"text",
-				"runs",
-				"code",
-				"code-file",
-				"markdown",
-				"markdown-file",
-				"task",
-				"equation",
-			].some((flag) => values[flag] !== undefined) ||
+		if (
+			values.equation !== undefined ||
 			values.display === true ||
-			values.inline === true;
-		if (conflicting) {
+			values.inline === true
+		) {
 			return fail(
 				"USAGE",
-				"--clear only strips formatting; don't combine it with content flags (--text/--markdown/--runs/…)",
+				"--clear can't be combined with --equation/--display/--inline",
 				HELP,
 			);
 		}
-		const names = clearFlag
-			.split(",")
-			.map((name) => name.trim().toLowerCase())
-			.filter(Boolean);
-		if (names.length === 0) {
-			return fail("USAGE", "--clear needs an attribute name, or 'all'", HELP);
+		const hasContent = [
+			"text",
+			"runs",
+			"code",
+			"code-file",
+			"markdown",
+			"markdown-file",
+			"task",
+		].some((flag) => values[flag] !== undefined);
+		if (!hasContent) {
+			const tags = await parseClearTagsOrFail(clearFlag);
+			if (typeof tags === "number") return tags;
+			return { kind: "clear", tags };
 		}
-		const tags = resolveClearTags(names);
-		if (!tags) {
-			return fail(
-				"USAGE",
-				`--clear: unknown attribute in "${clearFlag}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
-				HELP,
-			);
-		}
-		return { kind: "clear", tags };
+		// Combined with content — fall through to parse the content spec; the
+		// assembler re-reads --clear into opts.clearTags and applies it after.
 	}
 	const text = values.text as string | undefined;
 	const runsJson = values.runs as string | undefined;

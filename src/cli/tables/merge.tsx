@@ -51,7 +51,7 @@ immediately with a [docx-cli] audit comment.
 Rejected if the region edges bisect an existing merge — unmerge first.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   region}. --dry-run prints the preview object (no ok field). Errors print
   {code, error, hint?} with a nonzero exit.
 

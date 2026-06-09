@@ -174,14 +174,10 @@ const SINGLE_SHOT_FLAGS = [
 	"italic",
 ] as const;
 
-const CONTENT_KEYS = [
-	"text",
-	"clear",
-	"markdown",
-	"runs",
-	"code",
-	"task",
-] as const;
+// `clear` is NOT in here — it's a modifier that can stand alone OR ride along
+// with one content key (fill text AND strip formatting in one entry, e.g.
+// {at, text, clear:"highlight"} — the canonical form-fill + un-highlight move).
+const CONTENT_KEYS = ["text", "markdown", "runs", "code", "task"] as const;
 
 type EntryOptions = {
 	authorFlag?: string;
@@ -210,10 +206,11 @@ async function resolveEntry(
 	opts: EntryOptions,
 ): Promise<ResolvedEntry> {
 	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
-	if (present.length === 0) {
+	const hasClear = raw.clear !== undefined;
+	if (present.length === 0 && !hasClear) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}`,
+			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, or "clear"`,
 		);
 	}
 	if (present.length > 1) {
@@ -222,7 +219,10 @@ async function resolveEntry(
 			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
 		);
 	}
-	const kind = present[0] as (typeof CONTENT_KEYS)[number];
+	// A content key, "clear" alone, or a content key + "clear" (fill then strip).
+	const kind = (present[0] ?? "clear") as
+		| (typeof CONTENT_KEYS)[number]
+		| "clear";
 
 	const at = raw.at;
 	if (typeof at !== "string" || at.length === 0) {
@@ -294,26 +294,51 @@ async function buildApply(
 	document: Document,
 	raw: Record<string, unknown>,
 	index: number,
-	kind: (typeof CONTENT_KEYS)[number],
+	kind: (typeof CONTENT_KEYS)[number] | "clear",
 	blockRef: BlockReference,
 	span: { start: number; end: number } | null,
 	opts: EntryOptions,
 ): Promise<() => void> {
 	const author = typeof raw.author === "string" ? raw.author : opts.authorFlag;
+	const clearTags =
+		raw.clear !== undefined ? resolveClearOrThrow(raw.clear, index) : null;
 
+	// Clear-only entry (no content key): strip formatting in place.
+	if (kind === "clear") {
+		// clearTags is non-null here (resolveEntry only sets kind="clear" when
+		// raw.clear is present), but assert for the type checker.
+		const tags = clearTags ?? new Set<string>();
+		return () => new Edit(document).clearFormatting(blockRef, span, tags);
+	}
+
+	// A content kind, optionally combined with `clear` (apply content, then strip
+	// — the canonical "fill this placeholder AND remove its highlight" move).
 	if (span) {
 		if (kind === "text") {
 			const text = requireString(raw.text, index, "text");
 			rejectSpanFormatFlags(raw, index);
+			if (clearTags) {
+				// `find --highlight` emits span locators, so {at:span, text, clear}
+				// is the natural one-shot: replace the span, then strip formatting
+				// from the just-written range (offsets shift to the new length).
+				return () => {
+					const edit = new Edit(document);
+					edit.span(blockRef, span, text, {
+						authorFlag: author,
+						track: opts.track,
+					});
+					edit.clearFormattingNode(
+						blockRef.node,
+						{ start: span.start, end: span.start + text.length },
+						clearTags,
+					);
+				};
+			}
 			return () =>
 				new Edit(document).span(blockRef, span, text, {
 					authorFlag: author,
 					track: opts.track,
 				});
-		}
-		if (kind === "clear") {
-			const tags = resolveClearOrThrow(raw.clear, index);
-			return () => new Edit(document).clearFormatting(blockRef, span, tags);
 		}
 		throw new EntryError(
 			"USAGE",
@@ -322,10 +347,40 @@ async function buildApply(
 		);
 	}
 
+	// Whole-paragraph content → a closure returning the resulting paragraph node
+	// (so a trailing clear targets the post-edit node, not the replaced one).
+	const contentNode = await buildWholeParagraphContent(
+		document,
+		raw,
+		index,
+		kind,
+		blockRef,
+		author,
+		opts,
+	);
+	if (!clearTags) return () => void contentNode();
+	return () => {
+		const node = contentNode();
+		new Edit(document).clearFormattingNode(node, null, clearTags);
+	};
+}
+
+/** Build a closure that applies one whole-paragraph content edit and returns the
+ *  resulting paragraph node. Split out so the combined content+clear path can
+ *  clear that node afterward. */
+async function buildWholeParagraphContent(
+	document: Document,
+	raw: Record<string, unknown>,
+	index: number,
+	kind: (typeof CONTENT_KEYS)[number],
+	blockRef: BlockReference,
+	author: string | undefined,
+	opts: EntryOptions,
+): Promise<() => XmlNode> {
+	const paragraphOptions = readParagraphOptions(raw, index);
 	if (kind === "text") {
 		const text = requireString(raw.text, index, "text");
 		const format = readTextFormat(raw, index);
-		const paragraphOptions = readParagraphOptions(raw, index);
 		return () =>
 			new Edit(document).paragraph(
 				blockRef,
@@ -337,10 +392,6 @@ async function buildApply(
 				},
 			);
 	}
-	if (kind === "clear") {
-		const tags = resolveClearOrThrow(raw.clear, index);
-		return () => new Edit(document).clearFormatting(blockRef, null, tags);
-	}
 	if (kind === "task") {
 		const taskRaw = requireString(raw.task, index, "task");
 		const checked = parseTaskFlag(taskRaw);
@@ -350,15 +401,16 @@ async function buildApply(
 				`entry ${index}: "task" must be "checked" or "unchecked", got "${taskRaw}"`,
 			);
 		}
-		return () =>
+		return () => {
 			new Edit(document).taskToggle(blockRef, checked, {
 				authorFlag: author,
 				track: opts.track,
 			});
+			return blockRef.node; // toggled in place
+		};
 	}
 	if (kind === "runs") {
 		const runs = readRuns(raw.runs, index);
-		const paragraphOptions = readParagraphOptions(raw, index);
 		return () =>
 			new Edit(document).paragraph(
 				blockRef,
@@ -370,7 +422,6 @@ async function buildApply(
 		const content = requireString(raw.code, index, "code");
 		const language =
 			typeof raw.language === "string" ? raw.language : undefined;
-		const paragraphOptions = readParagraphOptions(raw, index);
 		return () =>
 			new Edit(document).paragraph(
 				blockRef,
@@ -385,7 +436,6 @@ async function buildApply(
 	}
 	// kind === "markdown" — pre-build blocks now so apply stays synchronous.
 	const source = requireString(raw.markdown, index, "markdown");
-	const paragraphOptions = readParagraphOptions(raw, index);
 	let blocks: XmlNode[];
 	try {
 		blocks = await new MarkdownImport(document).blocks(source);
@@ -440,7 +490,7 @@ function orderEntries(resolved: ResolvedEntry[]): ResolvedEntry[] {
 			throw new EntryError(
 				"USAGE",
 				`entries ${indices} target the same paragraph (${whole.locatorString})`,
-				"A paragraph takes one whole-paragraph edit, or several non-overlapping spans — not both.",
+				'One whole-paragraph edit per entry. To fill text AND strip formatting on the same paragraph, combine them in ONE entry: {"at":"…","text":"…","clear":"highlight"}.',
 			);
 		}
 		// Descending start so an earlier-offset edit doesn't shift a later one.
@@ -570,14 +620,21 @@ function readRuns(value: unknown, index: number): Run[] {
 }
 
 function resolveClearOrThrow(value: unknown, index: number): Set<string> {
-	if (typeof value !== "string") {
+	// Accept "highlight", "highlight,underline", or ["highlight","underline"].
+	const raw =
+		typeof value === "string"
+			? [value]
+			: Array.isArray(value) && value.every((v) => typeof v === "string")
+				? (value as string[])
+				: null;
+	if (!raw) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: "clear" must be a comma list of attributes or "all"`,
+			`entry ${index}: "clear" must be an attribute name, a comma list, or an array of names (or "all")`,
 		);
 	}
-	const names = value
-		.split(",")
+	const names = raw
+		.flatMap((entry) => entry.split(","))
 		.map((name) => name.trim().toLowerCase())
 		.filter(Boolean);
 	if (names.length === 0) {
@@ -590,7 +647,7 @@ function resolveClearOrThrow(value: unknown, index: number): Set<string> {
 	if (!tags) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: unknown attribute in "${value}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
+			`entry ${index}: unknown attribute in "${raw.join(",")}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
 		);
 	}
 	return tags;

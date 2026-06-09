@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { runCli, tempWorkspace } from "./harness";
+import { runCli, spawnCli, tempWorkspace } from "./harness";
 import { freshFixture } from "./helpers";
 
 describe("docx find", () => {
@@ -25,13 +25,25 @@ describe("docx find", () => {
 		);
 	});
 
-	test("returns first match by default", async () => {
+	test("returns ALL matches by default (totalMatches == returned)", async () => {
 		const result = await runCli("find", docPath, "fox");
 		const payload = result.parsed as {
 			totalMatches: number;
 			matches: Array<{ locator: string; text: string }>;
 		};
 		expect(payload.totalMatches).toBe(2);
+		expect(payload.matches).toHaveLength(2);
+		expect(payload.matches.map((match) => match.locator)).toEqual([
+			"p0:16-19",
+			"p1:8-11",
+		]);
+	});
+
+	test("--nth N selects a single match", async () => {
+		const result = await runCli("find", docPath, "fox", "--nth", "0");
+		const payload = result.parsed as {
+			matches: Array<{ locator: string; text: string }>;
+		};
 		expect(payload.matches).toHaveLength(1);
 		expect(payload.matches[0]).toMatchObject({
 			locator: "p0:16-19",
@@ -39,7 +51,7 @@ describe("docx find", () => {
 		});
 	});
 
-	test("--all returns every match in document order", async () => {
+	test("--all still returns every match (redundant: all is now default)", async () => {
 		const result = await runCli("find", docPath, "fox", "--all");
 		const payload = result.parsed as {
 			matches: Array<{ locator: string }>;
@@ -48,6 +60,14 @@ describe("docx find", () => {
 			"p0:16-19",
 			"p1:8-11",
 		]);
+	});
+
+	test("no matches: empty stdout, 'no matches' on stderr, exit 0", async () => {
+		// Text default (no --json injection), so spawn the real binary.
+		const result = await spawnCli("find", docPath, "zzz-not-present-zzz");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("");
+		expect(result.stderr.trim()).toBe("no matches");
 	});
 
 	test("--ignore-case finds upper- and lowercase", async () => {

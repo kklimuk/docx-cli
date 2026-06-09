@@ -44,7 +44,7 @@ Options:
                     no smart/straight quote or em/en-dash equivalence)
   -o, --output PATH write to PATH instead of overwriting FILE
   --dry-run         report what would change without writing the file
-  -v, --verbose     print the success ack JSON (default: silent on success)
+  -v, --verbose     print the success ack JSON (default: a one-line confirmation)
   -h, --help        show this help
 
 Within-paragraph matches only. Run formatting (rPr) on the surrounding text
@@ -59,6 +59,10 @@ straight quotes; em-dash and en-dash match the hyphen. The REPLACEMENT
 is always literal — whatever bytes you pass go in as-is. Pass --exact
 to match the raw pattern verbatim. --regex is always verbatim.
 
+If the PATTERN or REPLACEMENT begins with a dash (a negative number, "-$500.00",
+"--TODO"), put a bare "--" before the positionals so it isn't parsed as a flag:
+  docx replace doc.docx -- "Total" "-$500.00"
+
 With --regex, REPLACEMENT supports JS String.replace substitution syntax:
   $1, $2, ...   numbered capture groups
   $&            the matched substring
@@ -67,7 +71,7 @@ With --regex, REPLACEMENT supports JS String.replace substitution syntax:
   $$            a literal $
 
 Output:
-  Silent on success (exit 0) — replace mutates text in place and mints no new
+  Prints a one-line confirmation on success (exit 0) — replace mutates text in place and mints no new
   addressable handle (matched-span locators shift as text changes; re-read or
   use --dry-run to see them). --verbose / --dry-run print
   {ok:true, operation, totalMatches, replaced, matches:[{locator,…}], …}.

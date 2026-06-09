@@ -28,11 +28,11 @@ commands, NOT by toggle — toggle takes no --author.
 Options:
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   mode, previouslyOn}. --dry-run prints the preview {operation, dryRun, path,
   mode, previouslyOn}. Errors print {code, error, hint?} with a nonzero exit.
 

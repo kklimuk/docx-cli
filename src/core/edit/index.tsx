@@ -2,7 +2,7 @@ import type { Document } from "../ast/document";
 import type { BlockRangeReference, BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
-	applyParagraphOptionsInPlace,
+	insertPprChildInOrder,
 	Paragraph,
 	type ParagraphOptions,
 } from "../blocks";
@@ -98,7 +98,7 @@ export class Edit {
 		blockRef: BlockReference,
 		spec: ParagraphContentSpec,
 		opts: { authorFlag?: string; noFormatting?: boolean; track?: boolean } = {},
-	): void {
+	): XmlNode {
 		const targetIndex = blockRef.parent.indexOf(blockRef.node);
 		if (targetIndex === -1) {
 			throw new EditError(
@@ -131,14 +131,15 @@ export class Edit {
 				tracked,
 			);
 			this.reanchorComments(blockRef.node, commentMarkers);
-			return;
+			// Mutated in place — the same <w:p> node is the result.
+			return blockRef.node;
 		}
 
 		if (spec.kind === "code") {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 		const newParagraphs = buildNewParagraphs(spec);
-		inheritParagraphStyleIfPlain(
+		inheritParagraphFormattingIfPlain(
 			blockRef.node,
 			newParagraphs,
 			spec.paragraphOptions.style,
@@ -167,6 +168,9 @@ export class Edit {
 				newParagraphs,
 			);
 		}
+		// The spliced-in first paragraph is the result (a following clear in a
+		// combined content+clear edit targets this node, not the replaced one).
+		return anchorTarget ?? blockRef.node;
 	}
 
 	/** Character-span replace: `pN:S-E` (or a cell paragraph `tN:rRcC:pK:S-E`).
@@ -256,6 +260,27 @@ export class Edit {
 			);
 		}
 		clearRunFormatting(blockRef.node, span, tags);
+	}
+
+	/** Like `clearFormatting` but targets a paragraph node directly. Used by the
+	 *  combined content+clear edit, where the content step may have spliced in a
+	 *  fresh paragraph node (so the original blockRef is stale): `paragraph()`
+	 *  returns the resulting node and we clear THAT. The message differs from the
+	 *  locator path's: here the locator WAS a paragraph; it's the new content
+	 *  (e.g. `--markdown` that produced a table) that isn't clearable. */
+	clearFormattingNode(
+		node: XmlNode,
+		span: { start: number; end: number } | null,
+		tags: Set<string>,
+	): void {
+		if (node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"--clear can't apply: the new content isn't a single paragraph",
+				"Drop --clear (a table/structural block has no run formatting to strip), or clear separately with `edit --at <pN> --clear …` after the content edit.",
+			);
+		}
+		clearRunFormatting(node, span, tags);
 	}
 
 	/** Range replace: `pN-pM`. No formatting preservation (Word's empirical
@@ -379,10 +404,9 @@ function canPreserveFormatting(
 ): spec is Extract<ParagraphContentSpec, { kind: "text" }> {
 	if (noFormatting) return false;
 	if (spec.kind !== "text") return false;
-	// Multi-line text becomes a paragraph with <w:br/>/<w:tab/> runs (built via
-	// `Paragraph`); the word-level preserve diff has no notion of those, so route
-	// it to the fresh-run builder instead of leaking a literal \n into a <w:t>.
-	if (spec.text.includes("\n") || spec.text.includes("\t")) return false;
+	// Tabs/newlines are fine: the preserve-path emitter splits them into
+	// <w:tab/>/<w:br/> within each rPr-bearing run, so a "**Name**⇥date" line
+	// keeps its per-segment formatting instead of flattening to one plain run.
 	const format = spec.format;
 	if (format.color || format.bold || format.italic) return false;
 	return true;
@@ -427,22 +451,50 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
  *  preserves style via the formatting-preserving path; this covers the other
  *  paths. Markdown that carries its own block style (a `#` heading, a list) sets
  *  `<w:pStyle>` itself, so the guard below leaves it alone. */
-function inheritParagraphStyleIfPlain(
+function inheritParagraphFormattingIfPlain(
 	oldParagraph: XmlNode,
 	newParagraphs: XmlNode[],
 	explicitStyle: string | undefined,
 ): void {
-	if (explicitStyle) return;
 	if (newParagraphs.length !== 1) return;
 	const newParagraph = newParagraphs[0];
 	if (!newParagraph || newParagraph.tag !== "w:p") return;
+	// Content that brings its own block style (a markdown `#` heading, a list)
+	// owns its <w:pPr> — don't overwrite it with the old paragraph's.
 	if (newParagraph.findChild("w:pPr")?.findChild("w:pStyle")) return;
-	const oldStyle = oldParagraph
-		.findChild("w:pPr")
-		?.findChild("w:pStyle")
-		?.getAttribute("w:val");
-	if (!oldStyle) return;
-	applyParagraphOptionsInPlace(newParagraph.children, { style: oldStyle });
+	const oldPpr = oldParagraph.findChild("w:pPr");
+	if (!oldPpr) return;
+
+	// Base the replacement's paragraph properties on the OLD <w:pPr> (a clone, in
+	// its valid child order) so DIRECT formatting survives a fresh-run replace —
+	// alignment (w:jc), spacing, indent, keepNext, list membership, etc. Only the
+	// style was carried before, which silently dropped centering on `edit --text`.
+	const merged = oldPpr.clone();
+	// If the caller passed an explicit --style, applyParagraphOptions will set it;
+	// drop the inherited one so it doesn't fight.
+	if (explicitStyle) {
+		merged.children = merged.children.filter(
+			(child) => child.tag !== "w:pStyle",
+		);
+	}
+	// Overlay any pPr children the new paragraph already set (explicit --alignment
+	// etc.) so caller options win over the inherited ones.
+	const newPpr = newParagraph.findChild("w:pPr");
+	if (newPpr) {
+		for (const child of newPpr.children) {
+			const index = merged.children.findIndex((own) => own.tag === child.tag);
+			// Replace a same-tag inherited child in place (keeps its valid slot), or
+			// splice a new one at its canonical CT_PPr position — never push to the
+			// end, where it would land AFTER the paragraph-mark <w:rPr> the clone
+			// carries and trip Word's "unreadable content" repair (e.g. <w:jc> from
+			// --alignment).
+			if (index >= 0) merged.children[index] = child;
+			else insertPprChildInOrder(merged, child);
+		}
+		newParagraph.children[newParagraph.children.indexOf(newPpr)] = merged;
+	} else {
+		newParagraph.children.unshift(merged);
+	}
 }
 
 function makeMetaMinter(

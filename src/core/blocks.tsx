@@ -199,8 +199,10 @@ export function applyParagraphOptionsInPlace(
 		if (existingStyle) {
 			existingStyle.setAttribute("w:val", options.style);
 		} else {
-			const styleNode = new XmlNode("w:pStyle", { "w:val": options.style });
-			pPr.children.unshift(styleNode);
+			insertPprChildInOrder(
+				pPr,
+				new XmlNode("w:pStyle", { "w:val": options.style }),
+			);
 		}
 	}
 	if (options.alignment) {
@@ -208,9 +210,74 @@ export function applyParagraphOptionsInPlace(
 		if (existingJc) {
 			existingJc.setAttribute("w:val", options.alignment);
 		} else {
-			pPr.children.push(new XmlNode("w:jc", { "w:val": options.alignment }));
+			insertPprChildInOrder(
+				pPr,
+				new XmlNode("w:jc", { "w:val": options.alignment }),
+			);
 		}
 	}
+}
+
+/** CT_PPr child sequence (ECMA-376 §17.3.1.26), the subset we ever emit or
+ *  inherit. Word REJECTS a `<w:pPr>` whose children are out of this order —
+ *  most commonly `<w:jc>` after the trailing paragraph-mark `<w:rPr>` — with the
+ *  "unreadable content / repair" prompt. Any code that splices a child into an
+ *  existing pPr must go through `insertPprChildInOrder`, never `push`. */
+const PPR_CHILD_ORDER = [
+	"w:pStyle",
+	"w:keepNext",
+	"w:keepLines",
+	"w:pageBreakBefore",
+	"w:framePr",
+	"w:widowControl",
+	"w:numPr",
+	"w:suppressLineNumbers",
+	"w:pBdr",
+	"w:shd",
+	"w:tabs",
+	"w:suppressAutoHyphens",
+	"w:bidi",
+	"w:adjustRightInd",
+	"w:snapToGrid",
+	"w:spacing",
+	"w:ind",
+	"w:contextualSpacing",
+	"w:mirrorIndents",
+	"w:suppressOverlap",
+	"w:jc",
+	"w:textDirection",
+	"w:textAlignment",
+	"w:textboxTightWrap",
+	"w:outlineLvl",
+	"w:divId",
+	"w:cnfStyle",
+	"w:rPr",
+	"w:sectPr",
+	"w:pPrChange",
+] as const;
+
+/** Rank a pPr child by its position in CT_PPr. Unknown tags rank just before
+ *  `<w:rPr>` so they still land ahead of the paragraph-mark run props (and
+ *  sectPr/pPrChange), never after — the only ordering that matters for validity. */
+function pprChildRank(tag: string): number {
+	const index = PPR_CHILD_ORDER.indexOf(
+		tag as (typeof PPR_CHILD_ORDER)[number],
+	);
+	if (index >= 0) return index;
+	return PPR_CHILD_ORDER.indexOf("w:rPr") - 0.5;
+}
+
+/** Splice `child` into `pPr.children` at its canonical CT_PPr position: before
+ *  the first existing child that ranks after it. Use this instead of `push`
+ *  whenever you add to an already-built pPr (which usually ends in the
+ *  paragraph-mark `<w:rPr>`); see `PPR_CHILD_ORDER`. */
+export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
+	const rank = pprChildRank(child.tag);
+	const at = pPr.children.findIndex(
+		(existing) => pprChildRank(existing.tag) > rank,
+	);
+	if (at < 0) pPr.children.push(child);
+	else pPr.children.splice(at, 0, child);
 }
 
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.

@@ -46,7 +46,7 @@ Rejected if the column passes through a horizontal merge (unmerge first) or
 is the table's only column (delete the table instead).
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   column, tracked}. --dry-run prints the preview object (no ok field). Errors
   print {code, error, hint?} with a nonzero exit.
 

@@ -11,6 +11,7 @@ import {
 	openOrFail,
 	respond,
 	tryParseArgs,
+	writeStderr,
 	writeStdout,
 } from "../respond";
 
@@ -18,7 +19,7 @@ const HELP = `docx find — locate text spans and return their locators
 
 Usage:
   docx find FILE QUERY [options]
-  docx find FILE --highlight COLOR|any [--all]   # find by formatting (no QUERY)
+  docx find FILE --highlight [COLOR]             # find by formatting (no QUERY)
 
 Positional:
   QUERY             literal substring (or regex if --regex). Omit it when using
@@ -26,7 +27,10 @@ Positional:
 
 Formatting filters (alternative to QUERY — locate runs by formatting, the
 inverse of \`edit --clear\`; pair with \`edit --at <span> --clear\`):
-  --highlight C     runs highlighted color C (a name like "yellow", or "any")
+  --highlight [C]   runs highlighted color C (a name like "yellow", or "any").
+                    Bare --highlight (no value) means any color. Returns each
+                    highlighted placeholder's FULL span — paste it straight into
+                    \`edit --at\` instead of hand-counting offsets from a text match.
   --color HEX       runs with text color HEX (e.g. FF0000)
   --bold            bold runs
   --italic          italic runs
@@ -35,8 +39,9 @@ inverse of \`edit --clear\`; pair with \`edit --at <span> --clear\`):
 Options:
   --regex           treat QUERY as a JavaScript regular expression
   --ignore-case     case-insensitive match
-  --all             return every match (default: just the first)
-  --nth N           return only the Nth match (0-indexed)
+  --nth N           return only the Nth match (0-indexed). By default EVERY
+                    match is returned, one locator per line — pipe to a batch
+                    or loop. (--all is accepted but redundant: all is default.)
   --current         search the raw concatenation (both ins and del text)
   --baseline        search the pre-change text (skip ins/moveTo)
                     (--current and --baseline are mutually exclusive; default:
@@ -58,25 +63,50 @@ straight quotes; em-dash and en-dash match the hyphen. Pass --exact to
 match the raw query verbatim. --regex is always verbatim.
 
 Output:
-  Default: the matched span locators (e.g. p3:5-8), one per line — feed them
-  straight into another command's --at. No matches prints nothing (exit 0).
+  Default: EVERY matched span locator (e.g. p3:5-8), one per line — feed them
+  straight into another command's --at (or a --batch). No matches prints
+  nothing to stdout and "no matches" to stderr (exit 0) — so an empty result is
+  unambiguous. Use --nth N for a single match, or pipe to "head -1".
   --json: { totalMatches, query, view, matches:[{locator, blockId, start, end,
   text, …}], normalizedQuery? } (no envelope). Errors print {code, error,
   hint?} with a nonzero exit. Notation: offsets are 0-based, end-exclusive.
 
 Examples:
-  docx find doc.docx "fox"
-  docx find doc.docx "Action Item:" --all
+  docx find doc.docx "fox"                         # every match, one per line
   docx find doc.docx "TODO|FIXME" --regex --ignore-case
-  docx find doc.docx --highlight yellow --all     # every yellow-highlighted span
-  docx find doc.docx --highlight any --all | while read s; do \\
+  docx find doc.docx --highlight yellow            # every yellow-highlighted span
+  docx find doc.docx --highlight any | while read s; do \\
     docx edit doc.docx --at "$s" --clear highlight; done
   docx comments add doc.docx --at "$(docx find doc.docx fox | head -1)" --text "..."
 `;
 
+/** `--highlight` with no value means "any color" — the common cleanup intent
+ *  ("find every highlight, regardless of color"). `--highlight` is a string flag,
+ *  so a bare `--highlight` (at the end, or before another flag) would otherwise be
+ *  a parse error; rewrite it to `--highlight any` before parsing. `--highlight=`
+ *  (explicit empty) is handled too. */
+function withBareHighlightAsAny(args: string[]): string[] {
+	const out: string[] = [];
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === "--highlight") {
+			const next = args[index + 1];
+			out.push(arg);
+			if (next === undefined || next.startsWith("-")) out.push("any");
+			continue;
+		}
+		if (arg === "--highlight=") {
+			out.push("--highlight=any");
+			continue;
+		}
+		if (arg !== undefined) out.push(arg);
+	}
+	return out;
+}
+
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
-		args,
+		withBareHighlightAsAny(args),
 		{
 			regex: { type: "boolean" },
 			"ignore-case": { type: "boolean" },
@@ -136,7 +166,6 @@ export async function run(args: string[]): Promise<number> {
 
 	const ignoreCase = Boolean(parsed.values["ignore-case"]);
 	const useRegex = Boolean(parsed.values.regex);
-	const wantAll = Boolean(parsed.values.all);
 	const exact = Boolean(parsed.values.exact);
 	const findView = resolveView(parsed.values);
 	if (!findView) {
@@ -187,10 +216,12 @@ export async function run(args: string[]): Promise<number> {
 			);
 		}
 		selected = [single];
-	} else if (wantAll) {
-		selected = allMatches;
 	} else {
-		selected = allMatches.slice(0, 1);
+		// Default: every match. Returning only the first silently hid the rest —
+		// a weak agent that didn't know to pass --all fell back to one find per
+		// item. `--all` is now the default; `--nth N` selects a single match and
+		// `| head -1` still grabs the first. (`--all` is kept as an accepted no-op.)
+		selected = allMatches;
 	}
 
 	const matches = selected.map((match) => ({
@@ -217,8 +248,13 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	// Text-first default: the locators, one per line, ready to paste into --at.
+	// On zero matches stdout stays empty (so `find … | while read` is clean), but
+	// we print an explicit "no matches" to STDERR — otherwise empty output reads
+	// as "did it even run?" and (weak) agents re-run the query to be sure.
 	if (matches.length > 0) {
 		await writeStdout(`${matches.map((match) => match.locator).join("\n")}\n`);
+	} else {
+		await writeStderr("no matches\n");
 	}
 	return EXIT.OK;
 }

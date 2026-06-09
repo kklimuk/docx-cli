@@ -31,7 +31,7 @@ Optional:
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: silent on success)
+  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 If the replacement uses a different format from the original, the part is
@@ -43,7 +43,7 @@ referenced the swapped image since OOXML has no native tracked-change form
 for image replacement.
 
 Output:
-  Silent on success (exit 0) — replace mints no new id (the image keeps its
+  Prints a one-line confirmation on success (exit 0) — replace mints no new id (the image keeps its
   imgN). --verbose prints {ok:true, operation, path, imageId, partName,
   mimeType, bytes}. Errors print {code, error, hint?} with a nonzero exit.
   Discover ids with \`docx images list FILE\`.

@@ -8,20 +8,24 @@ import {
 	tempWorkspace,
 } from "./harness";
 
-// Mutators are silent on success unless --verbose is passed. The shared harness
-// auto-injects --verbose for mutators (so the rest of the suite keeps asserting
-// on JSON acks); these tests bypass it by spawning the REAL binary via
-// spawnCli. They ARE the binary smoke layer (real process boundary + exit
-// codes) now that the bulk of the suite runs in-process — the process-level
-// cases that once lived in binary-smoke.test.ts are folded in here.
+// Mutators print a concise text-first confirmation line on success by default;
+// --verbose swaps that for the full JSON ack. The shared harness auto-injects
+// --verbose for mutators (so the rest of the suite keeps asserting on JSON
+// acks); these tests bypass it by spawning the REAL binary via spawnCli. They
+// ARE the binary smoke layer (real process boundary + exit codes) now that the
+// bulk of the suite runs in-process — the process-level cases that once lived
+// in binary-smoke.test.ts are folded in here.
 
-describe("docx mutators — quiet by default", () => {
-	test("create succeeds with empty stdout when --verbose is omitted", async () => {
+describe("docx mutators — confirm by default", () => {
+	test("create prints a confirmation line when --verbose is omitted", async () => {
 		const workspace = tempWorkspace("quiet-create");
 		const docPath = join(workspace, "out.docx");
 		const result = await rawCli("create", docPath, "--text", "hello");
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("");
+		// Not silent: a one-line, text-first confirmation (not JSON).
+		expect(result.stdout.trim().length).toBeGreaterThan(0);
+		expect(result.stdout).toContain("create");
+		expect(result.stdout.trim().startsWith("{")).toBe(false);
 	});
 
 	test("create with --verbose prints the JSON ack", async () => {
@@ -85,13 +89,14 @@ describe("docx mutators — quiet by default", () => {
 		expect(result.stdout.trim()).toBe("p0:0-5");
 	});
 
-	test("track-changes on is silent by default; --verbose prints the toggle ack", async () => {
+	test("track-changes on confirms by default; --verbose prints the toggle ack", async () => {
 		const workspace = tempWorkspace("tc-quiet");
 		const docPath = join(workspace, "out.docx");
 		await rawCli("create", docPath, "--text", "hello");
 		const quiet = await rawCli("track-changes", docPath, "on");
 		expect(quiet.exitCode).toBe(0);
-		expect(quiet.stdout).toBe("");
+		// Text-first confirmation, not JSON.
+		expect(quiet.stdout.trim()).toBe("track-changes tracking on");
 
 		await rawCli("track-changes", docPath, "off");
 		const verbose = await rawCli("track-changes", docPath, "on", "--verbose");

@@ -45,7 +45,7 @@ Rejected if the row holds the "restart" half of a vertical merge whose
 continuation rows would be orphaned; unmerge first.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   row, tracked}. --dry-run prints the preview object (no ok field). Errors print
   {code, error, hint?} with a nonzero exit.
 

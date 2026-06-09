@@ -33,11 +33,11 @@ Options:
                      bodies flatten to plain text.)
   --force            Overwrite if FILE already exists
   --dry-run          Print what would be created; do not write the file
-  -v, --verbose      Print the success ack JSON (default: silent on success)
+  -v, --verbose      Print the success ack JSON (default: a one-line confirmation)
   -h, --help         Show this help
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   bytes, blocks}. --dry-run prints {operation, dryRun:true, path, ...} and
   writes nothing. Errors print {code, error, hint?} with a nonzero exit.
 

@@ -51,7 +51,7 @@ When track-changes is on, each new cell is wrapped as a tracked insertion
 merge — unmerge first.
 
 Output:
-  Silent on success (exit 0). --verbose prints {ok:true, operation, path, table,
+  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
   position, width, tracked}. --dry-run prints the preview object (no ok field).
   Errors print {code, error, hint?} with a nonzero exit.
 
