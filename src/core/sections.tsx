@@ -38,11 +38,18 @@ export function getPageContentWidthEmu(document: Document): number {
 export type SectionProperties = {
 	columns?: number;
 	sectionType?: SectionType;
+	pageWidth?: number;
+	pageHeight?: number;
+	pageOrientation?: "portrait" | "landscape";
+	marginTop?: number;
+	marginRight?: number;
+	marginBottom?: number;
+	marginLeft?: number;
 };
 
-/** Extract the columns / sectionType pair from a list of sectPr children
+/** Extract columns / sectionType / page geometry from a list of sectPr children
  * (works for both the live sectPr's children and a sectPrChange snapshot's
- * inner sectPr children). */
+ * inner sectPr children). Geometry (`<w:pgSz>`/`<w:pgMar>`) is read in twips. */
 export function readSectionProperties(
 	children: ReadonlyArray<XmlNode>,
 ): SectionProperties {
@@ -59,9 +66,40 @@ export function readSectionProperties(
 		if (child.tag === "w:type") {
 			const value = child.getAttribute("w:val");
 			if (value && isSectionType(value)) props.sectionType = value;
+			continue;
+		}
+		if (child.tag === "w:pgSz") {
+			const width = twipsAttr(child, "w:w");
+			const height = twipsAttr(child, "w:h");
+			if (width !== undefined) props.pageWidth = width;
+			if (height !== undefined) props.pageHeight = height;
+			const orient = child.getAttribute("w:orient");
+			if (orient === "landscape" || orient === "portrait") {
+				props.pageOrientation = orient;
+			}
+			continue;
+		}
+		if (child.tag === "w:pgMar") {
+			// Margins are signed (a negative top is legal — content into the header
+			// area). pgSz dimensions are positive.
+			const top = twipsAttr(child, "w:top");
+			const right = twipsAttr(child, "w:right");
+			const bottom = twipsAttr(child, "w:bottom");
+			const left = twipsAttr(child, "w:left");
+			if (top !== undefined) props.marginTop = top;
+			if (right !== undefined) props.marginRight = right;
+			if (bottom !== undefined) props.marginBottom = bottom;
+			if (left !== undefined) props.marginLeft = left;
 		}
 	}
 	return props;
+}
+
+function twipsAttr(node: XmlNode, attr: string): number | undefined {
+	const raw = node.getAttribute(attr);
+	if (raw === undefined) return undefined;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 const SECTION_TYPE_ORDER: ReadonlyArray<string> = [

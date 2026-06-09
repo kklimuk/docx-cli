@@ -4,11 +4,13 @@ import {
 	type Comment,
 	type Footnote,
 	flattenParagraphs,
+	type ImageRun,
 	type Locator,
 	LocatorParseError,
 	type Paragraph,
 	parseLocator,
 	type Run,
+	type SectionBreak,
 	type Table,
 	type TableCell,
 	type TableRow,
@@ -20,6 +22,13 @@ import {
 	isCodeBlockStyleId,
 } from "@core/code-block";
 import { extensionForImageMime } from "@core/image/formats";
+import {
+	emuToInches,
+	formatNote,
+	htmlAttr,
+	type NotePair,
+	twipsToInches,
+} from "./annotations";
 
 export type MarkdownView = "current" | "accepted" | "baseline";
 
@@ -36,11 +45,14 @@ export type MarkdownOptions = {
 
 /** Document-wide run formatting so ubiquitous it reads as noise: the dominant
  *  font and size across all body + table runs. `read` emits it once as a
- *  `<!-- docx:base … -->` note and omits it from every matching run; the markdown
- *  importer parses the note back and re-applies it per-run, so `read → create`
- *  round-trips. A value only becomes a baseline when it covers a majority of the
- *  document's text — otherwise the document has no single baseline and every
- *  run keeps its explicit formatting. */
+ *  `<!-- docx:base … -->` note and omits it from every matching run, so the body
+ *  reads clean AND an agent can see the doc's baseline to match new content. It's
+ *  a VISIBILITY hint (per "comments are never anything but hints") — the importer
+ *  DROPS it, so a full `read → create` rebuild falls back to the template
+ *  docDefaults for the dominant font/size (`read --ast` stays lossless;
+ *  in-place `edit` preserves runs). A value only becomes a baseline when it
+ *  covers a majority of the document's text — otherwise every run keeps its
+ *  explicit formatting. */
 export type RunFormatBaseline = { font?: string; sizeHalfPoints?: number };
 
 export class MarkdownLocatorError extends Error {
@@ -71,6 +83,9 @@ type RenderContext = {
 	 *  the raw markdown reads correctly, not as a wall of `1.` (a renderer would
 	 *  auto-increment, but the raw text an agent/human reads would not). */
 	orderedCounters: Map<string, number>;
+	/** Usable page width in EMU (page width − L/R margins) from the document's
+	 *  geometry, for flagging images wider than the text column (`overflow`). */
+	contentWidthEmu: number;
 };
 
 export function renderMarkdown(
@@ -99,6 +114,7 @@ export function renderMarkdown(
 		referencedEndnoteIds: new Set(),
 		referencedTrackedChanges: new Map(),
 		orderedCounters: new Map(),
+		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)),
 	};
 
 	const parts: string[] = [];
@@ -161,9 +177,13 @@ export function renderMarkdown(
 	if (parts.length === 0) return "";
 	// The base note rides at the very top so the importer reads it before any
 	// content — it declares the document's dominant font/size, which `read` then
-	// omits from every matching run below.
+	// omits from every matching run below. The page note follows it, declaring
+	// document page geometry when it deviates from the canonical default (a
+	// read-time hint the importer drops; geometry survives edits in place).
 	const baseNote = formatBaseNote(dominant);
-	const head = baseNote ? `${baseNote}\n\n` : "";
+	const pageNote = formatPageNote(documentGeometry(blocks));
+	const headLines = [baseNote, pageNote].filter((line) => line.length > 0);
+	const head = headLines.length > 0 ? `${headLines.join("\n")}\n\n` : "";
 	return `${head}${parts.join("\n\n")}\n`;
 }
 
@@ -208,20 +228,17 @@ function majorityKey<K>(counts: Map<K, number>, total: number): K | undefined {
 	return undefined;
 }
 
-/** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare.
- * The attribute spelling matches the `[text]{…}` span contract so the importer
- * parses it with the same `parseAttrs` — `size` in points, `font` verbatim. */
+/** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare —
+ * `size` in points, `font` verbatim. A visibility hint the importer drops (not
+ * parse-back). `formatNote` applies the shared `htmlAttr` escaping so a
+ * pathological font value (a `"`, `>`, or `-->`) can't break the comment. */
 function formatBaseNote(baseline: RunFormatBaseline): string {
-	const pairs: string[] = [];
-	// Escape via `htmlAttr` (same sink as every span attribute) so a pathological
-	// font value (a `"`, `>`, or `-->`) can't break the comment's quoting or close
-	// the note early. Normal font names have no metacharacters, so this is a no-op
-	// for real documents.
-	if (baseline.font) pairs.push(htmlAttr("font", baseline.font));
+	const pairs: NotePair[] = [];
+	if (baseline.font) pairs.push(["font", baseline.font]);
 	if (baseline.sizeHalfPoints !== undefined) {
-		pairs.push(htmlAttr("size", `${baseline.sizeHalfPoints / 2}pt`));
+		pairs.push(["size", `${baseline.sizeHalfPoints / 2}pt`]);
 	}
-	return pairs.length > 0 ? `<!-- docx:base ${pairs.join(" ")} -->` : "";
+	return pairs.length > 0 ? formatNote("base", pairs) : "";
 }
 
 function emptyCommentIndex(): CommentIndex {
@@ -304,8 +321,150 @@ function slotKey(paragraphId: string, runIndex: number): string {
 function renderBlock(block: Block, ctx: RenderContext): string | null {
 	if (block.type === "paragraph") return renderParagraph(block, ctx);
 	if (block.type === "table") return renderTable(block, ctx);
-	if (block.type === "sectionBreak") return `--- <!-- ${block.id} -->`;
+	if (block.type === "sectionBreak") return renderSectionBreak(block);
 	return null;
+}
+
+/** A section break as an own-line `<!-- docx:section sN cols="2" type="…" -->`
+ * annotation — NOT the bare `---` it used to be. `---` round-trips as a thematic
+ * break (`<HorizontalRule>` → a border paragraph), so emitting it for a section
+ * silently corrupted layout on `read → create` AND was indistinguishable from a
+ * real thematic break. The `docx:section` comment is a read-time VISIBILITY hint:
+ * the importer drops it (no reconstruction — `--ast` is the lossless view, and
+ * `docx columns` / `insert --section` / edit-in-place manage layout), and a
+ * hand-authored `---` now unambiguously means a thematic break. cols/type are
+ * shown for the section; document geometry rides the leading `docx:page` note. */
+function renderSectionBreak(block: SectionBreak): string {
+	const pairs: NotePair[] = [];
+	if (block.columns !== undefined && block.columns > 1) {
+		pairs.push(["cols", block.columns]);
+	}
+	if (block.sectionType !== undefined) pairs.push(["type", block.sectionType]);
+	return formatNote("section", pairs, [block.id]);
+}
+
+/** Canonical default page geometry — US Letter portrait, 1″ margins. Geometry
+ * matching this is suppressed from the `docx:page` note (deviation-only: a note
+ * that repeats the default is noise). */
+const DEFAULT_PAGE = {
+	width: 12240,
+	height: 15840,
+	margin: 1440,
+} as const;
+
+/** 635 EMU per twip — the OOXML geometry conversion (1 twip = 1/20 pt). */
+const EMU_PER_TWIP = 635;
+
+/** Usable page width in EMU (page width − L/R margins) from the document
+ * geometry, falling back to US-Letter-1″ (6.5″) when geometry is absent. Used to
+ * flag images wider than the text column. */
+function contentWidthEmu(geometry: SectionBreak | undefined): number {
+	const width = geometry?.pageWidth ?? DEFAULT_PAGE.width;
+	const left = geometry?.marginLeft ?? DEFAULT_PAGE.margin;
+	const right = geometry?.marginRight ?? DEFAULT_PAGE.margin;
+	const contentTwips = width - left - right;
+	const fallback =
+		(DEFAULT_PAGE.width - 2 * DEFAULT_PAGE.margin) * EMU_PER_TWIP;
+	return contentTwips > 0 ? contentTwips * EMU_PER_TWIP : fallback;
+}
+
+/** The `<!-- docx:image imgN size="6.2x4.1in" … -->` annotation for an image, or
+ * "" when there's nothing to declare. `size` is always shown (always
+ * decision-relevant); `overflow`/`float`/`wrap`/`align` are deviation-only
+ * (an inline, in-bounds image emits just its size). A DROPPED read-time hint. */
+function formatImageNote(run: ImageRun, contentEmu: number): string {
+	const pairs: NotePair[] = [];
+	if (run.widthEmu && run.heightEmu) {
+		pairs.push([
+			"size",
+			`${emuToInches(run.widthEmu)}x${emuToInches(run.heightEmu)}in`,
+		]);
+	}
+	if (run.floating) pairs.push(["float", "yes"]);
+	if (run.wrap) pairs.push(["wrap", run.wrap]);
+	if (run.align) pairs.push(["align", run.align]);
+	if (run.widthEmu && run.widthEmu > contentEmu)
+		pairs.push(["overflow", "yes"]);
+	if (pairs.length === 0) return "";
+	return ` ${formatNote("image", pairs, [run.id])}`;
+}
+
+/** The section break carrying the document-wide geometry — the trailing
+ * (mandatory) sectPr, which is the last section break. Scans from the end for the
+ * last break declaring ANY geometry. Keying on page width alone would miss a
+ * sectPr that sets non-default `<w:pgMar>` but inherits `<w:pgSz>` (legal — pgSz
+ * is schema-optional), hiding the margin deviation AND computing the wrong
+ * content width. formatPageNote / contentWidthEmu supply per-field defaults, so a
+ * margins-only break is safe to return. */
+function documentGeometry(blocks: Block[]): SectionBreak | undefined {
+	for (let index = blocks.length - 1; index >= 0; index--) {
+		const block = blocks[index];
+		if (block?.type === "sectionBreak" && hasGeometry(block)) {
+			return block;
+		}
+	}
+	return undefined;
+}
+
+/** True when a section break declares any page geometry (size, orientation, or
+ * any margin) — the discriminator for `documentGeometry`. */
+function hasGeometry(block: SectionBreak): boolean {
+	return (
+		block.pageWidth !== undefined ||
+		block.pageHeight !== undefined ||
+		block.pageOrientation !== undefined ||
+		block.marginTop !== undefined ||
+		block.marginRight !== undefined ||
+		block.marginBottom !== undefined ||
+		block.marginLeft !== undefined
+	);
+}
+
+/** A leading `<!-- docx:page … -->` note declaring document page geometry, but
+ * ONLY the parts that deviate from the canonical default (landscape, non-Letter
+ * size, non-1″ margins). Returns "" for a plain default-Letter document so the
+ * common case stays clean. Includes `text-width` (the usable column width =
+ * page width − left/right margins) since that's the single most decision-relevant
+ * number for layout and image-overflow reasoning. A DROPPED read-time hint —
+ * geometry survives edits via in-place mutation; `read --ast` carries exact
+ * twips. */
+function formatPageNote(geometry: SectionBreak | undefined): string {
+	if (!geometry) return "";
+	const width = geometry.pageWidth ?? DEFAULT_PAGE.width;
+	const height = geometry.pageHeight ?? DEFAULT_PAGE.height;
+	const left = geometry.marginLeft ?? DEFAULT_PAGE.margin;
+	const right = geometry.marginRight ?? DEFAULT_PAGE.margin;
+	const top = geometry.marginTop ?? DEFAULT_PAGE.margin;
+	const bottom = geometry.marginBottom ?? DEFAULT_PAGE.margin;
+	const orientation =
+		geometry.pageOrientation ?? (width > height ? "landscape" : "portrait");
+
+	const pairs: NotePair[] = [];
+	if (orientation === "landscape") pairs.push(["orientation", "landscape"]);
+	// "Not Letter" is orientation-agnostic — compare the unordered dimension pair.
+	const [short, long] = width <= height ? [width, height] : [height, width];
+	if (short !== DEFAULT_PAGE.width || long !== DEFAULT_PAGE.height) {
+		pairs.push(["size", `${twipsToInches(width)}x${twipsToInches(height)}in`]);
+	}
+	if (
+		top !== DEFAULT_PAGE.margin ||
+		right !== DEFAULT_PAGE.margin ||
+		bottom !== DEFAULT_PAGE.margin ||
+		left !== DEFAULT_PAGE.margin
+	) {
+		if (top === bottom && left === right && top === left) {
+			pairs.push(["margins", `${twipsToInches(top)}in`]);
+		} else {
+			pairs.push([
+				"margins",
+				`${twipsToInches(top)},${twipsToInches(right)},${twipsToInches(bottom)},${twipsToInches(left)}in`,
+			]);
+		}
+	}
+	// Nothing deviated → no note (the document is plain default Letter).
+	if (pairs.length === 0) return "";
+	pairs.push(["text-width", `${twipsToInches(width - left - right)}in`]);
+	return formatNote("page", pairs);
 }
 
 function isCodeBlockParagraph(block: Block): block is Paragraph {
@@ -383,8 +542,43 @@ function renderParagraph(
 	// Putting the locator after a space on the same line confuses the parser
 	// — it sees the trailing `$` as an unmatched math-mode toggle.
 	const separator = isDisplayEquationOnly(body) ? "\n" : " ";
-	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->`;
+	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->${formatParagraphNote(paragraph)}`;
 }
+
+/** The `<!-- docx:p pN style="Caption" align="center" -->` annotation, or "" when
+ * the paragraph has nothing non-default. `style` is shown only for styles NOT
+ * already conveyed by the Markdown construct (headings `#`, lists `-`, quotes
+ * `>`, code fences) — so Caption / custom paragraph styles surface; `align` only
+ * when it isn't the default left. A DROPPED read-time hint. */
+function formatParagraphNote(paragraph: Paragraph): string {
+	const pairs: NotePair[] = [];
+	if (paragraph.style && !isConstructStyle(paragraph.style)) {
+		pairs.push(["style", paragraph.style]);
+	}
+	if (paragraph.alignment && paragraph.alignment !== "left") {
+		pairs.push(["align", paragraph.alignment]);
+	}
+	if (pairs.length === 0) return "";
+	return ` ${formatNote("p", pairs, [paragraph.id])}`;
+}
+
+/** Styles already conveyed by the Markdown construct itself (so annotating them
+ * would be noise): headings (`#`), code blocks (fences), and the quote/list
+ * baseline styles, plus the `Normal` default. Everything else (Caption, custom
+ * pStyles) is invisible in GFM and worth surfacing. */
+function isConstructStyle(style: string): boolean {
+	if (headingLevelFor(style) !== null) return true;
+	if (isCodeBlockStyleId(style)) return true;
+	return CONSTRUCT_STYLES.has(style);
+}
+
+const CONSTRUCT_STYLES: ReadonlySet<string> = new Set([
+	"Normal",
+	"Quote",
+	"IntenseQuote",
+	"QuoteListParagraph",
+	"ListParagraph",
+]);
 
 /** True if the rendered body is a single display-math expression (`$$…$$`)
  *  with no other content — the case where we put the locator on its own
@@ -514,6 +708,9 @@ function renderRuns(
 			// convention used by `docx images extract`.
 			const extension = extensionForImageMime(run.contentType) ?? "bin";
 			out += `![${alt}](${run.hash}.${extension})`;
+			// Size (always) + float/wrap/align/overflow (deviation-only): the
+			// `![](hash)` proves existence, not "6.2in wide, past the margin".
+			out += formatImageNote(run, ctx.contentWidthEmu);
 		} else if (run.type === "break") {
 			// A line break renders as a real newline so verse/line-structured
 			// text round-trips (import maps a soft newline back to <w:br/>). In
@@ -762,18 +959,6 @@ function wrapRunFormatting(
 	return out;
 }
 
-/** An HTML attribute `key="value"` with the value escaped so it can't terminate
- * the attribute early or inject a sibling (`"`, `&`, `<`, `>`). remark decodes
- * the entities back, so the value round-trips verbatim. */
-function htmlAttr(key: string, value: string): string {
-	const escaped = value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
-	return `${key}="${escaped}"`;
-}
-
 /** Black (`000000`) or `auto` — the universal default text color, which carries
  * no information when stamped explicitly on a run. */
 function isDefaultColor(color: string): boolean {
@@ -837,7 +1022,42 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 		const row = renderedRows[rowIndex];
 		if (row) lines.push(rowToLine(row));
 	}
-	return lines.join("\n");
+	const body = lines.join("\n");
+	// A leading own-line note carries the visual structure GFM can't: uneven
+	// column widths and table borders (deviation-only — even/borderless tables
+	// stay clean). A DROPPED read-time hint; the importer ignores it.
+	const note = formatTableNote(table);
+	return note ? `${note}\n\n${body}` : body;
+}
+
+/** The `<!-- docx:table tN widths="…" borders="…" -->` note, or "" when the
+ * table has nothing non-default to declare (even columns, no explicit borders). */
+function formatTableNote(table: Table): string {
+	const pairs: NotePair[] = [];
+	const widths = unevenWidths(table.grid);
+	if (widths) pairs.push(["widths", widths]);
+	// `single` is the universal default (Word's default table border AND the
+	// border this tool emits on every created table), so it's noise. Surface only
+	// the actionable deviations: `none` (borderless), `double`, `mixed`, … .
+	if (table.borders && table.borders !== "single") {
+		pairs.push(["borders", table.borders]);
+	}
+	if (pairs.length === 0) return "";
+	return formatNote("table", pairs, [table.id]);
+}
+
+/** Comma-joined column widths in inches, but ONLY when the columns are
+ * meaningfully uneven (>5% spread). The GFM default is even columns, so even
+ * widths carry no signal — deviation-only. Returns undefined otherwise. */
+function unevenWidths(grid: number[]): string | undefined {
+	if (grid.length < 2) return undefined;
+	const min = Math.min(...grid);
+	const max = Math.max(...grid);
+	// Suppress only genuinely even grids; an all-zero/degenerate grid (max 0) is
+	// caught by the spread check below. (A single 0-width column is the MOST
+	// uneven case — it must surface, not be suppressed.)
+	if (max - min <= max * 0.05) return undefined;
+	return `${grid.map((width) => twipsToInches(width)).join(",")}in`;
 }
 
 function isRowVisible(row: TableRow, view: MarkdownView): boolean {
@@ -866,7 +1086,38 @@ function renderCell(cell: TableCell, ctx: RenderContext): string {
 			parts.push(renderNestedTable(block, ctx));
 		}
 	}
-	return escapeCell(parts.join("<br>"));
+	const body = parts.join("<br>");
+	// Cell-level visual structure GFM collapses: merge (gridSpan/vMerge) and
+	// background shading. Per the naming rule (bare = locator, docx: = metadata)
+	// this is its own `docx:cell` annotation, NOT riding the bare cell locator. A
+	// DROPPED read-time hint. A merged/shaded cell is often EMPTY (a
+	// vMerge="continue" cell carries no content) — surface the note regardless.
+	const note = cellNote(cell);
+	if (!note) return escapeCell(body);
+	return escapeCell(body ? `${body} ${note}` : note);
+}
+
+/** The `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699"
+ * -->` annotation for a cell with merge/shading, or "" for a plain cell. Carries
+ * the cell's address (the first paragraph's locator minus its `:pN`). */
+function cellNote(cell: TableCell): string {
+	const pairs: NotePair[] = [];
+	if (cell.gridSpan && cell.gridSpan > 1)
+		pairs.push(["gridSpan", cell.gridSpan]);
+	if (cell.vMerge) pairs.push(["vMerge", cell.vMerge]);
+	if (cell.shading) pairs.push(["shading", cell.shading]);
+	if (pairs.length === 0) return "";
+	const address = cellAddress(cell);
+	return formatNote("cell", pairs, address ? [address] : []);
+}
+
+/** A cell's locator address (`t0:r0c0`), derived from its first block's locator
+ * by dropping the trailing positional segment. A cell's first block is a
+ * paragraph (`t0:r0c0:p0` → `t0:r0c0`) or a nested table (`t0:r0c0:t0` →
+ * `t0:r0c0`) — keying on paragraphs alone would drop the address of a cell whose
+ * only content is a nested table, leaving the `docx:cell` note unaddressable. */
+function cellAddress(cell: TableCell): string | undefined {
+	return cell.blocks[0]?.id.replace(/:(?:p|t)\d+$/, "");
 }
 
 function renderNestedTable(table: Table, ctx: RenderContext): string {

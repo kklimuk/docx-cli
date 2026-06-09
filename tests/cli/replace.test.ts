@@ -222,3 +222,236 @@ describe("docx replace", () => {
 		expect(text).not.toContain("Breadboard");
 	});
 });
+
+const NORMALIZE_FIXTURE = "tests/fixtures/normalize-query.docx";
+// Layout (built by tests/fixtures/setup/normalize-query.ts):
+//   p0: 'The plan: "hello" world—ready to ship. The figure: 5 * 3 = 15.'
+//       (smart quotes around hello)
+//   p1: 'plan: "hello" today.' (straight quotes)
+
+async function paragraphText(
+	docPath: string,
+	blockId: string,
+): Promise<string> {
+	const read = await runCli("read", docPath, "--ast");
+	const blocks = (
+		read.parsed as {
+			blocks: Array<{
+				id: string;
+				runs?: Array<{ type: string; text: string }>;
+			}>;
+		}
+	).blocks;
+	const block = blocks.find((candidate) => candidate.id === blockId);
+	return (block?.runs ?? [])
+		.filter((run) => run.type === "text")
+		.map((run) => run.text)
+		.join("");
+}
+
+describe("docx replace — pattern normalization", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("replace-norm");
+		docPath = join(workspace, "out.docx");
+		await Bun.write(docPath, Bun.file(NORMALIZE_FIXTURE));
+	});
+
+	test("strips markdown emphasis from the pattern; replacement is literal", async () => {
+		// Default: replace just the first match (p0's smart-quote "hello").
+		const result = await runCli("replace", docPath, "**hello**", "goodbye");
+		expect(result.exitCode).toBe(0);
+		const payload = result.parsed as {
+			normalizedPattern?: string;
+			normalizationApplied?: string[];
+		};
+		expect(payload.normalizedPattern).toBe("hello");
+		expect(payload.normalizationApplied).toContain("strip-md-emphasis");
+
+		// p0's surrounding smart quotes are preserved (they weren't part of
+		// the matched span); "goodbye" replaces just "hello".
+		expect(await paragraphText(docPath, "p0")).toContain("“goodbye”");
+	});
+
+	test("smart-quote pattern matches straight-quote document text via canonicalization", async () => {
+		// Smart-quote pattern with --all hits both p0 (smart in doc) and
+		// p1 (straight in doc) thanks to canonicalization.
+		const result = await runCli(
+			"replace",
+			docPath,
+			"“hello”", // smart quotes in the pattern.
+			"goodbye",
+			"--all",
+		);
+		expect(result.exitCode).toBe(0);
+
+		// Replacement is LITERAL: the matched span (smart quote + hello +
+		// smart quote in p0; straight quote + hello + straight quote in p1)
+		// is replaced wholesale by the literal "goodbye". Surrounding
+		// punctuation is preserved.
+		expect(await paragraphText(docPath, "p0")).toBe(
+			"The plan: goodbye world—ready to ship. The figure: 5 * 3 = 15.",
+		);
+		expect(await paragraphText(docPath, "p1")).toBe("plan: goodbye today.");
+	});
+
+	test("--exact disables pattern normalization", async () => {
+		const result = await runCli(
+			"replace",
+			docPath,
+			"**hello**",
+			"goodbye",
+			"--exact",
+		);
+		expect(result.exitCode).toBe(0);
+		const payload = result.parsed as {
+			totalMatches: number;
+			replaced: number;
+			normalizedPattern?: string;
+		};
+		expect(payload.totalMatches).toBe(0);
+		expect(payload.replaced).toBe(0);
+		expect(payload.normalizedPattern).toBeUndefined();
+		// Both paragraphs unchanged.
+		expect(await paragraphText(docPath, "p0")).toContain("“hello”");
+		expect(await paragraphText(docPath, "p1")).toContain('"hello"');
+	});
+});
+
+// Repro of the agent-feedback case: under track-changes ON, two consecutive
+// replace calls in the same paragraph used to corrupt offsets — the second
+// match's start was computed against a string that included the first
+// replace's <w:ins>, so the splice landed mid-word inside the inserted run.
+//
+// The default (accepted) view fix: replace's offsets ignore the just-emitted
+// <w:ins> and existing <w:del> wrappers, so chained edits stay safe.
+
+const CHAINED_FIXTURE = "tests/fixtures/chained-tracked-edits.docx";
+// Layout (built by tests/fixtures/setup/chained-tracked-edits.ts):
+//   p0: "Cost of living, anti-price-gouging, and housing reform."
+//   p1: "Old plan: ship Tuesday."
+//   track-changes: ON, no tracked changes recorded yet.
+
+describe("docx replace — chained edits under tracking", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("chained-replace");
+		docPath = join(workspace, "out.docx");
+		await Bun.write(docPath, Bun.file(CHAINED_FIXTURE));
+	});
+
+	test("two replaces in the same paragraph keep offsets stable in accepted view", async () => {
+		const first = await runCli(
+			"replace",
+			docPath,
+			"Cost of living",
+			"Affordability",
+		);
+		expect(first.exitCode).toBe(0);
+
+		// The second pattern is a phrase to the right of the first edit.
+		// In the buggy version, the second replace's offset would be computed
+		// against a haystack that included the just-inserted "Affordability"
+		// AND the still-present <w:del>"Cost of living", landing the splice
+		// inside the <w:ins>. With the accepted-view fix, neither the
+		// pre-existing <w:del> nor the new <w:ins> shifts subsequent offsets.
+		const second = await runCli(
+			"replace",
+			docPath,
+			"anti-price-gouging",
+			"price control",
+		);
+		expect(second.exitCode).toBe(0);
+
+		// Read the accepted view of just p0 — under accepted view the
+		// <w:del>s are dropped and the <w:ins>s are inlined as plain text.
+		const result = await runCli("read", docPath, "--from", "p0", "--to", "p0");
+		expect(result.exitCode).toBe(0);
+		const accepted = result.stdout
+			.split("\n")
+			.map((line) => line.replace(/\s*<!--\s*[a-z0-9]+\s*-->\s*$/, ""))
+			.join("\n")
+			.trim();
+		expect(accepted).toBe("Affordability, price control, and housing reform.");
+	});
+
+	test("--current view (legacy behavior) sees the raw concatenation", async () => {
+		// Use p1 of the fixture: "Old plan: ship Tuesday."
+		await runCli("replace", docPath, "Old", "New");
+
+		// In --current view, find sees both ins and del text, so the next
+		// query against "Old" still matches the deleted run.
+		const find = await runCli("find", docPath, "Old", "--current");
+		const payload = find.parsed as {
+			matches: Array<{
+				blockId: string;
+				trackedChanges?: Array<{ kind: string }>;
+			}>;
+		};
+		expect(payload.matches).toHaveLength(1);
+		expect(payload.matches[0]?.blockId).toBe("p1");
+		expect(payload.matches[0]?.trackedChanges?.[0]?.kind).toBe("del");
+
+		// The default (accepted) view, by contrast, no longer sees "Old".
+		const findDefault = await runCli("find", docPath, "Old");
+		const defaultPayload = findDefault.parsed as { matches: unknown[] };
+		expect(defaultPayload.matches).toEqual([]);
+
+		// And the accepted view of p1 reads cleanly.
+		expect(await paragraphText(docPath, "p1")).toContain("New plan");
+	});
+});
+
+// replace chooses which tracked view the PATTERN matches against. The default
+// (accepted) view can't see deleted text; --baseline can. This is the only path
+// that substitutes text living inside a <w:del>.
+describe("docx replace — view selection (--baseline / --current)", () => {
+	async function trackedDeletionDoc(label: string): Promise<string> {
+		const path = join(tempWorkspace(label), "out.docx");
+		await runCli("create", path, "--text", "The quick brown fox jumps.");
+		await runCli("track-changes", path, "on");
+		await runCli("replace", path, "quick ", ""); // tracked-delete "quick "
+		return path;
+	}
+
+	test("--baseline matches text that lives only inside <w:del>", async () => {
+		const path = await trackedDeletionDoc("replace-baseline");
+
+		// The accepted (default) view no longer sees the deleted word.
+		const accepted = await runCli("replace", path, "quick", "QUICK");
+		expect((accepted.parsed as { totalMatches: number }).totalMatches).toBe(0);
+
+		// The baseline view matches the deleted text and substitutes it.
+		const baseline = await runCli(
+			"replace",
+			path,
+			"quick",
+			"QUICK",
+			"--baseline",
+		);
+		const payload = baseline.parsed as {
+			view: string;
+			totalMatches: number;
+			replaced: number;
+		};
+		expect(payload.view).toBe("baseline");
+		expect(payload.totalMatches).toBe(1);
+		expect(payload.replaced).toBe(1);
+	});
+
+	test("--current and --baseline together are a USAGE error", async () => {
+		const path = await trackedDeletionDoc("replace-view-mutex");
+		const result = await runCli(
+			"replace",
+			path,
+			"a",
+			"b",
+			"--current",
+			"--baseline",
+		);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+	});
+});

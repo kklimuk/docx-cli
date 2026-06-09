@@ -1,10 +1,10 @@
 import {
-	type FindView,
 	findFormattedSpans,
 	findTextSpans,
 	type RunFormatFilter,
 	type TextMatch,
 } from "@core/find";
+import { resolveView } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -137,17 +137,11 @@ export async function run(args: string[]): Promise<number> {
 	const ignoreCase = Boolean(parsed.values["ignore-case"]);
 	const useRegex = Boolean(parsed.values.regex);
 	const wantAll = Boolean(parsed.values.all);
-	const wantCurrent = Boolean(parsed.values.current);
-	const wantBaseline = Boolean(parsed.values.baseline);
 	const exact = Boolean(parsed.values.exact);
-	if (wantCurrent && wantBaseline) {
+	const findView = resolveView(parsed.values);
+	if (!findView) {
 		return fail("USAGE", "--current and --baseline are mutually exclusive");
 	}
-	const findView: FindView = wantCurrent
-		? "current"
-		: wantBaseline
-			? "baseline"
-			: "accepted";
 	const nthRaw = parsed.values.nth as string | undefined;
 	const nth = nthRaw === undefined ? undefined : Number(nthRaw);
 	if (nth !== undefined && (!Number.isInteger(nth) || nth < 0)) {

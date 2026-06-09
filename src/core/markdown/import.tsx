@@ -29,7 +29,7 @@ import { getPageContentWidthEmu } from "../sections";
 import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
 import { MarkdownImportError } from "./errors";
 import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
-import { parseDocBaseNote, remarkInlineSurgery } from "./inline-surgery";
+import { remarkInlineSurgery } from "./inline-surgery";
 import { walkRoot } from "./walker";
 
 /** Cross-cutting lens over "import this markdown source into the document."
@@ -62,13 +62,15 @@ export class MarkdownImport {
 			stripImages?: boolean;
 		} = {},
 	): Promise<XmlNode[]> {
-		// A leading `<!-- docx:base … -->` note (emitted by `read`) declares the
-		// document's ubiquitous font/size; strip it off and seed every run with it
-		// so `read → create` restores what read omitted. Absent for hand-authored
-		// markdown and for fragments piped into insert/edit (those blend via the
-		// target doc's own formatting instead).
-		const base = parseDocBaseNote(source);
-		const tree = parseToMdast(base ? base.body : source);
+		// The leading `<!-- docx:base … -->` note (emitted by `read`) is a
+		// VISIBILITY hint, not parse-back: it tells an agent the document's
+		// dominant font/size so new content can match, but the importer does NOT
+		// reconstruct it — it flows through as a block `html` node and `walkBlock`
+		// drops it like every other comment (per "comments are never anything but
+		// hints"). A full `read → create` rebuild therefore falls back to the
+		// template docDefaults for the dominant font/size; `read --ast` stays
+		// lossless and in-place `edit` preserves runs.
+		const tree = parseToMdast(source);
 		if (options.stripImages) stripImageNodes(tree);
 
 		const tracked = this.document.isTrackChangesEnabled();
@@ -81,7 +83,6 @@ export class MarkdownImport {
 			imageCache: new Map(),
 			definitions: collectDefinitions(tree),
 			relationships: options.relationships ?? this.document.relationships,
-			baselineFormat: base?.format,
 		};
 
 		if (tracked) {
@@ -273,9 +274,6 @@ function buildRichNoteBody(
 	const noteCtx: WalkContext = {
 		...ctx,
 		relationships: notesView.ensureRelationships(),
-		// The body baseline (e.g. 8pt) must not leak into footnote runs — their
-		// smaller size comes from the FootnoteText style, not per-run formatting.
-		baselineFormat: undefined,
 	};
 	const leadingSpace = (
 		<w.r>

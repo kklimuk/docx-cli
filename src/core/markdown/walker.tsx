@@ -60,8 +60,12 @@ function walkBlock(node: RootContent, ctx: WalkContext): XmlNode[] {
 		case "math":
 			return [mathParagraph(node)];
 		case "html":
-			// Raw block HTML (stray tags, `<!-- pN -->` locator markers on their
-			// own line) — drop. Agents author through markdown features.
+			// Raw block HTML (stray tags, `<!-- pN -->` locators, and the
+			// `docx:section` / `docx:page` / `docx:table` visibility annotations
+			// `read` emits) — drop. These are read-time hints, not parse-back: the
+			// importer never reconstructs structure from them (`--ast` is the
+			// lossless view; edit-in-place + `docx columns`/`insert --section`
+			// manage layout). Agents author through markdown features.
 			return [];
 		case "footnoteDefinition":
 			// The lens pre-collects footnote definitions and registers their

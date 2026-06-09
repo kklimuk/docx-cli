@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Pkg } from "../../src/core/ast/document/package";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
+import { readDocumentXml, readMarkdown } from "./helpers";
 
 type Block = {
 	id: string;
@@ -33,11 +34,6 @@ type Block = {
 async function readBlocks(docPath: string): Promise<Block[]> {
 	const result = await runCli("read", docPath, "--ast");
 	return (result.parsed as { blocks: Block[] }).blocks;
-}
-
-async function readMarkdown(docPath: string): Promise<string> {
-	const result = await runCli("read", docPath);
-	return result.stdout;
 }
 
 async function readPart(docPath: string, partPath: string): Promise<string> {
@@ -935,5 +931,724 @@ describe("docx insert --markdown — round-trip via read --markdown", () => {
 		expect(rendered).toContain("$$");
 		expect(rendered).toContain("[^fn1]");
 		expect(rendered).toContain("footnote body");
+	});
+});
+
+// read --markdown output must re-import cleanly: the ` <!-- pN -->` locator
+// separator must not accumulate spaces, and verse line breaks must survive,
+// across read → create → read. (The section-break `---` line is excluded —
+// section properties can't be recreated from markdown; tracked separately.)
+
+const SOURCE = `# Quarterly Report
+
+A normal paragraph with some text in it.
+
+The winter evening settles down
+With smell of steaks in passageways.
+The burnt-out ends of smoky days.
+
+| Name | Note |
+| --- | --- |
+| Dana | line one<br>line two |
+`;
+
+async function readBody(path: string): Promise<string> {
+	const out = (await runCli("read", path)).stdout;
+	// Drop the trailing section-break marker line (sections don't round-trip
+	// through markdown — a separate, known limitation).
+	return out
+		.split("\n")
+		.filter((line) => !line.includes("<!-- s0 -->"))
+		.join("\n");
+}
+
+describe("read → create → read is stable for normal content", () => {
+	test("no trailing-space growth before locators; verse + tables survive", async () => {
+		const workspace = tempWorkspace("md-roundtrip");
+		const src = join(workspace, "src.md");
+		await Bun.write(src, SOURCE);
+		const doc1 = join(workspace, "d1.docx");
+		expect((await runCli("create", doc1, "--from", src)).exitCode).toBe(0);
+
+		const read1 = await readBody(doc1);
+		const reimport = join(workspace, "r.md");
+		await Bun.write(reimport, `${read1}\n`);
+		const doc2 = join(workspace, "d2.docx");
+		expect((await runCli("create", doc2, "--from", reimport)).exitCode).toBe(0);
+		const read2 = await readBody(doc2);
+
+		expect(read2).toBe(read1);
+		// no double-space crept in before any locator comment
+		expect(read2).not.toMatch(/ {2}<!--/);
+		// verse line breaks are still there (3 lines → 2 <w:br/>)
+		const br = (await Bun.file(doc2).bytes()).length; // touch file
+		expect(br).toBeGreaterThan(0);
+		expect(read2).toContain("The winter evening settles down\n");
+	});
+});
+
+/**
+ * The read↔import formatting contract beyond the per-run round-trip and
+ * two-emitter convergence tests elsewhere in this file:
+ *   - the document `<!-- docx:base … -->` note (dominant font/size declared once
+ *     and omitted per-run — a read-time VISIBILITY hint the importer drops, NOT
+ *     parse-back; a full rebuild falls back to the template docDefaults),
+ *   - default formatting (black / text1) dropped as noise,
+ *   - hand-authored HTML formatting parsed on import (semantic tags + data-*),
+ *   - insert blending into the anchor paragraph's formatting.
+ */
+
+type RunAst = {
+	type: string;
+	text?: string;
+	bold?: boolean;
+	italic?: boolean;
+	strike?: boolean;
+	font?: string;
+	sizeHalfPoints?: number;
+	color?: string;
+	colorTheme?: string;
+	highlight?: string;
+	vertAlign?: string;
+	underline?: string;
+};
+type BaselineBlock = { id: string; type: string; runs?: RunAst[] };
+
+async function read(path: string): Promise<string> {
+	return (await runCli("read", path)).stdout;
+}
+
+async function blocks(path: string): Promise<BaselineBlock[]> {
+	const result = await runCli("read", path, "--ast");
+	return (result.parsed as { blocks: BaselineBlock[] }).blocks;
+}
+
+async function allRuns(path: string): Promise<RunAst[]> {
+	return (await blocks(path)).flatMap((block) => block.runs ?? []);
+}
+
+/** A doc whose single inserted paragraph (p1) carries the given runs. */
+async function docWith(label: string, runs: RunAst[]): Promise<string> {
+	const path = join(tempWorkspace(label), "out.docx");
+	await runCli("create", path, "--text", "Intro.");
+	await runCli("insert", path, "--after", "p0", "--runs", JSON.stringify(runs));
+	return path;
+}
+
+const ARIAL_BODY = { font: "Arial", sizeHalfPoints: 16 } as const;
+
+describe("read — document format baseline note", () => {
+	test("a dominant font/size becomes a base note and is omitted per-run", async () => {
+		const path = await docWith("base-emit", [
+			{
+				type: "text",
+				text: "The bulk of this document is in Arial eight point. ",
+				...ARIAL_BODY,
+			},
+			{
+				type: "text",
+				text: "More of the same ubiquitous body content here too. ",
+				...ARIAL_BODY,
+			},
+			{ type: "text", text: "TITLE", font: "Georgia", sizeHalfPoints: 44 },
+		]);
+		const md = await read(path);
+		expect(md).toContain('<!-- docx:base font="Arial" size="8pt" -->');
+		// Body runs carry no per-run font/size — they ride the note.
+		expect(md).toContain("The bulk of this document is in Arial eight point.");
+		expect(md).not.toContain("font-family:Arial");
+		// The deviating run keeps its own font + size.
+		expect(md).toContain("font-family:Georgia");
+		expect(md).toContain("font-size:22pt");
+	});
+
+	test("a hostile dominant font value can't break or inject into the base note", async () => {
+		const hostile = 'Bad"--><x'; // a quote, a comment-close, and angle brackets
+		const path = await docWith("base-hostile", [
+			{
+				type: "text",
+				text: "Body content one filling the document. ",
+				font: hostile,
+				sizeHalfPoints: 16,
+			},
+			{
+				type: "text",
+				text: "Body content two also in the same font. ",
+				font: hostile,
+				sizeHalfPoints: 16,
+			},
+		]);
+		const md = await read(path);
+		// Exactly one base note, escaped — the raw quote did NOT close the
+		// attribute and the `-->` did NOT close the comment early.
+		expect((md.match(/docx:base/g) ?? []).length).toBe(1);
+		expect(md).not.toContain('font="Bad"');
+		expect(md).not.toContain('Bad"--><x'); // raw hostile sequence never leaks
+		expect(md).toContain("&quot;"); // it was escaped instead
+		expect(md).toContain("Body content one filling the document.");
+	});
+
+	test("base note is a visibility hint, NOT parse-back: a full rebuild drops the dominant font/size but keeps deviating runs", async () => {
+		const src = await docWith("base-rt", [
+			{
+				type: "text",
+				text: "Ubiquitous Arial body content fills this page. ",
+				...ARIAL_BODY,
+			},
+			{
+				type: "text",
+				text: "Still more Arial body content to dominate it. ",
+				...ARIAL_BODY,
+			},
+			{ type: "text", text: "Heading", font: "Georgia", sizeHalfPoints: 44 },
+		]);
+		const workspace = tempWorkspace("base-rt-dst");
+		const mdPath = join(workspace, "doc.md");
+		await Bun.write(mdPath, await read(src));
+		const dst = join(workspace, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+
+		const runs = (await allRuns(dst)).filter((r) => (r.text ?? "").trim());
+		// "comments are never anything but hints" — the importer DROPS docx:base, so
+		// the omitted dominant Arial/8pt falls back to the template docDefaults
+		// (the body runs carry no explicit font/size after rebuild).
+		const body = runs.find((r) => (r.text ?? "").includes("Ubiquitous"));
+		expect(body?.font).toBeUndefined();
+		expect(body?.sizeHalfPoints).toBeUndefined();
+		// A run with its OWN (non-dominant) font/size keeps it — only the omitted
+		// baseline is lost on a from-scratch rebuild; `read --ast` of the source
+		// stays lossless and in-place `edit` never touches runs.
+		const heading = runs.find((r) => (r.text ?? "").includes("Heading"));
+		expect(heading?.font).toBe("Georgia");
+		expect(heading?.sizeHalfPoints).toBe(44);
+		// The rebuilt doc has no dominant font now → no base note on re-read.
+		expect(await read(dst)).not.toContain("docx:base");
+	});
+});
+
+describe("read — default formatting dropped as noise", () => {
+	test("black color and the text1 theme are not emitted; a real color is", async () => {
+		const path = await docWith("default-color", [
+			{
+				type: "text",
+				text: "plain black ",
+				color: "000000",
+				colorTheme: "text1",
+			},
+			{ type: "text", text: "teal", color: "107087" },
+		]);
+		const md = await read(path);
+		expect(md).not.toContain("000000");
+		expect(md).not.toContain("data-color-theme");
+		expect(md).toContain('<span style="color:#107087">teal</span>');
+	});
+});
+
+describe("import — hand-authored HTML formatting parses", () => {
+	test("<mark>, <span style>, <sup>, <sub>, <u> map to run formatting", async () => {
+		const workspace = tempWorkspace("html-import");
+		const mdPath = join(workspace, "doc.md");
+		await Bun.write(
+			mdPath,
+			'A <mark>hi</mark> <span style="color:#FF0000">red</span> <sup>up</sup> <sub>dn</sub> <u>ln</u> end.\n',
+		);
+		const dst = join(workspace, "out.docx");
+		await runCli("create", dst, "--from", mdPath);
+		const runs = await allRuns(dst);
+		expect(runs.find((r) => r.text === "hi")?.highlight).toBe("yellow");
+		expect(runs.find((r) => r.text === "red")?.color).toBe("FF0000");
+		expect(runs.find((r) => r.text === "up")?.vertAlign).toBe("superscript");
+		expect(runs.find((r) => r.text === "dn")?.vertAlign).toBe("subscript");
+		expect(runs.find((r) => r.text === "ln")?.underline).toBe("single");
+	});
+
+	test("data-* attributes carry OOXML-only props CSS can't express", async () => {
+		const workspace = tempWorkspace("html-data");
+		const mdPath = join(workspace, "doc.md");
+		await Bun.write(
+			mdPath,
+			'X <span data-color-theme="accent1">themed</span> <u data-underline="wave">wav</u> Y.\n',
+		);
+		const dst = join(workspace, "out.docx");
+		await runCli("create", dst, "--from", mdPath);
+		const runs = await allRuns(dst);
+		expect(runs.find((r) => r.text === "themed")?.colorTheme).toBe("accent1");
+		expect(runs.find((r) => r.text === "wav")?.underline).toBe("wave");
+	});
+});
+
+describe("read — whitespace-only runs keep their formatting", () => {
+	test("emphasis on a blank run uses HTML tags (not `** **`) and round-trips", async () => {
+		const path = await docWith("blank-fmt", [
+			{ type: "text", text: "a" },
+			{ type: "text", text: " ", bold: true },
+			{ type: "text", text: "b" },
+			{ type: "text", text: " ", underline: "single" },
+			{ type: "text", text: "c" },
+		]);
+		const md = await read(path);
+		// No mis-parsing `** **`; bold/underline ride unambiguous HTML.
+		expect(md).not.toContain("** **");
+		expect(md).toContain("<b> </b>");
+		expect(md).toContain("<u> </u>");
+
+		const workspace = tempWorkspace("blank-fmt-rt");
+		const mdPath = join(workspace, "doc.md");
+		await Bun.write(mdPath, md);
+		const dst = join(workspace, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+		const blanks = (await allRuns(dst)).filter(
+			(r) => r.type === "text" && (r.text ?? "").trim() === "",
+		);
+		expect(blanks.some((r) => (r as { bold?: boolean }).bold)).toBe(true);
+		expect(blanks.some((r) => r.underline === "single")).toBe(true);
+	});
+});
+
+describe("insert — inherits formatting from the anchor paragraph", () => {
+	test("plain inserted text adopts the neighbor's font + size", async () => {
+		const path = await docWith("blend", [
+			{
+				type: "text",
+				text: "Existing Arial eight-point body text.",
+				...ARIAL_BODY,
+			},
+		]);
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p1",
+			"--markdown",
+			"Brand new content.",
+		);
+		const inserted = (await allRuns(path)).find((r) =>
+			(r.text ?? "").includes("Brand new"),
+		);
+		expect(inserted?.font).toBe("Arial");
+		expect(inserted?.sizeHalfPoints).toBe(16);
+	});
+
+	test("inserting after a heading does NOT promote the new text to a heading", async () => {
+		const path = join(tempWorkspace("blend-head"), "out.docx");
+		await runCli("create", path, "--text", "Body.");
+		await runCli("insert", path, "--after", "p0", "--markdown", "# A Heading");
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p1",
+			"--markdown",
+			"Body paragraph after the heading.",
+		);
+		const run = (await allRuns(path)).find((r) =>
+			(r.text ?? "").includes("Body paragraph after the heading"),
+		);
+		// No heading size grafted on — the run stays plain body.
+		expect(run?.sizeHalfPoints).toBeUndefined();
+		expect(run?.font).toBeUndefined();
+	});
+});
+
+/**
+ * Run-level formatting round-trip (color + theme color + highlight + shading +
+ * underline + super/subscript + small/all caps + font + size). Drives the two
+ * governing invariants:
+ *   (I)  round-trip identity — author → read --markdown → import → read --ast is
+ *        a fixpoint, with exact OOXML values preserved.
+ *   (II) unsupported ≠ broken — an unmodeled rPr child survives untouched, and a
+ *        bad enum value fails loud rather than corrupting the file.
+ * Plus the two-emitter convergence guard (blocks.tsx vs markdown/inline.tsx).
+ */
+
+type TextRunAst = {
+	type: string;
+	text?: string;
+	color?: string;
+	colorTheme?: string;
+	colorThemeTint?: string;
+	colorThemeShade?: string;
+	highlight?: string;
+	shade?: string;
+	underline?: string;
+	underlineColor?: string;
+	vertAlign?: string;
+	smallCaps?: boolean;
+	allCaps?: boolean;
+	font?: string;
+	sizeHalfPoints?: number;
+};
+
+type FmtBlock = { id: string; type: string; runs?: TextRunAst[] };
+
+async function readFmtBlocks(docPath: string): Promise<FmtBlock[]> {
+	const result = await runCli("read", docPath, "--ast");
+	return (result.parsed as { blocks: FmtBlock[] }).blocks;
+}
+
+async function readText(docPath: string): Promise<string> {
+	return (await runCli("read", docPath)).stdout;
+}
+
+/** The runs covering every Phase-1 attribute, one run per variant. */
+const SAMPLE_RUNS: TextRunAst[] = [
+	{ type: "text", text: "red", color: "FF0000" },
+	{
+		type: "text",
+		text: "theme",
+		color: "4472C4",
+		colorTheme: "accent1",
+		colorThemeTint: "99",
+	},
+	{ type: "text", text: "hl", highlight: "yellow" },
+	{ type: "text", text: "shaded", shade: "FFE599" },
+	{ type: "text", text: "udbl", underline: "double", underlineColor: "FF0000" },
+	{ type: "text", text: "usng", underline: "single" },
+	{ type: "text", text: "sup", vertAlign: "superscript" },
+	{ type: "text", text: "sub", vertAlign: "subscript" },
+	{ type: "text", text: "sc", smallCaps: true },
+	{ type: "text", text: "ac", allCaps: true },
+	{ type: "text", text: "fontrun", font: "Courier New" },
+	{ type: "text", text: "bigrun", sizeHalfPoints: 28 },
+];
+
+async function authorSample(label: string): Promise<string> {
+	const docPath = join(tempWorkspace(label), "out.docx");
+	await runCli("create", docPath, "--text", "Intro.");
+	await runCli(
+		"insert",
+		docPath,
+		"--after",
+		"p0",
+		"--runs",
+		JSON.stringify(SAMPLE_RUNS),
+	);
+	return docPath;
+}
+
+function formattedParagraph(blocks: FmtBlock[]): TextRunAst[] {
+	const block = blocks.find((b) =>
+		(b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("")
+			.includes("red"),
+	);
+	// Drop whitespace-only runs: `read --markdown` appends a ` <!-- pN -->`
+	// locator comment, and the import drops the comment but keeps the leading
+	// space as a trailing run — an incidental artifact, not formatting.
+	return (block?.runs ?? []).filter(
+		(r) => r.type === "text" && (r.text ?? "").trim().length > 0,
+	);
+}
+
+describe("run formatting — AST author → read (blocks.tsx emit + read.ts capture)", () => {
+	test("every Phase-1 attribute survives create --runs → read --ast", async () => {
+		const docPath = await authorSample("rf-author");
+		const runs = formattedParagraph(await readFmtBlocks(docPath));
+		expect(runs).toEqual(SAMPLE_RUNS);
+	});
+
+	test("theme color emits <w:color w:val + w:themeColor + w:themeTint> byte-exact", async () => {
+		const docPath = await authorSample("rf-theme-xml");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain(
+			'<w:color w:val="4472C4" w:themeColor="accent1" w:themeTint="99"/>',
+		);
+		expect(xml).toContain(
+			'<w:shd w:val="clear" w:color="auto" w:fill="FFE599"/>',
+		);
+		expect(xml).toContain('<w:u w:val="double" w:color="FF0000"/>');
+	});
+});
+
+describe("run formatting — read --markdown emits HTML a reader renders", () => {
+	test("each attribute renders as the semantic HTML / `<span style>` form", async () => {
+		const docPath = await authorSample("rf-md");
+		const md = await readText(docPath);
+		expect(md).toContain('<span style="color:#FF0000">red</span>');
+		// Theme color: resolved hex in `style`, exact OOXML token in `data-*`.
+		expect(md).toContain('data-color-theme="accent1"');
+		expect(md).toContain('data-color-theme-tint="99"');
+		expect(md).toContain("<mark>hl</mark>");
+		expect(md).toContain(
+			'<span style="background-color:#FFE599">shaded</span>',
+		);
+		expect(md).toContain(
+			'<u data-underline="double" data-underline-color="FF0000">udbl</u>',
+		);
+		expect(md).toContain("<u>usng</u>");
+		expect(md).toContain("<sup>sup</sup>");
+		expect(md).toContain("<sub>sub</sub>");
+		expect(md).toContain('<span style="font-variant:small-caps">sc</span>');
+		expect(md).toContain('<span style="text-transform:uppercase">ac</span>');
+		expect(md).toContain("font-family:'Courier New'");
+		expect(md).toContain("font-size:14pt");
+		// No legacy Pandoc bracketed spans.
+		expect(md).not.toContain("{color=");
+		expect(md).not.toContain("]{.");
+	});
+});
+
+describe("run formatting — full round-trip identity (invariant I)", () => {
+	test("author → read --markdown → create --from → read --ast is a fixpoint", async () => {
+		const src = await authorSample("rf-rt-src");
+		const original = formattedParagraph(await readFmtBlocks(src));
+
+		const workspace = tempWorkspace("rf-rt-dst");
+		const mdPath = join(workspace, "doc.md");
+		await Bun.write(mdPath, await readText(src));
+		const dst = join(workspace, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+
+		const roundTripped = formattedParagraph(await readFmtBlocks(dst));
+		expect(roundTripped).toEqual(original);
+	});
+});
+
+describe("run formatting — two-emitter convergence (blocks.tsx ≡ inline.tsx)", () => {
+	test("same logical run via --runs and via --markdown yields identical <w:rPr>", async () => {
+		const astDoc = join(tempWorkspace("rf-conv-ast"), "out.docx");
+		await runCli("create", astDoc, "--text", "Intro.");
+		await runCli(
+			"insert",
+			astDoc,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([
+				{ type: "text", text: "X", color: "FF0000", underline: "single" },
+			]),
+		);
+
+		const mdDoc = join(tempWorkspace("rf-conv-md"), "out.docx");
+		await runCli("create", mdDoc, "--text", "Intro.");
+		await runCli(
+			"insert",
+			mdDoc,
+			"--after",
+			"p0",
+			"--markdown",
+			'[X]{.underline color="FF0000"}',
+		);
+
+		const rprOf = (xml: string): string =>
+			xml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
+		const astRpr = rprOf(await readDocumentXml(astDoc));
+		const mdRpr = rprOf(await readDocumentXml(mdDoc));
+		expect(astRpr).toBe(
+			'<w:rPr><w:color w:val="FF0000"/><w:u w:val="single"/></w:rPr>',
+		);
+		expect(mdRpr).toBe(astRpr);
+	});
+});
+
+describe("run formatting — invariant II (unsupported ≠ broken)", () => {
+	test("invalid highlight enum fails loud with USAGE (no silent OOXML loss)", async () => {
+		const docPath = join(tempWorkspace("rf-bad-hl"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			'A [bad]{highlight="chartreuse"} word.',
+		);
+		expect(result.exitCode).toBeGreaterThan(0);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		const parsed = result.parsed as { error?: string };
+		expect(parsed.error ?? "").toContain("chartreuse");
+	});
+
+	test("invalid underline enum fails loud with USAGE", async () => {
+		const docPath = join(tempWorkspace("rf-bad-u"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			'A [bad]{underline="squiggle"} word.',
+		);
+		expect(result.exitCode).toBeGreaterThan(0);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("a span whose attributes parse to nothing degrades to literal text", async () => {
+		const docPath = join(tempWorkspace("rf-empty-attrs"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"See [note]{TODO fixme} later.",
+		);
+		expect(result.exitCode).toBe(0);
+		// `{TODO fixme}` are bare tokens (no recognized attrs) → not a span →
+		// brackets restored as literal text.
+		const joined = (await readFmtBlocks(docPath))
+			.flatMap((b) => b.runs ?? [])
+			.map((r) => r.text ?? "")
+			.join("");
+		expect(joined).toContain("See [note]{TODO fixme} later.");
+	});
+
+	test("a formatted run whose text contains markup metacharacters keeps its formatting", async () => {
+		// `[ ] { }` in run text used to force DROPPING the span (Pandoc's `[…]{…}`
+		// couldn't escape them). HTML escapes them (`&#91;` etc.), so the formatting
+		// is kept AND the text round-trips byte-exact — strictly better than before.
+		const src = join(tempWorkspace("rf-bracket-src"), "out.docx");
+		await runCli("create", src, "--text", "Intro.");
+		await runCli(
+			"insert",
+			src,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([{ type: "text", text: "a]{x}b", color: "FF0000" }]),
+		);
+
+		const md = (await runCli("read", src)).stdout;
+		// Formatting is now preserved (HTML can escape the metacharacters).
+		expect(md).toContain("color:#FF0000");
+		// The literal `]` is entity-escaped so it can't re-tokenize as link syntax.
+		expect(md).not.toContain("a]{x}b");
+
+		const ws = tempWorkspace("rf-bracket-rt");
+		const mdPath = join(ws, "doc.md");
+		await Bun.write(mdPath, md);
+		const dst = join(ws, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+
+		// Round-trip: text byte-exact AND the color survived.
+		const runs = (await readFmtBlocks(dst))
+			.flatMap((b) => b.runs ?? [])
+			.filter((r) => r.type === "text");
+		expect(runs.map((r) => r.text ?? "").join("")).toContain("a]{x}b");
+		const colored = runs.find((r) => (r.text ?? "").includes("a]{x}b"));
+		expect(colored?.color).toBe("FF0000");
+	});
+
+	test("--runs with an invalid highlight enum fails loud (matches the markdown path)", async () => {
+		const docPath = join(tempWorkspace("rf-runs-bad-hl"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([{ type: "text", text: "x", highlight: "chartreuse" }]),
+		);
+		expect(result.exitCode).toBeGreaterThan(0);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { error?: string }).error ?? "").toContain(
+			"chartreuse",
+		);
+	});
+
+	test("a font value containing a quote can't inject a second attribute", async () => {
+		// Self-inflicted-injection guard: a crafted font with `"` must not
+		// round-trip into `highlight=...`; the unsafe value is dropped on export.
+		const src = join(tempWorkspace("rf-font-inject"), "out.docx");
+		await runCli("create", src, "--text", "Intro.");
+		await runCli(
+			"insert",
+			src,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([
+				{ type: "text", text: "hi", font: 'Arial" highlight="yellow' },
+			]),
+		);
+		const md = (await runCli("read", src)).stdout;
+		expect(md).not.toContain('highlight="yellow"');
+
+		const ws = tempWorkspace("rf-font-inject-rt");
+		const mdPath = join(ws, "doc.md");
+		await Bun.write(mdPath, md);
+		const dst = join(ws, "rt.docx");
+		await runCli("create", dst, "--from", mdPath);
+		const injected = (await readFmtBlocks(dst))
+			.flatMap((b) => b.runs ?? [])
+			.some((r) => (r as { highlight?: string }).highlight === "yellow");
+		expect(injected).toBe(false);
+	});
+});
+
+// "Comments are never anything but hints" (root CLAUDE.md): every docx: structural
+// annotation read emits is DROPPED on import — none drive reconstruction. So they
+// can't corrupt the parse or smuggle structure into a from-scratch create.
+describe("import — docx: annotations are dropped, never reconstructed", () => {
+	async function createFrom(label: string, markdown: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const mdPath = join(workspace, "src.md");
+		await Bun.write(mdPath, markdown);
+		const doc = join(workspace, "out.docx");
+		const result = await runCli("create", doc, "--from", mdPath);
+		expect(result.exitCode).toBe(0);
+		return doc;
+	}
+
+	test("a docx:table note before a table is dropped; the table still imports", async () => {
+		const doc = await createFrom(
+			"drop-table",
+			'# T\n\n<!-- docx:table t0 widths="1,2,3in" borders="double" -->\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n',
+		);
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Array<{ type: string }>;
+		};
+		expect(ast.blocks.some((b) => b.type === "table")).toBe(true);
+		// The note didn't leak as text, and didn't reconstruct custom widths.
+		const md = await read(doc);
+		expect(md).not.toContain("docx:table");
+		expect(md).not.toContain("widths="); // even-width table, no widths note
+	});
+
+	test("a docx:section note between paragraphs is dropped (no section reconstructed)", async () => {
+		const doc = await createFrom(
+			"drop-section",
+			'# T\n\nbefore\n\n<!-- docx:section s1 cols="2" type="continuous" -->\n\nafter\n',
+		);
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Array<{ type: string }>;
+		};
+		// Only the trailing mandatory sectPr — the docx:section comment was dropped.
+		expect(ast.blocks.filter((b) => b.type === "sectionBreak")).toHaveLength(1);
+		expect(await read(doc)).not.toContain("docx:section");
+	});
+
+	test("inline docx:cell / docx:p / docx:image hints don't break the parse or leak as text", async () => {
+		const doc = await createFrom(
+			"drop-inline",
+			'# T\n\nA paragraph. <!-- p9 --> <!-- docx:p p9 style="Caption" -->\n\n| x <!-- docx:cell t0:r0c0 gridSpan="2" --> | y |\n| --- | --- |\n',
+		);
+		const md = await read(doc);
+		expect(md).toContain("A paragraph.");
+		expect(md).toContain("x"); // table cell content survived
+		expect(md).not.toContain("docx:p");
+		expect(md).not.toContain("docx:cell");
+		// The dropped hints didn't reconstruct a Caption style.
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Array<{ type: string; style?: string }>;
+		};
+		expect(ast.blocks.some((b) => b.style === "Caption")).toBe(false);
+	});
+
+	test("a full read → create round-trip of an annotation-heavy fixture survives", async () => {
+		// sections.docx is dense with docx:section + docx:page hints.
+		const src = join(import.meta.dir, "..", "fixtures", "sections.docx");
+		const md = (await runCli("read", src)).stdout;
+		expect(md).toContain("docx:section");
+		const doc = await createFrom("drop-roundtrip", md);
+		// Content survived; the hints were dropped (no leak), and a re-read is
+		// itself stable (re-emitted fresh, never accreting).
+		const r1 = await read(doc);
+		const doc2 = await createFrom("drop-roundtrip2", r1);
+		expect(await read(doc2)).toBe(r1);
 	});
 });

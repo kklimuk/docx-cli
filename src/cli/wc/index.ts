@@ -11,6 +11,7 @@ import {
 	paragraphTextBaseline,
 	parseLocator,
 } from "@core";
+import { resolveView } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -114,23 +115,14 @@ export async function run(args: string[]): Promise<number> {
 	const locatorInput = parsed.positionals[1];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	const wantAccepted = Boolean(parsed.values.accepted);
-	const wantBaseline = Boolean(parsed.values.baseline);
-	const wantCurrent = Boolean(parsed.values.current);
-	const viewFlagCount =
-		(wantAccepted ? 1 : 0) + (wantBaseline ? 1 : 0) + (wantCurrent ? 1 : 0);
-	if (viewFlagCount > 1) {
+	const view = resolveView(parsed.values);
+	if (!view) {
 		return fail(
 			"USAGE",
 			"--accepted, --baseline, and --current are mutually exclusive",
 			HELP,
 		);
 	}
-	const view: CountView = wantCurrent
-		? "current"
-		: wantBaseline
-			? "baseline"
-			: "accepted";
 	const json = Boolean(parsed.values.json);
 	const pickText = paragraphTextFor(view);
 

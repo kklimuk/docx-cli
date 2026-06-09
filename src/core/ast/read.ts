@@ -297,6 +297,15 @@ function buildSectionBreak(id: string, sectPr: XmlNode): SectionBreak {
 	const block: SectionBreak = { id, type: "sectionBreak" };
 	if (props.columns !== undefined) block.columns = props.columns;
 	if (props.sectionType !== undefined) block.sectionType = props.sectionType;
+	if (props.pageWidth !== undefined) block.pageWidth = props.pageWidth;
+	if (props.pageHeight !== undefined) block.pageHeight = props.pageHeight;
+	if (props.pageOrientation !== undefined) {
+		block.pageOrientation = props.pageOrientation;
+	}
+	if (props.marginTop !== undefined) block.marginTop = props.marginTop;
+	if (props.marginRight !== undefined) block.marginRight = props.marginRight;
+	if (props.marginBottom !== undefined) block.marginBottom = props.marginBottom;
+	if (props.marginLeft !== undefined) block.marginLeft = props.marginLeft;
 	return block;
 }
 
@@ -870,7 +879,7 @@ function readImageFromDrawing(
 		? Number(extent.getAttribute("cy") ?? "0")
 		: undefined;
 
-	return {
+	const run: ImageRun = {
 		type: "image",
 		id,
 		contentType: relationship.contentType,
@@ -879,6 +888,43 @@ function readImageFromDrawing(
 		heightEmu,
 		alt: alt || undefined,
 	};
+	// `<wp:anchor>` = floating (out of flow, with wrap); `<wp:inline>` = the
+	// default in-flow shape. Only floating images carry wrap + horizontal align.
+	const anchor = drawing.findDescendant("wp:anchor");
+	if (anchor) {
+		run.floating = true;
+		const wrap = readImageWrap(anchor);
+		if (wrap) run.wrap = wrap;
+		const align = readImageAlign(anchor);
+		if (align) run.align = align;
+	}
+	return run;
+}
+
+const WRAP_TAGS: ReadonlyArray<[tag: string, label: string]> = [
+	["wp:wrapSquare", "square"],
+	["wp:wrapTight", "tight"],
+	["wp:wrapThrough", "through"],
+	["wp:wrapTopAndBottom", "topAndBottom"],
+	["wp:wrapNone", "none"],
+];
+
+function readImageWrap(anchor: XmlNode): string | undefined {
+	for (const [tag, label] of WRAP_TAGS) {
+		if (anchor.findChild(tag)) return label;
+	}
+	return undefined;
+}
+
+/** Horizontal placement of a floating image: a `<wp:positionH><wp:align>` value
+ * (`left`/`center`/`right`), or `absolute` when it's pinned via `<wp:posOffset>`. */
+function readImageAlign(anchor: XmlNode): string | undefined {
+	const positionH = anchor.findChild("wp:positionH");
+	if (!positionH) return undefined;
+	const align = positionH.findChild("wp:align")?.collectText().trim();
+	if (align) return align;
+	if (positionH.findChild("wp:posOffset")) return "absolute";
+	return undefined;
 }
 
 function readTable(
@@ -889,6 +935,8 @@ function readTable(
 ): Table {
 	const grid = readTableGrid(node);
 	const width = readTableWidth(node);
+	const borders = readTableBorders(node);
+	const style = readTableStyle(node);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
 	// both before the rows), so tcN ids land in document order.
 	readTablePropertyRevision(document, node, id, state);
@@ -930,8 +978,47 @@ function readTable(
 	}
 	const table: Table = { id, type: "table", grid, rows };
 	if (width) table.width = width;
+	if (borders) table.borders = borders;
+	if (style) table.style = style;
 	return table;
 }
+
+/** The table's applied style id from `<w:tblPr><w:tblStyle w:val="…"/>`, or
+ * undefined when the table references no style. */
+function readTableStyle(table: XmlNode): string | undefined {
+	return (
+		table
+			.findChild("w:tblPr")
+			?.findChild("w:tblStyle")
+			?.getAttribute("w:val") ?? undefined
+	);
+}
+
+/** Summarize `<w:tblPr><w:tblBorders>` into a single style word for visibility.
+ * All six edges sharing one `w:val` → that value (`nil`/`none` → "none");
+ * differing edges → "mixed"; no tblBorders → undefined (inherits, suppressed). */
+function readTableBorders(table: XmlNode): string | undefined {
+	const tblBorders = table.findChild("w:tblPr")?.findChild("w:tblBorders");
+	if (!tblBorders) return undefined;
+	const vals = new Set<string>();
+	for (const edge of TABLE_BORDER_EDGES) {
+		const val = tblBorders.findChild(edge)?.getAttribute("w:val");
+		if (val) vals.add(val);
+	}
+	if (vals.size === 0) return undefined;
+	if (vals.size > 1) return "mixed";
+	const only = [...vals][0] as string;
+	return only === "nil" || only === "none" ? "none" : only;
+}
+
+const TABLE_BORDER_EDGES = [
+	"w:top",
+	"w:left",
+	"w:bottom",
+	"w:right",
+	"w:insideH",
+	"w:insideV",
+] as const;
 
 function readTablePropertyRevision(
 	document: Document,
@@ -1136,6 +1223,13 @@ function readTableCell(
 	if (tcW) {
 		const width = readWidth(tcW);
 		if (width) cell.width = width;
+	}
+	const shd = tcPr.findChild("w:shd");
+	if (shd) {
+		const fill = shd.getAttribute("w:fill");
+		// `auto` (or absent) = no fill; a real hex is the cell background.
+		if (fill && fill.toLowerCase() !== "auto")
+			cell.shading = fill.toUpperCase();
 	}
 	return cell;
 }

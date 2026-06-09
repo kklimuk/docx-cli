@@ -10,7 +10,7 @@ import {
 	resolveAuthor,
 } from "@core";
 import { type FindView, findTextSpans } from "@core/find";
-import { readJsonlObjects } from "../parse-helpers";
+import { readJsonlObjects, resolveView } from "../parse-helpers";
 import {
 	type ErrorCode,
 	EXIT,
@@ -18,6 +18,7 @@ import {
 	openOrFail,
 	respond,
 	respondMinted,
+	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
@@ -129,10 +130,7 @@ export async function run(args: string[]): Promise<number> {
 			author: { type: "string" },
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
-			output: { type: "string", short: "o" },
-			"dry-run": { type: "boolean" },
-			verbose: { type: "boolean", short: "v" },
-			help: { type: "boolean", short: "h" },
+			...SAVE_FLAGS,
 		},
 		HELP,
 	);
@@ -158,16 +156,10 @@ export async function run(args: string[]): Promise<number> {
 	);
 	const outputPath = parsed.values.output as string | undefined;
 	const dryRun = Boolean(parsed.values["dry-run"]);
-	const wantCurrent = Boolean(parsed.values.current);
-	const wantBaseline = Boolean(parsed.values.baseline);
-	if (wantCurrent && wantBaseline) {
+	const findView = resolveView(parsed.values);
+	if (!findView) {
 		return fail("USAGE", "--current and --baseline are mutually exclusive");
 	}
-	const findView: FindView = wantCurrent
-		? "current"
-		: wantBaseline
-			? "baseline"
-			: "accepted";
 
 	const anchorCount =
 		(atInput ? 1 : 0) + (anchorInput ? 1 : 0) + (batchInput ? 1 : 0);

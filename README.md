@@ -88,6 +88,7 @@ docx find    FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current |
 docx find    FILE (--highlight COLOR|any | --color HEX | --bold | --italic | --underline) [--all] [--json]   # find by formatting (no QUERY)
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
+docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
 
 docx comments      list FILE [--include-resolved] [--thread cN]
@@ -101,6 +102,34 @@ docx info schema   [--ts]
 docx info locators [--json]
 ```
 
+`docx read` surfaces structural facts the Markdown body can't show as HTML-comment
+annotations (`<!-- docx:TYPE … -->`). These are **read-time visibility hints** — the
+agent can SEE the structure, but the importer drops them (the structure survives
+normal edits in place, `read --ast` is the lossless view, and `docx columns` /
+`insert --section` / `docx tables …` manage it). They're emitted **deviation-only**
+(only when a value differs from the document default, so a plain document stays
+clean):
+
+- **Section breaks** render as `<!-- docx:section sN cols="2" type="continuous" -->`
+  on their own line — never a bare `---` (that's a thematic break, and emitting it
+  for a section silently turned layout into border paragraphs). A hand-authored
+  `---` now unambiguously means a thematic break.
+- **Page geometry** rides a leading `<!-- docx:page orientation="landscape"
+  size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
+  US-Letter-portrait-1″ — `text-width` is the usable column width. Exact twips are
+  in `read --ast` (on each section break: `pageWidth`/`pageHeight`/`pageOrientation`/
+  `margin*`).
+- **Tables** carry a leading `<!-- docx:table t0 widths="1,2,3in" borders="double" -->`
+  when columns are uneven or borders deviate from the default, plus a per-cell
+  `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699" -->`
+  note on merged/shaded cells — so structure invisible in GFM is visible
+  (`Table.borders` / `TableCell.shading` in `read --ast`).
+- **Images** trail a `<!-- docx:image img0 size="6.2x4.1in" float="yes" wrap="square" align="center" overflow="yes" -->`
+  note: `size` always (the `![](hash)` alone doesn't say "6in wide"), and
+  `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds
+  image shows just its size). `overflow` flags an image wider than the usable text
+  column (`ImageRun.floating`/`wrap`/`align` + EMU extents in `read --ast`).
+
 ### Mutate (change FILE in place; `--dry-run`, `-v` everywhere; `-o PATH` on every mutator except `create`, whose positional FILE is already the output)
 
 ```sh
@@ -108,6 +137,7 @@ docx create FILE [--title T] [--author A] [--text "..." | --from PATH.md | --fro
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
+docx columns FILE --at LOCATOR --count N [--type T]       # LOCATOR = pN-pM | pN (wrap a range) | sN (recount an existing section)
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys

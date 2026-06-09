@@ -2,6 +2,85 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 
+describe("docx create + read", () => {
+	test("creates a minimal docx and reads it back", async () => {
+		const workspace = tempWorkspace("create-read");
+		const docPath = join(workspace, "out.docx");
+
+		const create = await runCli(
+			"create",
+			docPath,
+			"--title",
+			"Test",
+			"--author",
+			"Tester",
+			"--text",
+			"Hello world",
+		);
+		expect(create.exitCode).toBe(0);
+		expect(create.parsed).toMatchObject({
+			ok: true,
+			operation: "create",
+			path: docPath,
+		});
+
+		const read = await runCli("read", docPath, "--ast");
+		expect(read.exitCode).toBe(0);
+		const doc = read.parsed as {
+			properties: { title: string; author: string };
+			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
+		};
+		expect(doc.properties.title).toBe("Test");
+		expect(doc.properties.author).toBe("Tester");
+		const firstParagraph = doc.blocks.find(
+			(block) => block.type === "paragraph",
+		);
+		expect(firstParagraph?.runs?.[0]?.text).toBe("Hello world");
+	});
+
+	test("escapes hostile XML in title/author/text round-trip", async () => {
+		const workspace = tempWorkspace("escape");
+		const docPath = join(workspace, "out.docx");
+
+		await runCli(
+			"create",
+			docPath,
+			"--title",
+			'Has "quotes" & <stuff>',
+			"--author",
+			"<script>",
+			"--text",
+			"Body: <input> & 'data'",
+		);
+		const read = await runCli("read", docPath, "--ast");
+		const doc = read.parsed as {
+			properties: { title: string; author: string };
+			blocks: Array<{ type: string; runs?: Array<{ text: string }> }>;
+		};
+		expect(doc.properties.title).toBe('Has "quotes" & <stuff>');
+		expect(doc.properties.author).toBe("<script>");
+		const paragraph = doc.blocks.find((block) => block.type === "paragraph");
+		expect(paragraph?.runs?.[0]?.text).toBe("Body: <input> & 'data'");
+	});
+
+	test("read on missing file returns not-found error", async () => {
+		const result = await runCli("read", "/tmp/does-not-exist.docx");
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({
+			code: "FILE_NOT_FOUND",
+		});
+	});
+
+	test("create rejects existing file without --force", async () => {
+		const workspace = tempWorkspace("force");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "first");
+		const second = await runCli("create", docPath, "--text", "second");
+		expect(second.exitCode).toBe(2);
+		expect(second.parsed).toMatchObject({ code: "USAGE" });
+	});
+});
+
 const WIDE_PNG = "tests/fixtures/assets/sample.png";
 
 async function blankDoc(label: string): Promise<string> {
@@ -11,9 +90,17 @@ async function blankDoc(label: string): Promise<string> {
 	return path;
 }
 
-function extentCx(xml: string): number {
-	const match = xml.match(/<wp:extent cx="(\d+)"/);
-	return match ? Number(match[1]) : 0;
+async function imageWidthEmu(path: string): Promise<number> {
+	const read = await runCli("read", path, "--ast");
+	const blocks = (
+		read.parsed as {
+			blocks: Array<{ runs?: Array<{ type: string; widthEmu?: number }> }>;
+		}
+	).blocks;
+	const image = blocks
+		.flatMap((block) => block.runs ?? [])
+		.find((run) => run.type === "image");
+	return image?.widthEmu ?? 0;
 }
 
 describe("Ergonomics", () => {
@@ -32,7 +119,7 @@ describe("Ergonomics", () => {
 			(await runCli("insert", path, "--after", "p0", "--image", WIDE_PNG))
 				.exitCode,
 		).toBe(0);
-		const cx = extentCx(await readDocumentXml(path));
+		const cx = await imageWidthEmu(path);
 		// US-Letter content width with 1" margins = 6.5in = 5,943,600 EMU.
 		expect(cx).toBeLessThanOrEqual(5_943_600);
 		expect(cx).toBeGreaterThan(0);
@@ -54,7 +141,7 @@ describe("Ergonomics", () => {
 				)
 			).exitCode,
 		).toBe(0);
-		expect(extentCx(await readDocumentXml(path))).toBe(8 * 914400);
+		expect(await imageWidthEmu(path)).toBe(8 * 914400);
 	});
 
 	test("images add is an alias for insert --image", async () => {
@@ -117,10 +204,3 @@ describe("Ergonomics", () => {
 		expect((result.parsed as { code: string }).code).toBe("MATCH_NOT_FOUND");
 	});
 });
-
-async function readDocumentXml(path: string): Promise<string> {
-	const proc = Bun.spawn(["unzip", "-p", path, "word/document.xml"], {
-		stdout: "pipe",
-	});
-	return await new Response(proc.stdout).text();
-}

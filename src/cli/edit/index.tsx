@@ -38,6 +38,7 @@ import {
 	resolveTracked,
 	respond,
 	respondAck,
+	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
@@ -542,10 +543,7 @@ const OPTION_SPEC = {
 	author: { type: "string" },
 	track: { type: "boolean" },
 	"no-formatting": { type: "boolean" },
-	output: { type: "string", short: "o" },
-	"dry-run": { type: "boolean" },
-	verbose: { type: "boolean", short: "v" },
-	help: { type: "boolean", short: "h" },
+	...SAVE_FLAGS,
 } as const;
 
 type ValidatedOptions = {

@@ -22,6 +22,7 @@ const TOP_LEVEL_MUTATORS = new Set([
 	"edit",
 	"delete",
 	"replace",
+	"columns",
 	// `render` is a producer, not a doc mutator, but it's silent-by-default in
 	// the same way (bare page paths unless --verbose) — inject --verbose so the
 	// JSON-ack assertions keep working.
@@ -104,7 +105,7 @@ function parseAck(stdout: string): unknown {
  * spawning `bun src/index.ts` per call (which dominated suite time). Still
  * exercises the real arg-parse → dispatch → command → respond path; the actual
  * process boundary (spawn, exit propagation, 64 KB stdout truncation) is
- * covered by tests/cli/binary-smoke.test.ts via {@link spawnCli}. */
+ * covered by tests/cli/output-contract.test.ts via {@link spawnCli}. */
 export async function runCli(...args: string[]): Promise<CliResult> {
 	let stdout = "";
 	let stderr = "";
@@ -131,6 +132,24 @@ export async function runCli(...args: string[]): Promise<CliResult> {
  * Everything else should use the in-process {@link runCli}. */
 export async function spawnCli(...args: string[]): Promise<CliResult> {
 	const proc = Bun.spawn(["bun", BINARY, ...args], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const stdout = await new Response(proc.stdout).text();
+	const stderr = await new Response(proc.stderr).text();
+	const exitCode = await proc.exited;
+	return { stdout, stderr, exitCode, parsed: parseAck(stdout) };
+}
+
+/** Like {@link spawnCli}, but feeds `input` on the subprocess's stdin — the only
+ * way to exercise the `-` (stdin) ingress for `--batch` / `--code-file` /
+ * `--markdown-file` / `--from`, which the in-process {@link runCli} can't feed. */
+export async function spawnCliStdin(
+	input: string,
+	...args: string[]
+): Promise<CliResult> {
+	const proc = Bun.spawn(["bun", BINARY, ...args], {
+		stdin: Buffer.from(input),
 		stdout: "pipe",
 		stderr: "pipe",
 	});

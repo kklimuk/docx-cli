@@ -446,28 +446,6 @@ function parseAttrs(raw: string): SpanAttributes {
 	return attributes;
 }
 
-/** Pull a leading `<!-- docx:base font="…" size="…pt" -->` note off the markdown
- * source. `read` emits it to declare the document's ubiquitous run formatting
- * (which it then omits from every matching run); the importer seeds every run
- * with this format so a `read → create` round-trip restores font/size. Returns
- * the parsed format plus the source with the note stripped, or null when absent.
- * Reuses `parseAttrs` so the note and `[text]{…}` spans share one spelling. */
-export function parseDocBaseNote(
-	source: string,
-): { format: SpanAttributes; body: string } | null {
-	const match = source.match(DOC_BASE_NOTE);
-	if (!match) return null;
-	return {
-		format: parseAttrs(match[1] ?? ""),
-		body: source.slice(match[0].length),
-	};
-}
-
-/** A `<!-- docx:base … -->` line at the very start of the source (optional BOM /
- * leading whitespace), consuming its trailing newline so the body parses clean. */
-const DOC_BASE_NOTE =
-	/^﻿?[ \t]*<!--[ \t]*docx:base[ \t]+([^>]*?)[ \t]*-->[ \t]*\r?\n?/;
-
 function applyClass(attributes: SpanAttributes, className: string): void {
 	if (className === "underline") attributes.underline ??= "single";
 	else if (className === "smallcaps") attributes.smallCaps = true;
@@ -589,8 +567,7 @@ interface BracketedSpan {
 
 /** Run-formatting a `[…]{…}` span can carry. Mirrors the formatting subset of
  * `InlineFormat`/`TextRun`; the walker spreads it onto the inherited format.
- * Theme tint/shade stay raw hex strings so the value round-trips byte-exact.
- * Exported as the return shape of `parseDocBaseNote` (the document baseline). */
+ * Theme tint/shade stay raw hex strings so the value round-trips byte-exact. */
 export interface SpanAttributes {
 	bold?: boolean;
 	italic?: boolean;

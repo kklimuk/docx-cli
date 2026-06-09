@@ -5,6 +5,7 @@ import {
 	openOrFail,
 	respond,
 	respondAck,
+	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
@@ -22,10 +23,7 @@ export async function runApply(
 		{
 			at: { type: "string", multiple: true },
 			all: { type: "boolean" },
-			output: { type: "string", short: "o" },
-			"dry-run": { type: "boolean" },
-			verbose: { type: "boolean", short: "v" },
-			help: { type: "boolean", short: "h" },
+			...SAVE_FLAGS,
 		},
 		help,
 	);

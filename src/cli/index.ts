@@ -4,6 +4,7 @@ import { fail, writeStderr, writeStdout } from "./respond";
 type CommandFn = (args: string[]) => Promise<number>;
 
 const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
+	columns: () => import("./columns"),
 	comments: () => import("./comments"),
 	create: () => import("./create"),
 	delete: () => import("./delete"),
@@ -19,6 +20,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	read: () => import("./read"),
 	render: () => import("./render"),
 	replace: () => import("./replace"),
+	styles: () => import("./styles"),
 	tables: () => import("./tables"),
 	"track-changes": () => import("./track-changes"),
 	wc: () => import("./wc"),

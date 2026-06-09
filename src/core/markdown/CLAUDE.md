@@ -46,13 +46,59 @@ Three carriers — semantic tags (render everywhere, incl. GitHub), `<span style
 | size | `<span style="font-size:12pt">` | `<w:sz>` half-points; **omitted when it equals the document baseline** (see below) |
 | smallCaps / allCaps | `<span style="font-variant:small-caps">` / `text-transform:uppercase` | |
 
-bold/italic/strike/links/code stay native markdown (`**`/`*`/`~~`/`[](…)`/`` ` ``). Wrappers nest innermost→outermost `<span>` → `<u>` → `<sup>`/`<sub>` → `<mark>`, a fixed order `gatherHtmlSpans` reverses. The `<w:rPr>` emitter is still duplicated across `core/blocks.tsx::RunProperties` (AST→XML) and `inline.tsx::RunProperties` (markdown→XML); both MUST emit identical child order (CT_RPr §17.3.2.28) — enforced by the convergence test in [tests/cli/run-formatting-roundtrip.test.ts](../../../tests/cli/run-formatting-roundtrip.test.ts).
+bold/italic/strike/links/code stay native markdown (`**`/`*`/`~~`/`[](…)`/`` ` ``). Wrappers nest innermost→outermost `<span>` → `<u>` → `<sup>`/`<sub>` → `<mark>`, a fixed order `gatherHtmlSpans` reverses. The `<w:rPr>` emitter is still duplicated across `core/blocks.tsx::RunProperties` (AST→XML) and `inline.tsx::RunProperties` (markdown→XML); both MUST emit identical child order (CT_RPr §17.3.2.28) — enforced by the two-emitter convergence test in [tests/cli/markdown.test.ts](../../../tests/cli/markdown.test.ts).
 
-**Document baseline note.** A leading `<!-- docx:base font="Arial" size="8pt" -->` (`formatBaseNote`) declares the dominant font/size across the doc (a >50%-of-text majority); `read` then omits those from every matching run so the body reads clean instead of repeating `font-family:Arial` on every span. `parseDocBaseNote` strips it on import and seeds every run with it (`WalkContext.baselineFormat`), so `read → create` restores the omitted values. The note carries only true per-run dominants — a `read`-side docDefaults size fallback still suppresses the default size, but isn't declared (the importer's own `docDefaults` reconstruct it; declaring it would stamp explicit sizes on runs that never had one). Footnote bodies are excluded from the seed (their smaller size comes from FootnoteText, not the body baseline). Black (`000000`/`auto`) and the `text1`/`dark1` theme are dropped as noise (the universal default).
+**Document baseline note.** A leading `<!-- docx:base font="Arial" size="8pt" -->` (`formatBaseNote`) declares the dominant font/size across the doc (a >50%-of-text majority); `read` then omits those from every matching run so the body reads clean instead of repeating `font-family:Arial` on every span, AND so an agent can see the doc's baseline to match new content. It is a **visibility hint, not parse-back** (per "comments are never anything but hints" in the root CLAUDE.md): the importer DROPS it (the leading note flows through as a block `html` node and `walkBlock` drops it), so a full `read → create` rebuild falls back to the template `docDefaults` (Calibri 11pt) for the dominant font/size. `read --ast` stays lossless (every run's font/size is there) and in-place `edit` never touches runs, so only the from-scratch rebuild is lossy. The note carries only true per-run dominants; black (`000000`/`auto`) and the `text1`/`dark1` theme are dropped as noise (the universal default).
 
 **Enum validation is on every ingress.** `highlight`/`underline`/`vertAlign` are closed OOXML enums; an out-of-range value would make Word silently drop schema-invalid XML, so both the import path (`inline.tsx::validateSpanFormatting` → `MarkdownImportError` USAGE — fed by both HTML and legacy-Pandoc spans) AND the `--runs` JSON path (`cli/parse-helpers.ts::parseRunsArg` → USAGE fail) validate against the shared sets in [@core/run-formatting](../run-formatting.ts). Hex colors / theme tokens / font names pass through unvalidated (Word degrades unknowns gracefully).
 
 **Metacharacters are HTML-escaped — content is never lost or corrupted (invariant II).** Wrapped run text has `& < > [ ]` escaped to entities (`&#91;` etc., decoded back by remark) so it can't break a tag or re-tokenize as link syntax; attribute values are escaped (`&quot;` etc.) so a crafted font name with a `"` can't close the attribute early and inject a sibling. So unlike the old Pandoc spans (which had to DROP formatting on metacharacter text), HTML keeps both the text AND its formatting. Unmatched/unknown HTML degrades safely: the inline walker drops a raw `html` node, so an unrecognized tag loses its formatting but keeps its content. Legacy Pandoc `[text]{…}` spans are still parsed on import for backward compatibility, but no longer emitted.
+
+## Structural visibility annotations (read-only)
+
+`read --markdown` surfaces structural facts the GFM body can't show as HTML
+comments shaped `<!-- docx:TYPE [bareId] key="value" … -->` (emitted via
+`formatNote` in [cli/read/annotations.ts](../../cli/read/annotations.ts), escaped
+with `htmlAttr`): `docx:section` (section breaks), `docx:page` (page geometry),
+`docx:table` (uneven column widths + border summary), `docx:cell` (per-cell
+merge/shading, carrying the cell address), and `docx:image` (size always +
+float/wrap/align/overflow deviation-only, carrying the `imgN` id).
+
+**These are read-time VISIBILITY hints, not round-trip carriers — ONE contract.**
+The importer DROPS every one: `walkBlock`'s `case "html"` returns `[]`, and the
+inline walker drops inline comments. The structure survives normal edits via
+in-place XML mutation; `read --ast` is the lossless view; and the authoring verbs
+(`docx columns`, `insert --section`, `docx tables …`) manage it. So a from-scratch
+`create` is deliberately lossy for non-Markdown structure (a section break read →
+created vanishes rather than corrupting into a border paragraph) — but the agent
+SAW it in the read output. Re-emitted fresh each read, so they never accrete.
+
+**Naming rule — bare = locator, `docx:` = metadata.** A bare comment is a
+LOCATOR (an address: `<!-- p0 -->`, `<!-- t0:r0c0:p0 -->`). Anything docx-cli adds
+BEYOND addressing is a `docx:TYPE` annotation (`docx:section`, `docx:page`,
+`docx:table`, `docx:cell`, `docx:base`), which may carry the relevant locator as a
+bare leading token (`<!-- docx:cell t0:r0c0 gridSpan="2" shading="FFE699" -->`).
+Metadata never rides a bare locator comment — that keeps locators short and makes
+`docx:` a clean grep for "everything docx-cli added."
+
+**Deviation-only:** emit an attribute only when it differs from the document
+default (the `docx:base` size-suppression lesson) — a note that repeats the
+default is noise, not signal. Even columns, default Letter geometry, plain
+borderless tables, `align=left` → emit nothing.
+
+**No exceptions — `docx:base` is a hint too.** The run-formatting baseline note
+(`docx:base font=… size=…`) was once parse-back, but no longer: the importer drops
+it like every other comment (see the "Document baseline note" section above), so a
+from-scratch `read → create` rebuild falls back to the template `docDefaults`
+(Calibri 11pt) for the dominant font/size. `read --ast` stays lossless and
+in-place `edit` never rewrites runs, so only the full rebuild is lossy. There is
+NO comment, anywhere, that drives reconstruction.
+
+**Section breaks specifically** no longer render as bare `---`. `---` round-trips
+as a thematic break (`<HorizontalRule>` → a border paragraph), so emitting it for
+a section silently corrupted layout on `read → create` AND was indistinguishable
+from a real thematic break. Now a section is an own-line `docx:section` visibility
+comment and a hand-authored `---` unambiguously means a thematic break.
 
 ## Adding an mdast node type
 
@@ -89,6 +135,6 @@ If the URL is hash-shaped but the doc carries no matching image, we surface a cl
 - **Multiple references to one footnote** — markdown lets `[^x]` be cited repeatedly; OOXML/Word require a *distinct* footnote definition per reference (Word "repairs" N:1 linkage by cloning). `registerFootnotes` mints one definition clone per reference (`countFootnoteReferences`) and the walker consumes them in document order (`footnoteRefCursor`).
 - **Frontmatter into core properties** — YAML frontmatter is dropped. A follow-up could surface `title:` / `author:` / `date:` into `docProps/core.xml`.
 - **Comment references** — `[^c1]` (the dialect `read --markdown --comments` emits) is treated identically to a footnote reference. Round-tripping `read --comments` import-bound markdown imports the comment body as a footnote, not as a real `<w:comment>` — adding span-anchored comment imports needs the post-splice comment-anchor pass to live on the lens.
-- **Locator HTML comments** — `<!-- p3 -->` markers are dropped by the inline / block walkers. The locator metadata is already implicit in block order, so round-trips reconstruct the locators on the read side.
+- **Locator HTML comments** — `<!-- p3 -->` markers are dropped by the inline / block walkers. The locator metadata is already implicit in block order, so round-trips reconstruct the locators on the read side. The structural visibility annotations (`docx:section`/`docx:page`/`docx:table`) are dropped the same way — see "Structural visibility annotations" below.
 - **Image dimensions overrides** — there's no `--image-width` style flag on `--markdown`; we use the source's intrinsic pixel dimensions. Pass `--width` via standalone `insert --image` for explicit sizing.
 - **Strict CriticMarkup substitution** (`{~~old~>new~~}`) — only `{++…++}` and `{--…--}` are tokenized; substitution would need a third mdast node kind plus a paired `<w:del>` / `<w:ins>` emit.

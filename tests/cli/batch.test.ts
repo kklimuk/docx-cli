@@ -351,3 +351,56 @@ describe("insert --batch", () => {
 		expect((result.parsed as { code?: string }).code).toBe("USAGE");
 	});
 });
+
+describe("--batch empty file → USAGE", () => {
+	test("a zero-entry batch file is rejected for edit / insert / replace", async () => {
+		const path = join(tempWorkspace("empty-batch"), "doc.docx");
+		await runCli("create", path, "--text", "Body.");
+		const empty = join(tempWorkspace("empty-batch-file"), "empty.jsonl");
+		await Bun.write(empty, "");
+
+		for (const verb of ["edit", "insert", "replace"]) {
+			const result = await runCli(verb, path, "--batch", empty);
+			expect(result.exitCode).toBe(2);
+			expect((result.parsed as { code?: string }).code).toBe("USAGE");
+		}
+	});
+});
+
+// edit/insert batch resolve EVERY entry to a live ref before any mutation, so a
+// single unresolvable entry must abort with zero writes — otherwise a weak agent
+// silently half-applies a multi-edit. (replace is sed-like sequential by design
+// and is NOT atomic, so it's deliberately excluded here.)
+describe("--batch atomicity — one bad entry writes nothing", () => {
+	test("edit --batch with an unresolvable locator leaves the file byte-unchanged", async () => {
+		const path = await docWithParagraphs("batch-atomic-edit", [
+			"one",
+			"two",
+			"three",
+		]);
+		const before = await Bun.file(path).bytes();
+		const batch = await writeJsonl("batch-atomic-edit-file", [
+			{ at: "p0", text: "ONE" },
+			{ at: "p99", text: "BAD" },
+		]);
+
+		const result = await runCli("edit", path, "--batch", batch);
+		expect(result.exitCode).toBe(3);
+		expect((result.parsed as { code: string }).code).toBe("BLOCK_NOT_FOUND");
+		expect(await Bun.file(path).bytes()).toEqual(before);
+	});
+
+	test("insert --batch with an unresolvable anchor leaves the file byte-unchanged", async () => {
+		const path = await docWithParagraphs("batch-atomic-insert", ["alpha"]);
+		const before = await Bun.file(path).bytes();
+		const batch = await writeJsonl("batch-atomic-insert-file", [
+			{ after: "p0", text: "GOOD" },
+			{ after: "p77", text: "BAD" },
+		]);
+
+		const result = await runCli("insert", path, "--batch", batch);
+		expect(result.exitCode).toBe(3);
+		expect((result.parsed as { code: string }).code).toBe("BLOCK_NOT_FOUND");
+		expect(await Bun.file(path).bytes()).toEqual(before);
+	});
+});

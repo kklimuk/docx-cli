@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
+import { trackedKinds } from "./helpers";
 
 type FootnoteRefRun = {
 	type: string;
@@ -760,5 +761,140 @@ describe("docx footnotes under track-changes", () => {
 		const unique = new Set(ids);
 		expect(ids.length).toBeGreaterThan(0);
 		expect(unique.size).toBe(ids.length);
+	});
+});
+
+// The "under track-changes" block above drives tracking via the global toggle
+// (`track-changes on`). The per-invocation `--track` flag (forcing one note
+// op tracked while the toggle is OFF) is a separate code path — pinned here.
+describe("footnotes / endnotes — --track forces tracking with the toggle off", () => {
+	test("footnotes add --track records a tracked insertion", async () => {
+		const docPath = await freshDoc("fn-track-add", [
+			"Revenue grew sharply this year.",
+		]);
+		const result = await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0:7",
+			"--text",
+			"FY24 close.",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await trackedKinds(docPath)).toContain("ins");
+	});
+
+	test("footnotes edit --track records a tracked change to the body", async () => {
+		const docPath = await freshDoc("fn-track-edit", [
+			"Revenue grew sharply this year.",
+		]);
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0:7",
+			"--text",
+			"original",
+		);
+		const result = await runCli(
+			"footnotes",
+			"edit",
+			docPath,
+			"--at",
+			"fn1",
+			"--text",
+			"revised",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await trackedKinds(docPath)).length).toBeGreaterThan(0);
+	});
+
+	test("footnotes delete --track records a tracked deletion", async () => {
+		const docPath = await freshDoc("fn-track-del", [
+			"Revenue grew sharply this year.",
+		]);
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0:7",
+			"--text",
+			"doomed",
+		);
+		const result = await runCli(
+			"footnotes",
+			"delete",
+			docPath,
+			"--at",
+			"fn1",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await trackedKinds(docPath)).toContain("del");
+	});
+
+	test("endnotes add --track records a tracked insertion", async () => {
+		const docPath = await freshDoc("en-track-add", [
+			"Endnote anchor text here now.",
+		]);
+		const result = await runCli(
+			"endnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0:8",
+			"--text",
+			"see ref.",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await trackedKinds(docPath)).toContain("ins");
+	});
+
+	test("no --track on an untracked doc records nothing", async () => {
+		const docPath = await freshDoc("fn-track-control", [
+			"Revenue grew sharply this year.",
+		]);
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0:7",
+			"--text",
+			"plain",
+		);
+		expect(await trackedKinds(docPath)).toHaveLength(0);
+	});
+});
+
+describe("docx footnotes — -o parallel write", () => {
+	test("footnotes add -o writes to the output and leaves the source byte-unchanged", async () => {
+		const src = await freshDoc("fn-o-src", ["Revenue grew sharply here."]);
+		const before = await Bun.file(src).bytes();
+		const out = join(tempWorkspace("fn-o-out"), "out.docx");
+
+		const result = await runCli(
+			"footnotes",
+			"add",
+			src,
+			"--at",
+			"p0:7",
+			"--text",
+			"fn",
+			"-o",
+			out,
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { path: string }).path).toBe(out);
+		expect(await Bun.file(src).bytes()).toEqual(before);
+
+		expect((await listFootnotes(out)).length).toBe(1);
+		expect(await listFootnotes(src)).toEqual([]);
 	});
 });

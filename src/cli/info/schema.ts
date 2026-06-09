@@ -155,6 +155,9 @@ const JSON_SCHEMA = {
 				widthEmu: { type: "number" },
 				heightEmu: { type: "number" },
 				alt: { type: "string" },
+				floating: { type: "boolean" },
+				wrap: { type: "string" },
+				align: { type: "string" },
 				trackedChange: {
 					type: "object",
 					required: ["id", "kind", "author", "date", "revisionId"],
@@ -225,6 +228,8 @@ const JSON_SCHEMA = {
 				type: { const: "table" },
 				grid: { type: "array", items: { type: "number" } },
 				width: { $ref: "#/$defs/TableWidth" },
+				borders: { type: "string" },
+				style: { type: "string" },
 				rows: {
 					type: "array",
 					items: {
@@ -242,6 +247,7 @@ const JSON_SCHEMA = {
 										gridSpan: { type: "number" },
 										vMerge: { enum: ["restart", "continue"] },
 										width: { $ref: "#/$defs/TableWidth" },
+										shading: { type: "string" },
 										trackedChange: {
 											$ref: "#/$defs/TableRevision",
 											description: "cellIns / cellDel (tracked column change)",
@@ -289,6 +295,13 @@ const JSON_SCHEMA = {
 				sectionType: {
 					enum: ["continuous", "nextPage", "evenPage", "oddPage", "nextColumn"],
 				},
+				pageWidth: { type: "number" },
+				pageHeight: { type: "number" },
+				pageOrientation: { enum: ["portrait", "landscape"] },
+				marginTop: { type: "number" },
+				marginRight: { type: "number" },
+				marginBottom: { type: "number" },
+				marginLeft: { type: "number" },
 			},
 		},
 		Comment: {

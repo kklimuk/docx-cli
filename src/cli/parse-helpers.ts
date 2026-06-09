@@ -21,6 +21,29 @@ export function parseTaskFlag(value: string): boolean | null {
 	return null;
 }
 
+/** The tracked-change view selected by the `--accepted` / `--baseline` /
+ *  `--current` flags. Shared union across find/replace/read/wc/comments. */
+export type View = "accepted" | "baseline" | "current";
+
+/** Resolve the (mutually exclusive) view flags to a single view. Returns `null`
+ *  when more than one is set, so the caller can emit its own USAGE error with
+ *  the flag wording that command documents. Commands that only expose
+ *  `--current`/`--baseline` simply leave `accepted` undefined. */
+export function resolveView(values: {
+	accepted?: unknown;
+	baseline?: unknown;
+	current?: unknown;
+}): View | null {
+	const set =
+		(values.accepted ? 1 : 0) +
+		(values.baseline ? 1 : 0) +
+		(values.current ? 1 : 0);
+	if (set > 1) return null;
+	if (values.current) return "current";
+	if (values.baseline) return "baseline";
+	return "accepted";
+}
+
 /** Parse a `--runs JSON` argument into a `Run[]`. Shared by insert + edit.
  *  Returns a fail() exit code on malformed JSON or non-array shapes. */
 export async function parseRunsArg(json: string): Promise<Run[] | number> {

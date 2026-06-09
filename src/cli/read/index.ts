@@ -1,4 +1,5 @@
 import { Images } from "@core/image";
+import { resolveView } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -98,17 +99,14 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const viewFlagCount =
-		(accepted ? 1 : 0) + (baseline ? 1 : 0) + (current ? 1 : 0);
-	if (viewFlagCount > 1) {
+	const view = resolveView({ accepted, baseline, current });
+	if (!view) {
 		return fail(
 			"USAGE",
 			"--accepted, --baseline, and --current are mutually exclusive",
 			HELP,
 		);
 	}
-
-	const view = current ? "current" : baseline ? "baseline" : "accepted";
 
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;

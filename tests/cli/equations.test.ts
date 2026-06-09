@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
+import { readDocumentXml } from "./helpers";
 
 /** Canonical equations fixture — see `tests/fixtures/setup/equations.ts`.
  *  Authored by the CLI's `insert --equation` pipeline (LaTeX → temml MathML →
@@ -660,11 +661,3 @@ describe("tracked equation edit (Tier 2)", () => {
 		expect(result.stdout).toContain("Equation not found");
 	});
 });
-
-async function readDocumentXml(docPath: string): Promise<string> {
-	const JSZip = (await import("jszip")).default;
-	const zip = await JSZip.loadAsync(await Bun.file(docPath).bytes());
-	const file = zip.file("word/document.xml");
-	if (!file) throw new Error("document.xml missing from docx");
-	return await file.async("string");
-}

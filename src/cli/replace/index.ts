@@ -1,11 +1,11 @@
 import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
-	type FindView,
 	findTextSpans,
 	replaceSpanInParagraph,
 	type TextMatch,
 	type TrackedReplaceOptions,
 } from "@core/find";
+import { resolveView } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -13,6 +13,7 @@ import {
 	resolveTracked,
 	respond,
 	respondAck,
+	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
@@ -100,10 +101,7 @@ export async function run(args: string[]): Promise<number> {
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
 			exact: { type: "boolean" },
-			output: { type: "string", short: "o" },
-			"dry-run": { type: "boolean" },
-			verbose: { type: "boolean", short: "v" },
-			help: { type: "boolean", short: "h" },
+			...SAVE_FLAGS,
 		},
 		HELP,
 	);
@@ -141,17 +139,11 @@ export async function run(args: string[]): Promise<number> {
 	const ignoreCase = Boolean(parsed.values["ignore-case"]);
 	const useRegex = Boolean(parsed.values.regex);
 	const wantAll = Boolean(parsed.values.all);
-	const wantCurrent = Boolean(parsed.values.current);
-	const wantBaseline = Boolean(parsed.values.baseline);
 	const exact = Boolean(parsed.values.exact);
-	if (wantCurrent && wantBaseline) {
+	const findView = resolveView(parsed.values);
+	if (!findView) {
 		return fail("USAGE", "--current and --baseline are mutually exclusive");
 	}
-	const findView: FindView = wantCurrent
-		? "current"
-		: wantBaseline
-			? "baseline"
-			: "accepted";
 	const limitRaw = parsed.values.limit as string | undefined;
 	const limit = limitRaw === undefined ? undefined : Number(limitRaw);
 	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {

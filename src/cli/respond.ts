@@ -188,6 +188,16 @@ export async function resolveBlockOrFail(
 
 type ParseArgsOptions = NonNullable<Parameters<typeof parseArgs>[0]>["options"];
 
+/** The flags every in-place mutator shares: where to write (`-o`), preview-only
+ *  (`--dry-run`), ack verbosity (`-v`), and `--help`. Spread into a command's
+ *  `tryParseArgs` options so the four specs live in exactly one place. */
+export const SAVE_FLAGS = {
+	output: { type: "string", short: "o" },
+	"dry-run": { type: "boolean" },
+	verbose: { type: "boolean", short: "v" },
+	help: { type: "boolean", short: "h" },
+} as const satisfies ParseArgsOptions;
+
 /** Wrap `parseArgs` with the boilerplate every command repeats: fix
  *  `allowPositionals: true`, catch malformed-flag errors, and translate
  *  them to `fail("USAGE", ...)`. Saves ~7 lines per command vs the inline

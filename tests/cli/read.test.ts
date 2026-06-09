@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { runCli } from "./harness";
+import { runCli, tempWorkspace } from "./harness";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const fixture = (name: string): string => join(FIXTURES, name);
@@ -533,4 +533,212 @@ describe("docx read (markdown) smoke-test all fixtures", () => {
 			expect(result.stdout.length).toBeGreaterThan(0);
 		});
 	}
+});
+
+type OutlineEntry = {
+	id: string;
+	locator: string;
+	level: number;
+	style: string;
+	text: string;
+	children: OutlineEntry[];
+};
+
+describe("docx outline", () => {
+	test("builds a hierarchy from the academic-paper fixture", async () => {
+		const result = await runCli(
+			"outline",
+			"tests/fixtures/academic-paper.docx",
+		);
+		expect(result.exitCode).toBe(0);
+		const payload = result.parsed as OutlineEntry[];
+		const topLevelTexts = payload.map((entry) => entry.text);
+		expect(topLevelTexts).toContain("Guided Imagery");
+		expect(topLevelTexts).toContain("Conclusion");
+		expect(topLevelTexts).toContain("References");
+
+		const guidedImagery = payload.find(
+			(entry) => entry.text === "Guided Imagery",
+		);
+		expect(guidedImagery?.level).toBe(1);
+		expect(guidedImagery?.children.map((child) => child.text)).toEqual([
+			"Features of Guided Imagery",
+			"Guided Imagery in Group Psychotherapy",
+		]);
+		expect(guidedImagery?.children[0]?.level).toBe(2);
+		expect(guidedImagery?.children[0]?.locator).toMatch(/^p\d+$/);
+	});
+
+	test("doc with no headings returns an empty outline", async () => {
+		const workspace = tempWorkspace("outline-empty");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Just a body paragraph.");
+		const result = await runCli("outline", docPath);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toEqual([]);
+	});
+
+	test("--style-prefix targets a non-default style family", async () => {
+		// academic-paper has a "Title" style on p3 — invisible under default Heading
+		// prefix but should surface when we ask for it explicitly.
+		const result = await runCli(
+			"outline",
+			"tests/fixtures/academic-paper.docx",
+			"--style-prefix",
+			"Title",
+		);
+		const payload = result.parsed as OutlineEntry[];
+		expect(payload).toHaveLength(1);
+		expect(payload[0]?.style).toBe("Title");
+		expect(payload[0]?.level).toBe(1);
+	});
+
+	test("skipped levels nest directly under the nearest shallower level", async () => {
+		const workspace = tempWorkspace("outline-skip");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Top",
+			"--style",
+			"Heading1",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--text",
+			"Skipped",
+			"--style",
+			"Heading3",
+		);
+
+		const result = await runCli("outline", docPath);
+		const payload = result.parsed as OutlineEntry[];
+		expect(payload).toHaveLength(1);
+		expect(payload[0]?.text).toBe("Top");
+		expect(payload[0]?.children).toHaveLength(1);
+		expect(payload[0]?.children[0]).toMatchObject({
+			text: "Skipped",
+			level: 3,
+		});
+	});
+
+	test("a Heading-styled paragraph inside a table cell is skipped", async () => {
+		const workspace = tempWorkspace("outline-cell");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Top Heading",
+			"--style",
+			"Heading1",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--table",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		// Style the in-cell paragraph as a Heading2 — outline only walks
+		// top-level blocks, so it must NOT surface.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--markdown",
+			"## In-Cell Heading",
+		);
+
+		const result = await runCli("outline", docPath);
+		const payload = result.parsed as OutlineEntry[];
+		expect(payload).toHaveLength(1);
+		expect(payload[0]?.text).toBe("Top Heading");
+		expect(JSON.stringify(payload)).not.toContain("In-Cell Heading");
+	});
+});
+
+// Paragraph style + alignment that GFM can't show ride a docx:p hint (per the
+// naming rule: bare = locator, docx: = metadata). Deviation-only: styles already
+// conveyed by the construct (#, -, >, fences) and default-left alignment emit
+// nothing. Read-time hints; the importer drops them.
+describe("docx read — paragraph style/alignment hints (docx:p)", () => {
+	async function styledDoc(): Promise<string> {
+		const workspace = tempWorkspace("read-docx-p");
+		const md = join(workspace, "s.md");
+		await Bun.write(md, "# Heading\n\nnormal body\n");
+		const doc = join(workspace, "d.docx");
+		await runCli("create", doc, "--from", md);
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p1",
+			"--text",
+			"A caption",
+			"--style",
+			"Caption",
+		);
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p1",
+			"--text",
+			"Centered",
+			"--alignment",
+			"center",
+		);
+		await runCli(
+			"edit",
+			doc,
+			"--at",
+			"p0",
+			"--text",
+			"Heading",
+			"--alignment",
+			"center",
+		);
+		return doc;
+	}
+
+	test("a non-construct style (Caption) surfaces as docx:p style", async () => {
+		const out = await render(await styledDoc());
+		expect(out).toMatch(/<!-- docx:p p3 style="Caption" -->/);
+	});
+
+	test("non-default alignment surfaces; the bare locator stays", async () => {
+		const out = await render(await styledDoc());
+		expect(out).toContain(
+			'Centered <!-- p2 --> <!-- docx:p p2 align="center" -->',
+		);
+	});
+
+	test("a heading construct gets no style= (but align= still shows)", async () => {
+		const out = await render(await styledDoc());
+		expect(out).toMatch(
+			/# Heading <!-- p0 --> <!-- docx:p p0 align="center" -->/,
+		);
+		expect(out).not.toMatch(/docx:p p0[^>]*style=/);
+	});
+
+	test("a plain Normal/left paragraph gets no docx:p note", async () => {
+		const out = await render(await styledDoc());
+		expect(out).toMatch(/normal body <!-- p1 -->(?! <!-- docx:p)/);
+	});
 });

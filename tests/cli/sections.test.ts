@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
+import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
+import { readMarkdown } from "./helpers";
 
 const SECTIONS_FIXTURE = join(
 	import.meta.dir,
@@ -16,6 +18,13 @@ type SectionBlock = {
 	type: "sectionBreak";
 	columns?: number;
 	sectionType?: string;
+	pageWidth?: number;
+	pageHeight?: number;
+	pageOrientation?: "portrait" | "landscape";
+	marginTop?: number;
+	marginRight?: number;
+	marginBottom?: number;
+	marginLeft?: number;
 };
 
 type ParagraphBlock = {
@@ -404,7 +413,20 @@ describe("sections.docx fixture", () => {
 			{ id: "s4", type: "sectionBreak", columns: 1, sectionType: "nextPage" },
 			{ id: "s5", type: "sectionBreak", columns: 1, sectionType: "evenPage" },
 			{ id: "s6", type: "sectionBreak", columns: 1, sectionType: "oddPage" },
-			{ id: "s7", type: "sectionBreak", columns: 2, sectionType: "continuous" },
+			// The trailing (mandatory) sectPr carries the document-wide page
+			// geometry; the inline breaks above inherit it and surface none.
+			{
+				id: "s7",
+				type: "sectionBreak",
+				columns: 2,
+				sectionType: "continuous",
+				pageWidth: 12240,
+				pageHeight: 15840,
+				marginTop: 1440,
+				marginRight: 1440,
+				marginBottom: 1440,
+				marginLeft: 1440,
+			},
 		]);
 	});
 
@@ -532,5 +554,151 @@ describe("sections.docx fixture", () => {
 			);
 			expect(result.exitCode).toBe(0);
 		}
+	});
+});
+
+// Read-side rendering of section breaks + page geometry. These are read-time
+// VISIBILITY hints (per "comments are never anything but hints") — the bare `---`
+// is gone (it round-tripped as a thematic break, corrupting layout), and page
+// geometry deviations ride a leading docx:page note.
+describe("section breaks render as docx:section, not bare ---", () => {
+	test("a mid-doc section is an own-line docx:section hint with cols/type", async () => {
+		const md = await readMarkdown(SECTIONS_FIXTURE);
+		expect(md).not.toContain("---");
+		expect(md).toContain('<!-- docx:section s1 cols="2" type="continuous" -->');
+		// cols=1 is the default → suppressed; type still shown.
+		expect(md).toContain('<!-- docx:section s0 type="continuous" -->');
+		// The trailing mandatory section break is suppressed entirely.
+		expect(md).not.toContain("docx:section s7");
+	});
+});
+
+describe("docx:page note (deviation-only page geometry)", () => {
+	/** Rewrite a created doc's trailing sectPr geometry (no authoring verb sets
+	 *  page setup yet) so we can exercise non-default geometry. */
+	async function withGeometry(
+		path: string,
+		pgSz: string,
+		pgMar: string,
+	): Promise<void> {
+		const zip = await JSZip.loadAsync(await Bun.file(path).bytes());
+		const entry = zip.file("word/document.xml");
+		if (!entry) throw new Error("document.xml missing");
+		const xml = (await entry.async("string"))
+			.replace(/<w:pgSz[^/]*\/>/, pgSz)
+			.replace(/<w:pgMar[^/]*\/>/, pgMar);
+		zip.file("word/document.xml", xml);
+		await Bun.write(path, await zip.generateAsync({ type: "uint8array" }));
+	}
+
+	async function defaultDoc(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const md = join(workspace, "x.md");
+		await Bun.write(md, "# T\n\nhello\n");
+		const doc = join(workspace, "x.docx");
+		await runCli("create", doc, "--from", md);
+		return doc;
+	}
+
+	test("a plain default-Letter doc emits no page note", async () => {
+		const md = await readMarkdown(await defaultDoc("page-default"));
+		expect(md).not.toContain("docx:page");
+	});
+
+	test("landscape + narrow margins surface orientation, margins, text-width", async () => {
+		const doc = await defaultDoc("page-landscape");
+		await withGeometry(
+			doc,
+			'<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>',
+			'<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="720" w:footer="720" w:gutter="0"/>',
+		);
+		const md = await readMarkdown(doc);
+		expect(md).toContain('orientation="landscape"');
+		// Landscape Letter is still Letter — size is suppressed.
+		expect(md).not.toContain("size=");
+		expect(md).toContain('margins="0.5in"');
+		expect(md).toContain('text-width="10in"'); // 15840 − 720 − 720 = 14400tw = 10in
+	});
+
+	// <w:pgSz> is schema-optional — a section can set non-default margins yet
+	// inherit page size. Keying geometry detection on pageWidth alone treated this
+	// as "no geometry": the margin deviation was hidden AND content width fell back
+	// to the 6.5in default, mis-flagging image overflow.
+	test("non-default margins with no <w:pgSz> still surface a page note + correct text-width", async () => {
+		const doc = await defaultDoc("page-marginsonly");
+		const zip = await JSZip.loadAsync(await Bun.file(doc).bytes());
+		const entry = zip.file("word/document.xml");
+		if (!entry) throw new Error("document.xml missing");
+		const xml = (await entry.async("string"))
+			.replace(/<w:pgSz[^/]*\/>/, "") // drop page size entirely
+			.replace(
+				/<w:pgMar[^/]*\/>/,
+				'<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="720" w:footer="720" w:gutter="0"/>',
+			);
+		zip.file("word/document.xml", xml);
+		await Bun.write(doc, await zip.generateAsync({ type: "uint8array" }));
+
+		const md = await readMarkdown(doc);
+		expect(md).toContain('margins="0.5in"');
+		// Default Letter width (12240) − 720 − 720 = 10800tw = 7.5in (the real
+		// margins applied against the inherited default page width).
+		expect(md).toContain('text-width="7.5in"');
+	});
+
+	test("a non-Letter size (A4) surfaces the size attribute, exact twips in --ast", async () => {
+		const doc = await defaultDoc("page-a4");
+		await withGeometry(
+			doc,
+			'<w:pgSz w:w="11906" w:h="16838"/>',
+			'<w:pgMar w:top="1440" w:right="1134" w:bottom="1440" w:left="1134" w:header="720" w:footer="720" w:gutter="0"/>',
+		);
+		// twipsToInches uses 3 decimals (margins need 1/8" precision), so A4's
+		// non-round inches show in full.
+		expect(await readMarkdown(doc)).toContain('size="8.268x11.693in"');
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: SectionBlock[];
+		};
+		const trailing = ast.blocks
+			.filter((block) => block.type === "sectionBreak")
+			.pop();
+		expect(trailing?.pageWidth).toBe(11906);
+		expect(trailing?.marginLeft).toBe(1134);
+	});
+});
+
+// Layout is pure-visibility: the importer drops docx:section, so a full
+// read → create rebuild doesn't reconstruct sections (it doesn't corrupt them
+// into border paragraphs either). A hand-authored `---` is a thematic break.
+describe("section layout is pure-visibility on import", () => {
+	test("read → create drops mid-doc section breaks (only trailing remains)", async () => {
+		const workspace = tempWorkspace("section-vis");
+		const md = await readMarkdown(SECTIONS_FIXTURE);
+		expect(md).toContain("docx:section");
+		const mdPath = join(workspace, "s.md");
+		await Bun.write(mdPath, md);
+		const rebuilt = join(workspace, "rebuilt.docx");
+		expect((await runCli("create", rebuilt, "--from", mdPath)).exitCode).toBe(
+			0,
+		);
+		const ast = (await runCli("read", rebuilt, "--ast")).parsed as {
+			blocks: SectionBlock[];
+		};
+		const breaks = ast.blocks.filter((block) => block.type === "sectionBreak");
+		expect(breaks).toHaveLength(1); // just the trailing mandatory sectPr
+		expect(await readMarkdown(rebuilt)).not.toContain("---");
+	});
+
+	test("a hand-authored --- is a thematic break, not a section break", async () => {
+		const workspace = tempWorkspace("thematic-break");
+		const mdPath = join(workspace, "hr.md");
+		await Bun.write(mdPath, "# Title\n\nbefore\n\n---\n\nafter\n");
+		const doc = join(workspace, "hr.docx");
+		expect((await runCli("create", doc, "--from", mdPath)).exitCode).toBe(0);
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: SectionBlock[];
+		};
+		// Only the trailing mandatory sectPr — the `---` became a border paragraph.
+		expect(ast.blocks.filter((b) => b.type === "sectionBreak")).toHaveLength(1);
+		expect(await readMarkdown(doc)).not.toContain("docx:section");
 	});
 });

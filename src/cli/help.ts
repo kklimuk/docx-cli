@@ -18,6 +18,8 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   replace   FILE PATTERN REPL  Substitute text spans, sed-style (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern script)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
+  columns   FILE  Lay a paragraph range out in N columns (--at pN-pM --count N) or recount a section (--at sN)
+  styles    FILE  List the styles you can apply (--used for ones in use; --at ID to describe one) — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
   comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
   footnotes …     Add (--at | --anchor PHRASE), edit, delete, list footnotes (--text/--runs/--markdown bodies)

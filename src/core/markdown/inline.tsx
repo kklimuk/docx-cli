@@ -66,12 +66,6 @@ export type WalkContext = {
 	 *  The lens preallocates an author/date pair so all tracked nodes from
 	 *  one import share metadata. */
 	mintTrackedMeta?: () => TrackedMeta;
-	/** Document baseline run formatting from a `<!-- docx:base … -->` note (see
-	 *  `parseDocBaseNote`). Seeds every run so font/size that `read` omitted come
-	 *  back explicit — the read↔create round-trip. Undefined for hand-authored
-	 *  markdown / fragments with no note. NOT applied to footnote bodies (their
-	 *  smaller size comes from the FootnoteText style, not the body baseline). */
-	baselineFormat?: InlineFormat;
 };
 
 /** Walk a sequence of phrasing nodes into `<w:p>`-child siblings: `<w:r>`,
@@ -83,9 +77,8 @@ export function walkInline(
 	ctx: WalkContext,
 ): XmlNode[] {
 	const out: XmlNode[] = [];
-	const seed = ctx.baselineFormat ?? EMPTY_FORMAT;
 	for (const node of nodes) {
-		for (const child of walkPhrasing(node, ctx, seed)) out.push(child);
+		for (const child of walkPhrasing(node, ctx, EMPTY_FORMAT)) out.push(child);
 	}
 	return out;
 }

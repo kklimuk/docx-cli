@@ -40,6 +40,17 @@ export type Table = {
 	/** Table-level width from <w:tblPr><w:tblW/>. Optional — absent means
 	 * "auto" (sum of grid). `unit` matches OOXML's w:type attribute. */
 	width?: TableWidth;
+	/** Summary of `<w:tblPr><w:tblBorders>` — the dominant edge style across the
+	 * six edges (`"single"` / `"double"` / `"none"` / …), or `"mixed"` when edges
+	 * differ. Present only when the table declares explicit borders. A SUMMARY for
+	 * visibility (GFM shows none); full per-edge fidelity stays in the XML via
+	 * in-place mutation, and `docx tables borders` is the way to set them. */
+	borders?: string;
+	/** Table style applied via `<w:tblPr><w:tblStyle w:val="…"/>` (e.g.
+	 * "TableGrid") — a reference into styles.xml, distinct from the inline
+	 * `borders` summary. Surfaced so `styles --used` can report the table styles
+	 * a document actually applies. Present only when the table references one. */
+	style?: string;
 	rows: TableRow[];
 };
 
@@ -67,6 +78,11 @@ export type TableCell = {
 	/** Cell-level width override from <w:tcPr><w:tcW/>. Falls back to the
 	 * grid column's width if absent. */
 	width?: TableWidth;
+	/** Cell background fill hex from `<w:tcPr><w:shd w:fill="…"/>` (6-digit,
+	 * uppercase), when set to a real color (not `auto`). Surfaced as a read-time
+	 * hint — GFM can't show cell shading; the fill survives edits via in-place
+	 * mutation. */
+	shading?: string;
 };
 
 export type TableWidth = {
@@ -81,6 +97,20 @@ export type SectionBreak = {
 	type: "sectionBreak";
 	columns?: number;
 	sectionType?: SectionType;
+	/** Page geometry from `<w:sectPr><w:pgSz>` / `<w:pgMar>`, in twips (1/20 pt
+	 * — the OOXML native unit, matching the table grid). Present only when the
+	 * sectPr declares the attribute. The trailing (mandatory) section break
+	 * carries the document-wide geometry; an inline sectPr usually omits these
+	 * (it inherits). `read --markdown` surfaces deviations from the canonical
+	 * default (US Letter portrait, 1″ margins) as a leading `<!-- docx:page -->`
+	 * note; `read --ast` carries the exact twips. Margins may be negative. */
+	pageWidth?: number;
+	pageHeight?: number;
+	pageOrientation?: "portrait" | "landscape";
+	marginTop?: number;
+	marginRight?: number;
+	marginBottom?: number;
+	marginLeft?: number;
 };
 
 export type SectionType =
@@ -151,6 +181,18 @@ export type ImageRun = {
 	widthEmu?: number;
 	heightEmu?: number;
 	alt?: string;
+	/** True when the drawing is `<wp:anchor>` (floating — positioned out of the
+	 * text flow with wrap) rather than `<wp:inline>` (the default, flows with the
+	 * text). `read --markdown` surfaces this; GFM can only show the inline shape. */
+	floating?: boolean;
+	/** Text-wrap mode of a floating image, from the `<wp:wrap*>` child:
+	 * `square` / `tight` / `through` / `topAndBottom` / `none`. Absent for inline
+	 * images. */
+	wrap?: string;
+	/** Horizontal placement of a floating image from `<wp:positionH>`:
+	 * `left` / `center` / `right` (a `<wp:align>`), or `absolute` (a fixed
+	 * `<wp:posOffset>`). Absent for inline images (they flow with the text). */
+	align?: string;
 	trackedChange?: TrackedChange;
 };
 
