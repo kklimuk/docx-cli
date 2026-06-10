@@ -13,7 +13,16 @@ HTML comments, built via `formatNote` / `htmlAttr` in [read/annotations.ts](read
 These are read-time VISIBILITY hints — the importer DROPS them all (the structure
 survives edits in place, `read --ast` is lossless, and the authoring verbs manage
 it), emitted **deviation-only** (only what differs from the document default).
-Today: `docx:section`, `docx:page`, `docx:table`, and per-cell merge/shading hints.
+Today: `docx:section` (with an `applies-to="pX..pY (above)"` scope on deviating
+sections), `docx:page`, `docx:table`, per-cell merge/shading hints, a head
+`docx:track-changes on` when the doc's tracking toggle is enabled, and
+`docx:layout` on a tab-aligned paragraph that wraps — either inside a multi-column
+section (tab stops wrap mid-line there) or a line whose trailing content sits on a
+right-edge LEFT tab so a long value overflows the margin (the résumé
+`San`/`Francisco` split). The latter warn names its cure: `edit --at pN --tabs
+right` swaps the LEFT tab for a RIGHT tab flush at the margin (in `cli/edit/tabs.ts`,
+emitted via `ParagraphOptions.tabs`), so the content right-aligns instead of
+wrapping. Both are render-only breaks Markdown can't show.
 Full contract in [src/core/markdown/CLAUDE.md](../core/markdown/CLAUDE.md). New
 structural annotation? Use `formatNote`, keep it deviation-only, and remember the
 importer won't reconstruct it — NO comment is parse-back, not even `docx:base`.

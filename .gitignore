@@ -61,7 +61,7 @@ temp/
 
 # Local sample / scratch docs
 scripts/data/
-prd/
+product-notes/
 
 # worktrees
 .worktrees/

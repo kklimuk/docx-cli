@@ -75,7 +75,7 @@ float/wrap/align/overflow deviation-only, carrying the `imgN` id).
 The importer DROPS every one: `walkBlock`'s `case "html"` returns `[]`, and the
 inline walker drops inline comments. The structure survives normal edits via
 in-place XML mutation; `read --ast` is the lossless view; and the authoring verbs
-(`docx columns`, `insert --section`, `docx tables …`) manage it. So a from-scratch
+(`docx sections`, `docx tables …`) manage it. So a from-scratch
 `create` is deliberately lossy for non-Markdown structure (a section break read →
 created vanishes rather than corrupting into a border paragraph) — but the agent
 SAW it in the read output. Re-emitted fresh each read, so they never accrete.

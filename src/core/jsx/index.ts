@@ -67,6 +67,7 @@ const W_TAGS = [
 	"rFonts",
 	"br",
 	"tab",
+	"tabs",
 	"drawing",
 	"sectPr",
 	"sectPrChange",

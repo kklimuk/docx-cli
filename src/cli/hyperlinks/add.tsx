@@ -36,6 +36,9 @@ ${AT_FORMS}
   --url URL         Target URL
 
 Optional:
+  --no-style        Don't apply Word's "Hyperlink" character style (blue +
+                    underline). By default the wrapped text is styled so the link
+                    is visibly a link; pass this to keep the original run look.
   --author NAME     Author for the audit comment when track-changes is on
                     (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -72,6 +75,7 @@ export async function run(args: string[]): Promise<number> {
 			at: { type: "string" },
 			url: { type: "string" },
 			author: { type: "string" },
+			"no-style": { type: "boolean" },
 			...SAVE_FLAGS,
 		},
 		HELP,
@@ -134,6 +138,7 @@ export async function run(args: string[]): Promise<number> {
 	try {
 		new Hyperlinks(document).add(paragraphRef.node, target.span, url, {
 			author: parsed.values.author as string | undefined,
+			style: !parsed.values["no-style"],
 		});
 	} catch (error) {
 		if (error instanceof HyperlinkWrapError) {

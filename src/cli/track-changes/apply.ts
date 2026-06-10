@@ -10,6 +10,11 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import {
+	expandRevisionTargets,
+	revisionGroups,
+	UnknownRevisionError,
+} from "./groups";
 
 export type ApplyVerb = "accept" | "reject";
 
@@ -51,8 +56,30 @@ export async function runApply(
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	const target = all ? "all" : (atRaw ?? []);
 	const trackChanges = new TrackChanges(document);
+	// `--at revN` addresses a del+ins replace pair (from `list`'s `group` field) and
+	// expands to both member tcNs, so one logical change is one call — no re-list
+	// between halves. tcN/--all are untouched.
+	let target: "all" | string[];
+	if (all) {
+		target = "all";
+	} else {
+		try {
+			target = expandRevisionTargets(
+				atRaw ?? [],
+				revisionGroups(trackChanges.list()),
+			);
+		} catch (error) {
+			if (error instanceof UnknownRevisionError) {
+				return fail(
+					"TRACKED_CHANGE_NOT_FOUND",
+					error.message,
+					"Run 'docx track-changes list FILE' — revN handles appear as the `group` field on paired changes.",
+				);
+			}
+			throw error;
+		}
+	}
 	const outputPath = parsed.values.output as string | undefined;
 
 	try {

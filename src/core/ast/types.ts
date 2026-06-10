@@ -27,6 +27,13 @@ export type Paragraph = {
 	 * them at top level, breaking the quote at that point. See
 	 * [src/core/markdown/CLAUDE.md](../markdown/CLAUDE.md). */
 	quoteDepth?: number;
+	/** Explicit tab stops from `<w:pPr><w:tabs>`, each `{ align, pos }` (pos in
+	 * twips). Surfaced so `read` can flag a fragile right-alignment: a LEFT (or
+	 * center) tab stop near the right margin pushes content rightward but — unlike
+	 * a RIGHT tab — wraps anything wider than the gap to the margin (the résumé
+	 * "San / Francisco, CA" break). Present only when the paragraph declares
+	 * explicit tab stops. */
+	tabStops?: { align: string; pos: number }[];
 	runs: Run[];
 };
 

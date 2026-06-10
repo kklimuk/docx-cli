@@ -2,9 +2,14 @@
  *
  * `read` surfaces structural document facts the GFM body can't show as HTML
  * comments shaped `<!-- docx:TYPE [bareId] key="value" … -->` — section breaks
- * (`docx:section`), page geometry (`docx:page`), table widths/borders
- * (`docx:table`), per-cell merge/shading (`docx:cell`), and image
- * size/placement (`docx:image`).
+ * (`docx:section`, carrying an `applies-to="pX..pY (above)"` scope on deviating
+ * sections so the columns/type are unambiguously tied to the content they
+ * govern), page geometry (`docx:page`), table widths/borders (`docx:table`),
+ * per-cell merge/shading (`docx:cell`), image size/placement (`docx:image`),
+ * the document-level track-changes state (`docx:track-changes on`, at the head,
+ * deviation-only), and a layout hazard (`docx:layout`) on a tab-aligned paragraph
+ * inside a multi-column section, where tab stops wrap mid-line in the narrow
+ * column — a render-only break Markdown can't show.
  *
  * NAMING RULE: a BARE comment is a locator (`<!-- p0 -->`, `<!-- t0:r0c0:p0 -->`)
  * — pure addressing. Anything docx-cli adds BEYOND an address is a `docx:TYPE`
@@ -16,7 +21,7 @@
  * importer DROPS every one of them (`walker.tsx` returns `[]` for block `html`
  * nodes; the inline walker drops inline comments). The structure survives normal
  * edits via in-place XML mutation, `read --ast` is the lossless view, and the
- * authoring verbs (`docx columns`, `insert --section`, `docx tables …`) manage
+ * authoring verbs (`docx sections`, `docx tables …`) manage
  * it — so a from-scratch `create` is deliberately lossy for non-Markdown
  * structure, but the agent SAW it. Re-emitted fresh on every read, so they never
  * accrete. No comment is parse-back — not even `docx:base` (the run-formatting

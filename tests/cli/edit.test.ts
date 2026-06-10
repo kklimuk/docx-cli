@@ -705,6 +705,203 @@ async function docFrom(label: string, md: string): Promise<string> {
 	return docPath;
 }
 
+describe("edit --text preserves the format boundary at a tab (no bold-bleed)", () => {
+	// The résumé pattern: a BOLD org name, a tab, then a PLAIN city. A whole-
+	// paragraph --text edit used to demote the tab "keep" and merge the two
+	// format regions into one diff group, bleeding the org's bold across the tab
+	// into the city ("Lincoln High School⇥Portland, OR" → "Portland," bold).
+	test("a bold-org / tab / plain-city line keeps the new city plain", async () => {
+		const workspace = tempWorkspace("tab-boundary");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Globex","bold":true},{"type":"tab"},{"type":"text","text":"Reston, VA"}]',
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p1",
+					"--text",
+					"Initech Corporation\tBoston, MA",
+				)
+			).exitCode,
+		).toBe(0);
+		const line = (await runCli("read", docPath, "--from", "p1", "--to", "p1"))
+			.stdout;
+		// Everything after the tab (the city) must carry NO bold markers.
+		const afterTab = (line.split("\t")[1] ?? "").replace(/<!--.*$/, "");
+		expect(afterTab).toContain("Boston, MA");
+		expect(afterTab).not.toContain("**");
+	});
+
+	// The twin defect (bold LOSS, not bleed): the résumé title line is bold "Position
+	// Title", a tab, a BOLD SPACE (`<b> </b>`), then a plain date. The naive `\s+`
+	// tokenizer glued the tab to that bold space into one old token "\t " that never
+	// matched the new "\t", so the tab stopped being a keep-boundary and the LAST word
+	// before the tab ("Intern", "Lead") got positionally paired across it and lost bold.
+	test("a bold space after the tab doesn't strip bold from the last word before it", async () => {
+		const workspace = tempWorkspace("tab-bold-space");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Position Title","bold":true},{"type":"tab"},{"type":"text","text":" ","bold":true},{"type":"text","text":"Month Year"}]',
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p1",
+					"--text",
+					"Software Engineering Intern\tJun 2025 – Aug 2025",
+				)
+			).exitCode,
+		).toBe(0);
+		const line = (await runCli("read", docPath, "--from", "p1", "--to", "p1"))
+			.stdout;
+		const beforeTab = line.split("\t")[0] ?? "";
+		// The ENTIRE title (through "Intern") stays bold — one `**…Intern**` span.
+		expect(beforeTab).toContain("**Software Engineering Intern**");
+		// And the date after the tab stays plain.
+		const afterTab = (line.split("\t")[1] ?? "").replace(/<!--.*$/, "");
+		expect(afterTab).not.toContain("**");
+	});
+});
+
+describe("edit --text rejects markdown-looking values (use --markdown)", () => {
+	test("paired **bold** is refused with a redirect to --markdown", async () => {
+		const docPath = await docFrom("md-guard-bold", "Plain.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Skills **and** Interests",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { hint: string }).hint).toContain("--markdown");
+	});
+
+	test("a leading heading and a link are refused", async () => {
+		const docPath = await docFrom("md-guard-more", "Plain.\n");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0", "--text", "# Title"))
+				.exitCode,
+		).toBe(2);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"see [docs](http://x.io)",
+				)
+			).exitCode,
+		).toBe(2);
+	});
+
+	test("literal text with stray *, %, $, parens is NOT a false positive", async () => {
+		const docPath = await docFrom("md-guard-ok", "Plain.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Cost is $5 (5%) * 2 items",
+		);
+		expect(result.exitCode).toBe(0);
+	});
+
+	test("--markdown accepts the same bold value (the right verb)", async () => {
+		const docPath = await docFrom("md-guard-redirect", "Plain.\n");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--markdown",
+					"Skills **and** Interests",
+				)
+			).exitCode,
+		).toBe(0);
+	});
+});
+
+// The two "major" currency bugs in the adversarial review were one root cause:
+// a weak agent double-quotes a `$`-bearing value in bash, the shell eats `$NN`
+// ("$300.00" → ".00", "$10,000" → ",000"), and docx faithfully writes the gutted
+// value. We can't fix bash, so we refuse the shell-gutted signature at the door.
+describe("edit --text rejects shell-gutted currency (bare .NN / ,NNN)", () => {
+	test("gutted cents ('.00') is refused with a single-quote/--batch hint", async () => {
+		const docPath = await docFrom("shell-guard-cents", "Plain.\n");
+		const result = await runCli("edit", docPath, "--at", "p0", "--text", ".00");
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		const hint = (result.parsed as { hint: string }).hint;
+		expect(hint).toContain("SINGLE quotes");
+		expect(hint).toContain("--batch");
+	});
+
+	test("gutted thousands (',000') inside a sentence is refused", async () => {
+		const docPath = await docFrom("shell-guard-thousands", "Plain.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"liquidated damages of ,000, which",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("correctly-passed $300.00 and $10,000 are NOT false positives", async () => {
+		const docPath = await docFrom("shell-guard-ok", "Plain.\n");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Pay $300.00 and $10,000 now",
+				)
+			).exitCode,
+		).toBe(0);
+	});
+
+	test("legit $.99 cents (dollar precedes the dot) is NOT a false positive", async () => {
+		const docPath = await docFrom("shell-guard-cents-ok", "Plain.\n");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0", "--text", "Costs $.99 each"))
+				.exitCode,
+		).toBe(0);
+	});
+});
+
 describe("edit preserves paragraph style on plain whole-paragraph edits", () => {
 	test("--markdown plain text on a heading keeps the heading style", async () => {
 		const docPath = await docFrom("md-heading", "# Quarterly Design Review\n");
@@ -758,6 +955,32 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 		expect(await readDocumentXml(docPath)).toContain('<w:jc w:val="center"');
 	});
 
+	test("a fresh-run replace (--bold) keeps the heading style, not just alignment", async () => {
+		// The resume adversarial run's judge claimed `edit --text … --bold` demoted a
+		// Heading1 — it does not. The fresh-run path inherits the old <w:pPr>
+		// (pStyle included), so the heading survives even with a run-format flag.
+		const docPath = await docFrom("heading-bold", "# Section Header\n");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Section Header",
+					"--bold",
+				)
+			).exitCode,
+		).toBe(0);
+		const block = (
+			(await runCli("read", docPath, "--ast")).parsed as {
+				blocks: Array<{ id: string; style?: string }>;
+			}
+		).blocks[0];
+		expect(block?.style).toBe("Heading1");
+	});
+
 	test("--markdown that sets its own block style wins (## → Heading2)", async () => {
 		const docPath = await docFrom("md-override", "# Big\n");
 		expect(
@@ -769,6 +992,46 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 			ast.parsed as { blocks: Array<{ id: string; style?: string }> }
 		).blocks[0];
 		expect(block?.style).toBe("Heading2");
+	});
+
+	test("--style alone (no content) restyles in place, keeping the text", async () => {
+		const docPath = await docFrom("style-only", "Skills & Interests\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--style",
+			"Heading1",
+		);
+		expect(result.exitCode).toBe(0);
+		const block = (
+			(await runCli("read", docPath, "--ast")).parsed as {
+				blocks: Array<{
+					id: string;
+					style?: string;
+					runs?: { text: string }[];
+				}>;
+			}
+		).blocks[0];
+		expect(block?.style).toBe("Heading1");
+		expect(block?.runs?.map((r) => r.text).join("")).toBe("Skills & Interests");
+	});
+
+	test("--alignment alone (no content) re-aligns in place", async () => {
+		const docPath = await docFrom("align-only", "Centered\n");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0", "--alignment", "center"))
+				.exitCode,
+		).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain('<w:jc w:val="center"');
+	});
+
+	test("no content AND no --style/--alignment still errors", async () => {
+		const docPath = await docFrom("no-content", "Plain\n");
+		const result = await runCli("edit", docPath, "--at", "p0");
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toContain("Missing content");
 	});
 
 	test("rewording a plain paragraph does not invent a heading", async () => {
@@ -1461,7 +1724,9 @@ describe("docx wc pN-pM", () => {
 		await runCli("insert", docPath, "--after", "p0", "--text", "gamma delta");
 		await runCli("track-changes", docPath, "on");
 		// Tracked delete the second paragraph's text — its runs get <w:del>'d.
-		await runCli("edit", docPath, "--at", "p1", "--text", "");
+		// (`--runs '[]'` blanks the paragraph but keeps it; `--text ""` is rejected
+		// as ambiguous — it would point at `delete` to remove the line instead.)
+		await runCli("edit", docPath, "--at", "p1", "--runs", "[]");
 		await runCli("track-changes", docPath, "off");
 
 		// p0 has 2 words; p1's text is del-wrapped (accepted view skips it).
@@ -1695,11 +1960,10 @@ describe("range edit preserves inline sectPr (section break) on the endpoint", (
 		const docPath = join(tempWorkspace(label), "out.docx");
 		await runCli("create", docPath, "--text", "Body 1.");
 		await runCli(
-			"insert",
+			"sections",
 			docPath,
-			"--after",
+			"--at",
 			"p0",
-			"--section",
 			"--columns",
 			"2",
 			"--type",
@@ -1783,5 +2047,237 @@ describe("docx edit/delete --at pN-pN (degenerate range)", () => {
 			"Paragraph 4.",
 			"Paragraph 5.",
 		]);
+	});
+});
+
+// The tab-stop cure: `edit --tabs right` converts the fragile right-edge LEFT tab
+// (which left-aligns trailing content from a fixed point so a long value overflows
+// the margin and wraps — the résumé `San`/`Francisco` split) into a RIGHT tab flush
+// at the text margin, which never wraps. `read` flags the hazard as `docx:layout
+// warn=` and the warn text now names this command.
+describe("edit --tabs (tab-stop cure)", () => {
+	type TabStop = { align: string; pos: number };
+	async function tabStops(docPath: string, id: string): Promise<TabStop[]> {
+		const ast = JSON.parse((await runCli("read", docPath, "--ast")).stdout) as {
+			blocks: { id: string; tabStops?: TabStop[] }[];
+		};
+		return ast.blocks.find((b) => b.id === id)?.tabStops ?? [];
+	}
+
+	// A default `create` doc is US-Letter (12240tw) with 1in margins → 9360tw content.
+	const MARGIN_TWIPS = 9360;
+
+	async function tabbedDoc(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Org","bold":true},{"type":"tab"},{"type":"text","text":"City, State"}]',
+		);
+		return docPath;
+	}
+
+	test("--tabs right sets a single right tab flush at the margin", async () => {
+		const docPath = await tabbedDoc("tabs-right");
+		expect(
+			(await runCli("edit", docPath, "--at", "p1", "--tabs", "right")).exitCode,
+		).toBe(0);
+		const stops = await tabStops(docPath, "p1");
+		expect(stops).toEqual([{ align: "right", pos: MARGIN_TWIPS }]);
+	});
+
+	test("--tabs right REPLACES an existing left tab (doesn't append)", async () => {
+		const docPath = await tabbedDoc("tabs-replace");
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@2in");
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "left", pos: 2880 },
+		]);
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "right");
+		// One stop, not two — the cure swaps the tab, it doesn't stack.
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+	});
+
+	test("--tabs clear removes the paragraph's tab stops", async () => {
+		const docPath = await tabbedDoc("tabs-clear");
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@2in");
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "clear");
+		expect(await tabStops(docPath, "p1")).toEqual([]);
+	});
+
+	test("--tabs right rides along with --text (fill AND cure in one call)", async () => {
+		const docPath = await tabbedDoc("tabs-with-text");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p1",
+					"--text",
+					"Northwind Robotics\tSan Francisco, CA",
+					"--tabs",
+					"right",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+		// The text landed too, with bold preserved on the org and plain on the city.
+		const line = (await runCli("read", docPath, "--from", "p1", "--to", "p1"))
+			.stdout;
+		expect(line).toContain("**Northwind Robotics**");
+		const afterTab = (line.split("\t")[1] ?? "").replace(/<!--.*$/, "");
+		expect(afterTab).toContain("San Francisco, CA");
+		expect(afterTab).not.toContain("**");
+	});
+
+	test("--tabs alone (no content) is a valid in-place edit", async () => {
+		const docPath = await tabbedDoc("tabs-only");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--tabs",
+			"right",
+		);
+		expect(result.exitCode).toBe(0);
+	});
+
+	test("an explicit list sets each stop at its inch position", async () => {
+		const docPath = await tabbedDoc("tabs-explicit");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--tabs",
+			"left@1in,right@7.5in",
+		);
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "left", pos: 1440 },
+			{ align: "right", pos: 10800 },
+		]);
+	});
+
+	test("an invalid --tabs value is rejected with a hint", async () => {
+		const docPath = await tabbedDoc("tabs-bad");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--tabs",
+			"sideways",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("--tabs works per-entry in --batch", async () => {
+		const docPath = await tabbedDoc("tabs-batch");
+		const batch = join(tempWorkspace("tabs-batch-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p1", text: "Acme\tBoston, MA", tabs: "right" })}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+	});
+
+	// The one-call cure: a RANGE locator cures every tab-using line in the span at
+	// once (read's "fix-all" command), and skips paragraphs that have no tab stops.
+	test("--at pN-pM --tabs right cures every tab line in the range in one call", async () => {
+		const workspace = tempWorkspace("tabs-range");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		// p1 + p3 are tab lines (give them a left tab stop); p2 is a plain paragraph.
+		for (const after of ["p0", "p1", "p2"]) {
+			await runCli("insert", docPath, "--after", after, "--text", "filler");
+		}
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@2in");
+		await runCli("edit", docPath, "--at", "p3", "--tabs", "left@2in");
+
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1-p3",
+			"--tabs",
+			"right",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+		expect(await tabStops(docPath, "p3")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+		// The plain paragraph in the middle got no tab stop (cure only touches lines
+		// that already have one).
+		expect(await tabStops(docPath, "p2")).toEqual([]);
+	});
+
+	test("--at pN-pM --tabs right with no tab lines in range reports clearly", async () => {
+		const workspace = tempWorkspace("tabs-range-empty");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli("insert", docPath, "--after", "p0", "--text", "plain");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--tabs",
+			"right",
+		);
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
+	});
+});
+
+// The empty-text trap (Sonnet-surfaced): `--text ""` leaves an invisible blank
+// paragraph, not a removed line. We reject it and disambiguate — `delete` to
+// remove, `--runs '[]'` to blank but keep.
+describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)", () => {
+	test("single-shot empty --text points at delete", async () => {
+		const docPath = await docFrom("empty-text", "Drop me.\n");
+		const result = await runCli("edit", docPath, "--at", "p0", "--text", "");
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { hint: string }).hint).toContain(
+			"delete --at p0",
+		);
+	});
+
+	test("batch empty text points at delete --batch", async () => {
+		const docPath = await docFrom("empty-text-batch", "Drop me.\n");
+		const batch = join(tempWorkspace("empty-text-batch-file"), "b.jsonl");
+		await Bun.write(batch, `${JSON.stringify({ at: "p0", text: "" })}\n`);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { hint: string }).hint).toContain(
+			"delete --batch",
+		);
+	});
+
+	test("--runs '[]' is the keep-an-empty-paragraph escape", async () => {
+		const docPath = await docFrom("empty-runs", "Blank me.\n");
+		const result = await runCli("edit", docPath, "--at", "p0", "--runs", "[]");
+		expect(result.exitCode).toBe(0);
+		const ast = JSON.parse((await runCli("read", docPath, "--ast")).stdout) as {
+			blocks: { id: string; runs?: unknown[] }[];
+		};
+		expect(ast.blocks.find((b) => b.id === "p0")?.runs).toEqual([]);
 	});
 });

@@ -115,7 +115,7 @@ export function isSectionType(value: string): value is SectionType {
 }
 
 /** Emit a sentinel paragraph carrying an inline <w:sectPr> with the given
- * properties. Used by `insert --section`. The paragraph has no runs — its
+ * properties. Used by `docx sections`. The paragraph has no runs — its
  * sole purpose is to mark the end of a section. */
 export function SentinelSectionParagraph({
 	columns,

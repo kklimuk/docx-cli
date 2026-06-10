@@ -22,7 +22,7 @@ const TOP_LEVEL_MUTATORS = new Set([
 	"edit",
 	"delete",
 	"replace",
-	"columns",
+	"sections",
 	// `render` is a producer, not a doc mutator, but it's silent-by-default in
 	// the same way (bare page paths unless --verbose) — inject --verbose so the
 	// JSON-ack assertions keep working.

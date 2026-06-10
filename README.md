@@ -105,8 +105,8 @@ docx info locators [--json]
 `docx read` surfaces structural facts the Markdown body can't show as HTML-comment
 annotations (`<!-- docx:TYPE … -->`). These are **read-time visibility hints** — the
 agent can SEE the structure, but the importer drops them (the structure survives
-normal edits in place, `read --ast` is the lossless view, and `docx columns` /
-`insert --section` / `docx tables …` manage it). They're emitted **deviation-only**
+normal edits in place, `read --ast` is the lossless view, and `docx sections` /
+`docx tables …` manage it). They're emitted **deviation-only**
 (only when a value differs from the document default, so a plain document stays
 clean):
 
@@ -137,7 +137,7 @@ docx create FILE [--title T] [--author A] [--text "..." | --from PATH.md | --fro
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
-docx columns FILE --at LOCATOR --count N [--type T]       # LOCATOR = pN-pM | pN (wrap a range) | sN (recount an existing section)
+docx sections FILE --at LOCATOR --columns N [--type T]    # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (recount an existing section). Multi-column layout lives HERE, not in insert.
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys
@@ -154,6 +154,12 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 # insert/edit content selectors (run "docx insert --help" / "docx edit --help" for the full list):
 #   --text "..." [--style NAME] [--alignment A] [--color HEX] [--bold] [--italic] [--url URL]
 #       (a newline in --text becomes a line break <w:br/>, a tab becomes <w:tab/> — verse/addresses stay line-per-line)
+#   edit --tabs right   fix a line whose tabbed-over content WRAPS (read flags it as `docx:layout … warn`,
+#       and prints ONE consolidated fix-all summary at the top): swaps the fragile LEFT tab for a RIGHT tab
+#       flush at the margin so a long value (e.g. a city) never wraps. Rides along with --text, works
+#       per-entry in --batch, and on a RANGE (edit --at pN-pM --tabs right) cures every tab line at once.
+#   edit --text ""      rejected (it would leave an invisible blank paragraph) — use `delete` to remove the
+#       line, or `--runs '[]'` to blank it but keep an empty spacer.
 #   --runs '[{"type":"text","text":"X","bold":true}]'
 #   --markdown "..." | --markdown-file PATH        # GFM + math + CriticMarkup + inline HTML formatting → blocks
 #   --code "..." | --code-file PATH [--language LANG]
@@ -197,8 +203,10 @@ docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
 
 docx track-changes on|off FILE
-docx track-changes accept FILE (--at tcN [--at tcM ...] | --all)
-docx track-changes reject FILE (--at tcN [--at tcM ...] | --all)
+docx track-changes accept FILE (--at tcN [--at tcM ...] | --at revN | --all)
+docx track-changes reject FILE (--at tcN [--at tcM ...] | --at revN | --all)
+# A del+ins REPLACE pair shares a "group": "revN" in `list`; `--at revN` accepts/rejects
+# both halves in one call (no re-list between them — tcN ids renumber after each accept).
 ```
 
 > **One rule to memorize: addressing an existing thing is always `--at`.**

@@ -567,6 +567,18 @@ function applyParagraphProperties(
 		}
 	}
 
+	const tabsNode = paragraphProperties.findChild("w:tabs");
+	if (tabsNode) {
+		const stops = tabsNode
+			.findChildren("w:tab")
+			.map((tab) => ({
+				align: tab.getAttribute("w:val") ?? "left",
+				pos: Number(tab.getAttribute("w:pos") ?? "0"),
+			}))
+			.filter((stop) => Number.isFinite(stop.pos));
+		if (stops.length > 0) paragraph.tabStops = stops;
+	}
+
 	const numberingProperties = paragraphProperties.findChild("w:numPr");
 	if (numberingProperties) {
 		const indentLevel = numberingProperties.findChild("w:ilvl");

@@ -35,7 +35,7 @@ type ParagraphBlock = {
 
 type Block = SectionBlock | ParagraphBlock | { id: string; type: string };
 
-describe("sections via insert / edit / delete", () => {
+describe("sections via the sections verb / edit / delete", () => {
 	let docPath: string;
 
 	beforeEach(async () => {
@@ -44,13 +44,15 @@ describe("sections via insert / edit / delete", () => {
 		await runCli("create", docPath, "--text", "First");
 	});
 
-	test("insert --section emits a sentinel paragraph + new sN block", async () => {
+	test("sections --at p0 emits a sentinel paragraph + new sN block", async () => {
+		// p0 is the doc's first block, so the wrap omits the leading break and
+		// inserts only the trailing cols=2 break — the structure the removed
+		// `insert --section` used to produce.
 		await runCli(
-			"insert",
+			"sections",
 			docPath,
-			"--after",
+			"--at",
 			"p0",
-			"--section",
 			"--columns",
 			"2",
 			"--type",
@@ -69,6 +71,23 @@ describe("sections via insert / edit / delete", () => {
 		});
 		expect(sections[1]).toMatchObject({ id: "s1" });
 		expect(sections[1]?.columns).toBeUndefined();
+	});
+
+	test("insert no longer creates sections — it redirects to `docx sections`", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--section",
+			"--columns",
+			"2",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { error: string }).error).toContain(
+			"docx sections",
+		);
 	});
 
 	test("edit --at sN updates columns + type on the trailing section", async () => {
@@ -154,15 +173,7 @@ describe("sections via insert / edit / delete", () => {
 	});
 
 	test("delete --at sN removes an inline sectPr; the sentinel paragraph remains", async () => {
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--section",
-			"--columns",
-			"2",
-		);
+		await runCli("sections", docPath, "--at", "p0", "--columns", "2");
 		const beforeRead = await runCli("read", docPath, "--ast");
 		const before = (beforeRead.parsed as { blocks: Block[] }).blocks;
 		const beforeSections = before.filter((b) => b.type === "sectionBreak");
@@ -187,15 +198,7 @@ describe("sections via insert / edit / delete", () => {
 	});
 
 	test("wc reports a sections count alongside words", async () => {
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--section",
-			"--columns",
-			"2",
-		);
+		await runCli("sections", docPath, "--at", "p0", "--columns", "2");
 		const wc = await runCli("wc", docPath);
 		expect(wc.parsed).toMatchObject({
 			scope: "document",
@@ -214,14 +217,13 @@ describe("sections under track-changes", () => {
 		await runCli("create", docPath, "--text", "Hello");
 	});
 
-	test("insert --section under tracking + reject removes the sentinel paragraph entirely", async () => {
+	test("sections under tracking + reject removes the sentinel paragraph entirely", async () => {
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"insert",
+			"sections",
 			docPath,
-			"--after",
+			"--at",
 			"p0",
-			"--section",
 			"--columns",
 			"2",
 			"--author",
@@ -565,11 +567,91 @@ describe("section breaks render as docx:section, not bare ---", () => {
 	test("a mid-doc section is an own-line docx:section hint with cols/type", async () => {
 		const md = await readMarkdown(SECTIONS_FIXTURE);
 		expect(md).not.toContain("---");
-		expect(md).toContain('<!-- docx:section s1 cols="2" type="continuous" -->');
-		// cols=1 is the default → suppressed; type still shown.
-		expect(md).toContain('<!-- docx:section s0 type="continuous" -->');
+		// A deviating section also states the locator range it governs — the
+		// content ABOVE the break — so the off-by-one "which side?" trap is explicit.
+		expect(md).toContain(
+			'<!-- docx:section s1 cols="2" type="continuous" applies-to="p3..p7 (above)" -->',
+		);
+		// cols=1 is the default → suppressed; type still shown (with scope).
+		expect(md).toContain(
+			'<!-- docx:section s0 type="continuous" applies-to="p0..p2 (above)" -->',
+		);
 		// The trailing mandatory section break is suppressed entirely.
 		expect(md).not.toContain("docx:section s7");
+	});
+});
+
+describe("docx:layout hazard — tab alignment inside a multi-column section", () => {
+	test("flags tab paragraphs governed by a cols>1 section, and only those", async () => {
+		const workspace = tempWorkspace("layout-hazard");
+		const docPath = join(workspace, "doc.docx");
+		// p0 intro, p1/p2 tab-aligned, p3 outro — all single column to start.
+		await runCli("create", docPath, "--text", "Intro");
+		await runCli("insert", docPath, "--after", "p0", "--text", "Name\tLoc");
+		await runCli("insert", docPath, "--after", "p1", "--text", "Role\tDate");
+		await runCli("insert", docPath, "--after", "p2", "--text", "Outro");
+		// Single column → no hazard even though p1/p2 have tabs.
+		expect(await readMarkdown(docPath)).not.toContain("docx:layout");
+		// Wrap the two tab paragraphs in a 2-column section.
+		await runCli("sections", docPath, "--at", "p1-p2", "--columns", "2");
+		const md = await readMarkdown(docPath);
+		// Both tab paragraphs warn; the single-column intro/outro do not.
+		expect(md.match(/docx:layout/g)?.length).toBe(2);
+		expect(md).toContain('cols="2"');
+		expect(md).toContain("render to verify");
+	});
+
+	test("flags a fragile right-alignment via a near-margin LEFT tab (résumé pattern)", async () => {
+		const workspace = tempWorkspace("layout-lefttab");
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "seed");
+		// Inject the résumé template's fragile shape into p0: a LEFT tab stop near
+		// the right margin + a tabbed "Org⇥City" line (no authoring verb sets tab
+		// stops, so build it directly).
+		const pkg = await Pkg.open(docPath);
+		const xml = (await pkg.readText("word/document.xml")).replace(
+			'<w:p><w:r><w:t xml:space="preserve">seed</w:t></w:r></w:p>',
+			'<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="10000"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Org</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t xml:space="preserve">City, ST</w:t></w:r></w:p>',
+		);
+		pkg.writeText("word/document.xml", xml);
+		await pkg.save(docPath);
+
+		// AST exposes the tab stop; read flags the wrap risk.
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				id: string;
+				tabStops?: { align: string; pos: number }[];
+			}>;
+		};
+		expect(ast.blocks[0]?.tabStops).toEqual([{ align: "left", pos: 10000 }]);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain("docx:layout");
+		expect(md).toContain("LEFT tab");
+		// Per-line note points at the cure; the consolidated top summary carries the
+		// one-call fix-all command across every wrapping line.
+		expect(md).toContain("--tabs right");
+		expect(md).toContain('fix-all="edit FILE --at p0 --tabs right"');
+	});
+
+	test("consolidates MANY wrapping lines into one summary spanning their range", async () => {
+		const workspace = tempWorkspace("layout-summary-multi");
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "seed");
+		// Two tabbed lines (p1, p3) with a near-margin LEFT tab + a plain line between.
+		for (const after of ["p0", "p1", "p2"]) {
+			await runCli("insert", docPath, "--after", after, "--text", "filler");
+		}
+		await runCli("edit", docPath, "--at", "p1", "--text", "Org\tCity, State");
+		await runCli("edit", docPath, "--at", "p3", "--text", "Org\tCity, State");
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@5in");
+		await runCli("edit", docPath, "--at", "p3", "--tabs", "left@5in");
+
+		const md = await readMarkdown(docPath);
+		// ONE consolidated summary, covering 2 lines, with a single range cure that
+		// spans min..max (the range form skips the plain p2 in between).
+		expect(md).toContain('wrap="2 lines"');
+		expect(md).toContain('fix-all="edit FILE --at p1-p3 --tabs right"');
+		expect(md.match(/fix-all=/g)).toHaveLength(1);
 	});
 });
 

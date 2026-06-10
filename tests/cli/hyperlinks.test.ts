@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
+import { readDocumentXml } from "./helpers";
 
 type LinkInfo = {
 	id: string;
@@ -363,6 +365,42 @@ describe("docx hyperlinks add", () => {
 		expect(links).toHaveLength(1);
 		expect(links[0]?.text).toBe("brown");
 		expect(links[0]?.url).toBe("https://example.com/brown");
+	});
+
+	test("applies the Hyperlink character style by default and provisions it", async () => {
+		const { docPath } = await setupSample("hl-add-style");
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:10-15",
+			"--url",
+			"https://example.com",
+		);
+		const documentXml = await readDocumentXml(docPath);
+		expect(documentXml).toContain('<w:rStyle w:val="Hyperlink"');
+		const stylesXml = await (await Pkg.open(docPath)).readText(
+			"word/styles.xml",
+		);
+		expect(stylesXml).toContain('w:styleId="Hyperlink"');
+	});
+
+	test("--no-style leaves the run unstyled", async () => {
+		const { docPath } = await setupSample("hl-add-nostyle");
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:10-15",
+			"--url",
+			"https://example.com",
+			"--no-style",
+		);
+		expect(await readDocumentXml(docPath)).not.toContain(
+			'<w:rStyle w:val="Hyperlink"',
+		);
 	});
 
 	test("preserves text outside the wrapped span", async () => {

@@ -17,7 +17,7 @@ import {
 	type SectionType,
 	type XmlNode,
 } from "@core";
-import type { ParagraphOptions } from "@core/blocks";
+import type { ParagraphOptions, TabStop } from "@core/blocks";
 import {
 	EquationNotFoundError,
 	EquationParseError,
@@ -29,6 +29,8 @@ import {
 	parseRunsArg,
 	parseSectionFlags,
 	parseTaskFlag,
+	rejectMarkdownInText,
+	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
 	EXIT,
@@ -45,6 +47,11 @@ import {
 	writeStdout,
 } from "../respond";
 import { runEditBatch } from "./batch";
+import {
+	parseTabsValue,
+	resolveTabsDirective,
+	type TabsDirective,
+} from "./tabs";
 
 const AT_FORMS = describeForms(
 	[
@@ -76,7 +83,8 @@ ${AT_FORMS}
                     inheriting the existing run's formatting — paste a locator
                     straight from \`docx find\`. See \`docx info locators\`.
 
-Paragraph content (one required for paragraph / range locators):
+Paragraph content (one required for paragraph / range locators — UNLESS you pass
+only --style/--alignment below, which restyle the paragraph in place):
   --text TEXT       Replace with a single-run paragraph
   --runs JSON       Replace with custom runs (Run[] JSON)
   --code TEXT       Replace with a code block — newlines split into one
@@ -119,6 +127,25 @@ Equation editing (requires --at eqN):
 Paragraph options:
   --style NAME       Paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
+  --tabs SPEC        Replace the paragraph's tab stops. SPEC is:
+                       right   — a single RIGHT tab flush at the text margin.
+                                 This is the CURE for the \`docx:layout … warn=…\`
+                                 hint \`read\` prints on a line whose trailing
+                                 content sits on a fixed LEFT tab: a long value
+                                 (e.g. "San Francisco, CA") overflows the margin
+                                 and WRAPS to a second line. A right tab at the
+                                 margin right-aligns it instead, so it never wraps.
+                       clear   — remove the paragraph's tab stops.
+                       <list>  — explicit stops, e.g. \`right@7.5in\` or
+                                 \`left@1in,right@7.5in\` (ALIGN@POSin, comma list).
+  Pass any of --style/--alignment/--tabs ALONE (no content flag) to adjust the
+  paragraph in place, keeping its text/runs: \`docx edit doc.docx --at p4 --style
+  Heading1\`, \`docx edit doc.docx --at p9 --tabs right\`. --tabs also rides along
+  with --text (fill the line AND fix its tab in one call), and works per-entry in
+  --batch ({"at":"p9","text":"Harvard University\\tCambridge, MA","tabs":"right"}).
+  ONE-CALL cure: a RANGE locator fixes every wrapping tab line at once —
+  \`docx edit doc.docx --at p9-p38 --tabs right\` (the exact "fix-all" command
+  \`read\` prints at the top when lines wrap; it skips paragraphs with no tab stops).
 
 Run options (only with --text):
   --color HEX       Run color, hex (e.g., 800080 for purple)
@@ -222,6 +249,16 @@ export async function run(args: string[]): Promise<number> {
 
 	const document = await openOrFail(opts.filePath);
 	if (typeof document === "number") return document;
+
+	// `--tabs` resolves now that the document (and its content width) is loaded:
+	// `right` → a single right tab flush at the text margin, the cure for the
+	// fragile LEFT tab `read` warns about.
+	if (opts.tabsDirective) {
+		injectTabsIntoSpec(
+			opts.spec,
+			resolveTabsDirective(opts.tabsDirective, document),
+		);
+	}
 
 	// Range locator (`pN-pM`): replaces a span of paragraphs as a unit. Section
 	// edits don't make sense here (sN has its own grammar).
@@ -392,6 +429,11 @@ async function commitBlockEdit(
 			});
 		} else if (opts.spec.kind === "clear") {
 			edit.clearFormatting(blockRef, null, opts.spec.tags);
+		} else if (opts.spec.kind === "paragraphProps") {
+			resultNode = edit.paragraphProperties(
+				blockRef,
+				opts.spec.paragraphOptions,
+			);
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
 		}
@@ -435,6 +477,9 @@ async function commitRangeEdit(
 			HELP,
 		);
 	}
+	if (opts.spec.kind === "paragraphProps") {
+		return commitRangeProps(document, opts, opts.spec.paragraphOptions);
+	}
 
 	const rangeRef: BlockRangeReference | number = await resolveBlockRangeOrFail(
 		document,
@@ -473,6 +518,81 @@ async function commitRangeEdit(
 
 	await document.save(opts.outputPath);
 	return emitEditAck(opts);
+}
+
+/** Properties-only RANGE edit (`--at pN-pM --tabs right`, etc.): apply the
+ *  paragraph properties to each paragraph in the range, in place, without
+ *  rewriting any content. This is the one-call tab-stop cure — `read` flags N
+ *  wrapping lines, and `edit --at pN-pM --tabs right` fixes them all at once
+ *  instead of N separate calls. `--tabs` only touches paragraphs that ALREADY
+ *  have tab stops (the tab-using lines — adding a stop to a plain paragraph would
+ *  be noise); `--style`/`--alignment` apply to every paragraph in the range. */
+async function commitRangeProps(
+	document: Document,
+	opts: ValidatedOptions,
+	options: ParagraphOptions,
+): Promise<number> {
+	const rangeRef = await resolveBlockRangeOrFail(document, opts.locator);
+	if (typeof rangeRef === "number") return rangeRef;
+	if (opts.dryRun) return respondDryRun(opts);
+
+	let applied = 0;
+	try {
+		const edit = new Edit(document);
+		for (let index = rangeRef.startIndex; index <= rangeRef.endIndex; index++) {
+			const node = rangeRef.parent[index];
+			if (!node || node.tag !== "w:p") continue;
+			const perParagraph = scopeRangeProps(node, options);
+			if (!perParagraph) continue;
+			edit.paragraphProperties({ node, parent: rangeRef.parent }, perParagraph);
+			applied++;
+		}
+	} catch (error) {
+		if (error instanceof EditError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	if (applied === 0) {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			options.tabs !== undefined
+				? `No paragraphs with tab stops in ${opts.locator} — --tabs only adjusts tab-using lines (the ones \`read\` flags with docx:layout).`
+				: `No paragraphs in ${opts.locator} to restyle.`,
+		);
+	}
+
+	await document.save(opts.outputPath);
+	return emitEditAck(opts);
+}
+
+/** The subset of `options` to apply to ONE paragraph in a range props edit:
+ *  `--tabs` only rides along when the paragraph already has tab stops; style and
+ *  alignment always apply. Returns null when nothing applies to this paragraph. */
+function scopeRangeProps(
+	node: XmlNode,
+	options: ParagraphOptions,
+): ParagraphOptions | null {
+	const out: ParagraphOptions = {};
+	if (options.style !== undefined) out.style = options.style;
+	if (options.alignment !== undefined) out.alignment = options.alignment;
+	if (options.tabs !== undefined && paragraphHasTabStops(node)) {
+		out.tabs = options.tabs;
+	}
+	if (
+		out.style === undefined &&
+		out.alignment === undefined &&
+		out.tabs === undefined
+	)
+		return null;
+	return out;
+}
+
+/** True when a paragraph carries a `<w:pPr><w:tabs>` — i.e. it's a tab-using line
+ *  (the kind `read`'s docx:layout warning targets). */
+function paragraphHasTabStops(node: XmlNode): boolean {
+	return node.findChild("w:pPr")?.findChild("w:tabs") !== undefined;
 }
 
 /** Resolve an `eqN` locator, splice in a new OMML subtree, save. The spec
@@ -534,6 +654,13 @@ async function validateSingleShotOptions(
 	const paragraphOptions = await parseParagraphOptions(values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
 
+	let tabsDirective: TabsDirective | undefined;
+	if (values.tabs !== undefined) {
+		const parsed = parseTabsValue(values.tabs as string);
+		if ("error" in parsed) return fail("USAGE", parsed.error, parsed.hint);
+		tabsDirective = parsed;
+	}
+
 	const isSectionLocator = /^s\d+$/.test(locator);
 	const spec = isSectionLocator
 		? await validateSectionEdit(values)
@@ -560,6 +687,7 @@ async function validateSingleShotOptions(
 		dryRun: Boolean(values["dry-run"]),
 		noFormatting: Boolean(values["no-formatting"]),
 		...(clearTags ? { clearTags } : {}),
+		...(tabsDirective ? { tabsDirective } : {}),
 	};
 }
 
@@ -590,6 +718,7 @@ const OPTION_SPEC = {
 	type: { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
+	tabs: { type: "string" },
 	color: { type: "string" },
 	bold: { type: "boolean" },
 	italic: { type: "boolean" },
@@ -617,6 +746,10 @@ type ValidatedOptions = {
 	 *  paragraph locators only. Undefined when --clear isn't combined with
 	 *  content (clear-alone is the `{kind:"clear"}` spec instead). */
 	clearTags?: Set<string>;
+	/** `--tabs`: replace/clear the paragraph's tab stops. Parsed pre-open (the
+	 *  document isn't loaded yet), resolved to concrete twips in `run()` once the
+	 *  section's content width is available. */
+	tabsDirective?: TabsDirective;
 };
 
 type EditSpec =
@@ -641,6 +774,7 @@ type EditSpec =
 	  }
 	| { kind: "task"; checked: boolean }
 	| { kind: "clear"; tags: Set<string> }
+	| { kind: "paragraphProps"; paragraphOptions: ParagraphOptions }
 	| {
 			kind: "equation";
 			locator: string;
@@ -840,9 +974,21 @@ async function validateParagraphEdit(
 		markdownFile !== undefined,
 	].filter(Boolean).length;
 	if (contentFlags === 0) {
+		// Properties-only edit: `--style`/`--alignment`/`--tabs` with no content
+		// keeps the paragraph's existing runs and just re-applies the paragraph
+		// properties. (Re-styling shouldn't force a dummy --text that would otherwise
+		// replace the content and could drop direct run formatting.) `--tabs` alone
+		// is the tab-stop cure for the `read` LEFT-tab wrapping warning.
+		if (
+			paragraphOptions.style ||
+			paragraphOptions.alignment ||
+			values.tabs !== undefined
+		) {
+			return { kind: "paragraphProps", paragraphOptions };
+		}
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation",
+			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation — or --style/--alignment/--tabs to adjust the paragraph in place",
 			HELP,
 		);
 	}
@@ -862,6 +1008,21 @@ async function validateParagraphEdit(
 	}
 
 	if (text !== undefined) {
+		// Empty --text leaves an invisible, space-consuming blank paragraph rather
+		// than removing the line — a weak-agent trap (the instinct is "set the
+		// inapplicable section to empty → it's gone"). Redirect to the honest verb.
+		if (text === "") {
+			const at = values.at as string | undefined;
+			return fail(
+				"USAGE",
+				`Empty --text leaves a blank paragraph in place, it doesn't remove the line.`,
+				`To DELETE the paragraph: \`docx delete --at ${at ?? "pN"}\` (or \`docx delete --batch\` for many). To blank it but keep an empty spacer, pass --runs '[]'. Help:\n${HELP}`,
+			);
+		}
+		const rejected = await rejectMarkdownInText(text, HELP);
+		if (typeof rejected === "number") return rejected;
+		const mangled = await rejectShellMangledValue(text, HELP, "--text");
+		if (typeof mangled === "number") return mangled;
 		return {
 			kind: "text",
 			text,
@@ -997,6 +1158,21 @@ async function parseParagraphOptions(
 	}
 
 	return out;
+}
+
+/** Set `tabs` on the spec's `paragraphOptions` (every paragraph-content kind that
+ *  carries them). Section/task/clear/equation specs have no paragraph options, so
+ *  they're left untouched — `--tabs` with those locators is a no-op by design. */
+function injectTabsIntoSpec(spec: EditSpec, tabs: TabStop[]): void {
+	if (
+		spec.kind === "text" ||
+		spec.kind === "runs" ||
+		spec.kind === "code" ||
+		spec.kind === "markdown" ||
+		spec.kind === "paragraphProps"
+	) {
+		spec.paragraphOptions.tabs = tabs;
+	}
 }
 
 async function respondDryRun(opts: ValidatedOptions): Promise<number> {

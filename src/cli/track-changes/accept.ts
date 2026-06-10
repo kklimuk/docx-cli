@@ -34,6 +34,10 @@ Target (one required, mutually exclusive):
                     batch is not a concern. Supports:
 ${AT_FORMS}
                     See \`docx info locators\`.
+  --at revN         Accept a del+ins REPLACE pair in one call (both halves of one
+                    logical change). \`list\` tags the two tcNs with a shared
+                    "group": "revN"; addressing the revN saves the accept-relist-
+                    accept ping-pong (tcN ids renumber after each single accept).
   --all             Accept every tracked change.
 
 Options:

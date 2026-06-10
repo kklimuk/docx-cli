@@ -74,6 +74,17 @@ const JSON_SCHEMA = {
 					},
 				},
 				taskState: { enum: ["checked", "unchecked"] },
+				tabStops: {
+					type: "array",
+					items: {
+						type: "object",
+						required: ["align", "pos"],
+						properties: {
+							align: { type: "string" },
+							pos: { type: "number" },
+						},
+					},
+				},
 				runs: { type: "array", items: { $ref: "#/$defs/Run" } },
 			},
 		},

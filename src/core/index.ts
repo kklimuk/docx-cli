@@ -93,6 +93,7 @@ export {
 	renderDocxPages,
 } from "./render";
 export {
+	getPageContentWidthEmu,
 	isSectionType,
 	isTrailingSectPr,
 	readSectionProperties,

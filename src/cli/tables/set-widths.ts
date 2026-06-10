@@ -11,10 +11,12 @@ import {
 	setCellWidth,
 	setTableLayout,
 } from "@core/table";
+import { twipsToInches } from "../read/annotations";
 import {
 	EXIT,
 	fail,
 	openOrFail,
+	renderVerifyHint,
 	resolveTracked,
 	respond,
 	respondAck,
@@ -51,6 +53,15 @@ Percentages and twips set a fixed layout and rewrite <w:tblGrid> plus each
 cell's <w:tcW>. Under track-changes the resize is recorded as a real revision
 (<w:tblGridChange> for the grid plus a per-cell <w:tcPrChange>), so it can be
 accepted or rejected — matching what Word emits for a width change.
+
+Widths map one value per GRID column, not per visible column. On a table with
+merged cells (gridSpan), the grid has MORE columns than a single row shows, so
+the count you pass must match the grid (run \`docx read --ast\` to see it). A
+cell that HOLDS TEXT but lands narrower than ~0.2in is refused — after ~0.15in
+of cell margin it fits under one character, so Word wraps it one char per line
+(empty/spacer columns that thin are fine, nothing to wrap). The success line
+echoes the resulting per-column widths; since layout changes don't show in
+\`read\`, render to verify.
 
 Output:
   Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
@@ -115,9 +126,13 @@ export async function run(args: string[]): Promise<number> {
 	const cols = grid.tblGrid.findChildren("w:gridCol");
 	let twips: number[] = [];
 	if (!auto) {
-		const resolved = resolveWidths(widthsSpec, cols);
+		const resolved = resolveWidths(widthsSpec, cols, grid);
 		if (typeof resolved === "string") return fail("USAGE", resolved);
 		twips = resolved;
+		// Guard against a width that collapses a cell so narrow Word wraps its
+		// content one character per line — a render-only break `read` won't show.
+		const tooNarrow = findTooNarrowCell(grid, twips);
+		if (tooNarrow) return fail("USAGE", tooNarrow);
 	}
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -167,22 +182,38 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	await respondAck({
-		ok: true,
-		operation: "tables.set-widths",
-		path: outputPath ?? path,
-		table: tableId,
-		layout: auto ? "autofit" : "fixed",
-		widths: auto ? "auto" : twips,
-	});
+	const destination = outputPath ?? path;
+	const echo = auto ? "" : `${describeColumnWidths(twips)}\n`;
+	await respondAck(
+		{
+			ok: true,
+			operation: "tables.set-widths",
+			path: destination,
+			table: tableId,
+			layout: auto ? "autofit" : "fixed",
+			widths: auto ? "auto" : twips,
+		},
+		`${echo}${renderVerifyHint(destination)}`,
+	);
 	return EXIT.OK;
 }
 
-/** Resolve a `--widths` spec to per-column twips, or an error message. */
-function resolveWidths(spec: string, cols: XmlNode[]): number[] | string {
+/** Resolve a `--widths` spec to per-column twips, or an error message. Widths
+ * map one value per GRID column (`<w:gridCol>`), not per VISIBLE column — on a
+ * merged-cell table the two differ, and a positional list silently misaligns
+ * (the invoice scenario's blocker). When the count mismatches a merged table we
+ * explain the grid-vs-logical gap instead of the bare count. */
+function resolveWidths(
+	spec: string,
+	cols: XmlNode[],
+	grid: Grid,
+): number[] | string {
 	const tokens = spec.split(",").map((token) => token.trim());
 	if (tokens.length !== cols.length) {
-		return `--widths has ${tokens.length} entries but the table has ${cols.length} columns`;
+		const base = `--widths has ${tokens.length} entries but the table has ${cols.length} grid columns`;
+		return hasMergedColumns(grid)
+			? `${base}. This table has merged cells, so some visible columns span multiple grid columns and the grid has more columns than any single row shows. Supply one width per GRID column (${cols.length} values), left-to-right; a merged cell takes the sum of the grid columns it covers. Inspect the gridSpan layout with \`docx read --ast\`.`
+			: base;
 	}
 	const percentage = tokens.every((token) => token.endsWith("%"));
 	const anyPercent = tokens.some((token) => token.endsWith("%"));
@@ -257,4 +288,48 @@ function cellWidth(cell: GridCell, twips: number[]): number {
 		width += twips[cell.colStart + offset] ?? 0;
 	}
 	return width;
+}
+
+/** ~0.2in (288 twips) isn't an arbitrary round number: Word eats ~0.15in of
+ * default cell margin (108 twips/side) before any glyph, so a 0.2in cell leaves
+ * under one character of usable width and wraps content one char per line — a
+ * render-only break `read` never surfaces (the invoice scenario shipped a
+ * 0.156in Amount cell exactly this way). The check is the actual rendering unit,
+ * the CELL: a merged cell sums its grid columns (so a wide span isn't flagged),
+ * and an EMPTY cell is skipped (a deliberate thin spacer column renders fine —
+ * there's nothing to wrap). So we only refuse a narrow cell that holds text. */
+const MIN_COL_TWIPS = 288;
+
+function findTooNarrowCell(grid: Grid, twips: number[]): string | null {
+	for (const row of grid.rows) {
+		for (const cell of row.cells) {
+			const width = cellWidth(cell, twips);
+			if (width >= MIN_COL_TWIPS) continue;
+			const text = cell.node.collectText().trim();
+			if (text.length === 0) continue; // empty/spacer cell never wraps
+			const where =
+				cell.colSpan > 1
+					? `grid columns ${cell.colStart}–${cell.colStart + cell.colSpan - 1}`
+					: `grid column ${cell.colStart}`;
+			const sample = text.length > 24 ? `${text.slice(0, 24)}…` : text;
+			return `--widths collapses ${where} to ${twipsToInches(width)}in (${width} twips); that cell holds "${sample}" but ~0.15in goes to cell margins, leaving under one character — Word wraps it one char per line. Widen it and lower a wider column to compensate.`;
+		}
+	}
+	return null;
+}
+
+/** True if any cell spans more than one grid column — the table where "visible
+ * columns" and "grid columns" diverge and `--widths` becomes a footgun. */
+function hasMergedColumns(grid: Grid): boolean {
+	return grid.rows.some((row) => row.cells.some((cell) => cell.colSpan > 1));
+}
+
+/** Echo the resulting per-grid-column widths in inches so the agent can sanity-
+ * check the assignment at the moment of success — the misaligned slot is then
+ * self-evident (`g4=0.16in`) instead of invisible until a render. */
+function describeColumnWidths(twips: number[]): string {
+	const cells = twips.map(
+		(value, index) => `g${index}=${twipsToInches(value)}in`,
+	);
+	return `widths: ${cells.join(" ")}`;
 }

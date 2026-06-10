@@ -278,19 +278,32 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	await respondAck({
-		ok: true,
-		operation: "replace",
-		path: outputPath ?? path,
-		pattern,
-		replacement,
-		regex: useRegex,
-		ignoreCase,
-		view: findView,
-		totalMatches: allMatches.length,
-		replaced: selected.length,
-		matches: matchesPayload,
-		...normalizationFields,
-	});
+	// A default (first-match) or --limit replace can leave matches behind. Say so
+	// in the text confirmation — a weak agent that ran a bare `replace` and saw
+	// "1 occurrence replaced" otherwise assumes it got them all (the résumé agent
+	// errored twice before discovering --all). Silent on a full sweep.
+	const remaining = allMatches.length - selected.length;
+	const partialHint =
+		remaining > 0
+			? `↳ ${remaining} more match${remaining === 1 ? "" : "es"} left unreplaced (${selected.length} of ${allMatches.length} done) — pass --all to replace every match, or --limit N for a specific count.`
+			: undefined;
+
+	await respondAck(
+		{
+			ok: true,
+			operation: "replace",
+			path: outputPath ?? path,
+			pattern,
+			replacement,
+			regex: useRegex,
+			ignoreCase,
+			view: findView,
+			totalMatches: allMatches.length,
+			replaced: selected.length,
+			matches: matchesPayload,
+			...normalizationFields,
+		},
+		partialHint,
+	);
 	return EXIT.OK;
 }

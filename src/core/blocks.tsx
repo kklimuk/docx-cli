@@ -17,6 +17,7 @@ export function Paragraph({
 	alignment,
 	list,
 	taskState,
+	tabs,
 	text,
 	runs,
 	...formatting
@@ -28,7 +29,7 @@ export function Paragraph({
 	const resolvedRuns: Run[] = runs ?? textToRuns(text ?? "", formatting);
 	return (
 		<w.p>
-			<ParagraphProperties options={{ style, alignment, list }} />
+			<ParagraphProperties options={{ style, alignment, list, tabs }} />
 			{taskState && <TaskCheckbox checked={taskState === "checked"} />}
 			{taskState && (
 				<w.r>
@@ -71,7 +72,18 @@ export type ParagraphOptions = {
 	alignment?: "left" | "center" | "right" | "justify";
 	list?: { level: number; numId: number };
 	taskState?: "checked" | "unchecked";
+	/** Paragraph tab stops (`<w:tabs>`), in twips. A non-empty array REPLACES the
+	 *  paragraph's existing tab stops; an EMPTY array CLEARS them. Used by
+	 *  `edit --tabs` to cure the fragile right-edge LEFT tab (which left-aligns
+	 *  trailing content from a fixed point so a long value overflows the margin and
+	 *  wraps) by swapping it for a RIGHT tab at the margin. `undefined` = leave the
+	 *  paragraph's tabs untouched. */
+	tabs?: TabStop[];
 };
+
+/** One `<w:tab>` entry: `align` is the `w:val` (left/right/center/…), `pos` the
+ *  `w:pos` in twips (absolute from the left text margin). */
+export type TabStop = { align: string; pos: number };
 
 type EmittableTextFormatting = Pick<
 	TextRun,
@@ -188,11 +200,29 @@ export function applyParagraphOptionsInPlace(
 	rebuilt: XmlNode[],
 	options: ParagraphOptions,
 ): void {
-	if (!options.style && !options.alignment) return;
+	if (!options.style && !options.alignment && !options.tabs) return;
 	let pPr = rebuilt.find((child) => child.tag === "w:pPr");
 	if (!pPr) {
 		pPr = new XmlNode("w:pPr");
 		rebuilt.unshift(pPr);
+	}
+	if (options.tabs) {
+		// A non-empty array replaces the paragraph's tab stops; an empty array
+		// clears them. Drop the existing <w:tabs> either way, then re-add when there
+		// are stops to set — keeping CT_PPr order via insertPprChildInOrder.
+		pPr.children = pPr.children.filter((child) => child.tag !== "w:tabs");
+		if (options.tabs.length > 0) {
+			const tabsNode = new XmlNode("w:tabs");
+			for (const stop of options.tabs) {
+				tabsNode.children.push(
+					new XmlNode("w:tab", {
+						"w:val": stop.align,
+						"w:pos": String(Math.round(stop.pos)),
+					}),
+				);
+			}
+			insertPprChildInOrder(pPr, tabsNode);
+		}
 	}
 	if (options.style) {
 		const existingStyle = pPr.findChild("w:pStyle");
@@ -373,8 +403,10 @@ function ParagraphProperties({
 }: {
 	options: ParagraphOptions;
 }): NullableXmlNode {
-	if (!options.style && !options.alignment && !options.list) return null;
-	// Schema order (CT_PPrBase, ECMA-376 §17.3.1.26): pStyle → numPr → jc.
+	const hasTabs = options.tabs !== undefined && options.tabs.length > 0;
+	if (!options.style && !options.alignment && !options.list && !hasTabs)
+		return null;
+	// Schema order (CT_PPrBase, ECMA-376 §17.3.1.26): pStyle → numPr → tabs → jc.
 	return (
 		<w.pPr>
 			{options.style && <w.pStyle w-val={options.style} />}
@@ -383,6 +415,13 @@ function ParagraphProperties({
 					<w.ilvl w-val={String(options.list.level)} />
 					<w.numId w-val={String(options.list.numId)} />
 				</w.numPr>
+			)}
+			{hasTabs && (
+				<w.tabs>
+					{options.tabs?.map((stop) => (
+						<w.tab w-val={stop.align} w-pos={String(Math.round(stop.pos))} />
+					))}
+				</w.tabs>
 			)}
 			{options.alignment && <w.jc w-val={options.alignment} />}
 		</w.pPr>

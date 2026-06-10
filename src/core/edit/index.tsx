@@ -2,6 +2,7 @@ import type { Document } from "../ast/document";
 import type { BlockRangeReference, BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
+	applyParagraphOptionsInPlace,
 	insertPprChildInOrder,
 	Paragraph,
 	type ParagraphOptions,
@@ -171,6 +172,26 @@ export class Edit {
 		// The spliced-in first paragraph is the result (a following clear in a
 		// combined content+clear edit targets this node, not the replaced one).
 		return anchorTarget ?? blockRef.node;
+	}
+
+	/** Style-only edit: re-apply paragraph properties (`--style`/`--alignment`)
+	 *  in place, keeping every existing run. The symmetric "restyle without
+	 *  retyping" to the content path's `--style` ride-along — Word's `<w:pPrChange>`
+	 *  isn't modeled, so (like the ride-along) this applies directly rather than as
+	 *  a tracked revision, regardless of the document's track-changes toggle. */
+	paragraphProperties(
+		blockRef: BlockReference,
+		options: ParagraphOptions,
+	): XmlNode {
+		if (blockRef.node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"--style/--alignment alone restyle a paragraph; this locator is not a paragraph.",
+			);
+		}
+		this.document.ensureStyles().ensureReferencedStyle(options.style);
+		applyParagraphOptionsInPlace(blockRef.node.children, options);
+		return blockRef.node;
 	}
 
 	/** Character-span replace: `pN:S-E` (or a cell paragraph `tN:rRcC:pK:S-E`).

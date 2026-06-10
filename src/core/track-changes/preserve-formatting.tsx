@@ -127,11 +127,21 @@ function collectRunText(run: XmlNode): string {
 	return out;
 }
 
-/** Tokenize on whitespace boundaries: each token is either a run of
- *  non-whitespace ("words") or a run of whitespace. Empty strings drop. */
+/** Tokenize on whitespace boundaries: each token is a run of non-whitespace
+ *  ("words"), a run of TABS, or a run of non-tab whitespace (spaces/newlines).
+ *  Empty strings drop.
+ *
+ *  Tabs get their OWN token class — never glued to adjacent spaces — so the tab
+ *  ALWAYS aligns as a keep across old↔new. A template like `Title<tab><bold
+ *  space>Month` reads as the old token `"\t "` under a naive `\s+`; the new
+ *  `Title<tab>Date` has just `"\t"`, the two never match, the tab stops being a
+ *  recognized boundary, and the last word before the tab (`Intern`, `Lead`) ends
+ *  up positionally paired across the boundary and loses its bold. Splitting the
+ *  tab out keeps `demoteOrphanWhitespaceKeeps`'s tab-boundary protection working
+ *  and each tab-delimited segment formatted on its own side. */
 export function tokenize(text: string): string[] {
 	if (text.length === 0) return [];
-	return text.match(/\S+|\s+/g) ?? [];
+	return text.match(/\S+|\t+|[^\S\t]+/g) ?? [];
 }
 
 export type DiffOp =
@@ -225,6 +235,16 @@ function demoteOrphanWhitespaceKeeps(ops: DiffOp[]): DiffOp[] {
 			continue;
 		}
 		if (!isWhitespaceOnly(op.old.text)) {
+			out.push(op);
+			continue;
+		}
+		// A TAB keep is a structural/format boundary (left text | right-aligned
+		// content), not a spuriously-matched space. Demoting it merges the regions
+		// on either side into ONE edit group, so positional rPr-pairing bleeds the
+		// left region's formatting across the tab — e.g. a bold org name → a bold
+		// city ("Lincoln High School⇥Portland, OR" turning "Portland," bold). Keep
+		// it so each tab-delimited segment keeps its own formatting.
+		if (op.old.text.includes("\t")) {
 			out.push(op);
 			continue;
 		}
@@ -341,27 +361,55 @@ function inheritedRprForInsert(
 		groupEnd++;
 	}
 
-	const deletes: Array<XmlNode | null> = [];
-	let insertOrdinal = 0;
-	let myInsertOrdinal = -1;
+	// Two pairing tracks. A WORD insert pairs only against WORD deletes, so a real
+	// word never inherits a stray whitespace token's rPr — the bold-space-after-tab
+	// case (`Title<tab><bold space>Date` → new `Title<tab>Date`) where the first new
+	// word after the tab ("Jun") would otherwise grab the deleted bold space's bold.
+	// A WHITESPACE insert keeps the full pairing, so a space INSIDE a bold phrase
+	// still inherits the surrounding bold (keeps `**A B C**` contiguous).
+	const targetText = (() => {
+		const op = ops[index];
+		return op && op.kind === "insert" ? op.text : "";
+	})();
+	const targetIsWord = !isWhitespaceOnly(targetText);
+
+	const allDeletes: Array<XmlNode | null> = [];
+	const wordDeletes: Array<XmlNode | null> = [];
+	let allInsertOrdinal = 0;
+	let wordInsertOrdinal = 0;
+	let myAllOrdinal = -1;
+	let myWordOrdinal = -1;
 	for (let cursor = groupStart; cursor <= groupEnd; cursor++) {
 		const op = ops[cursor];
 		if (!op) continue;
 		if (op.kind === "delete") {
-			deletes.push(op.old.rPr);
+			allDeletes.push(op.old.rPr);
+			if (!isWhitespaceOnly(op.old.text)) wordDeletes.push(op.old.rPr);
 			continue;
 		}
 		if (op.kind === "insert") {
-			if (cursor === index) myInsertOrdinal = insertOrdinal;
-			insertOrdinal++;
+			const isWord = !isWhitespaceOnly(op.text);
+			if (cursor === index) {
+				myAllOrdinal = allInsertOrdinal;
+				myWordOrdinal = isWord ? wordInsertOrdinal : -1;
+			}
+			allInsertOrdinal++;
+			if (isWord) wordInsertOrdinal++;
 		}
 	}
 
-	if (deletes.length > 0 && myInsertOrdinal >= 0) {
+	if (targetIsWord && wordDeletes.length > 0 && myWordOrdinal >= 0) {
 		const paired =
-			myInsertOrdinal < deletes.length
-				? deletes[myInsertOrdinal]
-				: deletes[deletes.length - 1];
+			myWordOrdinal < wordDeletes.length
+				? wordDeletes[myWordOrdinal]
+				: wordDeletes[wordDeletes.length - 1];
+		if (paired !== undefined) return paired;
+	}
+	if (!targetIsWord && allDeletes.length > 0 && myAllOrdinal >= 0) {
+		const paired =
+			myAllOrdinal < allDeletes.length
+				? allDeletes[myAllOrdinal]
+				: allDeletes[allDeletes.length - 1];
 		if (paired !== undefined) return paired;
 	}
 

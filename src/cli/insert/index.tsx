@@ -12,13 +12,15 @@ import type { TableBorders, TableLayout } from "@core/table";
 import type { parseArgs } from "util";
 import {
 	parseRunsArg,
-	parseSectionFlags,
 	parseTaskFlag,
+	rejectMarkdownInText,
+	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
 	openOrFail,
+	renderVerifyHint,
 	resolveBlockOrFail,
 	resolveTracked,
 	respond,
@@ -54,7 +56,6 @@ Content (one required):
   --runs JSON       Insert a paragraph with custom runs (Run[] JSON)
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
-  --section         Insert a section boundary (sentinel paragraph w/ inline sectPr)
   --table           Insert an empty rows×cols table (requires --rows and --cols)
   --image SRC       Insert an image (SRC is a file path, data: URI, or http(s) URL)
   --code TEXT       Insert a multi-line code block. Newlines split into one
@@ -100,19 +101,20 @@ Run options (only with --text):
   --italic          Italic
   --url URL         Wrap the inserted text in a hyperlink to URL
 
-Section options (only with --section):
-  --columns N       Number of columns for the section ending at this boundary
-  --type T          continuous | nextPage | evenPage | oddPage | nextColumn
+Column / section layout: NOT here — use \`docx sections\`. Name the range and it
+inserts the bounding breaks correctly: \`docx sections --at p6-p16 --columns 2\`.
+(A raw section break formats the content ABOVE it, the off-by-one that made
+\`insert --section\` a footgun, so it was removed.)
 
 Agent tip: VERIFY LAYOUT VISUALLY: \`docx read\` shows text and structure as
-Markdown, but NOT how the page actually looks — multi-column sections, page
-breaks, image sizing, and where content lands on the page do not appear there.
-After inserting layout-affecting content (--section/--columns, --page-break,
---image, --table), render the document to images and look at them:
+Markdown, but NOT how the page actually looks — page breaks, image sizing, and
+where content lands on the page do not appear there. After inserting
+layout-affecting content (--page-break, --image, --table), render the document to
+images and look at them:
   docx render FILE --out pages/      # writes page-001.png, page-002.png, …
-Read the PNGs, check the layout reads the way you intended (columns balanced, no
-stray blank page, figure sized sensibly), and adjust placement + re-render until
-it looks right. Don't assume a section/column insert looks good without seeing it.
+Read the PNGs, check the layout reads the way you intended (no stray blank page,
+figure sized sensibly), and adjust placement + re-render until it looks right.
+Don't assume a layout-affecting insert looks good without seeing it.
 
 Table options (only with --table):
   --rows N          Number of rows (required, >= 1)
@@ -161,7 +163,6 @@ Examples:
   docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
   docx insert doc.docx --after p3 --text "click here" --url https://example.com
   docx insert doc.docx --after p3 --page-break
-  docx insert doc.docx --after p9 --section --columns 2 --type continuous
   docx insert doc.docx --after p3 --table --rows 3 --cols 2
   docx insert doc.docx --after p3 --table --rows 2 --cols 3 --widths 1440,2880,4320
   docx insert doc.docx --after p3 --image ./diagram.png --alt "System diagram"
@@ -273,15 +274,33 @@ async function commitInsert(
 		if (insertedNodes.has(reference.node)) locators.push(blockId);
 	}
 
-	await respondMinted(locators, {
-		ok: true,
-		operation: "insert",
-		path: opts.outputPath ?? opts.filePath,
+	const destination = opts.outputPath ?? opts.filePath;
+	await respondMinted(
 		locators,
-		anchor: opts.placement.locator,
-		placement: opts.placement.mode,
-	});
+		{
+			ok: true,
+			operation: "insert",
+			path: destination,
+			locators,
+			anchor: opts.placement.locator,
+			placement: opts.placement.mode,
+		},
+		isLayoutAffecting(opts.spec) ? renderVerifyHint(destination) : undefined,
+	);
 	return EXIT.OK;
+}
+
+/** Inserts whose result depends on page layout — multi-column sections, page/
+ * column breaks, sized images, fresh tables — need a render to confirm (`read`
+ * shows their text/structure but not how they land on the page). Plain text,
+ * runs, code, and markdown paragraphs reflow normally and don't. */
+function isLayoutAffecting(spec: InsertSpec): boolean {
+	return (
+		spec.kind === "section" ||
+		spec.kind === "image" ||
+		spec.kind === "table" ||
+		spec.kind === "break"
+	);
 }
 
 async function buildSingleShotOptions(
@@ -293,6 +312,21 @@ async function buildSingleShotOptions(
 
 	const spec = await chooseContentSpec(values);
 	if (typeof spec === "number") return spec;
+
+	// `--text` writes literal characters; a markdown-looking value (e.g. **bold**)
+	// would be baked in verbatim. Redirect to --markdown/--bold/--runs before it
+	// becomes literal `**` an agent then tries to scrub. (Single-shot only — the
+	// batch path is the verbatim-data channel and stays unguarded.)
+	if (spec.kind === "text") {
+		const rejected = await rejectMarkdownInText(values.text as string, HELP);
+		if (typeof rejected === "number") return rejected;
+		const mangled = await rejectShellMangledValue(
+			values.text as string,
+			HELP,
+			"--text",
+		);
+		if (typeof mangled === "number") return mangled;
+	}
 
 	// Markdown spec carries its own block styling (heading levels, list
 	// numbering, code blocks, …) so paragraph-level flags would be silently
@@ -419,7 +453,6 @@ const CONTENT_KINDS = [
 	{ flag: "runs", subFlags: [] },
 	{ flag: "page-break", subFlags: [] },
 	{ flag: "column-break", subFlags: [] },
-	{ flag: "section", subFlags: ["columns", "type"] },
 	{
 		flag: "table",
 		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
@@ -439,6 +472,21 @@ const CONTENT_FLAG_LIST = CONTENT_KINDS.map((kind) => `--${kind.flag}`).join(
 export async function chooseContentSpec(
 	values: RawValues,
 ): Promise<InsertSpec | number> {
+	// `insert` no longer creates sections/columns. A raw section break formats the
+	// content ABOVE it (the off-by-one that traps weak agents); `docx sections`
+	// takes a range and inserts the bounding breaks so the columns land exactly
+	// where you name them. Redirect rather than silently ignore the flags.
+	if (
+		values.section !== undefined ||
+		values.columns !== undefined ||
+		values.type !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"insert no longer creates section/column layout — use `docx sections`",
+			"To put paragraphs pN…pM in N columns: `docx sections --at pN-pM --columns N`. To recount an existing section: `docx sections --at sN --columns N`.",
+		);
+	}
 	const present = CONTENT_KINDS.filter(
 		(kind) => values[kind.flag] !== undefined,
 	);
@@ -477,10 +525,6 @@ export async function chooseContentSpec(
 			return { kind: "break", breakKind: "page" };
 		case "column-break":
 			return { kind: "break", breakKind: "column" };
-		case "section": {
-			const flags = await parseSectionFlags(values);
-			return typeof flags === "number" ? flags : { kind: "section", ...flags };
-		}
 		case "table": {
 			const flags = await parseTableFlags(values);
 			return typeof flags === "number" ? flags : { kind: "table", ...flags };

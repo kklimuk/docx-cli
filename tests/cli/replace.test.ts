@@ -372,6 +372,9 @@ describe("docx replace — chained edits under tracking", () => {
 		const accepted = result.stdout
 			.split("\n")
 			.map((line) => line.replace(/\s*<!--\s*[a-z0-9]+\s*-->\s*$/, ""))
+			// Drop the head `<!-- docx:track-changes on -->` orientation hint (this
+			// fixture has tracking on); it's not part of the paragraph text.
+			.filter((line) => !/^<!--\s*docx:[^>]*-->$/.test(line.trim()))
 			.join("\n")
 			.trim();
 		expect(accepted).toBe("Affordability, price control, and housing reform.");

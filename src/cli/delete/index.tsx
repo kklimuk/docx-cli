@@ -70,7 +70,7 @@ Tracked behavior:
   the paragraph mark as deleted (accept removes the paragraph by merging it
   forward). Section deletion under tracking emits a [docx-cli] audit comment
   on the owning paragraph if it has runs to anchor on; otherwise (sentinel
-  paragraphs from "insert --section" have no runs) the mutation is silent.
+  section sentinel paragraphs have no runs) the mutation is silent.
   delete --at tN under tracking is rejected (tracked table-row deletion is
   not supported).
 

@@ -38,6 +38,20 @@ describe("docx track-changes", () => {
 		expect(xml).not.toContain("<w:trackChanges/>");
 	});
 
+	test("read surfaces the tracking state as a head hint (on only)", async () => {
+		const workspace = tempWorkspace("track-read-hint");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "hi");
+
+		// Off (the default) is silent — deviation-only, no noise.
+		const before = await runCli("read", docPath);
+		expect(before.stdout).not.toContain("docx:track-changes");
+
+		await runCli("track-changes", "on", docPath);
+		const after = await runCli("read", docPath);
+		expect(after.stdout).toContain("<!-- docx:track-changes on -->");
+	});
+
 	test("accepts verb-first order (track-changes on FILE), matching list/accept/reject", async () => {
 		const workspace = tempWorkspace("verb-first");
 		const docPath = join(workspace, "out.docx");
@@ -1373,5 +1387,107 @@ describe("tracked moves — reject", () => {
 		const xml = await pkg.readText("word/document.xml");
 		expect(xml).not.toContain("<w:moveFrom");
 		expect(xml).not.toContain("<w:moveTo");
+	});
+});
+
+// `revN` revision groups: a del+ins replace pair gets ONE handle so the logical
+// change is one accept/reject call instead of the id-renumber ping-pong of doing
+// each half separately (the contract-finalize friction).
+describe("docx track-changes revision groups (revN)", () => {
+	async function replacePair(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "Payment due Net 90 today.");
+		await runCli("track-changes", docPath, "on");
+		// A tracked replace → an adjacent <w:del> + <w:ins> pair.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Payment due Net 30 today.",
+		);
+		return docPath;
+	}
+
+	async function list(
+		docPath: string,
+	): Promise<Array<{ id: string; kind: string; group?: string }>> {
+		const result = await runCli("track-changes", "list", docPath);
+		return result.parsed as Array<{ id: string; kind: string; group?: string }>;
+	}
+
+	test("list tags both halves of a replace with a shared group", async () => {
+		const docPath = await replacePair("rev-list");
+		const changes = await list(docPath);
+		const del = changes.find((c) => c.kind === "del");
+		const ins = changes.find((c) => c.kind === "ins");
+		expect(del?.group).toBeDefined();
+		expect(del?.group).toBe(ins?.group);
+		expect(del?.group).toBe("rev0");
+	});
+
+	test("accept --at revN applies both halves in one call", async () => {
+		const docPath = await replacePair("rev-accept");
+		const result = await runCli(
+			"track-changes",
+			"accept",
+			docPath,
+			"--at",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(0);
+		// Both halves gone, the replacement text stands.
+		expect(await list(docPath)).toHaveLength(0);
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).toContain("Net 30");
+		expect(read).not.toContain("Net 90");
+	});
+
+	test("reject --at revN reverts both halves in one call", async () => {
+		const docPath = await replacePair("rev-reject");
+		const result = await runCli(
+			"track-changes",
+			"reject",
+			docPath,
+			"--at",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await list(docPath)).toHaveLength(0);
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).toContain("Net 90");
+		expect(read).not.toContain("Net 30");
+	});
+
+	test("an unknown revN is reported with a hint to list", async () => {
+		const docPath = await replacePair("rev-unknown");
+		const result = await runCli(
+			"track-changes",
+			"accept",
+			docPath,
+			"--at",
+			"rev9",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.parsed).toMatchObject({ code: "TRACKED_CHANGE_NOT_FOUND" });
+	});
+
+	test("a solo insertion has no group", async () => {
+		const workspace = tempWorkspace("rev-solo");
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "Keep this line.");
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"A brand new line.",
+		);
+		const changes = await list(docPath);
+		expect(changes.every((c) => c.group === undefined)).toBe(true);
 	});
 });

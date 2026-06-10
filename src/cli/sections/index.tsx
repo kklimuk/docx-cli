@@ -17,6 +17,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	renderVerifyHint,
 	resolveBlockOrFail,
 	resolveBlockRangeOrFail,
 	resolveTracked,
@@ -28,23 +29,27 @@ import {
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx columns — lay text out in multiple columns
+const HELP = `docx sections — multi-column layout & section breaks
 
 Usage:
-  docx columns FILE --at LOCATOR --count N [options]
+  docx sections FILE --at LOCATOR --columns N [options]
 
-The intuitive verb for column layout, so you don't have to hand-build section
-breaks. Two addressing modes:
+The verb for section layout — multi-column flow and section breaks — so you
+don't have to hand-build them with the right OOXML semantics. This is the ONLY
+way to add/change column layout; \`insert\` no longer takes --section (a raw
+section break formats the content ABOVE it, which is the classic off-by-one).
+Two addressing modes:
 
   --at pN-pM   Wrap the paragraph range pN…pM in its own N-column section
-               (inserts the bounding continuous section breaks for you). Also
-               accepts a single paragraph (--at pN).
+               (inserts the bounding continuous section breaks for you, so the
+               columns land on EXACTLY pN…pM). Also accepts a single paragraph
+               (--at pN). THIS is how you put text in columns — name the range.
   --at sN      Set the column count on an EXISTING section break sN (the section
                whose content ENDS at sN). Equivalent to \`edit --at sN --columns N\`.
 
 Options:
   --at LOCATOR      Paragraph range (pN-pM), single paragraph (pN), or section (sN)
-  --count N         Number of columns (>= 1; use 1 to collapse back to single column)
+  --columns N       Number of columns (>= 1; use 1 to collapse back to single column)
   --type T          Section type for the wrapping break: continuous (default),
                     nextPage, evenPage, oddPage, nextColumn. Only meaningful with
                     a pN-pM/pN range; with sN it overrides the section's type.
@@ -67,14 +72,14 @@ Output:
   edits. Errors print {code, error, hint?} + nonzero exit.
 
 Examples:
-  docx columns doc.docx --at p4-p9 --count 2
-  docx columns doc.docx --at p4-p9 --count 3 --type continuous
-  docx columns doc.docx --at s2 --count 1        # collapse section s2 to one column
+  docx sections doc.docx --at p4-p9 --columns 2
+  docx sections doc.docx --at p4-p9 --columns 3 --type continuous
+  docx sections doc.docx --at s2 --columns 1     # collapse section s2 to one column
 `;
 
 const OPTION_SPEC = {
 	at: { type: "string" },
-	count: { type: "string" },
+	columns: { type: "string" },
 	type: { type: "string" },
 	author: { type: "string" },
 	track: { type: "boolean" },
@@ -112,11 +117,11 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const count = parseCount(parsed.values.count as string | undefined);
+	const count = parseCount(parsed.values.columns as string | undefined);
 	if (typeof count === "number" && Number.isNaN(count)) {
-		return fail("USAGE", `--count must be a positive integer`, HELP);
+		return fail("USAGE", `--columns must be a positive integer`, HELP);
 	}
-	if (count === undefined) return fail("USAGE", "Missing --count N", HELP);
+	if (count === undefined) return fail("USAGE", "Missing --columns N", HELP);
 
 	const typeRaw = parsed.values.type as string | undefined;
 	if (typeRaw !== undefined && !isSectionType(typeRaw)) {
@@ -359,7 +364,7 @@ async function commit(
 	if (opts.dryRun || meta.dryRunOnly) {
 		// Dry-run previews always print (no `ok` field), even without --verbose.
 		await respond({
-			operation: "columns",
+			operation: "sections",
 			dryRun: true,
 			path: opts.filePath,
 			locator: meta.at,
@@ -370,17 +375,21 @@ async function commit(
 		return EXIT.OK;
 	}
 	await document.save(opts.outputPath);
+	const destination = opts.outputPath ?? opts.filePath;
 	// `locator` (not `count`) is the salient field: the generic ack summarizer
 	// reads `count` as a CHANGE tally and would print "columns 2 changes" for a
 	// 2-column layout. The locator yields the right one-liner ("columns p2-p4");
 	// the column count rides as `columnCount` for --verbose/JSON consumers.
-	await respondAck({
-		ok: true,
-		operation: "columns",
-		path: opts.outputPath ?? opts.filePath,
-		locator: meta.at,
-		columnCount: opts.count,
-		mode: meta.mode,
-	});
+	await respondAck(
+		{
+			ok: true,
+			operation: "sections",
+			path: destination,
+			locator: meta.at,
+			columnCount: opts.count,
+			mode: meta.mode,
+		},
+		renderVerifyHint(destination),
+	);
 	return EXIT.OK;
 }

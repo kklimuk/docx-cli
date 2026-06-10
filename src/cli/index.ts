@@ -4,7 +4,6 @@ import { fail, writeStderr, writeStdout } from "./respond";
 type CommandFn = (args: string[]) => Promise<number>;
 
 const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
-	columns: () => import("./columns"),
 	comments: () => import("./comments"),
 	create: () => import("./create"),
 	delete: () => import("./delete"),
@@ -20,6 +19,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	read: () => import("./read"),
 	render: () => import("./render"),
 	replace: () => import("./replace"),
+	sections: () => import("./sections"),
 	styles: () => import("./styles"),
 	tables: () => import("./tables"),
 	"track-changes": () => import("./track-changes"),
@@ -50,6 +50,17 @@ export async function main(argv: string[]): Promise<number> {
 			await writeStdout(`docx ${VERSION}\n`);
 		}
 		return 0;
+	}
+
+	// `columns` was renamed to `sections` (it manages section layout, and the
+	// read side already speaks sN / docx:section / cols=). Redirect rather than a
+	// bare "unknown command" so an agent reaching for the old name lands right.
+	if (cmd === "columns") {
+		return fail(
+			"USAGE",
+			"`docx columns` was renamed to `docx sections`",
+			"Run `docx sections --at pN-pM --columns N` (or `docx sections --help`).",
+		);
 	}
 
 	const loader = COMMANDS[cmd];

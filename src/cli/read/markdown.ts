@@ -42,6 +42,11 @@ export type MarkdownOptions = {
 	 *  Used as the baseline size when no stronger per-run majority emerges, so a
 	 *  doc that stamps the default `<w:sz>` on most runs still reads clean. */
 	defaultSizeHalfPoints?: number;
+	/** Whether the document's global track-changes toggle is on. Surfaced as a
+	 *  head `<!-- docx:track-changes on -->` hint (deviation-only — off is the
+	 *  default, so nothing is emitted then) so an agent sees the state on the
+	 *  first read instead of spending a `track-changes list` call to learn it. */
+	trackChangesOn?: boolean;
 };
 
 /** Document-wide run formatting so ubiquitous it reads as noise: the dominant
@@ -87,6 +92,15 @@ type RenderContext = {
 	/** Usable page width in EMU (page width − L/R margins) from the document's
 	 *  geometry, for flagging images wider than the text column (`overflow`). */
 	contentWidthEmu: number;
+	/** Per-block governing column count (the columns of the section break the
+	 *  block falls under). Used to flag tab-aligned content living in a
+	 *  multi-column section, where tab stops wrap mid-line in the narrow column —
+	 *  a render-only break Markdown can't show (the résumé scenario's blocker). */
+	governingColumns: Map<string, number>;
+	/** Paragraph ids whose trailing tab-aligned content WILL wrap in render (a
+	 *  right-edge LEFT tab). Collected by `layoutHazardNote` during the walk so
+	 *  `renderMarkdown` can emit one consolidated summary + single-call cure. */
+	wrappingTabLines: string[];
 };
 
 export function renderMarkdown(
@@ -116,6 +130,8 @@ export function renderMarkdown(
 		referencedTrackedChanges: new Map(),
 		orderedCounters: new Map(),
 		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)),
+		governingColumns: computeGoverningColumns(blocks),
+		wrappingTabLines: [],
 	};
 
 	const parts: string[] = [];
@@ -151,7 +167,7 @@ export function renderMarkdown(
 			cursor = lookahead;
 			continue;
 		}
-		const rendered = renderBlock(block, ctx);
+		const rendered = renderBlock(block, ctx, blocks, cursor);
 		if (rendered !== null) parts.push(rendered);
 		cursor++;
 	}
@@ -183,7 +199,20 @@ export function renderMarkdown(
 	// read-time hint the importer drops; geometry survives edits in place).
 	const baseNote = formatBaseNote(dominant);
 	const pageNote = formatPageNote(documentGeometry(blocks));
-	const headLines = [baseNote, pageNote].filter((line) => line.length > 0);
+	// Track-changes ON is a deviation from the default (off), so surface it; off
+	// emits nothing. This is an own-`docx:` metadata hint, dropped on import like
+	// the others — it just orients the agent so edits/`--track` decisions don't
+	// need a separate `track-changes list`.
+	const trackNote = options.trackChangesOn
+		? formatNote("track-changes", [], ["on"])
+		: "";
+	// One consolidated, actionable summary for every line that WILL wrap in render —
+	// the per-line hints alone got ignored by both Haiku and Sonnet across repeated
+	// reads, so lead with a single command that cures them all.
+	const wrapSummary = formatWrappingTabSummary(ctx.wrappingTabLines);
+	const headLines = [baseNote, pageNote, trackNote, wrapSummary].filter(
+		(line) => line.length > 0,
+	);
 	const head = headLines.length > 0 ? `${headLines.join("\n")}\n\n` : "";
 	return `${head}${parts.join("\n\n")}\n`;
 }
@@ -319,11 +348,151 @@ function slotKey(paragraphId: string, runIndex: number): string {
 	return `${paragraphId}#${runIndex}`;
 }
 
-function renderBlock(block: Block, ctx: RenderContext): string | null {
+function renderBlock(
+	block: Block,
+	ctx: RenderContext,
+	blocks: Block[],
+	index: number,
+): string | null {
 	if (block.type === "paragraph") return renderParagraph(block, ctx);
 	if (block.type === "table") return renderTable(block, ctx);
-	if (block.type === "sectionBreak") return renderSectionBreak(block);
+	if (block.type === "sectionBreak") {
+		return renderSectionBreak(block, governedRange(blocks, index));
+	}
 	return null;
+}
+
+/** Map each block id to the column count of the section that governs it (the
+ * first section break at or after it — sections govern preceding content). Built
+ * by scanning from the end: the running column count is the nearest section
+ * break already passed. Default 1 (single column). */
+function computeGoverningColumns(blocks: Block[]): Map<string, number> {
+	const map = new Map<string, number>();
+	let cols = 1;
+	for (let index = blocks.length - 1; index >= 0; index--) {
+		const block = blocks[index];
+		if (!block) continue;
+		if (block.type === "sectionBreak") {
+			cols = block.columns ?? 1;
+			continue;
+		}
+		map.set(block.id, cols);
+	}
+	return map;
+}
+
+/** A `<!-- docx:layout pN … warn="…" -->` hazard hint for a tab-aligned line
+ * whose right-hand content can wrap — a render-only break Markdown shows as a
+ * clean `\t`. Two shapes, both deviation-only (fire only on the risky combo):
+ *  - a tab in a MULTI-COLUMN section (the column is narrow), or
+ *  - a tab right-positioned by a LEFT/center tab stop near the margin with no
+ *    RIGHT tab (the résumé "San / Francisco, CA" break — short placeholders fit
+ *    the gap to the margin, real values overflow and wrap; a right tab wouldn't). */
+/** The consolidated top-of-read summary for every line whose tab-aligned content
+ *  wraps in render, with a SINGLE command that cures them all. Empty when there's
+ *  nothing wrapping. The cure spans the min..max paragraph in document order; the
+ *  range form of `--tabs` only touches paragraphs that already have tab stops, so
+ *  a wide range safely skips the non-tab paragraphs in between. */
+function formatWrappingTabSummary(ids: string[]): string {
+	if (ids.length === 0) return "";
+	const count = `${ids.length} line${ids.length > 1 ? "s" : ""}`;
+	const range = tabCureRange(ids);
+	const fix = range
+		? `edit FILE --at ${range} --tabs right`
+		: ids.map((id) => `edit FILE --at ${id} --tabs right`).join(" ; ");
+	return formatNote(
+		"layout",
+		[
+			["wrap", count],
+			[
+				"warn",
+				"tab-aligned content (e.g. dates/locations) overflows the right margin and WRAPS in render until cured",
+			],
+			["fix-all", fix],
+		],
+		ids,
+	);
+}
+
+/** `pMin-pMax` (or `pMin` when one) over the simple `pN` ids in `ids`; null when
+ *  none are plain body-paragraph locators (e.g. all cell-paragraph locators), in
+ *  which case the caller lists per-line cures instead. */
+function tabCureRange(ids: string[]): string | null {
+	const nums = ids
+		.map((id) => /^p(\d+)$/.exec(id)?.[1])
+		.filter((value): value is string => value !== undefined)
+		.map(Number);
+	if (nums.length === 0) return null;
+	const min = Math.min(...nums);
+	const max = Math.max(...nums);
+	return min === max ? `p${min}` : `p${min}-p${max}`;
+}
+
+function layoutHazardNote(paragraph: Paragraph, ctx: RenderContext): string {
+	if (!paragraph.runs.some((run) => run.type === "tab")) return "";
+
+	const cols = ctx.governingColumns.get(paragraph.id) ?? 1;
+	if (cols > 1) {
+		return ` ${formatNote(
+			"layout",
+			[
+				["cols", cols],
+				[
+					"warn",
+					`tab alignment can wrap mid-line in this ${cols}-column section; render to verify`,
+				],
+			],
+			[paragraph.id],
+		)}`;
+	}
+
+	// Fragile right-alignment via a left/center tab near the margin.
+	const tabs = paragraph.tabStops ?? [];
+	if (tabs.some((tab) => tab.align === "right")) return ""; // robust
+	const textWidthTwips = Math.round(ctx.contentWidthEmu / EMU_PER_TWIP);
+	const fragile = tabs.find(
+		(tab) =>
+			(tab.align === "left" || tab.align === "center" || tab.align === "") &&
+			tab.pos > textWidthTwips * 0.7,
+	);
+	if (!fragile) return "";
+	// Record it so renderMarkdown can emit ONE consolidated top-of-doc summary with
+	// a single-call cure across all wrapping lines — per-line hints alone get
+	// ignored (both Haiku and Sonnet blew past them across repeated reads).
+	ctx.wrappingTabLines.push(paragraph.id);
+	const gapIn = twipsToInches(Math.max(0, textWidthTwips - fragile.pos));
+	return ` ${formatNote(
+		"layout",
+		[
+			["tab", `${fragile.align || "left"}@${twipsToInches(fragile.pos)}in`],
+			[
+				"warn",
+				`right content on a LEFT tab ~${gapIn}in from the margin — wraps when longer (cure: --tabs right; see the docx:layout fix-all at top)`,
+			],
+		],
+		[paragraph.id],
+	)}`;
+}
+
+/** The locator range a section break governs. Per ECMA-376 a `<w:sectPr>`
+ * applies to the content ENDING at it — everything back to the previous section
+ * boundary, i.e. the paragraphs ABOVE the break, not below. That direction is
+ * the off-by-one weak agents miss (they read the annotation as governing what
+ * follows; the `eliot-journal` scenario put a 2-column boundary before the poems
+ * and got single-column poems). Returns the `pX..pY` span (or a single id), or
+ * undefined when the section governs no addressable content. */
+function governedRange(blocks: Block[], index: number): string | undefined {
+	let first: string | undefined;
+	let last: string | undefined;
+	for (let cursor = index - 1; cursor >= 0; cursor--) {
+		const block = blocks[cursor];
+		if (!block) continue;
+		if (block.type === "sectionBreak") break;
+		first = block.id;
+		if (last === undefined) last = block.id;
+	}
+	if (!first || !last) return undefined;
+	return first === last ? first : `${first}..${last}`;
 }
 
 /** A section break as an own-line `<!-- docx:section sN cols="2" type="…" -->`
@@ -332,15 +501,22 @@ function renderBlock(block: Block, ctx: RenderContext): string | null {
  * silently corrupted layout on `read → create` AND was indistinguishable from a
  * real thematic break. The `docx:section` comment is a read-time VISIBILITY hint:
  * the importer drops it (no reconstruction — `--ast` is the lossless view, and
- * `docx columns` / `insert --section` / edit-in-place manage layout), and a
+ * `docx sections` / edit-in-place manage layout), and a
  * hand-authored `---` now unambiguously means a thematic break. cols/type are
  * shown for the section; document geometry rides the leading `docx:page` note. */
-function renderSectionBreak(block: SectionBreak): string {
+function renderSectionBreak(block: SectionBreak, governs?: string): string {
 	const pairs: NotePair[] = [];
 	if (block.columns !== undefined && block.columns > 1) {
 		pairs.push(["cols", block.columns]);
 	}
 	if (block.sectionType !== undefined) pairs.push(["type", block.sectionType]);
+	// State the scope only on a section that already deviates (multi-column or a
+	// non-default type) — a bare single-column break doesn't need it, and it's
+	// exactly the layout-bearing sections where the "which side?" trap bites. The
+	// `(above)` tag spells out that the columns/type govern the content ABOVE.
+	if (governs !== undefined && pairs.length > 0) {
+		pairs.push(["applies-to", `${governs} (above)`]);
+	}
 	return formatNote("section", pairs, [block.id]);
 }
 
@@ -548,7 +724,7 @@ function renderParagraph(
 	// Putting the locator after a space on the same line confuses the parser
 	// — it sees the trailing `$` as an unmatched math-mode toggle.
 	const separator = isDisplayEquationOnly(body) ? "\n" : " ";
-	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->${formatParagraphNote(paragraph)}`;
+	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->${formatParagraphNote(paragraph)}${layoutHazardNote(paragraph, ctx)}`;
 }
 
 /** The `<!-- docx:p pN style="Caption" align="center" -->` annotation, or "" when

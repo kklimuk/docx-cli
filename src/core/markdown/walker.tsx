@@ -64,7 +64,7 @@ function walkBlock(node: RootContent, ctx: WalkContext): XmlNode[] {
 			// `docx:section` / `docx:page` / `docx:table` visibility annotations
 			// `read` emits) — drop. These are read-time hints, not parse-back: the
 			// importer never reconstructs structure from them (`--ast` is the
-			// lossless view; edit-in-place + `docx columns`/`insert --section`
+			// lossless view; edit-in-place + `docx sections`
 			// manage layout). Agents author through markdown features.
 			return [];
 		case "footnoteDefinition":

@@ -21,7 +21,7 @@ were in effect before the tracked edit.
 
 Paragraph-mark trackings (<w:ins>/<w:del> inside <w:pPr><w:rPr>): rejecting
 a paragraph-mark insertion removes the entire owning paragraph (the inserted
-break disappears — for sentinels created by "insert --section" this also
+break disappears — for sentinels created by "docx sections" this also
 removes the section break the sentinel was carrying). Rejecting a
 paragraph-mark deletion just removes the marker (the paragraph stays).
 
@@ -39,6 +39,10 @@ Target (one required, mutually exclusive):
                     batch is not a concern. Supports:
 ${AT_FORMS}
                     See \`docx info locators\`.
+  --at revN         Reject a del+ins REPLACE pair in one call (both halves of one
+                    logical change). \`list\` tags the two tcNs with a shared
+                    "group": "revN"; addressing the revN saves the reject-relist-
+                    reject ping-pong (tcN ids renumber after each single reject).
   --all             Reject every tracked change.
 
 Options:

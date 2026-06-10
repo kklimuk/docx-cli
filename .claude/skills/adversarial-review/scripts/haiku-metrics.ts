@@ -258,7 +258,11 @@ type Totals = {
 	docxShare?: number;
 };
 
-function renderSection(rows: AgentRow[], totals: Totals): string {
+function renderSection(
+	rows: AgentRow[],
+	totals: Totals,
+	extras: { selfReport?: string; comparison?: string } = {},
+): string {
 	// The '## Haiku tool & cost economy' section: a totals table, a per-scenario
 	// table, and an outliers list. Emitted to stdout (appended to REPORT.md) and reused
 	// as the body of the standalone haiku-metrics.md.
@@ -277,8 +281,15 @@ function renderSection(rows: AgentRow[], totals: Totals): string {
 			"`docx share` = docx calls ÷ total calls — a low share, or many calls for a " +
 			"simple task, is a friction signal. **eff in** = cache-cost-weighted input " +
 			`(cache write ×${CACHE_WRITE_MULT}, cache read ×${CACHE_READ_MULT}); output is ` +
-			"kept separate (different rate). See Totals for the raw cache split.",
+			"kept separate (different rate). See Totals for the raw cache split. **These " +
+			"measured counts supersede the self-reported tool economy in the report body — " +
+			"agents under-report their own calls.**",
 		"",
+	);
+	if (extras.selfReport) {
+		lines.push(extras.selfReport, "");
+	}
+	lines.push(
 		"### Totals",
 		"",
 		"| metric | value |",
@@ -334,8 +345,173 @@ function renderSection(rows: AgentRow[], totals: Totals): string {
 		lines.push("", "### Outliers", "", ...outliers);
 	}
 
+	if (extras.comparison) {
+		lines.push("", extras.comparison);
+	}
+
 	lines.push("");
 	return lines.join("\n");
+}
+
+/** Sum the self-reported docx calls from the run's benchmark.json and contrast
+ * them with the measured total, so a reader knows which number to trust. Agents
+ * routinely under-count their own tool calls (~½ in practice), which is exactly
+ * why the report body's self-reported economy can't be relied on. */
+async function renderSelfReportNote(
+	runDir: string,
+	measured: Totals,
+): Promise<string> {
+	try {
+		const benchmark = JSON.parse(
+			await Bun.file(`${runDir}/benchmark.json`).text(),
+		);
+		const scenarios = benchmark?.perScenario;
+		if (!Array.isArray(scenarios) || !scenarios.length) {
+			return "";
+		}
+		const selfDocx = scenarios.reduce(
+			(sum: number, s: any) => sum + (s.docxCalls || 0),
+			0,
+		);
+		if (!selfDocx) {
+			return "";
+		}
+		const ratio = measured.docxToolCalls / selfDocx;
+		return (
+			`> **Self-reported vs measured:** agents self-reported **${selfDocx}** docx ` +
+			`calls; the transcripts show **${measured.docxToolCalls}** (×${ratio.toFixed(1)}). ` +
+			"Agents under-count their own calls, so treat the report body's tool-economy " +
+			"numbers as a floor and these as the truth."
+		);
+	} catch {
+		return "";
+	}
+}
+
+/** The most-recent prior run dir (a sibling under the same parent that has a
+ * haiku-metrics.json and sorts before this one — the run-id timestamps sort
+ * lexically), or null on the first run. */
+async function findPriorMetrics(
+	runDir: string,
+): Promise<{ name: string; data: any } | null> {
+	const normalized = runDir.replace(/\/+$/, "");
+	const slash = normalized.lastIndexOf("/");
+	if (slash < 0) {
+		return null;
+	}
+	const parent = normalized.slice(0, slash);
+	const current = normalized.slice(slash + 1);
+	let best: string | null = null;
+	for await (const path of new Bun.Glob("*/haiku-metrics.json").scan({
+		cwd: parent,
+		absolute: false,
+	})) {
+		const name = path.slice(0, path.indexOf("/"));
+		if (name >= current) {
+			continue; // skip self and any future run
+		}
+		if (best === null || name > best) {
+			best = name;
+		}
+	}
+	if (!best) {
+		return null;
+	}
+	try {
+		const data = JSON.parse(
+			await Bun.file(`${parent}/${best}/haiku-metrics.json`).text(),
+		);
+		return { name: best, data };
+	} catch {
+		return null;
+	}
+}
+
+/** A run-over-run comparison table (this run vs the previous one) with a short,
+ * data-driven interpretation naming the scenarios that drove the change. Answers
+ * "are we getting better or worse?" without a human diffing two JSON files — and
+ * flags the single-run weak-agent variance so a swing isn't over-read as a tool
+ * regression. */
+function renderComparison(
+	priorName: string,
+	prior: any,
+	rows: AgentRow[],
+	totals: Totals,
+): string {
+	const priorRows: any[] = Array.isArray(prior?.perScenario)
+		? prior.perScenario
+		: [];
+	const priorByKey: Record<string, any> = {};
+	for (const r of priorRows) {
+		if (r?.scenario) {
+			priorByKey[r.scenario] = r;
+		}
+	}
+	const delta = (now: number, before: number): string => {
+		const d = now - before;
+		const sign = d >= 0 ? "+" : "−";
+		return `${sign}${fmtTokens(Math.abs(d))}`;
+	};
+	const deltaCalls = (now: number, before: number): string => {
+		const d = now - before;
+		return `${d >= 0 ? "+" : "−"}${Math.abs(d)}`;
+	};
+
+	const out: string[] = [
+		`### vs previous run (\`${priorName}\`)`,
+		"",
+		"docx calls and effective input, this run vs last. Single-run weak-agent " +
+			"metrics are high-variance (the same prompt + tool can swing 2× on agent " +
+			"choices alone), so read a per-scenario swing as a lead to investigate, not " +
+			"a tool-quality verdict — the reliable signal is pass-rate and per-scenario " +
+			"root cause.",
+		"",
+		"| scenario | docx (was → now) | eff in (was → now) |",
+		"| --- | --: | --: |",
+	];
+	// Rank scenarios by |Δ eff in| so the interpretation can name the real drivers.
+	const drivers: { key: string; dEff: number }[] = [];
+	for (const row of rows) {
+		const key = row.scenario || "?";
+		const before = priorByKey[key];
+		if (!before) {
+			out.push(`| ${key} | ${row.docxToolCalls} (new) | ${fmtTokens(row.effectiveInputTokens)} (new) |`);
+			continue;
+		}
+		const dEff = row.effectiveInputTokens - (before.effectiveInputTokens || 0);
+		drivers.push({ key, dEff });
+		out.push(
+			`| ${key} ` +
+				`| ${before.docxToolCalls} → ${row.docxToolCalls} (${deltaCalls(row.docxToolCalls, before.docxToolCalls)}) ` +
+				`| ${fmtTokens(before.effectiveInputTokens)} → ${fmtTokens(row.effectiveInputTokens)} (${delta(row.effectiveInputTokens, before.effectiveInputTokens)}) |`,
+		);
+	}
+	const pt = prior?.totals;
+	if (pt) {
+		out.push(
+			`| **total** ` +
+				`| **${pt.docxToolCalls} → ${totals.docxToolCalls} (${deltaCalls(totals.docxToolCalls, pt.docxToolCalls)})** ` +
+				`| **${fmtTokens(pt.effectiveInputTokens)} → ${fmtTokens(totals.effectiveInputTokens)} (${delta(totals.effectiveInputTokens, pt.effectiveInputTokens)})** |`,
+		);
+	}
+
+	// Interpretation: name the 1–2 scenarios that moved eff-input the most.
+	drivers.sort((a, b) => Math.abs(b.dEff) - Math.abs(a.dEff));
+	const top = drivers.filter((d) => Math.abs(d.dEff) >= 50_000).slice(0, 2);
+	if (top.length && pt) {
+		const netDir = totals.effectiveInputTokens >= pt.effectiveInputTokens ? "up" : "down";
+		const names = top
+			.map((d) => `\`${d.key}\` (${d.dEff >= 0 ? "+" : "−"}${fmtTokens(Math.abs(d.dEff))})`)
+			.join(" and ");
+		out.push(
+			"",
+			`Net effective input moved **${netDir}**, driven almost entirely by ${names}` +
+				" — the rest of the corpus was roughly flat. Check those scenarios' reviews " +
+				"for whether the swing was real friction or agent variance before reading it " +
+				"as a regression.",
+		);
+	}
+	return out.join("\n");
 }
 
 function renderDocument(section: string, transcriptDir: string, generatedAt: string): string {
@@ -411,7 +587,12 @@ async function main(): Promise<void> {
 		: 0;
 
 	const generatedAt = localIsoSeconds(new Date());
-	const section = renderSection(rows, totals);
+	const selfReport = await renderSelfReportNote(runDir ?? "", totals);
+	const prior = await findPriorMetrics(runDir ?? "");
+	const comparison = prior
+		? renderComparison(prior.name, prior.data, rows, totals)
+		: "";
+	const section = renderSection(rows, totals, { selfReport, comparison });
 	const document = renderDocument(section, transcriptDir ?? "./tmp/", generatedAt);
 
 	const outMd = `${runDir}/haiku-metrics.md`;
@@ -432,8 +613,10 @@ async function main(): Promise<void> {
 	}
 
 	// stdout is appended to REPORT.md by the skill — emit the SECTION (## …), not the
-	// titled standalone doc, so it slots in cleanly as a sub-section.
-	console.log(section);
+	// titled standalone doc. Lead with a blank line + thematic break so it can't glue
+	// onto the synthesized report's last paragraph (which has no trailing newline) and
+	// turn it into a setext heading.
+	console.log(`\n\n---\n\n${section}`);
 	console.error(`[wrote ${outMd} and ${outJson}]`);
 }
 

@@ -471,6 +471,85 @@ describe("docx tables insert-row", () => {
 		expect(result.stdout).toContain("columns");
 	});
 
+	test("inserted row copies the sibling row's gridSpan pattern (invoice footgun)", async () => {
+		// 3-grid-col table whose data rows merge cols 1+2 → 2 logical columns.
+		const merged = await newTableDoc("ins-row-span", 2, 3);
+		await runCli("tables", "merge", merged, "--at", "t0:r1c1-r1c2");
+		// One value per LOGICAL cell (2), not per grid column (3).
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			merged,
+			"--at",
+			"t0",
+			"--position",
+			"2",
+			"--cells",
+			"Label,Spanned",
+		);
+		expect(result.exitCode).toBe(0);
+		const t = await table(merged);
+		const newRow = t.rows[2];
+		// Mirrors the sibling: 2 cells, the second spanning 2 grid columns — NOT
+		// 3 flat cells that would shove values into the wrong columns.
+		expect(newRow?.cells).toHaveLength(2);
+		expect(newRow?.cells[1]?.gridSpan).toBe(2);
+		expect(newRow?.cells.map(cellText)).toEqual(["Label", "Spanned"]);
+		// Span-sum matches the grid (3 columns) — no malformed row.
+		const span = (c: MutCell) => c.gridSpan ?? 1;
+		expect(newRow?.cells.reduce((s, c) => s + span(c), 0)).toBe(3);
+	});
+
+	test("--cells limit counts logical (visible) columns on a merged table", async () => {
+		const merged = await newTableDoc("ins-row-span-limit", 2, 3);
+		await runCli("tables", "merge", merged, "--at", "t0:r1c1-r1c2");
+		// 2 logical columns now; 3 values must be rejected.
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			merged,
+			"--at",
+			"t0",
+			"--position",
+			"2",
+			"--cells",
+			"a,b,c",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toContain("2 columns");
+	});
+
+	test("--cells with a shell-gutted currency value ('.00') is refused", async () => {
+		// The invoice blocker: `--cells "...,$300.00,$600.00"` double-quoted in bash
+		// becomes `...,.00,.00` before docx sees it. Refuse the gutted signature so a
+		// weak agent doesn't ship `.00` cells.
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			docPath,
+			"--at",
+			"t0",
+			"--cells",
+			"Calibration kit,.00",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { hint: string }).hint).toContain("--batch");
+	});
+
+	test("--cells with correct $300.00 is NOT a false positive", async () => {
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			docPath,
+			"--at",
+			"t0",
+			"--cells",
+			"Calibration kit,$300.00",
+		);
+		expect(result.exitCode).toBe(0);
+	});
+
 	test("missing table is reported", async () => {
 		const result = await runCli("tables", "insert-row", docPath, "--at", "t9");
 		expect(result.exitCode).toBe(3);
@@ -644,6 +723,61 @@ describe("docx tables set-widths", () => {
 		);
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout).toContain("entries");
+	});
+
+	test("a text cell collapsed below ~0.2in is refused (invoice footgun)", async () => {
+		// Put content in the column we're about to crush: 2% of the 9360 grid ≈
+		// 187tw ≈ 0.13in, which after ~0.15in of cell margin fits under one char,
+		// so Word wraps it one char per line. Refuse rather than return ok.
+		await runCli("edit", docPath, "--at", "t0:r0c2:p0", "--text", "Amount");
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"96%,2%,2%",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toContain("Amount");
+		expect(result.stdout).toContain("margins");
+		// The original grid is untouched (no partial write of a broken layout).
+		expect((await table(docPath)).grid).toEqual([3120, 3120, 3120]);
+	});
+
+	test("an EMPTY thin column is allowed (deliberate spacer, nothing to wrap)", async () => {
+		// Same crushing widths, but the cells are empty — a thin spacer renders
+		// fine, so the content-aware guard must NOT block it.
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"96%,2%,2%",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([8986, 187, 187]);
+	});
+
+	test("count mismatch on a merged-cell table explains grid-vs-visible columns", async () => {
+		// Merge c0+c1: the grid still has 3 <w:gridCol> but row 0 shows 2 cells.
+		// A 2-value (visible-column) --widths must be told it needs 3 grid values.
+		await runCli("tables", "merge", docPath, "--at", "t0:r0c0-r0c1");
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"50%,50%",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toContain("merged cells");
+		expect(result.stdout).toContain("grid columns");
 	});
 });
 

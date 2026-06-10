@@ -50,6 +50,11 @@ export const meta = {
 const parsedArgs = typeof args === "string" ? JSON.parse(args) : args || {};
 const { runDir, binary, scenariosDir } = parsedArgs;
 const only = normalizeOnly(parsedArgs.only);
+// The exercise (subject-under-test) agent model. Defaults to "haiku" — the whole
+// harness is framed around weak agents — but overridable via args.model to probe a
+// stronger model (e.g. "sonnet"): does it ACT on the read-time hints/cures a weaker
+// agent ignores? Only the exercise agent changes; render/judge/synth are unaffected.
+const exerciseModel = parsedArgs.model || "haiku";
 if (!runDir || !binary || !scenariosDir) {
 	throw new Error(
 		"adversarial-review requires args { runDir, binary, scenariosDir }",
@@ -330,7 +335,7 @@ const pipelines = active.map((scenario) => {
 	const exerciseP = agent(exercisePrompt(scenario), {
 		label: `exercise:${scenario.key}`,
 		phase: "Exercise",
-		model: "haiku",
+		model: exerciseModel,
 		agentType: "general-purpose",
 		schema: EXERCISE_SCHEMA,
 	})
@@ -578,7 +583,7 @@ Write a thorough, prioritized Markdown report with these sections:
 1. **Executive summary** — can weak agents use docx-cli today? Overall pass rate, the headline strengths, and the 2–3 biggest problems.
 2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly | formatting preserved | docx calls | other tool calls | top merit | top demerit. The docx/other call counts come from \`benchmark.perScenario\`.
 2b. **Per-task merits & demerits** — for EVERY scenario, a short block listing its merits (what worked) and its demerits (defects/failures) from the judge verdicts. The user explicitly wants both sides for each task.
-2c. **Tool economy** — a short subsection on the Haiku tool split from \`benchmark\`: total docx-cli calls vs other tool calls and the docx share, plus per-scenario outliers (which tasks needed the most docx calls or the most non-docx workaround calls) and what that says about ergonomics. A high non-docx share, or many docx calls for a simple task, is a friction signal. Note: the harness appends a precise, transcript-measured metrics table (per-agent tokens + wall-clock time + tool split) below your report — you may reference it, but you don't need to reproduce the exact numbers; the self-reported \`benchmark\` counts you have are approximate.
+2c. **Tool economy** — a short subsection on the Haiku tool split from \`benchmark\`. Keep this QUALITATIVE: per-scenario outliers (which tasks needed the most docx calls or the most non-docx workaround calls), the friction patterns they reveal, and what that says about ergonomics. A high non-docx share, or many docx calls for a simple task, is a friction signal. CRITICAL framing: the \`benchmark\` counts are SELF-REPORTED by the weak agents and routinely UNDERCOUNT (agents miss ~half their own calls), so do NOT present them as authoritative totals — label any number you cite as "self-reported (approximate)" and point the reader to the transcript-**measured** "Haiku tool & cost economy" section the harness appends below your report (which also carries a run-over-run comparison) as the source of truth. Prefer relative/ordinal claims ("resume needed the most calls") over absolute totals here.
 3. **Cross-cutting themes** — group findings into: Discoverability, CLI ergonomics / surface, Correctness & bugs, Formatting fidelity / preservation, Missing capabilities. Rank themes by impact. For each, give the EVIDENCE (which scenarios, specific commands, judge defects, verbatim friction quotes) and a concrete, actionable recommendation.
 4. **Prioritized fixes** — a numbered top 5–8 list, highest leverage first, each tied to the evidence above and phrased as something the maintainer can act on (ideally pointing at the command/flag/output to change).
 5. **What worked well** — what weak agents found easy; don't only criticize.

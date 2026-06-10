@@ -7,10 +7,12 @@ import {
 	buildGrid,
 	cellAt,
 	type Grid,
+	type GridRow,
 	markRowTracked,
 	resolveTableNode,
 	TableCell,
 } from "@core/table";
+import { rejectShellMangledValue } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -38,8 +40,11 @@ ${AT_FORMS}
 
 Optional:
   --position INDEX   0-based row index to insert at (default: append at end)
-  --cells "a,b,c"    Comma-separated text for the new cells (default: empty).
-                     Must not exceed the table's column count.
+  --cells "a,b,c"    Comma-separated text, one value per VISIBLE cell left to
+                     right (default: empty). On a table with merged cells the new
+                     row copies the neighbor row's gridSpan pattern, so you pass
+                     one value per logical column (a spanned cell counts once),
+                     NOT one per underlying grid column.
   --author NAME      Author for tracked insertion (default: $DOCX_AUTHOR)
   -o, --output PATH  Write to PATH instead of overwriting FILE
   --dry-run          Print what would change; do not write
@@ -120,10 +125,19 @@ export async function run(args: string[]): Promise<number> {
 	const cellTexts = parsed.values.cells
 		? (parsed.values.cells as string).split(",")
 		: [];
-	if (cellTexts.length > grid.colCount) {
+	for (const cell of cellTexts) {
+		const mangled = await rejectShellMangledValue(cell, HELP, "--cells");
+		if (typeof mangled === "number") return mangled;
+	}
+	// Validate against the row's LOGICAL columns (a merged/gridSpan cell counts
+	// once), not the raw grid-column count — the new row mirrors the sibling row's
+	// span pattern, so `--cells` maps one value per visible cell.
+	const reference = referenceRow(grid, position);
+	const logicalCols = reference ? reference.cells.length : grid.colCount;
+	if (cellTexts.length > logicalCols) {
 		return fail(
 			"USAGE",
-			`--cells has ${cellTexts.length} entries but table ${tableId} has ${grid.colCount} columns`,
+			`--cells has ${cellTexts.length} entries but the row has ${logicalCols} columns (a merged cell counts once)`,
 		);
 	}
 
@@ -175,19 +189,40 @@ function resolveRowPosition(raw: unknown, rowCount: number): number | null {
 	return value;
 }
 
-/** Build the `<w:tr>` to insert at logical `position`. Columns whose vertical
- * merge spans the insertion point get a `vMerge="continue"` cell so the merge
- * *extends* through the new row (matching Word's behavior — inserting inside a
- * vertical merge grows it rather than splitting it); other columns get a normal
- * cell carrying the matching `--cells` text. A merge spans the insertion point
- * when the row now below (`grid.rows[position]`) is a `continue` there — which
- * never happens at the top (0) or at append (rows.length). */
+/** The sibling row whose horizontal `gridSpan` pattern the new row copies — the
+ * row ABOVE the insertion point (a data row, the canonical structure), falling
+ * back to the row below when inserting at the top, or undefined for an empty
+ * table. Also drives the `--cells` logical-column count. */
+function referenceRow(grid: Grid, position: number): GridRow | undefined {
+	const above = position > 0 ? grid.rows[position - 1] : undefined;
+	const below = position < grid.rows.length ? grid.rows[position] : undefined;
+	return above ?? below;
+}
+
+/** Build the `<w:tr>` to insert at logical `position`, mirroring the table's
+ * existing column structure rather than emitting a flat band of single cells.
+ *
+ * Two patterns are honored so the new row lines up with its neighbors:
+ *  - **Horizontal `gridSpan`** is copied from the reference sibling row, so a
+ *    table whose data rows merge two grid columns (e.g. an invoice "Quantity"
+ *    cell spanning 2) gets a matching spanned cell — NOT two stray cells that
+ *    shove every later value one column left.
+ *  - **Vertical merge** spanning the insertion point still gets a
+ *    `vMerge="continue"` cell so the merge extends through the new row (Word's
+ *    behavior); a continuation isn't an editable cell, so it consumes no
+ *    `--cells` value.
+ *
+ * `--cells` maps one value per LOGICAL (visible) cell, left to right. By
+ * construction the emitted spans sum to `grid.colCount`, so the row always
+ * matches `<w:tblGrid>`. */
 function buildRow(grid: Grid, position: number, cellTexts: string[]): XmlNode {
 	const below =
 		position > 0 && position < grid.rows.length
 			? grid.rows[position]
 			: undefined;
+	const spans = referenceRow(grid, position);
 	const cells: XmlNode[] = [];
+	let logical = 0;
 	for (let col = 0; col < grid.colCount; ) {
 		const continued = below ? cellAt(below, col) : undefined;
 		if (continued?.vMerge === "continue") {
@@ -202,12 +237,14 @@ function buildRow(grid: Grid, position: number, cellTexts: string[]): XmlNode {
 			col += continued.colSpan;
 			continue;
 		}
+		const refSpan = spans ? (cellAt(spans, col)?.colSpan ?? 1) : 1;
 		cells.push(
-			<TableCell>
-				<Paragraph text={cellTexts[col] ?? ""} />
+			<TableCell gridSpan={refSpan > 1 ? refSpan : undefined}>
+				<Paragraph text={cellTexts[logical] ?? ""} />
 			</TableCell>,
 		);
-		col += 1;
+		logical += 1;
+		col += refSpan;
 	}
 	return <w.tr>{cells}</w.tr>;
 }

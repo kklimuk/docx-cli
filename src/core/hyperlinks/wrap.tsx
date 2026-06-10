@@ -29,6 +29,7 @@ export function wrapSpanInHyperlink(
 	paragraph: XmlNode,
 	span: Span,
 	relationshipId: string,
+	applyStyle = true,
 ): void {
 	if (span.start >= span.end) {
 		throw new HyperlinkWrapError(
@@ -43,6 +44,7 @@ export function wrapSpanInHyperlink(
 
 	const placeWrapper = (): void => {
 		if (placed || wrappedRuns.length === 0) return;
+		if (applyStyle) for (const run of wrappedRuns) applyHyperlinkRunStyle(run);
 		newChildren.push(hyperlinkWrapper(relationshipId, wrappedRuns));
 		wrappedRuns.length = 0;
 		placed = true;
@@ -113,4 +115,20 @@ function messageForOverlap(tag: string, span: Span): string {
 
 function hyperlinkWrapper(relationshipId: string, runs: XmlNode[]): XmlNode {
 	return <w.hyperlink {...{ "r:id": relationshipId }}>{runs}</w.hyperlink>;
+}
+
+/** Apply Word's canonical `Hyperlink` character style to a wrapped run so the
+ * link renders blue + underlined (a black, undecorated link reads as body text).
+ * `<w:rStyle>` is the first child of `<w:rPr>` in CT_RPr order, so unshift keeps
+ * the run valid; existing direct formatting on the run is left to win over the
+ * style, as Word does. No-op if the run already carries an rStyle. */
+function applyHyperlinkRunStyle(run: XmlNode): void {
+	if (run.tag !== "w:r") return;
+	let rPr = run.findChild("w:rPr");
+	if (!rPr) {
+		rPr = (<w.rPr />) as XmlNode;
+		run.children.unshift(rPr);
+	}
+	if (rPr.findChild("w:rStyle")) return;
+	rPr.children.unshift((<w.rStyle w-val="Hyperlink" />) as XmlNode);
 }

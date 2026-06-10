@@ -29,6 +29,7 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
+import { parseTabsValue, resolveTabsDirective } from "./tabs";
 
 type RawValues = Record<
 	string,
@@ -169,6 +170,7 @@ const SINGLE_SHOT_FLAGS = [
 	"type",
 	"style",
 	"alignment",
+	"tabs",
 	"color",
 	"bold",
 	"italic",
@@ -207,10 +209,14 @@ async function resolveEntry(
 ): Promise<ResolvedEntry> {
 	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
 	const hasClear = raw.clear !== undefined;
-	if (present.length === 0 && !hasClear) {
+	const hasProps =
+		raw.style !== undefined ||
+		raw.alignment !== undefined ||
+		raw.tabs !== undefined;
+	if (present.length === 0 && !hasClear && !hasProps) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, or "clear"`,
+			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, "clear", or "style"/"alignment"/"tabs" to adjust in place`,
 		);
 	}
 	if (present.length > 1) {
@@ -219,10 +225,12 @@ async function resolveEntry(
 			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
 		);
 	}
-	// A content key, "clear" alone, or a content key + "clear" (fill then strip).
-	const kind = (present[0] ?? "clear") as
+	// A content key, "clear" alone, a content key + "clear" (fill then strip), or
+	// "style"/"alignment" alone (restyle in place, keeping the runs).
+	const kind = (present[0] ?? (hasClear ? "clear" : "props")) as
 		| (typeof CONTENT_KEYS)[number]
-		| "clear";
+		| "clear"
+		| "props";
 
 	const at = raw.at;
 	if (typeof at !== "string" || at.length === 0) {
@@ -294,7 +302,7 @@ async function buildApply(
 	document: Document,
 	raw: Record<string, unknown>,
 	index: number,
-	kind: (typeof CONTENT_KEYS)[number] | "clear",
+	kind: (typeof CONTENT_KEYS)[number] | "clear" | "props",
 	blockRef: BlockReference,
 	span: { start: number; end: number } | null,
 	opts: EntryOptions,
@@ -302,6 +310,20 @@ async function buildApply(
 	const author = typeof raw.author === "string" ? raw.author : opts.authorFlag;
 	const clearTags =
 		raw.clear !== undefined ? resolveClearOrThrow(raw.clear, index) : null;
+
+	// Style-only entry (no content key): restyle the paragraph in place, keeping
+	// its runs. Mirrors single-shot `edit --at pN --style X`.
+	if (kind === "props") {
+		if (span) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: a character span (${raw.at}) can't take "style"/"alignment" — restyle the whole paragraph (pN).`,
+			);
+		}
+		const paragraphOptions = readParagraphOptions(document, raw, index);
+		return () =>
+			void new Edit(document).paragraphProperties(blockRef, paragraphOptions);
+	}
 
 	// Clear-only entry (no content key): strip formatting in place.
 	if (kind === "clear") {
@@ -377,9 +399,18 @@ async function buildWholeParagraphContent(
 	author: string | undefined,
 	opts: EntryOptions,
 ): Promise<() => XmlNode> {
-	const paragraphOptions = readParagraphOptions(raw, index);
+	const paragraphOptions = readParagraphOptions(document, raw, index);
 	if (kind === "text") {
 		const text = requireString(raw.text, index, "text");
+		// Empty text leaves a blank space-consuming paragraph, not a removed line —
+		// redirect to the delete batch (the honest verb for removals).
+		if (text === "") {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: empty "text" leaves a blank paragraph in place, it doesn't remove the line (${raw.at}).`,
+				'Remove lines with `docx delete --batch` ({ "at": "pN" } per line). To keep an empty spacer, use "runs": [] instead.',
+			);
+		}
 		const format = readTextFormat(raw, index);
 		return () =>
 			new Edit(document).paragraph(
@@ -537,10 +568,14 @@ function rejectSpanFormatFlags(
 			`entry ${index}: --color/--bold/--italic aren't supported on a character span — the replacement inherits the run's formatting`,
 		);
 	}
-	if (raw.style !== undefined || raw.alignment !== undefined) {
+	if (
+		raw.style !== undefined ||
+		raw.alignment !== undefined ||
+		raw.tabs !== undefined
+	) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: style/alignment apply to a whole paragraph, not a character span`,
+			`entry ${index}: style/alignment/tabs apply to a whole paragraph, not a character span`,
 		);
 	}
 }
@@ -565,6 +600,7 @@ function readTextFormat(
 }
 
 function readParagraphOptions(
+	document: Document,
 	raw: Record<string, unknown>,
 	index: number,
 ): ParagraphOptions {
@@ -589,6 +625,20 @@ function readParagraphOptions(
 			);
 		}
 		out.alignment = alignment;
+	}
+	if (raw.tabs !== undefined) {
+		if (typeof raw.tabs !== "string") {
+			throw new EntryError("USAGE", `entry ${index}: "tabs" must be a string`);
+		}
+		const parsed = parseTabsValue(raw.tabs);
+		if ("error" in parsed) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: ${parsed.error}`,
+				parsed.hint,
+			);
+		}
+		out.tabs = resolveTabsDirective(parsed, document);
 	}
 	return out;
 }

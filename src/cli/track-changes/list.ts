@@ -9,6 +9,7 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { revisionGroups } from "./groups";
 
 const HELP = `docx track-changes list — inventory every revision wrapper
 
@@ -27,7 +28,11 @@ apart.
 
 Output: a bare JSON array of { id, kind, author, date, revisionId, blockId,
 text } sorted by id (document order). Each item's "id" (e.g. tc0) is its
-addressable handle — pass it to \`accept\`/\`reject --at tcN\`. Errors print
+addressable handle — pass it to \`accept\`/\`reject --at tcN\`. When a del and an
+ins are an adjacent REPLACE pair on the same paragraph, BOTH carry a shared
+"group": "revN" — accept/reject the whole logical change in one call with
+\`--at revN\` instead of accepting each half separately (tcN ids renumber after
+each single accept, so the revN handle avoids the re-list ping-pong). Errors print
 {code, error, hint?} with a nonzero exit. kind is one of: "ins", "del", "moveFrom",
 "moveTo", "sectPrChange", "rowIns", "rowDel", "cellIns", "cellDel",
 "tblGridChange", "tblPrChange", "tcPrChange", "checkboxToggle". Paragraph-mark
@@ -58,6 +63,9 @@ type TrackedChangeRecord = TrackedChange & {
 	text: string;
 	prior?: SectionProperties;
 	current?: SectionProperties;
+	/** `revN` when this change is one half of a del+ins replace pair; absent for
+	 *  solo changes. `accept/reject --at revN` acts on both halves at once. */
+	group?: string;
 };
 
 export async function run(args: string[]): Promise<number> {
@@ -132,6 +140,15 @@ export async function run(args: string[]): Promise<number> {
 	const sorted = [...byId.values()].sort(
 		(a, b) => trackedChangeIndex(a.id) - trackedChangeIndex(b.id),
 	);
+
+	// Tag the two halves of each del+ins replace with a shared `revN` so an agent
+	// can accept/reject the logical change in ONE call (`accept --at revN`) instead
+	// of the id-renumbering ping-pong of accepting each half separately.
+	const { revOf } = revisionGroups(sorted);
+	for (const record of sorted) {
+		const group = revOf.get(record.id);
+		if (group) record.group = group;
+	}
 
 	await respond(sorted);
 	return EXIT.OK;

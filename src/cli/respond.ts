@@ -87,13 +87,29 @@ export function setVerboseAck(verbose: boolean): void {
  *  to confirm the command took effect, so we echo a one-liner like every other
  *  text-first command (read/find/wc). Mutators that mint a new handle use
  *  `respondMinted` instead (the handle is their confirmation). */
-export async function respondAck(payload: unknown): Promise<void> {
+export async function respondAck(
+	payload: unknown,
+	layoutHint?: string,
+): Promise<void> {
 	if (verboseAck) {
 		await respond(payload);
 		return;
 	}
-	const line = summarizeAck(payload);
-	if (line) await writeStdout(`${line}\n`);
+	const parts = [summarizeAck(payload), layoutHint].filter(
+		(part): part is string => Boolean(part),
+	);
+	if (parts.length > 0) await writeStdout(`${parts.join("\n")}\n`);
+}
+
+/** A render-verify nudge for layout-affecting mutators. `read` shows text and
+ * structure but NOT how the page actually looks (multi-column flow, cell-width
+ * wraps, image sizing, where content lands), so a weak agent that trusts a
+ * clean `read` after a layout edit ships a broken render. Layout mutators
+ * (`tables set-widths`, `columns`, `insert --section/--page-break/--image/
+ * --table`) pass this to `respondAck`/`respondMinted` so the reminder lands at
+ * the moment of success, not just in `--help`. */
+export function renderVerifyHint(path: string): string {
+	return `↳ layout changed — verify it renders right: docx render ${path} --out pages/ (read shows text/structure, NOT page layout: columns, wraps, image sizing)`;
 }
 
 /** A one-line, text-first summary of a mutator ack: `<operation> <target>`,
@@ -152,12 +168,15 @@ function ackTarget(ack: Record<string, unknown>): string | null {
 export async function respondMinted(
 	locators: string[],
 	verbosePayload: unknown,
+	layoutHint?: string,
 ): Promise<void> {
 	if (verboseAck) {
 		await respond(verbosePayload);
 		return;
 	}
-	if (locators.length > 0) await writeStdout(`${locators.join("\n")}\n`);
+	const parts = [...locators];
+	if (layoutHint) parts.push(layoutHint);
+	if (parts.length > 0) await writeStdout(`${parts.join("\n")}\n`);
 }
 
 /** Error output. Exit code is the canonical failure signal, so no `ok` field —

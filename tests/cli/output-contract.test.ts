@@ -77,6 +77,48 @@ describe("docx mutators — confirm by default", () => {
 		expect(payload).toMatchObject({ dryRun: true });
 	});
 
+	test("a layout-affecting mutator appends a render-verify hint (quiet mode)", async () => {
+		const workspace = tempWorkspace("layout-hint");
+		const docPath = join(workspace, "out.docx");
+		await rawCli("create", docPath, "--text", "hello");
+		// A multi-column section is layout-bearing — read can't show how it flows,
+		// so the `sections` success ack nudges a render. Plain text inserts must NOT.
+		const layout = await rawCli(
+			"sections",
+			docPath,
+			"--at",
+			"p0",
+			"--columns",
+			"2",
+		);
+		expect(layout.exitCode).toBe(0);
+		expect(layout.stdout).toContain("docx render");
+		const plain = await rawCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"just text",
+		);
+		expect(plain.exitCode).toBe(0);
+		expect(plain.stdout).not.toContain("docx render");
+	});
+
+	test("a default replace that leaves matches behind nudges --all (quiet mode)", async () => {
+		const workspace = tempWorkspace("replace-partial");
+		const docPath = join(workspace, "out.docx");
+		await rawCli("create", docPath, "--text", "fox fox fox");
+		const result = await rawCli("replace", docPath, "fox", "cat");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("--all");
+		expect(result.stdout).toMatch(/1 of 3/);
+		// A full sweep stays silent about remaining matches.
+		await rawCli("create", docPath, "--text", "fox fox fox", "--force");
+		const full = await rawCli("replace", docPath, "fox", "cat", "--all");
+		expect(full.stdout).not.toContain("--all to replace");
+	});
+
 	test("read commands stay loud (no --verbose needed)", async () => {
 		const workspace = tempWorkspace("read-loud");
 		const docPath = join(workspace, "out.docx");

@@ -12,13 +12,13 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   create    FILE  Create a new .docx (--from PATH.md | --from - builds from Markdown; --force to overwrite)
   read      FILE  Render as Markdown with pN locators; --from/--to to slice, --accepted (default)/--current/--baseline tracked views, --comments, --ast for JSON-AST
   edit      FILE  Replace or strip text/formatting at pN, pN:S-E, pN-pM, sN, eqN, or table-cell locators (--clear to strip formatting, --track to redline, --batch for many edits in one read)
-  insert    FILE  Insert a paragraph, image, table, equation, code block, markdown, or structural break (--after/--before LOCATOR; --track; --batch for many inserts in one read)
+  insert    FILE  Insert a paragraph, image, table, equation, code block, markdown, or page break (--after/--before LOCATOR; --track; --batch for many inserts in one read). For COLUMN layout use "docx sections", not insert.
   delete    FILE  Remove a paragraph, range, table, or section break (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
   find      FILE [QUERY]  Find spans by text, OR by formatting (--highlight/--color/--bold/--italic/--underline); returns locators for --at
   replace   FILE PATTERN REPL  Substitute text spans, sed-style (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern script)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
-  columns   FILE  Lay a paragraph range out in N columns (--at pN-pM --count N) or recount a section (--at sN)
+  sections  FILE  Multi-column layout & section breaks — put a paragraph range in N columns (--at pN-pM --columns N) or recount a section (--at sN). The ONLY way to do columns; insert does not.
   styles    FILE  List the styles you can apply (--used for ones in use; --at ID to describe one) — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
   comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
@@ -46,7 +46,7 @@ render (each render spins up Word and is slow). Render only for what Markdown ca
 multi-column sections, page/section breaks, image sizing/placement, table geometry — and
 then ONCE at the end (not after every edit), or one final time if you're genuinely unsure
 it looks right: "docx render FILE --out pages/" writes page-001.png, … which you can read.
-(A multi-column section's columns apply to content BEFORE the break — see "docx insert --help".)
+(To put text in columns, name the range: "docx sections --at pN-pM --columns N" — it inserts the bounding breaks so the columns land on exactly that range. A raw section break's columns apply to the content BEFORE it, which is why insert no longer takes --section.)
 
 Environment:
   DOCX_AUTHOR    Default author for comments and tracked-change attribution

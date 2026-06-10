@@ -28,10 +28,14 @@ export class Hyperlinks {
 		paragraph: XmlNode,
 		span: Span,
 		url: string,
-		options: { author?: string } = {},
+		options: { author?: string; style?: boolean } = {},
 	): void {
 		const relationshipId = this.document.relationships.addHyperlink(url);
-		wrapSpanInHyperlink(paragraph, span, relationshipId);
+		const applyStyle = options.style ?? true;
+		// Provision Word's Hyperlink character style so the rStyle reference
+		// resolves (otherwise the link renders as plain body text).
+		if (applyStyle) this.document.ensureStyles().ensureStyle("Hyperlink");
+		wrapSpanInHyperlink(paragraph, span, relationshipId, applyStyle);
 		this.document.relationships.hyperlinksByRelationshipId.set(relationshipId, {
 			url,
 		});
