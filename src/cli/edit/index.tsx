@@ -1008,15 +1008,18 @@ async function validateParagraphEdit(
 	}
 
 	if (text !== undefined) {
-		// Empty --text leaves an invisible, space-consuming blank paragraph rather
-		// than removing the line — a weak-agent trap (the instinct is "set the
-		// inapplicable section to empty → it's gone"). Redirect to the honest verb.
-		if (text === "") {
-			const at = values.at as string | undefined;
+		// Whole-paragraph empty --text leaves an invisible, space-consuming blank
+		// paragraph rather than removing the line — a weak-agent trap (the instinct
+		// is "set the inapplicable section to empty → it's gone"). Redirect to the
+		// honest verb. A SPAN locator (pN:S-E) is EXEMPT: there `--text ""` deletes
+		// just those characters in place (the paragraph keeps its other content) — a
+		// legitimate, common move (e.g. strip an inline `[Note: …]`).
+		const at = values.at as string | undefined;
+		if (text === "" && !(at && spanLocatorTarget(at))) {
 			return fail(
 				"USAGE",
 				`Empty --text leaves a blank paragraph in place, it doesn't remove the line.`,
-				`To DELETE the paragraph: \`docx delete --at ${at ?? "pN"}\` (or \`docx delete --batch\` for many). To blank it but keep an empty spacer, pass --runs '[]'. Help:\n${HELP}`,
+				`To DELETE the paragraph: \`docx delete --at ${at ?? "pN"}\` (or \`docx delete --batch\` for many). To delete just SOME characters, use a span locator (\`--at pN:S-E --text ""\`). To blank the paragraph but keep an empty spacer, pass --runs '[]'. Help:\n${HELP}`,
 			);
 		}
 		const rejected = await rejectMarkdownInText(text, HELP);

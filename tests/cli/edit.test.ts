@@ -2280,4 +2280,25 @@ describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)"
 		};
 		expect(ast.blocks.find((b) => b.id === "p0")?.runs).toEqual([]);
 	});
+
+	// A SPAN locator is exempt: `--at pN:S-E --text ""` deletes just those chars in
+	// place (the paragraph keeps its other content) — the natural "strip an inline
+	// [Note: …]" move. The whole-paragraph guard must NOT block it (it did before,
+	// forcing a delete-span → error → replace detour that bloated a résumé run).
+	test("span --text '' deletes just those characters (not rejected)", async () => {
+		const docPath = await docFrom("empty-span", "Keep [drop me] this.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:5-14",
+			"--text",
+			"",
+		);
+		expect(result.exitCode).toBe(0);
+		const line = (await runCli("read", docPath, "--from", "p0", "--to", "p0"))
+			.stdout;
+		expect(line).toContain("Keep  this.");
+		expect(line).not.toContain("drop me");
+	});
 });
