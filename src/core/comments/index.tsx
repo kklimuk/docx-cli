@@ -7,6 +7,7 @@ import {
 	addCommentMarkersAroundRun,
 	addCommentMarkersToParagraph,
 	addCommentRangeMarkers,
+	addReplyCommentMarkers,
 	authorInitials,
 	CommentBody,
 	type CommentSpan,
@@ -122,10 +123,15 @@ export class Comments {
 		return numericId;
 	}
 
-	/** Append a reply chained to `parentId` via `<w15:commentEx>`. Mints +
-	 * persists a `w14:paraId` on the parent first if absent. Returns the
-	 * minted numeric id (no `c` prefix). Throws
-	 * `CommentsError("COMMENT_NOT_FOUND")` if the parent doesn't exist. */
+	/** Append a reply chained to `parentId`'s thread via `<w15:commentEx>`,
+	 * anchored in the body by mirroring the thread's markers (Word drops a
+	 * comment with no `<w:commentReference>` in the body). Replying to a
+	 * reply attaches to the thread ROOT — Word threads are single-level and
+	 * Word rewrites deeper chains to the root on open, so chaining to the
+	 * root keeps our output round-trip-stable. Mints + persists a
+	 * `w14:paraId` on the root first if absent. Returns the minted numeric id
+	 * (no `c` prefix). Throws `CommentsError("COMMENT_NOT_FOUND")` if the
+	 * parent doesn't exist or its thread has no body anchor to mirror. */
 	reply(
 		parentId: string,
 		body: string,
@@ -141,11 +147,12 @@ export class Comments {
 				`Parent comment not found: c${parentNumericId}`,
 			);
 		}
-		const parentParaId = view.ensureParaId(parentNumericId);
-		if (!parentParaId) {
+		const rootNumericId = view.threadRootId(parentNumericId);
+		const rootParaId = view.ensureParaId(rootNumericId);
+		if (!rootParaId) {
 			throw new CommentsError(
 				"COMMENT_NOT_FOUND",
-				`Parent comment c${parentNumericId} could not be assigned a w14:paraId.`,
+				`Parent comment c${rootNumericId} could not be assigned a w14:paraId.`,
 			);
 		}
 
@@ -153,17 +160,72 @@ export class Comments {
 		const numericId = view.nextId();
 		const replyParaId = generateParaId();
 
-		this.#appendCommentBody(numericId, replyParaId, body, options.author, date);
+		// Word drops any comment without a `<w:commentReference>` in the body,
+		// so the reply mirrors the parent thread's anchor markers. Anchor before
+		// writing any part — an unanchorable parent aborts with nothing mutated.
+		const anchored = addReplyCommentMarkers(
+			this.document.documentTree,
+			[rootNumericId, ...view.descendantReplyIds(rootNumericId)],
+			numericId,
+		);
+		if (!anchored) {
+			throw new CommentsError(
+				"COMMENT_NOT_FOUND",
+				`Parent comment c${parentNumericId} has no anchor in the document body; cannot anchor a reply to it.`,
+			);
+		}
+
+		this.#appendCommentBody(
+			numericId,
+			replyParaId,
+			body,
+			options.author,
+			date,
+			{
+				threadParentNumericId: rootNumericId,
+			},
+		);
 
 		const extView = this.document.ensureCommentsExtended();
 		const extRoot = extView.extendedTree
 			? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
 			: undefined;
 		if (!extRoot) throw new Error("expected <w15:commentsEx> root");
-		extRoot.children.push(
+
+		// Word registers every threaded comment in the sidecar; a root that
+		// predates it gets its entry now, and the reply's entry lands after the
+		// thread's existing tail so sibling replies stay in reply order.
+		const threadParaIds = new Set([
+			rootParaId,
+			...view
+				.descendantReplyIds(rootNumericId)
+				.map((replyId) => view.paraIdFor(replyId)),
+		]);
+		const hasRootEntry = extRoot.children.some(
+			(child) =>
+				child.tag === "w15:commentEx" &&
+				child.getAttribute("w15:paraId") === rootParaId,
+		);
+		if (!hasRootEntry) {
+			extRoot.children.push(
+				new XmlNode("w15:commentEx", {
+					"w15:paraId": rootParaId,
+					"w15:done": "0",
+				}),
+			);
+		}
+		let insertIndex = extRoot.children.length;
+		for (const [index, child] of extRoot.children.entries()) {
+			if (child.tag !== "w15:commentEx") continue;
+			const paraId = child.getAttribute("w15:paraId");
+			if (paraId && threadParaIds.has(paraId)) insertIndex = index + 1;
+		}
+		extRoot.children.splice(
+			insertIndex,
+			0,
 			new XmlNode("w15:commentEx", {
 				"w15:paraId": replyParaId,
-				"w15:paraIdParent": parentParaId,
+				"w15:paraIdParent": rootParaId,
 				"w15:done": "0",
 			}),
 		);
@@ -224,8 +286,10 @@ export class Comments {
 	/** Remove every id in `ids`: splice the `<w:comment>` body, prune any
 	 * `<w15:commentEx>` entry keyed to its paraId, and strip
 	 * `<w:commentRangeStart>` / `<w:commentRangeEnd>` /
-	 * `<w:commentReference>` markers from the body. Pre-validates the
-	 * batch — any unknown id aborts before any mutation. Throws
+	 * `<w:commentReference>` markers from the body. Deleting a thread parent
+	 * cascades through its replies so none is left with dangling body markers
+	 * or a `w15:paraIdParent` pointing at a removed comment. Pre-validates
+	 * the batch — any unknown id aborts before any mutation. Throws
 	 * `CommentsError("COMMENT_NOT_FOUND")` with the first offending id. */
 	delete(ids: string[]): void {
 		const normalized = ids.map((id) => (id.startsWith("c") ? id : `c${id}`));
@@ -241,10 +305,17 @@ export class Comments {
 		}
 		if (!view) return; // `normalized` is empty (no ids → no `view` access yet).
 
+		const cascaded = new Set(normalized);
+		for (const commentId of normalized) {
+			for (const replyId of view.descendantReplyIds(commentId)) {
+				cascaded.add(`c${replyId}`);
+			}
+		}
+
 		const root = XmlNode.findRoot(view.tree, "w:comments");
 		if (!root) return;
 
-		for (const commentId of normalized) {
+		for (const commentId of cascaded) {
 			const numericId = commentId.slice(1);
 			const node = view.findById(numericId);
 			if (!node) continue; // pre-validated above
@@ -303,11 +374,12 @@ export class Comments {
 		text: string,
 		author: string,
 		date: string,
+		options?: { threadParentNumericId: string },
 	): void {
 		const commentsView = this.document.ensureComments();
 		const commentsRoot = XmlNode.findRoot(commentsView.tree, "w:comments");
 		if (!commentsRoot) throw new Error("expected <w:comments> root");
-		commentsRoot.children.push(
+		const comment = (
 			<CommentBody
 				options={{
 					id: numericId,
@@ -317,8 +389,13 @@ export class Comments {
 					paraId,
 					text,
 				}}
-			/>,
+			/>
 		);
+		if (options?.threadParentNumericId) {
+			commentsView.insertReplyAfter(options.threadParentNumericId, comment);
+			return;
+		}
+		commentsRoot.children.push(comment);
 	}
 
 	#resolveBlock(blockId: string): { node: XmlNode; parent: XmlNode[] } {

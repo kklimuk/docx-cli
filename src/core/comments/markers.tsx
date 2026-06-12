@@ -500,6 +500,78 @@ export function CommentBody({
 	);
 }
 
+/**
+ * Anchor a reply in the document body by mirroring its thread's markers.
+ * Word drops any comment whose `<w:commentReference>` is absent from the
+ * body, so a reply needs its own range markers + reference run nested inside
+ * the thread's — in the exact layout Word itself writes for threads:
+ * `Start_parent, Start_reply, …, End_parent, ref_parent, End_reply,
+ * ref_reply` (each reply's range closes after the previous member's
+ * reference run). `threadNumericIds` is the parent plus its existing replies;
+ * the new markers splice after the LAST member's, so sibling replies stay in
+ * reply order. Locates the thread's markers before mutating, so a thread
+ * with no reference run returns false with the body untouched. A legacy
+ * parent with a bare reference run and no range markers gets a
+ * bare-reference reply.
+ */
+export function addReplyCommentMarkers(
+	documentTree: XmlNode[],
+	threadNumericIds: string[],
+	replyNumericId: string,
+): boolean {
+	const document = XmlNode.findRoot(documentTree, "w:document");
+	if (!document) return false;
+	const threadIds = new Set(threadNumericIds);
+	const referenceRun = findLastDescendant(
+		document,
+		(node) =>
+			node.tag === "w:r" &&
+			node.children.some(
+				(child) =>
+					child.tag === "w:commentReference" &&
+					threadIds.has(child.getAttribute("w:id") ?? ""),
+			),
+	);
+	if (!referenceRun) return false;
+	const rangeStart = findLastDescendant(
+		document,
+		(node) =>
+			node.tag === "w:commentRangeStart" &&
+			threadIds.has(node.getAttribute("w:id") ?? ""),
+	);
+	if (!rangeStart) {
+		spliceAfter(referenceRun, commentReferenceRun(replyNumericId));
+		return true;
+	}
+	spliceAfter(rangeStart, commentRangeStartMarker(replyNumericId));
+	spliceAfter(
+		referenceRun,
+		commentRangeEndMarker(replyNumericId),
+		commentReferenceRun(replyNumericId),
+	);
+	return true;
+}
+
+type FoundNode = { node: XmlNode; siblings: XmlNode[] };
+
+function findLastDescendant(
+	root: XmlNode,
+	matches: (node: XmlNode) => boolean,
+): FoundNode | undefined {
+	let last: FoundNode | undefined;
+	for (const child of root.children) {
+		if (matches(child)) last = { node: child, siblings: root.children };
+		const found = findLastDescendant(child, matches);
+		if (found) last = found;
+	}
+	return last;
+}
+
+function spliceAfter(target: FoundNode, ...nodes: XmlNode[]): void {
+	const index = target.siblings.indexOf(target.node);
+	target.siblings.splice(index + 1, 0, ...nodes);
+}
+
 export function removeCommentMarkers(
 	documentTree: XmlNode[],
 	numericId: string,
