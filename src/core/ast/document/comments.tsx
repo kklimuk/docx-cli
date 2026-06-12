@@ -397,8 +397,18 @@ function lastParagraph(comment: XmlNode | undefined): XmlNode | undefined {
  * orphans every sidecar entry (`w15:commentEx` resolved flags, reply
  * `w15:paraIdParent` links) keyed to the old value. Used both by
  * `CommentsView.ensureParaId` and by the comments lens for replies + audit
- * comments. */
+ * comments.
+ *
+ * `DOCX_CLI_PARA_ID_SEED` (8-char hex) switches to sequential minting from
+ * that base — the byte-determinism seam for fixture rebuilds, mirroring
+ * `DOCX_CLI_NOW`. The counter is per-process: a builder that invokes the CLI
+ * multiple times must set a DISTINCT seed per invocation or ids collide. */
 export function generateParaId(): string {
+	const seed = Bun.env.DOCX_CLI_PARA_ID_SEED;
+	if (seed) {
+		const minted = (Number.parseInt(seed, 16) + seededParaIds++) % 0x80000000;
+		return (minted || 1).toString(16).padStart(8, "0").toUpperCase();
+	}
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
 	bytes[0] = (bytes[0] ?? 0) & 0x7f;
@@ -408,6 +418,8 @@ export function generateParaId(): string {
 	if (hex === "00000000") return "00000001";
 	return hex.toUpperCase();
 }
+
+let seededParaIds = 0;
 
 function CommentsExRoot(): XmlNode {
 	return (

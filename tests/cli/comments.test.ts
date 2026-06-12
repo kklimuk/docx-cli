@@ -230,6 +230,36 @@ describe("docx comments", () => {
 		expect(commentOrder).toEqual(["0", "1", "2", "3"]);
 	});
 
+	test("the committed comments-threaded fixture reads back as one root-anchored thread", async () => {
+		// tests/fixtures/setup/comments-threaded.ts authors this thread with the
+		// CLI (Alice root; Bob, Carol, Dave replies — Dave addressed a reply and
+		// attached to the root). Guards that the committed binary keeps the
+		// Word-valid shape: every reply anchored, all parented to c0.
+		const fixturePath = "tests/fixtures/comments-threaded.docx";
+		const list = await runCli(
+			"comments",
+			"list",
+			fixturePath,
+			"--thread",
+			"c0",
+		);
+		const thread = list.parsed as Array<{
+			id: string;
+			parentId?: string;
+			anchor: { startBlockId: string };
+		}>;
+		expect(thread.map((comment) => comment.id)).toEqual([
+			"c0",
+			"c1",
+			"c2",
+			"c3",
+		]);
+		for (const comment of thread) {
+			expect(comment.anchor.startBlockId).toBe("p0");
+			if (comment.id !== "c0") expect(comment.parentId).toBe("c0");
+		}
+	});
+
 	test("deleting a thread parent cascades to its replies", async () => {
 		await runCli(
 			"comments",

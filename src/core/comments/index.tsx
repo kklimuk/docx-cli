@@ -35,6 +35,7 @@ export {
 
 import type { Comment } from "../ast/types";
 import type { FindView } from "../find";
+import { resolveDate } from "../track-changes";
 
 /** Cross-cutting lens over the document's comments: spans the body (marker
  * placement / removal) and the comments part (mint + persist `<w:comment>`,
@@ -81,7 +82,7 @@ export class Comments {
 			findView?: FindView;
 		},
 	): string {
-		const date = options.date ?? new Date().toISOString();
+		const date = options.date ?? resolveDate();
 		const numericId = this.document.comments?.nextId() ?? "0";
 		const paraId = generateParaId();
 
@@ -156,7 +157,7 @@ export class Comments {
 			);
 		}
 
-		const date = options.date ?? new Date().toISOString();
+		const date = options.date ?? resolveDate();
 		const numericId = view.nextId();
 		const replyParaId = generateParaId();
 
