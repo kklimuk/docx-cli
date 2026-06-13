@@ -18,6 +18,8 @@ Usage:
 
 Required:
   --at cN           Parent comment id (e.g., c0). The "c" prefix is optional.
+                    Replying to a reply attaches to the thread root (Word
+                    threads are single-level); the ack's parentId reports it.
   --text TEXT       Reply body
 
 Optional:
@@ -88,7 +90,7 @@ export async function run(args: string[]): Promise<number> {
 			dryRun: true,
 			path,
 			commentId: `c${nextId}`,
-			parentId: `c${parentNumericId}`,
+			parentId: `c${document.comments.threadRootId(parentNumericId)}`,
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
@@ -108,12 +110,14 @@ export async function run(args: string[]): Promise<number> {
 
 	// The reply is itself a new comment with a fresh id the agent can't
 	// reconstruct, so print it by default; --verbose upgrades to the full ack.
+	// parentId is the EFFECTIVE parent — the thread root, which can differ
+	// from --at when the target was itself a reply.
 	await respondMinted([`c${numericId}`], {
 		ok: true,
 		operation: "comments.reply",
 		path: outputPath ?? path,
 		commentId: `c${numericId}`,
-		parentId: `c${parentNumericId}`,
+		parentId: `c${document.comments?.threadRootId(parentNumericId) ?? parentNumericId}`,
 	});
 	return EXIT.OK;
 }

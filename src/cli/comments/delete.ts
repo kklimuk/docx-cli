@@ -23,7 +23,8 @@ Target (one required, mutually exclusive):
   --at cN             Comment id (e.g., c0). Repeat for multiple ids:
                       --at c1 --at c3 --at c5. All ids are validated against
                       the pre-mutation tree, so the batch is atomic. The "c"
-                      prefix is optional.
+                      prefix is optional. Deleting a thread parent also
+                      deletes its replies.
   --batch PATH        JSONL with one {"id": "cN"} per line. Use - for stdin.
 
 Optional:

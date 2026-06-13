@@ -18,7 +18,8 @@ const CORE_FIXTURES = [
 	"notes.docx", // footnotes / endnotes write-back
 	"multi-tracked.docx", // run-level <w:ins>/<w:del>/move emit
 	"multi-column.docx", // <w:sectPr> + columns
-	"comments-with-replies.docx", // comments + commentsExtended
+	"comments-with-replies.docx", // comments + commentsExtended (Word-authored)
+	"comments-threaded.docx", // CLI-authored thread: anchored reply markers + root-attached nesting
 	"tables-mutations.docx", // tables + merges + tracked-table revisions (richest)
 	"images.docx", // inserted media parts + inline <w:drawing> picture
 	"footnotes-mutations.docx", // footnotes/endnotes parts authored from scratch

@@ -126,15 +126,15 @@ export class CommentsView {
 		);
 	}
 
-	/** Read a comment's `w14:paraId`, or undefined if the comment is missing
-	 * or has no inner `<w:p>`. Accepts the `cN` or bare-`N` id form. */
+	/** Read a comment's threading `w14:paraId`, or undefined if the comment is
+	 * missing or has no inner `<w:p>`. Word keys `<w15:commentEx>` and a
+	 * reply's `w15:paraIdParent` off the comment's LAST paragraph, so
+	 * threading must too. Accepts the `cN` or bare-`N` id form. */
 	paraIdFor(commentId: string): string | undefined {
 		const numericId = commentId.startsWith("c")
 			? commentId.slice(1)
 			: commentId;
-		const comment = this.findById(numericId);
-		const paragraph = comment?.findChild("w:p");
-		return paragraph?.getAttribute("w14:paraId");
+		return lastParagraph(this.findById(numericId))?.getAttribute("w14:paraId");
 	}
 
 	/** Read a comment's `w14:paraId`, minting + persisting one (and the
@@ -146,8 +146,7 @@ export class CommentsView {
 			? commentId.slice(1)
 			: commentId;
 		const root = XmlNode.findRoot(this.tree, "w:comments");
-		const comment = this.findById(numericId);
-		const paragraph = comment?.findChild("w:p");
+		const paragraph = lastParagraph(this.findById(numericId));
 		if (!root || !paragraph) return undefined;
 		const existing = paragraph.getAttribute("w14:paraId");
 		if (existing) return existing;
@@ -176,6 +175,112 @@ export class CommentsView {
 		return String(highest + 1);
 	}
 
+	/** Resolve the thread root of `commentId` by walking `w15:paraIdParent`
+	 * links upward; returns the input's numeric id when it has no parent.
+	 * Word threads are single-level — its UI attaches a reply-to-a-reply to
+	 * the thread ROOT, and it rewrites deeper chains to the root on open — so
+	 * new replies chain to the root for round-trip stability. Accepts the
+	 * `cN` or bare-`N` id form; returns the bare-`N` form. */
+	threadRootId(commentId: string): string {
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		const numericId = commentId.startsWith("c")
+			? commentId.slice(1)
+			: commentId;
+		if (!root) return numericId;
+
+		const extended = this.#readExtended();
+		const idByParaId = new Map<string, string>();
+		for (const child of root.children) {
+			if (child.tag !== "w:comment") continue;
+			const childId = child.getAttribute("w:id");
+			if (childId == null) continue;
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
+			if (paraId) idByParaId.set(paraId, childId);
+		}
+
+		let currentId = numericId;
+		const seen = new Set([currentId]);
+		for (;;) {
+			const paraId = lastParagraph(this.findById(currentId))?.getAttribute(
+				"w14:paraId",
+			);
+			const parentParaId = paraId
+				? extended.get(paraId)?.parentParaId
+				: undefined;
+			const parentId = parentParaId ? idByParaId.get(parentParaId) : undefined;
+			if (!parentId || seen.has(parentId)) return currentId;
+			seen.add(parentId);
+			currentId = parentId;
+		}
+	}
+
+	/** Numeric ids of every transitive reply chained under `commentId` via
+	 * `w15:paraIdParent`. Delete cascades through these so a removed parent
+	 * never strands its replies' body markers or dangles their thread link.
+	 * Accepts the `cN` or bare-`N` id form. */
+	descendantReplyIds(commentId: string): string[] {
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		if (!root) return [];
+		const numericId = commentId.startsWith("c")
+			? commentId.slice(1)
+			: commentId;
+		const startParaId = lastParagraph(this.findById(numericId))?.getAttribute(
+			"w14:paraId",
+		);
+		if (!startParaId) return [];
+
+		const extended = this.#readExtended();
+		const idByParaId = new Map<string, string>();
+		const childParaIdsByParent = new Map<string, string[]>();
+		for (const child of root.children) {
+			if (child.tag !== "w:comment") continue;
+			const childId = child.getAttribute("w:id");
+			if (childId == null) continue;
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
+			if (!paraId) continue;
+			idByParaId.set(paraId, childId);
+			const parentParaId = extended.get(paraId)?.parentParaId;
+			if (!parentParaId) continue;
+			const siblings = childParaIdsByParent.get(parentParaId) ?? [];
+			siblings.push(paraId);
+			childParaIdsByParent.set(parentParaId, siblings);
+		}
+
+		const descendants: string[] = [];
+		const queue = [startParaId];
+		while (queue.length > 0) {
+			const paraId = queue.pop();
+			if (!paraId) break;
+			for (const childParaId of childParaIdsByParent.get(paraId) ?? []) {
+				const childId = idByParaId.get(childParaId);
+				if (childId) descendants.push(childId);
+				queue.push(childParaId);
+			}
+		}
+		return descendants;
+	}
+
+	/** Insert `comment` (a fresh `<w:comment>`) immediately after the last
+	 * comment in the thread rooted at `parentNumericId` (the parent plus every
+	 * transitive reply), so a new reply lands after the existing thread tail
+	 * instead of after some other thread at the end of the part — matching how
+	 * Word groups a thread's comments together. */
+	insertReplyAfter(parentNumericId: string, comment: XmlNode): void {
+		const root = XmlNode.findRoot(this.tree, "w:comments");
+		if (!root) throw new Error("expected <w:comments> root");
+		const threadIds = new Set([
+			parentNumericId,
+			...this.descendantReplyIds(parentNumericId),
+		]);
+		let insertIndex = root.children.length;
+		for (const [index, child] of root.children.entries()) {
+			if (child.tag !== "w:comment") continue;
+			const id = child.getAttribute("w:id");
+			if (id != null && threadIds.has(id)) insertIndex = index + 1;
+		}
+		root.children.splice(insertIndex, 0, comment);
+	}
+
 	/** Parse this part (plus the extended sidecar) into the AST `Comment[]` the
 	 * reader exposes on `Body.comments`, and populate `commentReferences` for
 	 * mutators. `anchors` are the span ranges the body walk computed from
@@ -190,8 +295,9 @@ export class CommentsView {
 			if (child.tag !== "w:comment") continue;
 			const numericId = child.getAttribute("w:id");
 			if (numericId == null) continue;
-			const paragraph = child.findChild("w:p");
-			const paraId = paragraph?.getAttribute("w14:paraId");
+			// Threading keys off the LAST paragraph (see `paraIdFor`), so index
+			// by it to resolve a reply's `w15:paraIdParent` back to its parent.
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
 			if (paraId) commentIdByParaId.set(paraId, `c${numericId}`);
 		}
 
@@ -214,8 +320,7 @@ export class CommentsView {
 				endOffset: 0,
 			};
 
-			const paragraph = child.findChild("w:p");
-			const paraId = paragraph?.getAttribute("w14:paraId");
+			const paraId = lastParagraph(child)?.getAttribute("w14:paraId");
 			const meta = paraId ? (extendedByParaId.get(paraId) ?? {}) : {};
 			const parentCommentId = meta.parentParaId
 				? commentIdByParaId.get(meta.parentParaId)
@@ -280,16 +385,41 @@ function CommentsRoot(): XmlNode {
 	return <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
 }
 
+/** A comment's threading identity is its LAST `<w:p>` — that's the paragraph
+ * Word keys `<w15:commentEx>` and a reply's `w15:paraIdParent` to. */
+function lastParagraph(comment: XmlNode | undefined): XmlNode | undefined {
+	return comment?.findChildren("w:p").at(-1);
+}
+
 /** Mint a fresh `w14:paraId` value. Word writes 8-char uppercase hex; we
- * match. Used both by `CommentsView.ensureParaId` and by the comments lens
- * for replies + audit comments. */
+ * match. Per MS-DOCX, a paraId MUST be greater than 0x00000000 and less
+ * than 0x80000000 — Word silently re-keys out-of-range ids on open, which
+ * orphans every sidecar entry (`w15:commentEx` resolved flags, reply
+ * `w15:paraIdParent` links) keyed to the old value. Used both by
+ * `CommentsView.ensureParaId` and by the comments lens for replies + audit
+ * comments.
+ *
+ * `DOCX_CLI_PARA_ID_SEED` (8-char hex) switches to sequential minting from
+ * that base — the byte-determinism seam for fixture rebuilds, mirroring
+ * `DOCX_CLI_NOW`. The counter is per-process: a builder that invokes the CLI
+ * multiple times must set a DISTINCT seed per invocation or ids collide. */
 export function generateParaId(): string {
+	const seed = Bun.env.DOCX_CLI_PARA_ID_SEED;
+	if (seed) {
+		const minted = (Number.parseInt(seed, 16) + seededParaIds++) % 0x80000000;
+		return (minted || 1).toString(16).padStart(8, "0").toUpperCase();
+	}
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
-	let hex = "";
-	for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+	bytes[0] = (bytes[0] ?? 0) & 0x7f;
+	const hex = [...bytes]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+	if (hex === "00000000") return "00000001";
 	return hex.toUpperCase();
 }
+
+let seededParaIds = 0;
 
 function CommentsExRoot(): XmlNode {
 	return (

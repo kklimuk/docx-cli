@@ -15,3 +15,17 @@ left), and the rejected ones are reverted to the original wording; every comment
 Company reply; and the comments the Company addressed are marked resolved. Verify via
 `docx track-changes list` (the accepted/rejected revisions no longer appear as
 pending) and `docx comments list` (replies present, the addressed comments resolved).
+
+**Replies must be real, Word-visible comments — not sidecar orphans** (regression
+guard for issue #1, where `comments reply` wrote the reply to `comments.xml` but never
+anchored it, so Word silently deleted it on the next save). Check all three of these
+on the finished file:
+
+1. Every reply in `docx comments list` has a `parentId` AND a non-empty anchor
+   (`anchor.startBlockId` is a real locator, not `""`).
+2. `docx read FILE --comments` shows every reply as its own `[^cN]` footnote with the
+   `↳ cN` thread marker — a reply missing from the default read view fails the
+   write→read invariant.
+3. The raw body markers exist: `unzip -p FILE word/document.xml` contains a
+   `<w:commentReference w:id="N"/>` for every reply id listed (an id present in
+   `comments.xml` but absent from `document.xml` is exactly the orphan Word drops).

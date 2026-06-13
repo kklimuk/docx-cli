@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
+import { readDocumentXml } from "./helpers";
+
+async function readPart(docPath: string, partName: string): Promise<string> {
+	const pkg = await Pkg.open(docPath);
+	return await pkg.readText(partName);
+}
 
 describe("docx comments", () => {
 	let docPath: string;
@@ -105,6 +112,205 @@ describe("docx comments", () => {
 		const comments = list.parsed as Array<{ id: string; parentId?: string }>;
 		expect(comments).toHaveLength(2);
 		expect(comments[1]).toMatchObject({ id: "c1", parentId: "c0" });
+	});
+
+	test("reply anchors its own body markers in Word's thread nesting", async () => {
+		// Word drops any comment whose <w:commentReference> is missing from the
+		// body — a reply with only a comments.xml entry + sidecar link is
+		// silently deleted on the next open/save (issue #1).
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Q?",
+			"--author",
+			"A",
+		);
+		await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--at",
+			"c0",
+			"--text",
+			"Answer",
+			"--author",
+			"B",
+		);
+
+		// Word's thread layout: Start0, Start1, …, End0, ref0, End1, ref1 —
+		// the reply's range closes after the parent's reference run.
+		const documentXml = await readDocumentXml(docPath);
+		const order = [
+			'<w:commentRangeStart w:id="0"/>',
+			'<w:commentRangeStart w:id="1"/>',
+			'<w:commentRangeEnd w:id="0"/>',
+			'<w:commentReference w:id="0"/>',
+			'<w:commentRangeEnd w:id="1"/>',
+			'<w:commentReference w:id="1"/>',
+		].map((marker) => documentXml.indexOf(marker));
+		expect(order).not.toContain(-1);
+		expect(order).toEqual([...order].sort((left, right) => left - right));
+
+		// The thread link lives ONLY in the extended sidecar — Word writes no
+		// parent attribute in comments.xml itself.
+		const extendedXml = await readPart(docPath, "word/commentsExtended.xml");
+		expect(extendedXml).toContain("w15:paraIdParent=");
+		const commentsXml = await readPart(docPath, "word/comments.xml");
+		expect(commentsXml).not.toContain("paraIdParent");
+
+		// The anchored reply survives the write-read loop: it now has a real
+		// anchor and shows up in the default markdown view.
+		const listed = await runCli("comments", "list", docPath);
+		const reply = (
+			listed.parsed as Array<{ id: string; anchor: { startBlockId: string } }>
+		).find((comment) => comment.id === "c1");
+		expect(reply?.anchor.startBlockId).toBe("p0");
+		const rendered = await runCli("read", docPath, "--comments");
+		expect(rendered.stdout).toContain("[^c1]");
+	});
+
+	test("sibling replies keep reply order; replying to a reply attaches to the thread root", async () => {
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Q?",
+			"--author",
+			"A",
+		);
+		for (const reply of ["first answer", "second answer"]) {
+			await runCli(
+				"comments",
+				"reply",
+				docPath,
+				"--at",
+				"c0",
+				"--text",
+				reply,
+				"--author",
+				"B",
+			);
+		}
+		const nested = await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--at",
+			"c1",
+			"--text",
+			"reply to the first answer",
+			"--author",
+			"C",
+		);
+		// Word threads are single-level: replying to c1 attaches to the thread
+		// root c0 (Word rewrites deeper chains to the root on open anyway), and
+		// the ack reports the effective parent.
+		expect(nested.parsed).toMatchObject({ parentId: "c0" });
+		const list = await runCli("comments", "list", docPath);
+		const replies = list.parsed as Array<{ id: string; parentId?: string }>;
+		expect(replies.find((comment) => comment.id === "c3")?.parentId).toBe("c0");
+
+		// Thread order holds across document.xml and comments.xml alike.
+		const documentXml = await readDocumentXml(docPath);
+		const referenceOrder = [
+			...documentXml.matchAll(/<w:commentReference w:id="(\d+)"\/>/g),
+		].map(([, id]) => id);
+		expect(referenceOrder).toEqual(["0", "1", "2", "3"]);
+		const commentsXml = await readPart(docPath, "word/comments.xml");
+		const commentOrder = [
+			...commentsXml.matchAll(/<w:comment w:id="(\d+)"/g),
+		].map(([, id]) => id);
+		expect(commentOrder).toEqual(["0", "1", "2", "3"]);
+	});
+
+	test("the committed comments-threaded fixture reads back as one root-anchored thread", async () => {
+		// tests/fixtures/setup/comments-threaded.ts authors this thread with the
+		// CLI (Alice root; Bob, Carol, Dave replies — Dave addressed a reply and
+		// attached to the root). Guards that the committed binary keeps the
+		// Word-valid shape: every reply anchored, all parented to c0.
+		const fixturePath = "tests/fixtures/comments-threaded.docx";
+		const list = await runCli(
+			"comments",
+			"list",
+			fixturePath,
+			"--thread",
+			"c0",
+		);
+		const thread = list.parsed as Array<{
+			id: string;
+			parentId?: string;
+			anchor: { startBlockId: string };
+		}>;
+		expect(thread.map((comment) => comment.id)).toEqual([
+			"c0",
+			"c1",
+			"c2",
+			"c3",
+		]);
+		for (const comment of thread) {
+			expect(comment.anchor.startBlockId).toBe("p0");
+			if (comment.id !== "c0") expect(comment.parentId).toBe("c0");
+		}
+	});
+
+	test("deleting a thread parent cascades to its replies", async () => {
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Q?",
+			"--author",
+			"A",
+		);
+		await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--at",
+			"c0",
+			"--text",
+			"Answer",
+			"--author",
+			"B",
+		);
+		await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--at",
+			"c1",
+			"--text",
+			"Nested",
+			"--author",
+			"C",
+		);
+
+		await runCli("comments", "delete", docPath, "--at", "c0");
+
+		const list = await runCli(
+			"comments",
+			"list",
+			docPath,
+			"--include-resolved",
+		);
+		expect((list.parsed as unknown[]).length).toBe(0);
+
+		// No orphaned reply markers or dangling thread links survive the cascade.
+		const documentXml = await readDocumentXml(docPath);
+		expect(documentXml).not.toContain("commentReference");
+		expect(documentXml).not.toContain("commentRangeStart");
+		const extendedXml = await readPart(docPath, "word/commentsExtended.xml");
+		expect(extendedXml).not.toContain("w15:paraIdParent=");
 	});
 
 	test("resolve flips done flag and filter excludes by default", async () => {
