@@ -1,3 +1,4 @@
+import { insertRprChildInOrder } from "../../blocks";
 import { w } from "../../jsx";
 import { XmlNode } from "../../parser";
 import type { ContentTypesView } from "./content-types";
@@ -6,12 +7,17 @@ import type { RelationshipsView } from "./relationships";
 
 export type BaselineStyleId =
 	| "Normal"
+	| "Title"
+	| "Subtitle"
 	| "Heading1"
 	| "Heading2"
 	| "Heading3"
 	| "Heading4"
 	| "Heading5"
 	| "Heading6"
+	| "Heading7"
+	| "Heading8"
+	| "Heading9"
 	| "Quote"
 	| "IntenseQuote"
 	| "Code"
@@ -27,6 +33,18 @@ export type BaselineStyleId =
 
 export function isBaselineStyle(styleId: string): styleId is BaselineStyleId {
 	return Object.hasOwn(BASELINE, styleId);
+}
+
+/** The built-in style catalog docx-cli can provision on demand — every id that
+ *  `insert --style` / `edit --style` auto-defines (via `ensureStyle`) even when
+ *  the document doesn't yet contain it. `styles --catalog` lists these so agents
+ *  can discover valid `--style` values (Title, Subtitle, Heading1–9, Quote, …)
+ *  before applying them, instead of guessing. Returns freshly-built `<w:style>`
+ *  nodes; the caller reads id / type / name off each. */
+export function baselineCatalog(): XmlNode[] {
+	return (Object.keys(BASELINE) as BaselineStyleId[]).map((id) =>
+		BASELINE[id](),
+	);
 }
 
 const STYLES_PART_NAME = "word/styles.xml";
@@ -168,6 +186,99 @@ export class StylesView {
 		root.children.push(build());
 	}
 
+	/** Set the document default run font: `<w:docDefaults>/<w:rPrDefault>/<w:rPr>/
+	 *  <w:rFonts>`, creating the docDefaults scaffold if absent. Writes explicit
+	 *  `w:ascii`/`w:hAnsi`/`w:cs` (and drops any theme reference) so the font wins
+	 *  for every run that doesn't pin its own — the lowest, broadest font layer. */
+	setDefaultFont(fontName: string): void {
+		const rPr = this.#ensureDocDefaultsRPr();
+		let rFonts = rPr.findChild("w:rFonts");
+		if (!rFonts) {
+			rFonts = XmlNode.element("w:rFonts");
+			insertRprChildInOrder(rPr, rFonts);
+		}
+		applyRunFont(rFonts, fontName);
+	}
+
+	/** Set the document default run size (`<w:sz>`/`<w:szCs>` in docDefaults), in
+	 *  half-points. Inserted at the canonical CT_RPr slot (after color/kern/…, not
+	 *  merely after `<w:rFonts>`) so a docDefaults rPr that already carries other
+	 *  run properties stays Word-valid. */
+	setDefaultSizeHalfPoints(halfPoints: number): void {
+		const rPr = this.#ensureDocDefaultsRPr();
+		const value = String(halfPoints);
+		let sz = rPr.findChild("w:sz");
+		if (!sz) {
+			sz = XmlNode.element("w:sz");
+			insertRprChildInOrder(rPr, sz);
+		}
+		sz.setAttribute("w:val", value);
+		let szCs = rPr.findChild("w:szCs");
+		if (!szCs) {
+			szCs = XmlNode.element("w:szCs");
+			insertRprChildInOrder(rPr, szCs);
+		}
+		szCs.setAttribute("w:val", value);
+	}
+
+	/** Style ids whose own definition pins an explicit (non-theme) `w:ascii` font.
+	 *  These OVERRIDE the document default, so a default-font change leaves them
+	 *  looking different — the CLI names them so the agent knows what `--all`
+	 *  would additionally touch. Theme-referencing styles aren't listed: they
+	 *  follow the theme, which `Fonts` repoints alongside the default. */
+	explicitFontStyleIds(): string[] {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return [];
+		const out: string[] = [];
+		for (const style of root.findChildren("w:style")) {
+			const ascii = style
+				.findChild("w:rPr")
+				?.findChild("w:rFonts")
+				?.getAttribute("w:ascii");
+			if (!ascii) continue;
+			const id = style.getAttribute("w:styleId");
+			if (id) out.push(id);
+		}
+		return out;
+	}
+
+	/** Repoint every style definition's explicit `<w:rFonts>` to `fontName` (the
+	 *  `--all` path). Returns the count changed. */
+	overrideStyleFonts(fontName: string): number {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return 0;
+		let count = 0;
+		for (const style of root.findChildren("w:style")) {
+			const rFonts = style.findChild("w:rPr")?.findChild("w:rFonts");
+			if (!rFonts) continue;
+			applyRunFont(rFonts, fontName);
+			count++;
+		}
+		return count;
+	}
+
+	/** Navigate to (creating if absent) `<w:docDefaults>/<w:rPrDefault>/<w:rPr>`.
+	 *  `<w:docDefaults>` is the first child of `<w:styles>` per CT_Styles. */
+	#ensureDocDefaultsRPr(): XmlNode {
+		const root = this.ensureStylesRoot();
+		let docDefaults = root.findChild("w:docDefaults");
+		if (!docDefaults) {
+			docDefaults = XmlNode.element("w:docDefaults");
+			root.children.unshift(docDefaults);
+		}
+		let rPrDefault = docDefaults.findChild("w:rPrDefault");
+		if (!rPrDefault) {
+			rPrDefault = XmlNode.element("w:rPrDefault");
+			docDefaults.children.unshift(rPrDefault); // before <w:pPrDefault>
+		}
+		let rPr = rPrDefault.findChild("w:rPr");
+		if (!rPr) {
+			rPr = XmlNode.element("w:rPr");
+			rPrDefault.children.push(rPr);
+		}
+		return rPr;
+	}
+
 	private ensureStylesRoot(): XmlNode {
 		const root = XmlNode.findRoot(this.tree, "w:styles");
 		if (!root) throw new Error("expected <w:styles> root in styles tree");
@@ -183,10 +294,26 @@ export class StylesView {
 	}
 }
 
+/** Point a `<w:rFonts>` at `fontName` for the Latin/ASCII script: set
+ *  `w:ascii`/`w:hAnsi`/`w:cs` and DROP any `w:asciiTheme`/`w:hAnsiTheme`/
+ *  `w:cstheme` reference (an explicit font must beat the theme). East-Asian /
+ *  complex-script fallbacks (`w:eastAsia`) are left alone. Shared by
+ *  `setDefaultFont`, `overrideStyleFonts`, and the `Fonts` lens's body/note walk. */
+export function applyRunFont(rFonts: XmlNode, fontName: string): void {
+	rFonts.setAttribute("w:ascii", fontName);
+	rFonts.setAttribute("w:hAnsi", fontName);
+	rFonts.setAttribute("w:cs", fontName);
+	delete rFonts.attributes["w:asciiTheme"];
+	delete rFonts.attributes["w:hAnsiTheme"];
+	delete rFonts.attributes["w:cstheme"];
+}
+
 /** The baseline style catalog: id → a builder that emits the `<w:style>`
  * definition. Each builder renders one of the style components below. */
 const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 	Normal: () => <NormalStyle />,
+	Title: () => <TitleStyle />,
+	Subtitle: () => <SubtitleStyle />,
 	// Modern Word (Office 365 / 2013+) heading defaults. Size + bold/italic
 	// + color = visual hierarchy. Color cues (`2E74B5` mid-blue, `1F4D78`
 	// darker blue) carry most of the differentiation since H3–H6 are all
@@ -251,6 +378,37 @@ const BASELINE: Record<BaselineStyleId, () => XmlNode> = {
 			color="1F4D78"
 		/>
 	),
+	// H7–H9 keep the 11pt body size (like H5/H6) and lean on color + italic for
+	// the remaining hierarchy — matching Word's modern defaults where the deep
+	// levels are visually subtle.
+	Heading7: () => (
+		<HeadingStyle
+			styleId="Heading7"
+			displayName="heading 7"
+			outlineLevel={6}
+			sizeHalfPoints={22}
+			color="2E74B5"
+		/>
+	),
+	Heading8: () => (
+		<HeadingStyle
+			styleId="Heading8"
+			displayName="heading 8"
+			outlineLevel={7}
+			sizeHalfPoints={22}
+			italic
+			color="272727"
+		/>
+	),
+	Heading9: () => (
+		<HeadingStyle
+			styleId="Heading9"
+			displayName="heading 9"
+			outlineLevel={8}
+			sizeHalfPoints={22}
+			color="272727"
+		/>
+	),
 	Quote: () => <QuoteStyle />,
 	IntenseQuote: () => <IntenseQuoteStyle />,
 	Code: () => <CodeStyle />,
@@ -270,6 +428,47 @@ function NormalStyle(): XmlNode {
 		<w.style w-type="paragraph" w-default="1" w-styleId="Normal">
 			<w.name w-val="Normal" />
 			<w.qFormat />
+		</w.style>
+	);
+}
+
+function TitleStyle(): XmlNode {
+	// Word's built-in Title: large (28pt) Calibri Light, dark blue. The
+	// document's top-line heading — what an agent reaches for to open a doc.
+	return (
+		<w.style w-type="paragraph" w-styleId="Title">
+			<w.name w-val="Title" />
+			<w.basedOn w-val="Normal" />
+			<w.next w-val="Normal" />
+			<w.qFormat />
+			<w.pPr>
+				<w.spacing w-after="60" />
+			</w.pPr>
+			<w.rPr>
+				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				<w.color w-val="1F3864" />
+				<w.sz w-val="56" />
+			</w.rPr>
+		</w.style>
+	);
+}
+
+function SubtitleStyle(): XmlNode {
+	// Word's built-in Subtitle: 14pt grey Calibri Light, sits under a Title.
+	return (
+		<w.style w-type="paragraph" w-styleId="Subtitle">
+			<w.name w-val="Subtitle" />
+			<w.basedOn w-val="Normal" />
+			<w.next w-val="Normal" />
+			<w.qFormat />
+			<w.pPr>
+				<w.spacing w-after="160" />
+			</w.pPr>
+			<w.rPr>
+				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				<w.color w-val="5A5A5A" />
+				<w.sz w-val="28" />
+			</w.rPr>
 		</w.style>
 	);
 }

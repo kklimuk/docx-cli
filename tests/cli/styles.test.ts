@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { runCli } from "./harness";
+import { Pkg } from "@core/ast/document/package";
+import { runCli, tempWorkspace } from "./harness";
 
 // `docx styles` is the one query whose data isn't in the document body — the
 // style catalog lives in word/styles.xml. It tells an authoring agent which
@@ -118,5 +119,146 @@ describe("docx styles", () => {
 		expect(
 			usedJson.some((s) => s.id === "TableGrid" && s.type === "table"),
 		).toBe(true);
+	});
+
+	test("--catalog lists the provisionable built-ins, no FILE needed", async () => {
+		const result = await runCli("styles", "--catalog");
+		expect(result.exitCode).toBe(0);
+		// The styles an agent had to guess at before — Title and the deep headings —
+		// are now discoverable even though no document defines them.
+		expect(result.stdout).toMatch(/^Title\s+paragraph/m);
+		expect(result.stdout).toMatch(/^Subtitle\s+paragraph/m);
+		expect(result.stdout).toMatch(/^Heading9\s+paragraph/m);
+	});
+
+	test("--catalog --json emits the structured catalog", async () => {
+		const result = await runCli("styles", "--catalog", "--json");
+		expect(result.exitCode).toBe(0);
+		const ids = (result.parsed as Array<{ id: string }>).map((s) => s.id);
+		expect(ids).toEqual(
+			expect.arrayContaining([
+				"Title",
+				"Subtitle",
+				"Heading7",
+				"Heading8",
+				"Heading9",
+			]),
+		);
+	});
+});
+
+describe("docx styles set-default-font", () => {
+	async function docWithHeading(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "out.docx");
+		await runCli("create", docPath, "--text", "Body paragraph.");
+		// A Heading1 pins its own explicit font (Calibri Light) — the override case.
+		await runCli(
+			"insert",
+			docPath,
+			"--at-start",
+			"--text",
+			"Heading",
+			"--style",
+			"Heading1",
+		);
+		return docPath;
+	}
+
+	const readPart = async (docPath: string, part: string): Promise<string> =>
+		(await Pkg.open(docPath)).readText(part);
+
+	test("sets docDefaults + theme fonts, preserving explicit-font styles", async () => {
+		const docPath = await docWithHeading("font-default");
+		const result = await runCli(
+			"styles",
+			"set-default-font",
+			docPath,
+			"Times New Roman",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: true,
+			operation: "styles.set-default-font",
+			font: "Times New Roman",
+			themeUpdated: true,
+		});
+		// Heading1 pins its own font, so it's reported (not silently left different).
+		expect(
+			(result.parsed as { explicitStyles: string[] }).explicitStyles,
+		).toContain("Heading1");
+
+		const styles = await readPart(docPath, "word/styles.xml");
+		expect(styles).toMatch(/<w:docDefaults>[\s\S]*w:ascii="Times New Roman"/);
+		// Explicit (theme-attrs dropped) so it beats the theme.
+		expect(styles).not.toMatch(/<w:docDefaults>[\s\S]*w:asciiTheme/);
+		// Heading1's own font is untouched in the default scope.
+		expect(styles).toMatch(/Heading1[\s\S]*?w:ascii="Calibri Light"/);
+
+		const theme = await readPart(docPath, "word/theme/theme1.xml");
+		// Both major (headings) and minor (body) latin typefaces became the font.
+		expect([
+			...theme.matchAll(/<a:latin typeface="Times New Roman"/g),
+		]).toHaveLength(2);
+	});
+
+	test("--all repoints explicit style fonts too", async () => {
+		const docPath = await docWithHeading("font-all");
+		const result = await runCli(
+			"styles",
+			"set-default-font",
+			docPath,
+			"Georgia",
+			"--all",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { repointed: number }).repointed).toBeGreaterThan(
+			0,
+		);
+
+		const styles = await readPart(docPath, "word/styles.xml");
+		expect(styles).toMatch(/Heading1[\s\S]*?w:ascii="Georgia"/);
+		expect(styles).not.toContain("Calibri Light"); // the only explicit font, now gone
+	});
+
+	test("--size sets the default size (points → half-points)", async () => {
+		const docPath = await docWithHeading("font-size");
+		await runCli(
+			"styles",
+			"set-default-font",
+			docPath,
+			"Calibri",
+			"--size",
+			"16",
+		);
+		const styles = await readPart(docPath, "word/styles.xml");
+		expect(styles).toMatch(/<w:docDefaults>[\s\S]*<w:sz w:val="32"/);
+	});
+
+	test("--dry-run writes nothing", async () => {
+		const docPath = await docWithHeading("font-dry");
+		const before = (await Bun.file(docPath).arrayBuffer()).byteLength;
+		const result = await runCli(
+			"styles",
+			"set-default-font",
+			docPath,
+			"Arial",
+			"--dry-run",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { dryRun?: boolean }).dryRun).toBe(true);
+		expect((result.parsed as { ok?: boolean }).ok).toBeUndefined();
+		// The preview must surface which styles stay off-font (same as the real run),
+		// so an agent can decide on --all without mutating the file first.
+		expect(
+			(result.parsed as { explicitStyles: string[] }).explicitStyles,
+		).toContain("Heading1");
+		expect((await Bun.file(docPath).arrayBuffer()).byteLength).toBe(before);
+	});
+
+	test("requires a FONT name", async () => {
+		const docPath = await docWithHeading("font-missing");
+		const result = await runCli("styles", "set-default-font", docPath);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
 	});
 });

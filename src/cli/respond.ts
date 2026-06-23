@@ -153,6 +153,7 @@ function ackTarget(ack: Record<string, unknown>): string | null {
 		: num(ack.applied);
 	if (applied !== null) return plural(applied, "change");
 	if (str(ack.mode)) return `tracking ${ack.mode}`;
+	if (str(ack.font)) return str(ack.font);
 	if (Array.isArray(ack.batch)) return plural(ack.batch.length, "change");
 	// Last resort: the path. Redundant for in-place edits (they win above via
 	// locator/id/count), but it's the salient new thing for `create`.

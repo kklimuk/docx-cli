@@ -310,6 +310,75 @@ export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
 	else pPr.children.splice(at, 0, child);
 }
 
+/** CT_RPr child order (ECMA-376 §17.3.2.28). The same validity rule as pPr:
+ *  splice a child into an already-built `<w:rPr>` at its canonical slot or Word
+ *  rejects the file. The classic break is adding `<w:sz>` after `<w:rFonts>` when
+ *  `<w:b>`/`<w:color>`/`<w:kern>` sit between them (CT_RPr puts sz well after
+ *  those) — `insertAfter(rFonts)` would land sz too early. */
+const RPR_CHILD_ORDER = [
+	"w:rStyle",
+	"w:rFonts",
+	"w:b",
+	"w:bCs",
+	"w:i",
+	"w:iCs",
+	"w:caps",
+	"w:smallCaps",
+	"w:strike",
+	"w:dstrike",
+	"w:outline",
+	"w:shadow",
+	"w:emboss",
+	"w:imprint",
+	"w:noProof",
+	"w:snapToGrid",
+	"w:vanish",
+	"w:webHidden",
+	"w:color",
+	"w:spacing",
+	"w:w",
+	"w:kern",
+	"w:position",
+	"w:sz",
+	"w:szCs",
+	"w:highlight",
+	"w:u",
+	"w:effect",
+	"w:bdr",
+	"w:shd",
+	"w:fitText",
+	"w:vertAlign",
+	"w:rtl",
+	"w:cs",
+	"w:em",
+	"w:lang",
+	"w:eastAsianLayout",
+	"w:specVanish",
+	"w:oMath",
+] as const;
+
+/** Rank an rPr child by CT_RPr position. Unknown tags rank last so an
+ *  in-order insert of a known property (rFonts/sz/…) still lands ahead of them. */
+function rprChildRank(tag: string): number {
+	const index = RPR_CHILD_ORDER.indexOf(
+		tag as (typeof RPR_CHILD_ORDER)[number],
+	);
+	return index >= 0 ? index : RPR_CHILD_ORDER.length;
+}
+
+/** Splice `child` into `rPr.children` at its canonical CT_RPr position: before
+ *  the first existing child that ranks after it. Use this instead of `push`/
+ *  `unshift`/`insertAfter` when adding to an already-built rPr; see
+ *  `RPR_CHILD_ORDER`. */
+export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
+	const rank = rprChildRank(child.tag);
+	const at = rPr.children.findIndex(
+		(existing) => rprChildRank(existing.tag) > rank,
+	);
+	if (at < 0) rPr.children.push(child);
+	else rPr.children.splice(at, 0, child);
+}
+
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.
  * Word renders this as a thin line spanning the page width.
  *

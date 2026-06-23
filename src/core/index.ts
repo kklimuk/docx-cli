@@ -1,6 +1,7 @@
 export {
 	type BlockReference,
 	Body,
+	baselineCatalog,
 	type CommentReference,
 	Document,
 	type EquationReference,
@@ -53,12 +54,14 @@ export {
 	type ParagraphContentSpec,
 	resolveClearTags,
 } from "./edit";
+export { Fonts, type SetDefaultFontResult } from "./fonts";
 export {
 	Insert,
 	InsertError,
 	type InsertSpec,
 	type TextFormatting,
 } from "./insert";
+export { literalParagraphs } from "./literal-text";
 export {
 	type BlockRangeReference,
 	type BlockTarget,

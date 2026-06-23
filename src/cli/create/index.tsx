@@ -1,5 +1,6 @@
 import {
 	Document,
+	literalParagraphs,
 	MarkdownImport,
 	MarkdownImportError,
 	type XmlNode,
@@ -23,14 +24,21 @@ Usage:
 Options:
   --title TEXT       Document title
   --author TEXT      Document author (default: $DOCX_AUTHOR)
-  --text TEXT        Seed first paragraph with this text. Mutex with --from.
+  --text TEXT        Seed first paragraph with this text. One content source
+                     only (mutex with --text-file / --from).
+  --text-file PATH   Seed the body with LITERAL multi-paragraph text from PATH
+                     (use "-" for stdin), NOT parsed as markdown — every
+                     character lands verbatim, each newline starts a new
+                     paragraph. Use for prose GFM would corrupt ("3. note"
+                     stays "3.", *x* / [t](u) / bare URLs / {++x++} untouched).
+                     One content source only.
   --from PATH        Seed the body with parsed markdown from PATH (use "-" for
-                     stdin). Mutex with --text. Uses the same markdown dialect
-                     as 'docx insert --markdown'. This is the canonical way to
-                     build a whole .docx from a markdown file. Footnote/endnote
-                     bodies keep bold/italic + hyperlinks; footnote labels
-                     renumber to [^fnN] on import. (Under track-changes, note
-                     bodies flatten to plain text.)
+                     stdin). One content source only. Uses the same markdown
+                     dialect as 'docx insert --markdown'. This is the canonical
+                     way to build a whole .docx from a markdown file.
+                     Footnote/endnote bodies keep bold/italic + hyperlinks;
+                     footnote labels renumber to [^fnN] on import. (Under
+                     track-changes, note bodies flatten to plain text.)
   --force            Overwrite if FILE already exists
   --dry-run          Print what would be created; do not write the file
   -v, --verbose      Print the success ack JSON (default: a one-line confirmation)
@@ -46,6 +54,8 @@ Examples:
   docx create out.docx --title "Spec" --author "Claude" --text "First paragraph."
   docx create out.docx --from draft.md
   cat draft.md | docx create out.docx --from -
+  docx create out.docx --text-file reviewer-notes.txt
+  cat notes.txt | docx create out.docx --text-file -
 
 For a doc that opens with a code block, chain create with insert:
   docx create out.docx
@@ -59,6 +69,7 @@ export async function run(args: string[]): Promise<number> {
 			title: { type: "string" },
 			author: { type: "string" },
 			text: { type: "string" },
+			"text-file": { type: "string" },
 			from: { type: "string" },
 			force: { type: "boolean" },
 			"dry-run": { type: "boolean" },
@@ -83,11 +94,15 @@ export async function run(args: string[]): Promise<number> {
 
 	const text = parsed.values.text as string | undefined;
 	const fromPath = parsed.values.from as string | undefined;
-	if (text !== undefined && fromPath !== undefined) {
+	const textFilePath = parsed.values["text-file"] as string | undefined;
+	const contentSources = [text, fromPath, textFilePath].filter(
+		(value) => value !== undefined,
+	);
+	if (contentSources.length > 1) {
 		return fail(
 			"USAGE",
-			"Pass either --text or --from, not both",
-			"--text seeds a single paragraph; --from parses a markdown file into the body.",
+			"Pass at most one of --text, --text-file, --from",
+			"--text seeds one paragraph; --text-file seeds literal multi-paragraph text; --from parses a markdown file into the body.",
 		);
 	}
 
@@ -111,6 +126,7 @@ export async function run(args: string[]): Promise<number> {
 			dryRun: true,
 			path: destination,
 			...(text !== undefined ? { text } : {}),
+			...(textFilePath !== undefined ? { textFile: textFilePath } : {}),
 			...(fromPath !== undefined ? { from: fromPath } : {}),
 		});
 		return EXIT.OK;
@@ -135,6 +151,10 @@ export async function run(args: string[]): Promise<number> {
 	let blockCount = 1; // the seed paragraph buildBlankPackage emitted
 	if (fromPath !== undefined) {
 		const applied = await applyMarkdownToBody(destination, fromPath);
+		if (typeof applied === "number") return applied;
+		blockCount = applied.blockCount;
+	} else if (textFilePath !== undefined) {
+		const applied = await applyLiteralToBody(destination, textFilePath);
 		if (typeof applied === "number") return applied;
 		blockCount = applied.blockCount;
 	}
@@ -182,22 +202,51 @@ async function applyMarkdownToBody(
 		throw error;
 	}
 
-	// Empty markdown source (or one containing only constructs the walker
-	// drops, like frontmatter / link-definition orphans) → keep the seed
-	// paragraph in place. Splicing zero blocks over it would leave a bare
-	// `<w:sectPr>` as a direct `<w:body>` child, which ECMA-376 §17.2.2
-	// frowns on and Word for Mac flags on save.
-	if (blocks.length === 0) {
-		// Nothing to write — the blank package on disk is already valid.
-		return { blockCount: 1 };
+	return replacePlaceholderAndSave(document, blocks);
+}
+
+/** Read literal text from PATH (or stdin), split it into one paragraph per line
+ *  (NO markdown parsing — every character lands verbatim), and splice the result
+ *  over the seed paragraph. The `create` counterpart of `insert --text-file`,
+ *  for building a doc from prose that GFM would corrupt. */
+async function applyLiteralToBody(
+	docxPath: string,
+	textFilePath: string,
+): Promise<number | { blockCount: number }> {
+	let source: string;
+	try {
+		source =
+			textFilePath === "-"
+				? await new Response(Bun.stdin.stream()).text()
+				: await Bun.file(textFilePath).text();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --text-file ${textFilePath}: ${message}`,
+		);
 	}
 
-	// `Document.open()` populated the embedded views; `document.body.body`
-	// is the parsed `<w:body>` XmlNode. No need to re-walk the tree.
+	const document = await Document.open(docxPath);
+	return replacePlaceholderAndSave(document, literalParagraphs(source));
+}
+
+/** Replace the blank package's single seed `<w:p>` with `blocks` and save.
+ *  `buildBlankPackage` always emits exactly one placeholder `<w:p>` plus the
+ *  trailing `<w:sectPr>`; we swap the placeholder for the real content and leave
+ *  the sectPr at the tail. An empty `blocks` (markdown source that walked to
+ *  nothing) keeps the seed paragraph — splicing zero blocks would leave a bare
+ *  `<w:sectPr>` as a direct `<w:body>` child, which ECMA-376 §17.2.2 frowns on
+ *  and Word for Mac flags on save. */
+async function replacePlaceholderAndSave(
+	document: Document,
+	blocks: XmlNode[],
+): Promise<number | { blockCount: number }> {
+	if (blocks.length === 0) return { blockCount: 1 };
+
+	// `Document.open()` populated the embedded views; `document.body.body` is
+	// the parsed `<w:body>` XmlNode. No need to re-walk the tree.
 	const body = document.body.body;
-	// `buildBlankPackage` always emits exactly one placeholder `<w:p>` plus
-	// the trailing `<w:sectPr>`. Replace the placeholder with the parsed
-	// blocks; sectPr stays put at the tail.
 	const placeholderIndex = body.children.findIndex(
 		(child) => child.tag === "w:p",
 	);

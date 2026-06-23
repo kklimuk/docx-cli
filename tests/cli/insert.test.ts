@@ -4,6 +4,23 @@ import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 import { trackedKinds } from "./helpers";
 
+type AstParagraph = {
+	id: string;
+	type: string;
+	style?: string;
+	runs?: Array<{ type: string; text?: string }>;
+};
+
+async function readParagraphs(docPath: string): Promise<AstParagraph[]> {
+	const read = await runCli("read", docPath, "--ast");
+	const doc = read.parsed as { blocks: AstParagraph[] };
+	return doc.blocks.filter((block) => block.type === "paragraph");
+}
+
+function paragraphText(paragraph: AstParagraph | undefined): string {
+	return (paragraph?.runs ?? []).map((run) => run.text ?? "").join("");
+}
+
 describe("docx insert / edit / delete", () => {
 	let docPath: string;
 
@@ -954,5 +971,206 @@ describe("docx insert — --track forces tracking with the toggle off", () => {
 		await runCli("create", path, "--text", "alpha");
 		await runCli("insert", path, "--after", "p0", "--text", "beta");
 		expect(await trackedKinds(path)).toHaveLength(0);
+	});
+});
+
+describe("insert --text-file (literal, parser-free)", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		docPath = newDoc("insert-literal");
+		await runCli("create", docPath, "--text", "SEED");
+	});
+
+	test("inserts literal multi-paragraph text without GFM parsing", async () => {
+		const notes = join(tempWorkspace("literal-src"), "notes.txt");
+		// Every line is content GFM would corrupt — an ordered-list marker, emphasis
+		// punctuation, a bare URL, CriticMarkup. Literal mode keeps them verbatim.
+		await Bun.write(
+			notes,
+			"3. Reviewer 1 notes the issue\n*not italic* and _also not_\nSee https://example.com here\nCost {++5++} dollars",
+		);
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text-file",
+			notes,
+		);
+		expect(result.exitCode).toBe(0);
+		// 4 source lines → 4 new paragraphs, in order.
+		expect((result.parsed as { locators: string[] }).locators).toEqual([
+			"p1",
+			"p2",
+			"p3",
+			"p4",
+		]);
+
+		const paragraphs = await readParagraphs(docPath);
+		expect(paragraphText(paragraphs[1])).toBe("3. Reviewer 1 notes the issue");
+		expect(paragraphText(paragraphs[2])).toBe("*not italic* and _also not_");
+		expect(paragraphText(paragraphs[3])).toBe("See https://example.com here");
+		expect(paragraphText(paragraphs[4])).toBe("Cost {++5++} dollars");
+		// No run became a hyperlink or CriticMarkup ins/del — every run is plain text.
+		for (const paragraph of paragraphs.slice(1)) {
+			for (const run of paragraph.runs ?? []) expect(run.type).toBe("text");
+		}
+		// And the raw XML carries no list numbering or hyperlink that GFM would mint.
+		const xml = await (await Pkg.open(docPath)).readText("word/document.xml");
+		expect(xml).not.toContain("<w:hyperlink");
+		expect(xml).not.toContain("<w:numPr");
+	});
+
+	test("each newline is a paragraph; blank lines become empty paragraphs", async () => {
+		const notes = join(tempWorkspace("literal-blank"), "n.txt");
+		// Interior blank line → an empty paragraph; the trailing newline must NOT
+		// mint a stray trailing paragraph.
+		await Bun.write(notes, "alpha\n\nbravo\n");
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text-file",
+			notes,
+		);
+		expect((result.parsed as { locators: string[] }).locators).toEqual([
+			"p1",
+			"p2",
+			"p3",
+		]);
+
+		const paragraphs = await readParagraphs(docPath);
+		expect(paragraphText(paragraphs[1])).toBe("alpha");
+		expect(paragraphText(paragraphs[2])).toBe(""); // the blank line
+		expect(paragraphText(paragraphs[3])).toBe("bravo");
+	});
+});
+
+describe("insert --at-start / --at-end (boundary placement)", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		docPath = newDoc("insert-boundary");
+		await runCli("create", docPath, "--text", "MIDDLE");
+	});
+
+	test("--at-start prepends; --at-end appends; both need no locator", async () => {
+		const top = await runCli(
+			"insert",
+			docPath,
+			"--at-start",
+			"--text",
+			"TOP",
+			"--style",
+			"Title",
+		);
+		expect(top.exitCode).toBe(0);
+		expect((top.parsed as { locators: string[] }).locators).toEqual(["p0"]);
+
+		const bottom = await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--text",
+			"BOTTOM",
+		);
+		expect(bottom.exitCode).toBe(0);
+
+		const paragraphs = await readParagraphs(docPath);
+		expect(paragraphText(paragraphs[0])).toBe("TOP");
+		expect(paragraphs[0]?.style).toBe("Title"); // boundary insert still styles
+		expect(paragraphText(paragraphs[1])).toBe("MIDDLE");
+		expect(paragraphText(paragraphs[2])).toBe("BOTTOM");
+	});
+
+	test("--at-start and --at-end are mutually exclusive", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at-start",
+			"--at-end",
+			"--text",
+			"x",
+		);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+	});
+
+	test("--at-start is rejected inside --batch (no boundary anchors there)", async () => {
+		const batch = join(tempWorkspace("boundary-batch"), "b.jsonl");
+		await Bun.write(batch, '{"at-start":true,"text":"x"}\n');
+		const result = await runCli("insert", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain(
+			"aren't supported in --batch",
+		);
+	});
+
+	// Regression for the table-cell anchoring bug: blockReferences holds cell
+	// paragraphs (tag w:p) registered BEFORE their owning table, so a tag-only
+	// boundary scan would pick the first CELL paragraph on a table-first doc and
+	// splice INSIDE the cell. --at-start must anchor at the BODY top.
+	test("--at-start on a table-first doc anchors at the body top, not inside the first cell", async () => {
+		const docPath = newDoc("boundary-table-first");
+		await runCli("create", docPath, "--text", "TAIL");
+		// Push a table above p0 so the document now BEGINS with a table.
+		await runCli(
+			"insert",
+			docPath,
+			"--before",
+			"p0",
+			"--table",
+			"--rows",
+			"2",
+			"--cols",
+			"2",
+		);
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at-start",
+			"--text",
+			"TOP",
+		);
+		expect(result.exitCode).toBe(0);
+		// A TOP-LEVEL paragraph locator (p0) — NOT a cell locator (t0:r0c0:pN).
+		expect((result.parsed as { locators: string[] }).locators).toEqual(["p0"]);
+
+		const paragraphs = await readParagraphs(docPath);
+		expect(paragraphText(paragraphs[0])).toBe("TOP"); // first block in the body
+	});
+
+	test("--at-end on a table-last doc anchors at the body end, not inside the last cell", async () => {
+		const docPath = newDoc("boundary-table-last");
+		await runCli("create", docPath, "--text", "HEAD");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--table",
+			"--rows",
+			"2",
+			"--cols",
+			"2",
+		);
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--text",
+			"BOTTOM",
+		);
+		expect(result.exitCode).toBe(0);
+		const locators = (result.parsed as { locators: string[] }).locators;
+		// Top-level paragraph after the table — no cell-scoped (":") locator.
+		expect(locators).toEqual(["p1"]);
+		expect(locators.some((l) => l.includes(":"))).toBe(false);
 	});
 });

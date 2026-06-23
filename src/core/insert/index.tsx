@@ -14,6 +14,7 @@ import {
 	nextDrawingId,
 } from "../image";
 import { w } from "../jsx";
+import { literalParagraphs } from "../literal-text";
 import { MarkdownImport, MarkdownImportError } from "../markdown";
 import type { XmlNode } from "../parser";
 import { getPageContentWidthEmu, SentinelSectionParagraph } from "../sections";
@@ -83,7 +84,8 @@ export class Insert {
 		if (
 			spec.kind === "text" ||
 			spec.kind === "runs" ||
-			spec.kind === "markdown"
+			spec.kind === "markdown" ||
+			spec.kind === "literal"
 		) {
 			inheritFormattingFromAnchor(blocks, blockRef.node);
 		}
@@ -147,7 +149,8 @@ export type InsertSpec =
 	  }
 	| { kind: "code"; content: string; language?: string }
 	| { kind: "equation"; latex: string; display: boolean }
-	| { kind: "markdown"; source: string };
+	| { kind: "markdown"; source: string }
+	| { kind: "literal"; text: string };
 
 export type TextFormatting = {
 	color?: string;
@@ -220,6 +223,8 @@ async function buildInsertedParagraph(
 			return buildEquationParagraph(spec, paragraphOptions);
 		case "markdown":
 			return buildMarkdownBlocks(document, spec);
+		case "literal":
+			return literalParagraphs(spec.text, paragraphOptions);
 	}
 }
 

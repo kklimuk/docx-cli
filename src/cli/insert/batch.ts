@@ -83,6 +83,12 @@ export async function runInsertBatch(
 
 		const placement = await parseTargetPlacement(entryValues);
 		if (typeof placement === "number") return placement;
+		if ("boundary" in placement) {
+			return fail(
+				"USAGE",
+				`entry ${index}: --at-start/--at-end aren't supported in --batch (use --after/--before with a locator)`,
+			);
+		}
 
 		const spec = await chooseContentSpec(entryValues);
 		if (typeof spec === "number") return spec;
@@ -216,7 +222,10 @@ type BuiltEntry = {
 const SINGLE_SHOT_FLAGS = [
 	"after",
 	"before",
+	"at-start",
+	"at-end",
 	"text",
+	"text-file",
 	"runs",
 	"page-break",
 	"column-break",

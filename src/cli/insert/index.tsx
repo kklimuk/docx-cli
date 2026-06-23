@@ -41,18 +41,31 @@ const HELP = `docx insert — insert a block (paragraph, table, image, …) at a
 
 Usage:
   docx insert FILE (--after | --before) LOCATOR <content> [options]
+  docx insert FILE (--at-start | --at-end) <content> [options]
   docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read
   docx insert FILE --batch -          [options]   # read JSONL from stdin
 
-Locator (one required) — where to place the new block, relative to:
+Placement (exactly one required) — where to put the new block:
   --after LOCATOR   Insert after the block at LOCATOR
   --before LOCATOR  Insert before the block at LOCATOR
                     LOCATOR is one of:
 ${ANCHOR_FORMS}
                     See \`docx info locators\`.
+  --at-start        Insert at the very top of the document (before the first
+                    paragraph/table) — no locator needed, works on a fresh doc.
+  --at-end          Insert at the very end (after the last paragraph/table, but
+                    before the trailing section properties). No locator needed.
+                    (--at-start/--at-end are single-shot only, not --batch.)
 
 Content (one required):
   --text TEXT       Insert a paragraph with this text
+  --text-file PATH  Insert literal multi-paragraph text from PATH (use "-" for
+                    stdin), NOT parsed as markdown — every character lands
+                    verbatim. Each newline starts a new paragraph (blank lines
+                    become empty paragraphs). Use this for prose that must stay
+                    untouched: "3. note" stays "3." (no list renumber), *x* /
+                    [t](u) / bare URLs / {++x++} are NOT interpreted. (--text /
+                    --markdown go through GFM and would corrupt such content.)
   --runs JSON       Insert a paragraph with custom runs (Run[] JSON)
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
@@ -173,12 +186,18 @@ Examples:
   docx insert doc.docx --after p3 --markdown $'# Heading\\n\\n- a\\n- b'
   docx insert doc.docx --after p3 --markdown-file README.md
   cat draft.md | docx insert doc.docx --after p3 --markdown-file -
+  docx insert doc.docx --at-start --text "Title" --style Title
+  docx insert doc.docx --after p3 --text-file reviewer-notes.txt
+  cat notes.txt | docx insert doc.docx --at-end --text-file -
   docx insert doc.docx --batch additions.jsonl
 
 Batch JSONL example (keys mirror the flags; one insert per line):
   {"after": "p3", "text": "New clause.", "style": "Heading2"}
   {"before": "p0", "text": "ALERT", "color": "CC0000", "bold": true}
   {"after": "p5", "markdown": "## Summary\\n\\n- point a\\n- point b"}
+Ordering guarantee: entries apply in file order, and several entries anchored
+after the SAME block stack in that order — so three lines all "after": "p0"
+land as p1, p2, p3 in the order written (not reversed).
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -206,8 +225,9 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(opts.filePath);
 	if (typeof document === "number") return document;
 
-	const blockRef = await resolveBlockOrFail(document, opts.placement.locator);
-	if (typeof blockRef === "number") return blockRef;
+	const resolved = await resolvePlacement(document, opts.placement);
+	if (typeof resolved === "number") return resolved;
+	const { blockRef, mode, locator } = resolved;
 
 	let blocks: Awaited<ReturnType<Insert["paragraph"]>>;
 	try {
@@ -216,7 +236,7 @@ export async function run(args: string[]): Promise<number> {
 			opts.spec,
 			opts.paragraphOptions,
 			{
-				placement: opts.placement.mode,
+				placement: mode,
 				authorFlag: opts.authorFlag,
 				track: resolveTracked(document, opts.trackFlag),
 			},
@@ -228,7 +248,7 @@ export async function run(args: string[]): Promise<number> {
 		throw error;
 	}
 
-	return commitInsert(document, blockRef, blocks, opts);
+	return commitInsert(document, blockRef, blocks, opts, mode, locator);
 }
 
 /** Splice the built blocks into the document and persist (unless `--dry-run`).
@@ -239,14 +259,16 @@ async function commitInsert(
 	blockRef: BlockReference,
 	blocks: XmlNode[],
 	opts: ValidatedOptions,
+	mode: "after" | "before",
+	anchorLocator: string,
 ): Promise<number> {
 	if (opts.dryRun) {
 		await respond({
 			operation: "insert",
 			dryRun: true,
 			path: opts.filePath,
-			anchor: opts.placement.locator,
-			placement: opts.placement.mode,
+			anchor: anchorLocator,
+			placement: mode,
 			...(opts.outputPath ? { output: opts.outputPath } : {}),
 		});
 		return EXIT.OK;
@@ -259,8 +281,7 @@ async function commitInsert(
 			"Block reference is stale (parent does not contain it)",
 		);
 	}
-	const insertIndex =
-		opts.placement.mode === "after" ? targetIndex + 1 : targetIndex;
+	const insertIndex = mode === "after" ? targetIndex + 1 : targetIndex;
 	blockRef.parent.splice(insertIndex, 0, ...blocks);
 	await document.save(opts.outputPath);
 
@@ -282,8 +303,8 @@ async function commitInsert(
 			operation: "insert",
 			path: destination,
 			locators,
-			anchor: opts.placement.locator,
-			placement: opts.placement.mode,
+			anchor: anchorLocator,
+			placement: mode,
 		},
 		isLayoutAffecting(opts.spec) ? renderVerifyHint(destination) : undefined,
 	);
@@ -362,8 +383,11 @@ async function buildSingleShotOptions(
 const OPTION_SPEC = {
 	after: { type: "string" },
 	before: { type: "string" },
+	"at-start": { type: "boolean" },
+	"at-end": { type: "boolean" },
 	batch: { type: "string" },
 	text: { type: "string" },
+	"text-file": { type: "string" },
 	runs: { type: "string" },
 	"page-break": { type: "boolean" },
 	"column-break": { type: "boolean" },
@@ -405,7 +429,7 @@ const OPTION_SPEC = {
 
 type ValidatedOptions = {
 	filePath: string;
-	placement: { mode: "after" | "before"; locator: string };
+	placement: TargetPlacement;
 	spec: InsertSpec;
 	paragraphOptions: ParagraphOptions;
 	authorFlag?: string;
@@ -414,19 +438,112 @@ type ValidatedOptions = {
 	dryRun: boolean;
 };
 
+/** Where a new block goes: relative to a user locator (`--after`/`--before`),
+ *  or pinned to a document boundary (`--at-start`/`--at-end`) which needs no
+ *  existing locator — the boundary resolves against the open document. */
+export type TargetPlacement =
+	| { mode: "after" | "before"; locator: string }
+	| { boundary: "start" | "end" };
+
 export async function parseTargetPlacement(
 	values: RawValues,
-): Promise<{ mode: "after" | "before"; locator: string } | number> {
+): Promise<TargetPlacement | number> {
 	const after = values.after as string | undefined;
 	const before = values.before as string | undefined;
-	if (!after && !before) {
-		return fail("USAGE", "Missing locator: pass --after or --before", HELP);
+	const atStart = Boolean(values["at-start"]);
+	const atEnd = Boolean(values["at-end"]);
+	const chosen = [
+		after !== undefined ? "--after" : null,
+		before !== undefined ? "--before" : null,
+		atStart ? "--at-start" : null,
+		atEnd ? "--at-end" : null,
+	].filter((flag): flag is string => flag !== null);
+	if (chosen.length === 0) {
+		return fail(
+			"USAGE",
+			"Missing placement: pass --after, --before, --at-start, or --at-end",
+			HELP,
+		);
 	}
-	if (after && before) {
-		return fail("USAGE", "Pass either --after or --before, not both", HELP);
+	if (chosen.length > 1) {
+		return fail(
+			"USAGE",
+			`Pass exactly one placement, got ${chosen.join(" + ")}`,
+			HELP,
+		);
 	}
+	if (atStart) return { boundary: "start" };
+	if (atEnd) return { boundary: "end" };
 	if (after !== undefined) return { mode: "after", locator: after };
 	return { mode: "before", locator: before as string };
+}
+
+/** Turn a parsed placement into the concrete anchor the splice needs: a live
+ *  `BlockReference`, the side to insert on, and the locator to report. For a
+ *  `--at-start`/`--at-end` boundary this resolves against the open document
+ *  (first/last content block, or — for an otherwise-empty body — before the
+ *  mandatory trailing `<w:sectPr>`). */
+async function resolvePlacement(
+	document: Document,
+	placement: TargetPlacement,
+): Promise<
+	| { blockRef: BlockReference; mode: "after" | "before"; locator: string }
+	| number
+> {
+	if ("boundary" in placement) {
+		return resolveBoundaryAnchor(document, placement.boundary);
+	}
+	const blockRef = await resolveBlockOrFail(document, placement.locator);
+	if (typeof blockRef === "number") return blockRef;
+	return { blockRef, mode: placement.mode, locator: placement.locator };
+}
+
+/** Resolve `--at-start` / `--at-end` against the document. Anchors only on
+ *  TOP-LEVEL content blocks — `<w:p>` / `<w:tbl>` whose parent IS the body's
+ *  child list. Filtering by tag alone is wrong: `blockReferences` also holds
+ *  table-CELL paragraphs (tag `w:p`), and the reader registers a table's cell
+ *  refs BEFORE the table's own `tN` ref, so a tag-only `refs[0]` on a table-first
+ *  doc is the first cell paragraph — `--at-start` would splice INSIDE cell (0,0).
+ *  Section sentinels (inline + trailing `<w:sectPr>`, which also enumerate as
+ *  `sN`) are excluded too, so `--at-end` lands BEFORE the trailing sectPr. */
+async function resolveBoundaryAnchor(
+	document: Document,
+	boundary: "start" | "end",
+): Promise<
+	| { blockRef: BlockReference; mode: "after" | "before"; locator: string }
+	| number
+> {
+	const bodyChildren = document.body.body.children;
+	const refs = [...document.body.blockReferences.entries()].filter(
+		([, ref]) =>
+			ref.parent === bodyChildren &&
+			(ref.node.tag === "w:p" || ref.node.tag === "w:tbl"),
+	);
+	if (refs.length > 0) {
+		const entry = boundary === "start" ? refs[0] : refs[refs.length - 1];
+		if (entry) {
+			const [locator, blockRef] = entry;
+			return {
+				blockRef,
+				mode: boundary === "start" ? "before" : "after",
+				locator,
+			};
+		}
+	}
+	// Empty body — only the mandatory trailing <w:sectPr>. Anchor before it so
+	// the first inserted block becomes the document's sole content.
+	const sectPr = bodyChildren.find((child) => child.tag === "w:sectPr");
+	if (!sectPr) {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			"Document body has no blocks to anchor against",
+		);
+	}
+	return {
+		blockRef: { node: sectPr, parent: bodyChildren },
+		mode: "before",
+		locator: "start",
+	};
 }
 
 export type RawValues = ReturnType<typeof parseArgs>["values"];
@@ -450,6 +567,7 @@ export const MARKDOWN_INCOMPATIBLE_FLAGS = [
 
 const CONTENT_KINDS = [
 	{ flag: "text", subFlags: ["color", "bold", "italic", "url"] },
+	{ flag: "text-file", subFlags: [] },
 	{ flag: "runs", subFlags: [] },
 	{ flag: "page-break", subFlags: [] },
 	{ flag: "column-break", subFlags: [] },
@@ -517,6 +635,8 @@ export async function chooseContentSpec(
 	switch (chosen.flag) {
 		case "text":
 			return buildTextSpec(values);
+		case "text-file":
+			return resolveLiteralSpec(values);
 		case "runs": {
 			const runs = await parseRunsArg(values.runs as string);
 			return typeof runs === "number" ? runs : { kind: "runs", runs };
@@ -570,6 +690,29 @@ async function resolveMarkdownSpec(
 		return fail(
 			"FILE_NOT_FOUND",
 			`Failed to read --markdown-file ${path}: ${message}`,
+		);
+	}
+}
+
+/** Resolve `--text-file PATH` (file / stdin) into a `literal` spec — the
+ *  parser-free channel. Every newline in the file starts a new paragraph and
+ *  every other character lands verbatim (no GFM parsing), so reviewer prose
+ *  with `3. …`, `*x*`, `[t](u)`, bare URLs, `{++x++}` survives untouched. */
+async function resolveLiteralSpec(
+	values: RawValues,
+): Promise<Extract<InsertSpec, { kind: "literal" }> | number> {
+	const path = values["text-file"] as string;
+	try {
+		const text =
+			path === "-"
+				? await new Response(Bun.stdin.stream()).text()
+				: await Bun.file(path).text();
+		return { kind: "literal", text };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(
+			"FILE_NOT_FOUND",
+			`Failed to read --text-file ${path}: ${message}`,
 		);
 	}
 }

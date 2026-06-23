@@ -204,3 +204,53 @@ describe("Ergonomics", () => {
 		expect((result.parsed as { code: string }).code).toBe("MATCH_NOT_FOUND");
 	});
 });
+
+describe("docx create --text-file (literal body)", () => {
+	test("seeds the body with literal paragraphs, replacing the placeholder", async () => {
+		const workspace = tempWorkspace("create-literal");
+		const docPath = join(workspace, "out.docx");
+		const notes = join(workspace, "notes.txt");
+		// GFM-hostile prose: ordered-list marker + CriticMarkup must survive verbatim.
+		await Bun.write(notes, "3. Reviewer note\nSecond line {++keep++}\n");
+
+		const create = await runCli("create", docPath, "--text-file", notes);
+		expect(create.exitCode).toBe(0);
+		expect(create.parsed).toMatchObject({
+			ok: true,
+			operation: "create",
+			blocks: 2, // the seed placeholder was replaced, not appended to
+		});
+
+		const read = await runCli("read", docPath, "--ast");
+		const paragraphs = (
+			read.parsed as {
+				blocks: Array<{ type: string; runs?: Array<{ text?: string }> }>;
+			}
+		).blocks.filter((block) => block.type === "paragraph");
+		expect(paragraphs).toHaveLength(2);
+		expect(paragraphs[0]?.runs?.map((run) => run.text ?? "").join("")).toBe(
+			"3. Reviewer note",
+		);
+		expect(paragraphs[1]?.runs?.map((run) => run.text ?? "").join("")).toBe(
+			"Second line {++keep++}",
+		);
+	});
+
+	test("rejects more than one content source", async () => {
+		const workspace = tempWorkspace("create-mutex");
+		const docPath = join(workspace, "out.docx");
+		const notes = join(workspace, "n.txt");
+		await Bun.write(notes, "x");
+
+		const result = await runCli(
+			"create",
+			docPath,
+			"--text",
+			"a",
+			"--text-file",
+			notes,
+		);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+	});
+});
