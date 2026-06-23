@@ -446,7 +446,12 @@ function layoutHazardNote(paragraph: Paragraph, ctx: RenderContext): string {
 		)}`;
 	}
 
-	// Fragile right-alignment via a left/center tab near the margin.
+	// Fragile right-alignment via a left/center tab near the margin. List items
+	// are excluded: their tab stops are the structural bullet-to-text gap, and the
+	// `--tabs right` cure can't safely touch them (it'd jump the bullet text to the
+	// margin), so flagging them would advertise a cure that corrupts — keep flag
+	// and cure in lockstep (`scopeRangeProps` skips list paragraphs too).
+	if (paragraph.list) return "";
 	const tabs = paragraph.tabStops ?? [];
 	if (tabs.some((tab) => tab.align === "right")) return ""; // robust
 	const textWidthTwips = Math.round(ctx.contentWidthEmu / EMU_PER_TWIP);

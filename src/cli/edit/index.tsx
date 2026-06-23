@@ -525,8 +525,8 @@ async function commitRangeEdit(
  *  rewriting any content. This is the one-call tab-stop cure — `read` flags N
  *  wrapping lines, and `edit --at pN-pM --tabs right` fixes them all at once
  *  instead of N separate calls. `--tabs` only touches paragraphs that ALREADY
- *  have tab stops (the tab-using lines — adding a stop to a plain paragraph would
- *  be noise); `--style`/`--alignment` apply to every paragraph in the range. */
+ *  have tab stops AND aren't list items (a bullet's tab is structural — see
+ *  `scopeRangeProps`); `--style`/`--alignment` apply to every paragraph. */
 async function commitRangeProps(
 	document: Document,
 	opts: ValidatedOptions,
@@ -558,7 +558,7 @@ async function commitRangeProps(
 		return fail(
 			"BLOCK_NOT_FOUND",
 			options.tabs !== undefined
-				? `No paragraphs with tab stops in ${opts.locator} — --tabs only adjusts tab-using lines (the ones \`read\` flags with docx:layout).`
+				? `No non-list paragraphs with tab stops in ${opts.locator} — --tabs only adjusts tab-using lines (the ones \`read\` flags with docx:layout), and skips bullets.`
 				: `No paragraphs in ${opts.locator} to restyle.`,
 		);
 	}
@@ -568,8 +568,17 @@ async function commitRangeProps(
 }
 
 /** The subset of `options` to apply to ONE paragraph in a range props edit:
- *  `--tabs` only rides along when the paragraph already has tab stops; style and
- *  alignment always apply. Returns null when nothing applies to this paragraph. */
+ *  `--tabs` only rides along when the paragraph carries tab stops AND is not a
+ *  list/numbered paragraph; style and alignment always apply. Returns null when
+ *  nothing applies to this paragraph.
+ *
+ *  The list-paragraph exclusion is load-bearing: a bullet's `<w:pPr><w:tabs>` is
+ *  the STRUCTURAL bullet-to-text tab, not a content alignment tab, and replacing
+ *  it with the right-margin cure jumps the bullet text to the far margin (the
+ *  résumé "Built…" → stray "B" corruption the fix-all hint caused). `read` never
+ *  flags bullets (they have no `<w:tab/>` RUN), so the consolidated `--at pN-pM
+ *  --tabs right` cure spans them only by min..max — and must skip them here so
+ *  the one-call cure is safe to paste verbatim. */
 function scopeRangeProps(
 	node: XmlNode,
 	options: ParagraphOptions,
@@ -577,7 +586,11 @@ function scopeRangeProps(
 	const out: ParagraphOptions = {};
 	if (options.style !== undefined) out.style = options.style;
 	if (options.alignment !== undefined) out.alignment = options.alignment;
-	if (options.tabs !== undefined && paragraphHasTabStops(node)) {
+	if (
+		options.tabs !== undefined &&
+		paragraphHasTabStops(node) &&
+		!isListParagraph(node)
+	) {
 		out.tabs = options.tabs;
 	}
 	if (
@@ -593,6 +606,13 @@ function scopeRangeProps(
  *  (the kind `read`'s docx:layout warning targets). */
 function paragraphHasTabStops(node: XmlNode): boolean {
 	return node.findChild("w:pPr")?.findChild("w:tabs") !== undefined;
+}
+
+/** True when a paragraph is a list/numbered item (`<w:pPr><w:numPr>`). Its tab
+ *  stops position the bullet text and must NOT be replaced by the range `--tabs`
+ *  cure. */
+function isListParagraph(node: XmlNode): boolean {
+	return node.findChild("w:pPr")?.findChild("w:numPr") !== undefined;
 }
 
 /** Resolve an `eqN` locator, splice in a new OMML subtree, save. The spec

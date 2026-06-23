@@ -2244,6 +2244,93 @@ describe("edit --tabs (tab-stop cure)", () => {
 		expect(result.exitCode).toBe(3);
 		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
 	});
+
+	// Regression (adversarial-review #1): a bullet's `<w:pPr><w:tabs>` is the
+	// STRUCTURAL bullet-to-text tab. The fix-all range can span bullets (read lists
+	// only the fragile non-list lines, but the cure range is min..max), so the cure
+	// MUST skip list paragraphs — replacing a bullet's tab with the right-margin
+	// stop jumps its text to the far margin ("Built…" → stray "B"). The cure stays
+	// a single safe-to-paste command instead of being split into sub-ranges.
+	test("--at pN-pM --tabs right skips list/bullet paragraphs (keeps the structural bullet tab)", async () => {
+		const workspace = tempWorkspace("tabs-range-bullet");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		// p1, p3 = fragile tab lines; p2 = a BULLET that also carries a tab stop.
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Org A"},{"type":"tab"},{"type":"text","text":"City A"}]',
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--list",
+			"bullet",
+			"--text",
+			"Built something",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p2",
+			"--runs",
+			'[{"type":"text","text":"Org B"},{"type":"tab"},{"type":"text","text":"City B"}]',
+		);
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@7in");
+		await runCli("edit", docPath, "--at", "p2", "--tabs", "left@0.5in"); // bullet's tab
+		await runCli("edit", docPath, "--at", "p3", "--tabs", "left@7in");
+
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1-p3",
+			"--tabs",
+			"right",
+		);
+		expect(result.exitCode).toBe(0);
+		// Fragile lines cured to a right-margin tab…
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+		expect(await tabStops(docPath, "p3")).toEqual([
+			{ align: "right", pos: MARGIN_TWIPS },
+		]);
+		// …but the BULLET's structural tab is untouched (no right-margin stop).
+		expect(await tabStops(docPath, "p2")).toEqual([
+			{ align: "left", pos: 720 },
+		]);
+	});
+
+	// Consistency: read must not FLAG a bullet as a fragile tab line either, even
+	// when it has a tab run + a fragile left tab — the cure (which now skips list
+	// paragraphs) couldn't fix it, so advertising the cure would mislead.
+	test("read does not flag a list/bullet paragraph as a fragile tab line", async () => {
+		const workspace = tempWorkspace("tabs-bullet-read");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--list",
+			"bullet",
+			"--runs",
+			'[{"type":"text","text":"Item"},{"type":"tab"},{"type":"text","text":"2020"}]',
+		);
+		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@7in");
+		const read = (await runCli("read", docPath)).stdout;
+		// The bullet (p1) must not appear in a docx:layout fragile warning / fix-all.
+		expect(read).not.toMatch(/docx:layout p1 tab=/);
+		expect(read).not.toContain("fix-all");
+	});
 });
 
 // The empty-text trap (Sonnet-surfaced): `--text ""` leaves an invisible blank
