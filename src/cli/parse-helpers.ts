@@ -1,4 +1,5 @@
 import { isSectionType, type Run, type SectionType } from "@core";
+import type { ParagraphOptions } from "@core/blocks";
 import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
@@ -256,4 +257,168 @@ export async function readJsonlIds(source: string): Promise<string[]> {
 		ids.push(entry.id);
 	}
 	return ids;
+}
+
+const TWIPS_PER_POINT = 20;
+const TWIPS_PER_INCH = 1440;
+/** `<w:spacing w:line>` units for `lineRule="auto"`: 240ths of a line. */
+const LINE_UNITS_PER_MULTIPLE = 240;
+
+type SpacingIndentError = { error: string; hint?: string };
+
+/** Parse the paragraph spacing/indentation flags (shared by `insert` and `edit`,
+ *  single-shot and batch) into a `ParagraphOptions` slice, or a `{ error }` the
+ *  caller turns into a `fail()`. Units follow the existing CLI conventions:
+ *  spacing in points (like font size), indents in inches (like tabs/images), line
+ *  spacing as a multiple/alias. `--first-line` and `--hanging` are mutually
+ *  exclusive (same OOXML slot). Returns an empty object when no flag is set. */
+export function parseSpacingIndentFlags(
+	values: Record<string, unknown>,
+): Pick<ParagraphOptions, "spacing" | "indent"> | SpacingIndentError {
+	const out: Pick<ParagraphOptions, "spacing" | "indent"> = {};
+	const spacing: NonNullable<ParagraphOptions["spacing"]> = {};
+	const indent: NonNullable<ParagraphOptions["indent"]> = {};
+
+	const before = readMeasure(values, "space-before", pointsToTwips);
+	if (isError(before)) return before;
+	if (before !== undefined) spacing.before = before;
+
+	const after = readMeasure(values, "space-after", pointsToTwips);
+	if (isError(after)) return after;
+	if (after !== undefined) spacing.after = after;
+
+	const lineRaw = values["line-spacing"];
+	if (lineRaw !== undefined) {
+		const parsed = parseLineSpacing(String(lineRaw));
+		if (isError(parsed)) return parsed;
+		spacing.line = parsed.line;
+		spacing.lineRule = parsed.lineRule;
+	}
+
+	const left = readMeasure(values, "indent-left", inchesToTwips);
+	if (isError(left)) return left;
+	if (left !== undefined) indent.left = left;
+
+	const right = readMeasure(values, "indent-right", inchesToTwips);
+	if (isError(right)) return right;
+	if (right !== undefined) indent.right = right;
+
+	if (values["first-line"] !== undefined && values.hanging !== undefined) {
+		return {
+			error: "--first-line and --hanging are mutually exclusive",
+			hint: "They occupy the same indent slot (positive vs. negative first-line indent). Pass one.",
+		};
+	}
+	const firstLine = readMeasure(values, "first-line", inchesToTwips);
+	if (isError(firstLine)) return firstLine;
+	if (firstLine !== undefined) indent.firstLine = firstLine;
+
+	const hanging = readMeasure(values, "hanging", unsignedInchesToTwips);
+	if (isError(hanging)) return hanging;
+	if (hanging !== undefined) indent.hanging = hanging;
+
+	if (Object.keys(spacing).length > 0) out.spacing = spacing;
+	if (Object.keys(indent).length > 0) out.indent = indent;
+	return out;
+}
+
+function isError(value: unknown): value is SpacingIndentError {
+	return typeof value === "object" && value !== null && "error" in value;
+}
+
+/** Read one measure flag and convert it via `convert`, or undefined if absent. */
+function readMeasure(
+	values: Record<string, unknown>,
+	flag: string,
+	convert: (raw: string, flag: string) => number | SpacingIndentError,
+): number | undefined | SpacingIndentError {
+	const raw = values[flag];
+	if (raw === undefined) return undefined;
+	return convert(String(raw), flag);
+}
+
+/** Points → twips (×20). Accepts a bare number or an explicit `pt` suffix.
+ *  Unsigned: `<w:before>`/`<w:after>` are `ST_TwipsMeasure` (non-negative). */
+function pointsToTwips(raw: string, flag: string): number | SpacingIndentError {
+	const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(?:pt)?$/i);
+	if (!match) {
+		return {
+			error: `Invalid --${flag}: ${raw}`,
+			hint: "Use a point value, e.g. --space-after 6 (or 6pt).",
+		};
+	}
+	return Math.round(Number.parseFloat(match[1] as string) * TWIPS_PER_POINT);
+}
+
+/** Inches → twips (×1440). Accepts a bare number or an explicit `in` suffix, and
+ *  (for the signed indent slots) an optional leading `-`. `w:left`/`w:right`/
+ *  `w:firstLine` are `ST_SignedTwipsMeasure` — a negative value is a deliberate
+ *  outdent into the page margin, which Word produces and the reader surfaces, so
+ *  the read→re-apply loop needs to accept it back. `w:hanging` is unsigned
+ *  (`signed: false`), as is everything routed through `pointsToTwips`. */
+function inchesToTwips(
+	raw: string,
+	flag: string,
+	signed = true,
+): number | SpacingIndentError {
+	const pattern = signed
+		? /^(-?\d+(?:\.\d+)?)\s*(?:in)?$/i
+		: /^(\d+(?:\.\d+)?)\s*(?:in)?$/i;
+	const match = raw.trim().match(pattern);
+	if (!match) {
+		return {
+			error: `Invalid --${flag}: ${raw}`,
+			hint: "Use an inch value, e.g. --indent-left 0.5 (or 0.5in).",
+		};
+	}
+	return Math.round(Number.parseFloat(match[1] as string) * TWIPS_PER_INCH);
+}
+
+/** `--hanging` only — the unsigned inch converter (the hanging indent has no
+ *  negative form; a negative first-line indent is `--first-line -N`). */
+function unsignedInchesToTwips(
+	raw: string,
+	flag: string,
+): number | SpacingIndentError {
+	return inchesToTwips(raw, flag, false);
+}
+
+type LineRule = NonNullable<ParagraphOptions["spacing"]>["lineRule"];
+
+/** Line-spacing flag → `{ line, lineRule }`. Three forms, mirroring what `read`
+ *  emits back in the `docx:p` note so the value round-trips:
+ *   • a multiple/alias (`1`, `1.5`, `single`, `double`) → `lineRule="auto"`,
+ *     `line` in 240ths of a line;
+ *   • `<n>pt` → `lineRule="exact"`, `line` in twips (a fixed line height);
+ *   • `<n>pt atLeast` → `lineRule="atLeast"` (a minimum line height).
+ *  Word authors exact/atLeast rules; without the pt forms the read note for them
+ *  (`line-spacing="18pt exact"`) couldn't be fed back through `--line-spacing`. */
+function parseLineSpacing(
+	raw: string,
+): { line: number; lineRule: LineRule } | SpacingIndentError {
+	const value = raw.trim().toLowerCase();
+	const ptMatch = value.match(/^(\d+(?:\.\d+)?)\s*pt(?:\s+(exact|atleast))?$/);
+	if (ptMatch) {
+		const points = Number.parseFloat(ptMatch[1] as string);
+		if (points <= 0) return invalidLineSpacing(raw);
+		const lineRule: LineRule = ptMatch[2] === "atleast" ? "atLeast" : "exact";
+		return { line: Math.round(points * TWIPS_PER_POINT), lineRule };
+	}
+	const aliases: Record<string, number> = { single: 1, double: 2 };
+	const multiple =
+		aliases[value] ??
+		(/^\d+(?:\.\d+)?$/.test(value) ? Number.parseFloat(value) : Number.NaN);
+	if (!Number.isFinite(multiple) || multiple <= 0)
+		return invalidLineSpacing(raw);
+	return {
+		line: Math.round(multiple * LINE_UNITS_PER_MULTIPLE),
+		lineRule: "auto",
+	};
+}
+
+function invalidLineSpacing(raw: string): SpacingIndentError {
+	return {
+		error: `Invalid --line-spacing: ${raw}`,
+		hint: "Use a multiple (1, 1.5, 2), a name (single, double), or an exact point value (e.g. 15pt, or '15pt atLeast').",
+	};
 }

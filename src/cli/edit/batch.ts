@@ -20,7 +20,11 @@ import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
 } from "@core/run-formatting";
-import { parseTaskFlag, readJsonlObjects } from "../parse-helpers";
+import {
+	parseSpacingIndentFlags,
+	parseTaskFlag,
+	readJsonlObjects,
+} from "../parse-helpers";
 import {
 	type ErrorCode,
 	EXIT,
@@ -189,6 +193,13 @@ const SINGLE_SHOT_FLAGS = [
 	"size",
 	"highlight",
 	"shade",
+	"space-before",
+	"space-after",
+	"line-spacing",
+	"indent-left",
+	"indent-right",
+	"first-line",
+	"hanging",
 ] as const;
 
 // `clear` is NOT in here — it's a modifier that can stand alone OR ride along
@@ -214,6 +225,21 @@ const SET_KEYS = [
 	"size",
 	"highlight",
 	"shade",
+] as const;
+
+// Batch-entry keys that carry paragraph properties (no content of their own) —
+// used to detect a props-only entry. Spacing/indent keys mirror the CLI flags.
+const PARAGRAPH_PROP_KEYS = [
+	"style",
+	"alignment",
+	"tabs",
+	"space-before",
+	"space-after",
+	"line-spacing",
+	"indent-left",
+	"indent-right",
+	"first-line",
+	"hanging",
 ] as const;
 
 type EntryOptions = {
@@ -245,10 +271,7 @@ async function resolveEntry(
 	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
 	const hasClear = raw.clear !== undefined;
 	const hasSet = SET_KEYS.some((key) => raw[key] !== undefined);
-	const hasProps =
-		raw.style !== undefined ||
-		raw.alignment !== undefined ||
-		raw.tabs !== undefined;
+	const hasProps = PARAGRAPH_PROP_KEYS.some((key) => raw[key] !== undefined);
 	if (present.length === 0 && !hasClear && !hasSet && !hasProps) {
 		throw new EntryError(
 			"USAGE",
@@ -376,12 +399,15 @@ async function buildApply(
 		if (span) {
 			throw new EntryError(
 				"USAGE",
-				`entry ${index}: a character span (${raw.at}) can't take "style"/"alignment" — restyle the whole paragraph (pN).`,
+				`entry ${index}: a character span (${raw.at}) can't take style/alignment/spacing/indent/tabs — restyle the whole paragraph (pN).`,
 			);
 		}
 		const paragraphOptions = readParagraphOptions(document, raw, index);
 		return () =>
-			void new Edit(document).paragraphProperties(blockRef, paragraphOptions);
+			void new Edit(document).paragraphProperties(blockRef, paragraphOptions, {
+				authorFlag: author,
+				track: opts.track,
+			});
 	}
 
 	// Clear-only entry (no content key): strip formatting in place.
@@ -625,14 +651,10 @@ function rejectSpanParagraphFlags(
 	raw: Record<string, unknown>,
 	index: number,
 ): void {
-	if (
-		raw.style !== undefined ||
-		raw.alignment !== undefined ||
-		raw.tabs !== undefined
-	) {
+	if (PARAGRAPH_PROP_KEYS.some((key) => raw[key] !== undefined)) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: style/alignment/tabs apply to a whole paragraph, not a character span`,
+			`entry ${index}: style/alignment/spacing/indent/tabs apply to a whole paragraph, not a character span`,
 		);
 	}
 }
@@ -783,6 +805,18 @@ function readParagraphOptions(
 		}
 		out.tabs = resolveTabsDirective(parsed, document);
 	}
+	// Spacing/indent keys mirror the CLI flags (space-before, line-spacing,
+	// indent-left, …); the shared parser handles numbers or strings.
+	const spacingIndent = parseSpacingIndentFlags(raw);
+	if ("error" in spacingIndent) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: ${spacingIndent.error}`,
+			spacingIndent.hint,
+		);
+	}
+	if (spacingIndent.spacing) out.spacing = spacingIndent.spacing;
+	if (spacingIndent.indent) out.indent = spacingIndent.indent;
 	return out;
 }
 

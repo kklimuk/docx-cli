@@ -54,6 +54,10 @@ Batch (--batch PATH | -):
   LOCATOR is a whole-block locator (pN, tN, or a cell paragraph tN:rRcC:pK).
   All locators address the document AS READ — they're resolved to live node
   refs before anything is removed, so deleting one never shifts another's id.
+  So when you're clearing SEVERAL scattered blocks (e.g. every "[Note: …]"
+  helper line, or a set of placeholder paragraphs), read ONCE, list ALL their
+  pN ids, and delete them in ONE batch — do NOT delete-one-then-re-read-then-
+  delete-the-next (the ids you read stay valid for the whole batch).
   Range (pN-pM), section (sN), equation (eqN), and span (pN:S-E) deletes run
   one at a time, not in a batch. Don't mix --batch with --at.
 
@@ -83,6 +87,10 @@ Examples:
   docx delete doc.docx --at t0
   docx delete doc.docx --at s2
   docx delete doc.docx --batch drop.jsonl   # {"at":"p26"} per line
+  # Clear every placeholder in ONE pass (one read → one batch), e.g. drop.jsonl:
+  #   {"at": "p4"}
+  #   {"at": "p9"}
+  #   {"at": "p15"}
 `;
 
 export async function run(args: string[]): Promise<number> {

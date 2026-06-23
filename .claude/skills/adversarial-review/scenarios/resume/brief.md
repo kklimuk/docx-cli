@@ -29,9 +29,24 @@ element alone (it's part of the template).
 - **Harvard Robotics Club**, Cambridge, MA — Project Lead, 2024 – present
   - Led a 12-person team to a 2nd-place finish at the regional autonomous-rover competition.
 
+## Polish the layout (paragraph spacing & indentation)
+
+The template is cramped. Once the text is in, tidy the paragraph layout:
+
+- Add **12pt space before** each of the three section headings (Education,
+  Experience, Leadership & Activities) so the sections are visually separated.
+- Add **6pt space after** each experience/leadership **entry** line (the
+  org/title/date lines) so entries breathe instead of butting together.
+- Give the contact line directly under the name **6pt space after** as well.
+
+These are paragraph properties — set them in place; you don't need to retype the
+text. `docx read` shows the current spacing/indent as `docx:p … space-after="…"`
+hints, and `docx read --ast` shows the exact values.
+
 ## What "done" looks like
 
 Every placeholder (name, contact, school, degree, dates, position, bullets) is
 replaced with the candidate's real details, the `[Note: ...]` helper text is gone,
 the section headings (Education / Experience / Leadership & Activities) keep their
-heading style, and the dates still right-align against the tab stop.
+heading style, the dates still right-align against the tab stop, and the layout has
+breathing room — space before the section headings and after the entries.

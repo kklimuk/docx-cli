@@ -23,6 +23,14 @@ right-edge LEFT tab so a long value overflows the margin (the résumé
 right` swaps the LEFT tab for a RIGHT tab flush at the margin (in `cli/edit/tabs.ts`,
 emitted via `ParagraphOptions.tabs`), so the content right-aligns instead of
 wrapping. Both are render-only breaks Markdown can't show.
+The per-paragraph `docx:p` note carries `style`/`align` plus direct paragraph
+spacing/indent (`space-before`/`space-after`/`line-spacing`/`indent-left`/
+`indent-right`/`first-line`/`hanging`, in points/inches/multiples so an agent can
+read a value and re-apply it through the matching `edit`/`insert` flag). Like
+`docx:cell`, the note carries the locator as its leading token, so a paragraph
+WITH a `docx:p` note does NOT also get the bare `<!-- pN -->` locator — that would
+duplicate `pN`. Plain paragraphs (no note) keep the bare locator. Every paragraph
+shows its addressable `pN` exactly once, either bare or as the note's leading token.
 Full contract in [src/core/markdown/CLAUDE.md](../core/markdown/CLAUDE.md). New
 structural annotation? Use `formatNote`, keep it deviation-only, and remember the
 importer won't reconstruct it — NO comment is parse-back, not even `docx:base`.

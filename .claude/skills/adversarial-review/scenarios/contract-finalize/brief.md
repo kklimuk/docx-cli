@@ -19,9 +19,14 @@ First, see what's pending:
 - The **deletion of §11 (Personal Guarantee)** — the Company wants the guarantee, so
   reject the deletion (the section stays).
 
+Opposing counsel also **reformatted the indemnification clause** (a tracked
+paragraph-formatting change — it shows in `track-changes list` as a `pPrChange`, not
+a text del/ins). The Company is fine with the cleaner spacing — **accept** it.
+
 Tip: `track-changes list` ids (`tcN`) renumber after each accept/reject — re-list
 between operations, or address one change at a time with `--at tcN`. (Each text
-revision shows as a `del` + an `ins` pair; act on both halves of a change.)
+revision shows as a `del` + an `ins` pair; act on both halves of a change. The
+`pPrChange` is a single entry — accept it once.)
 
 ## Comments — reply to all, resolve the addressed ones
 

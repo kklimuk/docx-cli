@@ -157,6 +157,12 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 # insert/edit content selectors (run "docx insert --help" / "docx edit --help" for the full list):
 #   --text "..." [--style NAME] [--alignment A] [--color HEX] [--bold] [--italic] [--url URL]
 #       (a newline in --text becomes a line break <w:br/>, a tab becomes <w:tab/> — verse/addresses stay line-per-line)
+#   paragraph spacing/indent (insert + edit, alone or with content, per-entry in --batch, across a range):
+#       --space-before PT --space-after PT --line-spacing N(=1|1.5|2|single|double, or 15pt / "15pt atLeast")
+#       --indent-left IN --indent-right IN --first-line IN --hanging IN  (points / inches; first-line ⊥ hanging;
+#       left/right/first-line accept a negative value to outdent into the margin; hanging stays non-negative)
+#       Under track-changes these record a tracked <w:pPrChange> (accept/reject in Word) — even when they ride
+#       along with --text; read surfaces them as a deviation-only <!-- docx:p … space-after="6pt" --> hint.
 #   edit --tabs right   fix a line whose tabbed-over content WRAPS (read flags it as `docx:layout … warn`,
 #       and prints ONE consolidated fix-all summary at the top): swaps the fragile LEFT tab for a RIGHT tab
 #       flush at the margin so a long value (e.g. a city) never wraps. Rides along with --text, works

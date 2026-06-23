@@ -30,6 +30,7 @@ import type { parseArgs } from "util";
 import {
 	parseRunsArg,
 	parseSectionFlags,
+	parseSpacingIndentFlags,
 	parseTaskFlag,
 	rejectMarkdownInText,
 	rejectShellMangledValue,
@@ -129,6 +130,14 @@ Equation editing (requires --at eqN):
 Paragraph options:
   --style NAME       Paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
+  --space-before PT  Space above the paragraph, in points (e.g. 12)
+  --space-after PT   Space below the paragraph, in points (e.g. 6)
+  --line-spacing N   Line spacing: a multiple (1, 1.5, 2), a name (single,
+                     double), or an exact point height (15pt, or "15pt atLeast")
+  --indent-left IN   Left indent, in inches (e.g. 0.5 or 0.5in; negative outdents)
+  --indent-right IN  Right indent, in inches (negative outdents into the margin)
+  --first-line IN    First-line indent, in inches (negative ok; mutex w/ --hanging)
+  --hanging IN       Hanging indent, in inches (mutex with --first-line)
   --tabs SPEC        Replace the paragraph's tab stops. SPEC is:
                        right   — a single RIGHT tab flush at the text margin.
                                  This is the CURE for the \`docx:layout … warn=…\`
@@ -140,11 +149,14 @@ Paragraph options:
                        clear   — remove the paragraph's tab stops.
                        <list>  — explicit stops, e.g. \`right@7.5in\` or
                                  \`left@1in,right@7.5in\` (ALIGN@POSin, comma list).
-  Pass any of --style/--alignment/--tabs ALONE (no content flag) to adjust the
-  paragraph in place, keeping its text/runs: \`docx edit doc.docx --at p4 --style
-  Heading1\`, \`docx edit doc.docx --at p9 --tabs right\`. --tabs also rides along
-  with --text (fill the line AND fix its tab in one call), and works per-entry in
-  --batch ({"at":"p9","text":"Harvard University\\tCambridge, MA","tabs":"right"}).
+  Pass any of --style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/
+  --hanging/--tabs ALONE (no content flag) to adjust the paragraph in place,
+  keeping its text/runs: \`docx edit doc.docx --at p4 --style Heading1\`,
+  \`docx edit doc.docx --at p4 --space-after 6 --line-spacing 1.5\`,
+  \`docx edit doc.docx --at p9 --tabs right\`. They also ride along with --text
+  (fill the line AND format it), work per-entry in --batch, and apply across a
+  RANGE (\`--at p0-p9 --line-spacing 2\` sets every paragraph). Under track-changes
+  these are recorded as a tracked \`<w:pPrChange>\` revision (accept/reject in Word).
   ONE-CALL cure: a RANGE locator fixes every wrapping tab line at once —
   \`docx edit doc.docx --at p9-p38 --tabs right\` (the exact "fix-all" command
   \`read\` prints at the top when lines wrap; it skips paragraphs with no tab stops).
@@ -359,10 +371,17 @@ async function commitSpanEdit(
 		);
 	}
 	if (spec.kind === "text") {
-		if (spec.paragraphOptions.style || spec.paragraphOptions.alignment) {
+		const paragraphOptions = spec.paragraphOptions;
+		if (
+			paragraphOptions.style ||
+			paragraphOptions.alignment ||
+			paragraphOptions.spacing ||
+			paragraphOptions.indent ||
+			paragraphOptions.tabs
+		) {
 			return fail(
 				"USAGE",
-				"--style/--alignment apply to a whole paragraph, not a character span (pN:S-E).",
+				"--style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/--hanging/--tabs apply to a whole paragraph, not a character span (pN:S-E). Use a whole-paragraph locator (pN).",
 				HELP,
 			);
 		}
@@ -459,6 +478,10 @@ async function commitBlockEdit(
 			resultNode = edit.paragraphProperties(
 				blockRef,
 				opts.spec.paragraphOptions,
+				{
+					authorFlag: opts.authorFlag,
+					track,
+				},
 			);
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
@@ -587,6 +610,7 @@ async function commitRangeProps(
 	if (typeof rangeRef === "number") return rangeRef;
 	if (opts.dryRun) return respondDryRun(opts);
 
+	const track = resolveTracked(document, opts.trackFlag);
 	let applied = 0;
 	try {
 		const edit = new Edit(document);
@@ -595,7 +619,14 @@ async function commitRangeProps(
 			if (!node || node.tag !== "w:p") continue;
 			const perParagraph = scopeRangeProps(node, options);
 			if (!perParagraph) continue;
-			edit.paragraphProperties({ node, parent: rangeRef.parent }, perParagraph);
+			edit.paragraphProperties(
+				{ node, parent: rangeRef.parent },
+				perParagraph,
+				{
+					authorFlag: opts.authorFlag,
+					track,
+				},
+			);
 			applied++;
 		}
 	} catch (error) {
@@ -676,6 +707,10 @@ function scopeRangeProps(
 	const out: ParagraphOptions = {};
 	if (options.style !== undefined) out.style = options.style;
 	if (options.alignment !== undefined) out.alignment = options.alignment;
+	// Spacing/indent apply to every paragraph in the range (like style/alignment),
+	// unlike --tabs which is gated to existing tab-using, non-list lines.
+	if (options.spacing !== undefined) out.spacing = options.spacing;
+	if (options.indent !== undefined) out.indent = options.indent;
 	if (
 		options.tabs !== undefined &&
 		paragraphHasTabStops(node) &&
@@ -686,6 +721,8 @@ function scopeRangeProps(
 	if (
 		out.style === undefined &&
 		out.alignment === undefined &&
+		out.spacing === undefined &&
+		out.indent === undefined &&
 		out.tabs === undefined
 	)
 		return null;
@@ -835,7 +872,21 @@ async function validateSingleShotOptions(
  *  `--markdown-file` (the markdown source already encodes block styling).
  *  See `chooseContentSpec` in `cli/insert/index.tsx` for the symmetric
  *  rejection on the insert side. */
-const MARKDOWN_INCOMPATIBLE_FLAGS = ["style", "alignment"] as const;
+// `--tabs` is deliberately ABSENT: `setTabsOnSpec`/`injectTabsIntoSpec` applies it
+// to a markdown spec on purpose (a tab-stop fix is orthogonal to block styling).
+// The spacing/indent flags ARE incompatible — the markdown source owns block-level
+// layout, so they'd be silently dropped; reject them up front like style/alignment.
+const MARKDOWN_INCOMPATIBLE_FLAGS = [
+	"style",
+	"alignment",
+	"space-before",
+	"space-after",
+	"line-spacing",
+	"indent-left",
+	"indent-right",
+	"first-line",
+	"hanging",
+] as const;
 
 const OPTION_SPEC = {
 	at: { type: "string" },
@@ -872,6 +923,13 @@ const OPTION_SPEC = {
 	size: { type: "string" },
 	highlight: { type: "string" },
 	shade: { type: "string" },
+	"space-before": { type: "string" },
+	"space-after": { type: "string" },
+	"line-spacing": { type: "string" },
+	"indent-left": { type: "string" },
+	"indent-right": { type: "string" },
+	"first-line": { type: "string" },
+	hanging: { type: "string" },
 	author: { type: "string" },
 	track: { type: "boolean" },
 	"no-formatting": { type: "boolean" },
@@ -1251,6 +1309,8 @@ async function validateParagraphEdit(
 		const hasProps = Boolean(
 			paragraphOptions.style ||
 				paragraphOptions.alignment ||
+				paragraphOptions.spacing ||
+				paragraphOptions.indent ||
 				values.tabs !== undefined,
 		);
 		// Run-formatting edit: `--bold`/`--color`/`--font`/… with no content SET
@@ -1452,6 +1512,13 @@ async function parseParagraphOptions(
 		}
 		out.alignment = alignmentValue;
 	}
+
+	const spacingIndent = parseSpacingIndentFlags(values);
+	if ("error" in spacingIndent) {
+		return fail("USAGE", spacingIndent.error, spacingIndent.hint);
+	}
+	if (spacingIndent.spacing) out.spacing = spacingIndent.spacing;
+	if (spacingIndent.indent) out.indent = spacingIndent.indent;
 
 	return out;
 }

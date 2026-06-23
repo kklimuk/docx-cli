@@ -19,6 +19,10 @@ Section-property revisions (<w:sectPrChange>): reject restores the prior-state
 snapshot — the live section's columns/type are replaced with the values that
 were in effect before the tracked edit.
 
+Paragraph-property revisions (<w:pPrChange>): reject restores the prior-state
+snapshot — the live paragraph's style/alignment/spacing/indent are replaced
+with the values that were in effect before the tracked edit.
+
 Paragraph-mark trackings (<w:ins>/<w:del> inside <w:pPr><w:rPr>): rejecting
 a paragraph-mark insertion removes the entire owning paragraph (the inserted
 break disappears — for sentinels created by "docx sections" this also
@@ -29,8 +33,8 @@ moveFrom and moveTo are processed independently. To fully undo a move, target
 both halves (or use --all). The runtime treats them as paired only by their
 shared revision id, not by atomic accept/reject.
 
-Out of scope: formatting changes (<w:rPrChange>/<w:pPrChange>). These aren't
-modeled in the AST today and --all silently skips them.
+Out of scope: run-formatting changes (<w:rPrChange>). These aren't modeled in
+the AST today and --all silently skips them.
 
 Target (one required, mutually exclusive):
   --at tcN          Reject a tracked change by id. Repeat for multiple ids

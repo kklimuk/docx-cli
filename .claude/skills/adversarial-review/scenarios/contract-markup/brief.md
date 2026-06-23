@@ -34,8 +34,17 @@ Leave a comment on at least **four**:
   Flag.
 - **§13 Amendment** — the Company may amend the contract by posting to a URL. Flag.
 
+## Reformat for readability (as a tracked change)
+
+The **§9 Limitation of Liability** paragraph is a dense, single-spaced block that's
+hard to read. With tracking still on, **set it to 1.5 line spacing** (and/or add a
+little space after it) so the clause you most want the Company to re-read is legible.
+This is a paragraph-formatting change — set it in place; under tracking it records as
+a tracked revision the Company can accept or reject, same as your text redlines.
+
 ## What "done" looks like
 
 Tracking is on; your redlines on the terms above are visible as tracked changes (not
-silent edits); and anchored comments sit on the clauses you flagged. `docx
-track-changes list` and `docx comments list` reflect your review.
+silent edits); your §9 line-spacing change is a tracked formatting revision; and
+anchored comments sit on the clauses you flagged. `docx track-changes list` and
+`docx comments list` reflect your review.

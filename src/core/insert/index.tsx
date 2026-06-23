@@ -1,7 +1,12 @@
 import type { Document } from "../ast/document";
 import type { BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
-import { Paragraph, type ParagraphOptions } from "../blocks";
+import {
+	indentAttributes,
+	Paragraph,
+	type ParagraphOptions,
+	spacingAttributes,
+} from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
 import { EquationParseError, latexToOmml } from "../equation";
 import {
@@ -218,7 +223,11 @@ async function buildInsertedParagraph(
 		case "image":
 			return buildImageParagraph(document, spec, paragraphOptions);
 		case "code":
-			return buildCodeBlockParagraphs(spec.content, spec.language);
+			return buildCodeBlockParagraphs(
+				spec.content,
+				spec.language,
+				paragraphOptions,
+			);
 		case "equation":
 			return buildEquationParagraph(spec, paragraphOptions);
 		case "markdown":
@@ -272,12 +281,19 @@ function EquationParagraph({
 	omml,
 	style,
 	alignment,
+	spacing,
+	indent,
 }: { omml: XmlNode } & ParagraphOptions): XmlNode {
+	const spacingAttrs = spacingAttributes(spacing);
+	const indentAttrs = indentAttributes(indent);
 	return (
 		<w.p>
-			{(style || alignment) && (
+			{(style || alignment || spacingAttrs || indentAttrs) && (
+				// CT_PPrBase order: pStyle → spacing → ind → jc.
 				<w.pPr>
 					{style && <w.pStyle w-val={style} />}
+					{spacingAttrs && <w.spacing {...spacingAttrs} />}
+					{indentAttrs && <w.ind {...indentAttrs} />}
 					{alignment && <w.jc w-val={alignment} />}
 				</w.pPr>
 			)}
@@ -328,15 +344,20 @@ async function buildImageParagraph(
 		/>
 	);
 
-	const { style, alignment } = paragraphOptions;
+	const { style, alignment, spacing, indent } = paragraphOptions;
+	const spacingAttrs = spacingAttributes(spacing);
+	const indentAttrs = indentAttributes(indent);
 	const hasCaption = spec.caption !== undefined && spec.caption.length > 0;
 	const imageParagraph = (
 		<w.p>
-			{style || alignment || hasCaption ? (
+			{style || alignment || hasCaption || spacingAttrs || indentAttrs ? (
+				// CT_PPrBase order: pStyle → keepNext → spacing → ind → jc.
 				<w.pPr>
 					{style ? <w.pStyle w-val={style} /> : null}
 					{/* Keep the figure with its caption across a page break. */}
 					{hasCaption ? <w.keepNext /> : null}
+					{spacingAttrs ? <w.spacing {...spacingAttrs} /> : null}
+					{indentAttrs ? <w.ind {...indentAttrs} /> : null}
 					{alignment ? <w.jc w-val={alignment} /> : null}
 				</w.pPr>
 			) : null}

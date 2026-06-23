@@ -85,6 +85,24 @@ const JSON_SCHEMA = {
 						},
 					},
 				},
+				spacing: {
+					type: "object",
+					properties: {
+						before: { type: "number" },
+						after: { type: "number" },
+						line: { type: "number" },
+						lineRule: { enum: ["auto", "exact", "atLeast"] },
+					},
+				},
+				indent: {
+					type: "object",
+					properties: {
+						left: { type: "number" },
+						right: { type: "number" },
+						firstLine: { type: "number" },
+						hanging: { type: "number" },
+					},
+				},
 				runs: { type: "array", items: { $ref: "#/$defs/Run" } },
 			},
 		},

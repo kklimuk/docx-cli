@@ -722,23 +722,110 @@ describe("docx read — paragraph style/alignment hints (docx:p)", () => {
 		expect(out).toMatch(/<!-- docx:p p3 style="Caption" -->/);
 	});
 
-	test("non-default alignment surfaces; the bare locator stays", async () => {
+	test("non-default alignment surfaces in a docx:p note that carries the locator (no bare dup)", async () => {
 		const out = await render(await styledDoc());
-		expect(out).toContain(
-			'Centered <!-- p2 --> <!-- docx:p p2 align="center" -->',
-		);
+		// The docx:p note carries `p2` as its leading token (like docx:cell), so the
+		// bare `<!-- p2 -->` locator is NOT also emitted — that would duplicate p2.
+		expect(out).toContain('Centered <!-- docx:p p2 align="center" -->');
+		expect(out).not.toContain("<!-- p2 -->");
 	});
 
-	test("a heading construct gets no style= (but align= still shows)", async () => {
+	test("a heading construct gets no style= (but align= still shows, locator in the note)", async () => {
 		const out = await render(await styledDoc());
-		expect(out).toMatch(
-			/# Heading <!-- p0 --> <!-- docx:p p0 align="center" -->/,
-		);
+		expect(out).toMatch(/# Heading <!-- docx:p p0 align="center" -->/);
 		expect(out).not.toMatch(/docx:p p0[^>]*style=/);
+		expect(out).not.toContain("<!-- p0 -->");
 	});
 
 	test("a plain Normal/left paragraph gets no docx:p note", async () => {
 		const out = await render(await styledDoc());
 		expect(out).toMatch(/normal body <!-- p1 -->(?! <!-- docx:p)/);
+	});
+});
+
+describe("docx read — paragraph spacing & indentation (letter.docx fixture)", () => {
+	// letter.docx is authored entirely via the insert/edit spacing+indent flags
+	// (tests/fixtures/setup/letter.ts), so reading it back is the round-trip dogfood.
+	type LetterPara = {
+		id: string;
+		type: string;
+		spacing?: { before?: number; after?: number; line?: number };
+		indent?: {
+			left?: number;
+			right?: number;
+			firstLine?: number;
+			hanging?: number;
+		};
+		runs?: Array<{ text?: string }>;
+	};
+	async function paras(): Promise<LetterPara[]> {
+		const result = await runCli("read", fixture("letter.docx"), "--ast");
+		expect(result.exitCode).toBe(0);
+		return (result.parsed as { blocks: LetterPara[] }).blocks.filter(
+			(b) => b.type === "paragraph",
+		);
+	}
+	const byText = (list: LetterPara[], needle: string): LetterPara | undefined =>
+		list.find((p) =>
+			(p.runs ?? []).some((r) => (r.text ?? "").includes(needle)),
+		);
+
+	test("--ast carries every authored pPr (twips): tight blocks, body, quote, signature, enclosures", async () => {
+		const list = await paras();
+		// Tight address line: space-after 0.
+		expect(byText(list, "Howard Street")?.spacing?.after).toBe(0);
+		// Body: first-line indent (0.5in) + 1.5 line spacing (range-edited).
+		const body = byText(list, "Thank you for sending");
+		expect(body?.indent?.firstLine).toBe(720);
+		expect(body?.spacing?.line).toBe(360);
+		// Block quote: left + right indent.
+		const quote = byText(list, "aggregate liability");
+		expect(quote?.indent).toEqual({ left: 720, right: 720 });
+		// Closing / signature: indented to ~center (3.5in = 5040 twips).
+		expect(byText(list, "Sincerely")?.indent?.left).toBe(5040);
+		// Enclosures: hanging indent.
+		expect(byText(list, "Enclosures:")?.indent?.hanging).toBe(720);
+	});
+
+	test("read markdown annotates the layout deviation-only, in re-appliable units", async () => {
+		const md = await render(fixture("letter.docx"));
+		expect(md).toContain('first-line="0.5in"');
+		expect(md).toContain('line-spacing="1.5"');
+		expect(md).toContain('indent-left="3.5in"');
+		expect(md).toContain('hanging="0.5in"');
+		expect(md).toContain('space-after="0pt"');
+	});
+});
+
+describe("docx read — direct indent on a Quote paragraph (write-read loop)", () => {
+	// The Quote style's LEFT indent is structural (it drives quoteDepth), so it's
+	// not surfaced as direct indent — but right/firstLine/hanging are direct
+	// formatting and must round-trip, not vanish on read-back.
+	type QuotePara = {
+		id: string;
+		quoteDepth?: number;
+		indent?: { left?: number; right?: number; hanging?: number };
+	};
+	test("right/hanging surface; left stays structural (quoteDepth)", async () => {
+		const docPath = join(tempWorkspace("quote-indent"), "doc.docx");
+		await runCli("create", docPath, "--text", "A quote line.");
+		await runCli("edit", docPath, "--at", "p0", "--style", "Quote");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-right",
+			"0.5",
+			"--hanging",
+			"0.25",
+		);
+		const result = await runCli("read", docPath, "--ast");
+		const p0 = (result.parsed as { blocks: QuotePara[] }).blocks.find(
+			(b) => b.id === "p0",
+		);
+		expect(p0?.quoteDepth).toBe(1);
+		expect(p0?.indent).toEqual({ right: 720, hanging: 360 });
+		expect(p0?.indent?.left).toBeUndefined();
 	});
 });

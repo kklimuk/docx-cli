@@ -34,7 +34,34 @@ export type Paragraph = {
 	 * "San / Francisco, CA" break). Present only when the paragraph declares
 	 * explicit tab stops. */
 	tabStops?: { align: string; pos: number }[];
+	/** Direct paragraph spacing from `<w:pPr><w:spacing>`. Present only when the
+	 * paragraph sets spacing directly (not inherited from its style/the doc
+	 * default). */
+	spacing?: ParagraphSpacing;
+	/** Direct paragraph indentation from `<w:pPr><w:ind>`. Surfaced only for
+	 * non-list, non-quote paragraphs — a list/quote's `<w:ind>` is structural
+	 * positioning, not direct formatting. */
+	indent?: ParagraphIndent;
 	runs: Run[];
+};
+
+/** `<w:pPr><w:spacing>`. `before`/`after` are twips (1/20 pt). `line` is the
+ * line-spacing value: with `lineRule="auto"` it's 240ths of a line (240 =
+ * single, 360 = 1.5×, 480 = double); with `exact`/`atLeast` it's twips. */
+export type ParagraphSpacing = {
+	before?: number;
+	after?: number;
+	line?: number;
+	lineRule?: "auto" | "exact" | "atLeast";
+};
+
+/** `<w:pPr><w:ind>`, in twips (1440/inch). `firstLine` and `hanging` are
+ * mutually exclusive (same slot, opposite sign). */
+export type ParagraphIndent = {
+	left?: number;
+	right?: number;
+	firstLine?: number;
+	hanging?: number;
 };
 
 export type Table = {
@@ -275,6 +302,12 @@ export type TrackedChange = {
  *    embedded inside a <w:sectPr>. Carries a snapshot of the prior section
  *    properties (e.g. columns / type) so accept/reject can drop or restore
  *    them. Has no run text.
+ *  - `pPrChange`: <w:pPrChange> — paragraph-property revision marker embedded
+ *    inside a <w:pPr> (its last child). Carries a snapshot of the prior <w:pPr>
+ *    (spacing / indent / style / alignment / …) so accept drops the marker
+ *    (keeping the new props) and reject restores the prior pPr. The paragraph
+ *    analog of `sectPrChange`; how `edit`'s paragraph-property changes are
+ *    tracked. Has no run text. Empirically matches Word for Mac's shape.
  *  - `rowIns` / `rowDel`: <w:trPr><w:ins/> / <w:del/> — a whole table row
  *    inserted / deleted under tracking. Accept/reject acts on the entire
  *    <w:tr>. Has no run text of its own.
@@ -307,6 +340,7 @@ export type TrackedChangeKind =
 	| "moveFrom"
 	| "moveTo"
 	| "sectPrChange"
+	| "pPrChange"
 	| "rowIns"
 	| "rowDel"
 	| "cellIns"

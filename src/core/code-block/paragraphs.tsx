@@ -1,5 +1,5 @@
 import type { TextRun } from "../ast/types";
-import { Paragraph } from "../blocks";
+import { Paragraph, type ParagraphOptions } from "../blocks";
 import type { XmlNode } from "../parser";
 import { codeBlockStyleIdFor } from "./style";
 import { type CodeToken, highlightCode } from "./syntax-highlight";
@@ -22,6 +22,7 @@ import { type CodeToken, highlightCode } from "./syntax-highlight";
 export function buildCodeBlockParagraphs(
 	content: string,
 	language?: string,
+	layout?: Pick<ParagraphOptions, "spacing" | "indent" | "tabs">,
 ): XmlNode[] {
 	// Normalize line endings: a `--code-file` source from Windows (CRLF) or
 	// classic Mac (CR) would otherwise leave each line with a trailing `\r`,
@@ -29,8 +30,18 @@ export function buildCodeBlockParagraphs(
 	const normalized = content.replace(/\r\n?/g, "\n");
 	const tokenLines = collectTokenLines(normalized, language);
 	const style = codeBlockStyleIdFor(language);
+	// Layout-only paragraph options (spacing/indent/tabs from the ride-along flags)
+	// compose with the CodeBlock pStyle — which still owns the monospace font and
+	// contextualSpacing — and land on EVERY line so the block spaces uniformly.
+	// Deliberately NOT style/list/alignment: those would fight the CodeBlock model.
 	return tokenLines.map((tokens) => (
-		<Paragraph style={style} runs={tokensToRuns(tokens)} />
+		<Paragraph
+			style={style}
+			runs={tokensToRuns(tokens)}
+			spacing={layout?.spacing}
+			indent={layout?.indent}
+			tabs={layout?.tabs}
+		/>
 	));
 }
 

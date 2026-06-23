@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { trackedKinds } from "./helpers";
+import { readDocumentXml, trackedKinds } from "./helpers";
 
 type AstParagraph = {
 	id: string;
 	type: string;
 	style?: string;
+	spacing?: Record<string, unknown>;
+	indent?: Record<string, unknown>;
 	runs?: Array<{ type: string; text?: string }>;
 };
 
@@ -498,6 +500,100 @@ describe("image captions", () => {
 		await runCli("insert", path, "--after", "p0", "--image", PNG);
 		const caption = (await blocks(path)).find((b) => b.style === "Caption");
 		expect(caption).toBeUndefined();
+	});
+});
+
+// Regression: spacing/indent flags used to be silently dropped on several insert
+// content kinds (exit 0, no effect) — the weak-agent footgun. They must either
+// take effect (code/equation/image: meaningful, single/uniform paragraphs) or be
+// rejected up front (markdown: the source owns block layout).
+describe("insert — spacing/indent across content kinds (no silent drop)", () => {
+	async function withAnchor(label: string): Promise<string> {
+		const path = newDoc(label);
+		await runCli("create", path, "--text", "Anchor.");
+		return path;
+	}
+
+	test("--code threads spacing/indent onto every code paragraph", async () => {
+		const path = await withAnchor("ins-code-spacing");
+		expect(
+			(
+				await runCli(
+					"insert",
+					path,
+					"--after",
+					"p0",
+					"--code",
+					"a = 1\nb = 2",
+					"--language",
+					"python",
+					"--space-after",
+					"12",
+					"--indent-left",
+					"0.5",
+				)
+			).exitCode,
+		).toBe(0);
+		for (const id of ["p1", "p2"]) {
+			const paragraph = (await readParagraphs(path)).find((b) => b.id === id);
+			expect(paragraph?.spacing).toEqual({ after: 240 });
+			expect(paragraph?.indent).toEqual({ left: 720 });
+		}
+	});
+
+	test("--equation threads spacing/indent onto the equation paragraph", async () => {
+		const path = await withAnchor("ins-eq-spacing");
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p0",
+			"--equation",
+			"x = y",
+			"--space-before",
+			"12",
+			"--indent-left",
+			"0.5",
+		);
+		const xml = await readDocumentXml(path);
+		expect(xml).toContain('<w:spacing w:before="240"/>');
+		expect(xml).toContain('<w:ind w:left="720"/>');
+	});
+
+	test("--image threads spacing onto the figure paragraph", async () => {
+		const path = await withAnchor("ins-img-spacing");
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG,
+			"--width",
+			"1",
+			"--space-after",
+			"12",
+		);
+		const figure = (await readParagraphs(path)).find((b) => b.id === "p1");
+		expect(figure?.spacing).toEqual({ after: 240 });
+	});
+
+	test("--markdown rejects spacing/indent flags (the source owns block layout)", async () => {
+		const path = await withAnchor("ins-md-reject");
+		const result = await runCli(
+			"insert",
+			path,
+			"--after",
+			"p0",
+			"--markdown",
+			"A new paragraph.",
+			"--space-after",
+			"12",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"can't be combined with --markdown",
+		);
 	});
 });
 
@@ -1172,5 +1268,53 @@ describe("insert --at-start / --at-end (boundary placement)", () => {
 		// Top-level paragraph after the table — no cell-scoped (":") locator.
 		expect(locators).toEqual(["p1"]);
 		expect(locators.some((l) => l.includes(":"))).toBe(false);
+	});
+});
+
+describe("docx insert — paragraph spacing & indentation", () => {
+	test("inserts a paragraph carrying spacing + indentation", async () => {
+		const workspace = tempWorkspace("insert-spacing");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "First.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Spaced and indented.",
+			"--space-after",
+			"6",
+			"--line-spacing",
+			"1.5",
+			"--indent-left",
+			"0.5in",
+		);
+		expect(result.exitCode).toBe(0);
+		const p1 = (await readParagraphs(docPath)).find((p) => p.id === "p1");
+		expect(p1?.spacing).toEqual({ after: 120, line: 360, lineRule: "auto" });
+		expect(p1?.indent).toEqual({ left: 720 });
+	});
+
+	test("rejects --first-line together with --hanging", async () => {
+		const workspace = tempWorkspace("insert-mutex");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "First.");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"x",
+			"--first-line",
+			"0.5in",
+			"--hanging",
+			"0.25in",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"mutually exclusive",
+		);
 	});
 });

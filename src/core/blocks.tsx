@@ -1,7 +1,13 @@
-import type { Run, TextRun } from "./ast/types";
+import type {
+	ParagraphIndent,
+	ParagraphSpacing,
+	Run,
+	TextRun,
+} from "./ast/types";
 import { w } from "./jsx";
 import { type NullableXmlNode, XmlNode } from "./parser";
 import { TaskCheckbox } from "./task-list";
+import type { TrackedMeta } from "./track-changes";
 
 /** A `<w:p>`. Pass `runs` for full control, or `text` (+ optional run-level
  * formatting) for a single-run paragraph. `runs` wins if both are given; with
@@ -18,6 +24,8 @@ export function Paragraph({
 	list,
 	taskState,
 	tabs,
+	spacing,
+	indent,
 	text,
 	runs,
 	...formatting
@@ -29,7 +37,9 @@ export function Paragraph({
 	const resolvedRuns: Run[] = runs ?? textToRuns(text ?? "", formatting);
 	return (
 		<w.p>
-			<ParagraphProperties options={{ style, alignment, list, tabs }} />
+			<ParagraphProperties
+				options={{ style, alignment, list, tabs, spacing, indent }}
+			/>
 			{taskState && <TaskCheckbox checked={taskState === "checked"} />}
 			{taskState && (
 				<w.r>
@@ -79,6 +89,15 @@ export type ParagraphOptions = {
 	 *  wraps) by swapping it for a RIGHT tab at the margin. `undefined` = leave the
 	 *  paragraph's tabs untouched. */
 	tabs?: TabStop[];
+	/** `<w:spacing>` — paragraph spacing (before/after) + line spacing. Each set
+	 *  attribute is applied/merged onto an existing `<w:spacing>`; `undefined` =
+	 *  leave untouched. Units: twips for before/after, 240ths for line (lineRule
+	 *  "auto"). */
+	spacing?: ParagraphSpacing;
+	/** `<w:ind>` — paragraph indentation (left/right/firstLine/hanging), twips.
+	 *  Each set attribute merges onto an existing `<w:ind>`; setting `firstLine`
+	 *  clears `hanging` and vice versa (same slot). `undefined` = leave untouched. */
+	indent?: ParagraphIndent;
 };
 
 /** One `<w:tab>` entry: `align` is the `w:val` (left/right/center/…), `pos` the
@@ -200,7 +219,14 @@ export function applyParagraphOptionsInPlace(
 	rebuilt: XmlNode[],
 	options: ParagraphOptions,
 ): void {
-	if (!options.style && !options.alignment && !options.tabs) return;
+	if (
+		!options.style &&
+		!options.alignment &&
+		!options.tabs &&
+		!options.spacing &&
+		!options.indent
+	)
+		return;
 	let pPr = rebuilt.find((child) => child.tag === "w:pPr");
 	if (!pPr) {
 		pPr = new XmlNode("w:pPr");
@@ -246,6 +272,118 @@ export function applyParagraphOptionsInPlace(
 			);
 		}
 	}
+	if (options.spacing) {
+		const node = findOrCreatePprChild(pPr, "w:spacing");
+		const { before, after, line, lineRule } = options.spacing;
+		if (before !== undefined) node.setAttribute("w:before", String(before));
+		if (after !== undefined) node.setAttribute("w:after", String(after));
+		if (line !== undefined) {
+			node.setAttribute("w:line", String(line));
+			node.setAttribute("w:lineRule", lineRule ?? "auto");
+		}
+	}
+	if (options.indent) {
+		const node = findOrCreatePprChild(pPr, "w:ind");
+		const { left, right, firstLine, hanging } = options.indent;
+		if (left !== undefined) node.setAttribute("w:left", String(left));
+		if (right !== undefined) node.setAttribute("w:right", String(right));
+		// firstLine and hanging share a slot — setting one clears the other.
+		if (firstLine !== undefined) {
+			node.setAttribute("w:firstLine", String(firstLine));
+			delete node.attributes["w:hanging"];
+		}
+		if (hanging !== undefined) {
+			node.setAttribute("w:hanging", String(hanging));
+			delete node.attributes["w:firstLine"];
+		}
+	}
+}
+
+/** Find a `<w:pPr>` child by tag, or create + splice it at its CT_PPr slot.
+ *  Returns the live node so the caller can merge attributes onto it (preserving
+ *  any the caller didn't set — e.g. a quote's existing `<w:ind w:left>`). */
+function findOrCreatePprChild(pPr: XmlNode, tag: string): XmlNode {
+	const existing = pPr.findChild(tag);
+	if (existing) return existing;
+	const created = new XmlNode(tag);
+	insertPprChildInOrder(pPr, created);
+	return created;
+}
+
+/** Find the paragraph's `<w:pPr>`, creating an empty one (as the first child) if
+ *  absent. The home for direct paragraph properties. */
+export function ensureParagraphProperties(paragraph: XmlNode): XmlNode {
+	const existing = paragraph.findChild("w:pPr");
+	if (existing) return existing;
+	const created = new XmlNode("w:pPr");
+	paragraph.children.unshift(created);
+	return created;
+}
+
+/** Snapshot the prior `<w:pPr>` into a `<w:pPrChange>` marker (its last child),
+ *  so a subsequent property mutation is a tracked revision Word can accept/reject.
+ *  The paragraph analog of `wrapSectPrChange`: clone every current pPr child
+ *  EXCEPT a pre-existing `<w:pPrChange>` (and an inline `<w:sectPr>`) into
+ *  `<w:pPrChange><w:pPr>…</w:pPr>`, replacing any prior marker. MUST be called
+ *  BEFORE the live mutation so the snapshot captures the prior state. Empirically
+ *  matches Word for Mac's shape
+ *  (`<w:pPrChange w:id w:author w:date><w:pPr>…prior…</w:pPr></w:pPrChange>`). */
+export function wrapPprChange(pPr: XmlNode, meta: TrackedMeta): void {
+	// The snapshot's inner `<w:pPr>` is CT_PPrChange's pPr — type CT_PPrBase,
+	// which does NOT permit `<w:sectPr>` (a section break is tracked via a
+	// separate `<w:sectPrChange>`, never inside a pPrChange). Cloning an inline
+	// sectPr here would make Word reject the file ("unreadable content") AND
+	// duplicate the section break. Filter it out of the snapshot; the live sectPr
+	// stays put. Keep the paragraph-mark `<w:rPr>` — Word includes it.
+	const prior = pPr.children.filter(
+		(child) => child.tag !== "w:pPrChange" && child.tag !== "w:sectPr",
+	);
+	injectPprChange(pPr, prior, meta);
+}
+
+/** Inject a `<w:pPrChange>` carrying an EXPLICIT prior-pPr snapshot into `pPr`,
+ *  replacing any existing marker. Unlike `wrapPprChange` (which snapshots the
+ *  node's CURRENT children), this takes the prior children directly — used when
+ *  the live pPr already holds the NEW properties (a freshly-built paragraph for a
+ *  content+props ride-along edit), so the prior state must be supplied separately.
+ *  The caller is responsible for excluding a pre-existing pPrChange and an inline
+ *  `<w:sectPr>` from `priorChildren` (CT_PPrBase forbids sectPr in the snapshot). */
+export function injectPprChange(
+	pPr: XmlNode,
+	priorChildren: XmlNode[],
+	meta: TrackedMeta,
+): void {
+	pPr.children = pPr.children.filter((child) => child.tag !== "w:pPrChange");
+	const change = new XmlNode(
+		"w:pPrChange",
+		{
+			"w:id": String(meta.revisionId),
+			"w:author": meta.author,
+			"w:date": meta.date,
+		},
+		[
+			new XmlNode(
+				"w:pPr",
+				{},
+				priorChildren.map((child) => child.clone()),
+			),
+		],
+	);
+	insertPprChildInOrder(pPr, change);
+}
+
+/** True when `options` carries any direct paragraph property (a `<w:pPr>` child):
+ *  style/alignment/tabs/spacing/indent. The gate for "is there a pPr change to
+ *  apply — and, under tracking, to snapshot into a `<w:pPrChange>`?" Mirrors the
+ *  early-return in `applyParagraphOptionsInPlace`. */
+export function hasParagraphProperties(options: ParagraphOptions): boolean {
+	return Boolean(
+		options.style ||
+			options.alignment ||
+			options.tabs ||
+			options.spacing ||
+			options.indent,
+	);
 }
 
 /** CT_PPr child sequence (ECMA-376 §17.3.1.26), the subset we ever emit or
@@ -473,9 +611,19 @@ function ParagraphProperties({
 	options: ParagraphOptions;
 }): NullableXmlNode {
 	const hasTabs = options.tabs !== undefined && options.tabs.length > 0;
-	if (!options.style && !options.alignment && !options.list && !hasTabs)
+	const spacingAttrs = spacingAttributes(options.spacing);
+	const indentAttrs = indentAttributes(options.indent);
+	if (
+		!options.style &&
+		!options.alignment &&
+		!options.list &&
+		!hasTabs &&
+		!spacingAttrs &&
+		!indentAttrs
+	)
 		return null;
-	// Schema order (CT_PPrBase, ECMA-376 §17.3.1.26): pStyle → numPr → tabs → jc.
+	// Schema order (CT_PPrBase, ECMA-376 §17.3.1.26):
+	// pStyle → numPr → tabs → spacing → ind → jc.
 	return (
 		<w.pPr>
 			{options.style && <w.pStyle w-val={options.style} />}
@@ -492,7 +640,46 @@ function ParagraphProperties({
 					))}
 				</w.tabs>
 			)}
+			{spacingAttrs && <w.spacing {...spacingAttrs} />}
+			{indentAttrs && <w.ind {...indentAttrs} />}
 			{options.alignment && <w.jc w-val={options.alignment} />}
 		</w.pPr>
 	);
+}
+
+/** Build the `<w:spacing>` attribute map from a `ParagraphSpacing`, or null if it
+ *  sets nothing. `before`/`after` are emitted in twips; `line` carries its
+ *  `lineRule` (defaulting to `auto`, where `line` is 240ths of a line). */
+export function spacingAttributes(
+	spacing: ParagraphSpacing | undefined,
+): Record<string, string> | null {
+	if (!spacing) return null;
+	const attrs: Record<string, string> = {};
+	if (spacing.before !== undefined)
+		attrs["w:before"] = String(Math.round(spacing.before));
+	if (spacing.after !== undefined)
+		attrs["w:after"] = String(Math.round(spacing.after));
+	if (spacing.line !== undefined) {
+		attrs["w:line"] = String(Math.round(spacing.line));
+		attrs["w:lineRule"] = spacing.lineRule ?? "auto";
+	}
+	return Object.keys(attrs).length > 0 ? attrs : null;
+}
+
+/** Build the `<w:ind>` attribute map from a `ParagraphIndent`, or null if empty.
+ *  All values are twips. `firstLine` and `hanging` are mutually exclusive. */
+export function indentAttributes(
+	indent: ParagraphIndent | undefined,
+): Record<string, string> | null {
+	if (!indent) return null;
+	const attrs: Record<string, string> = {};
+	if (indent.left !== undefined)
+		attrs["w:left"] = String(Math.round(indent.left));
+	if (indent.right !== undefined)
+		attrs["w:right"] = String(Math.round(indent.right));
+	if (indent.firstLine !== undefined)
+		attrs["w:firstLine"] = String(Math.round(indent.firstLine));
+	if (indent.hanging !== undefined)
+		attrs["w:hanging"] = String(Math.round(indent.hanging));
+	return Object.keys(attrs).length > 0 ? attrs : null;
 }

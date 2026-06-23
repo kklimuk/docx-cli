@@ -29,6 +29,7 @@ import {
 	htmlAttr,
 	type NotePair,
 	twipsToInches,
+	twipsToPoints,
 } from "./annotations";
 
 export type MarkdownView = "current" | "accepted" | "baseline";
@@ -724,12 +725,22 @@ function renderParagraph(
 	// the body from its ` <!-- pN -->` locator doesn't accumulate one extra
 	// space on every read → create → read cycle.
 	const body = rendered.replace(/[ \t]+$/, "");
-	// Display equations need to be on their own line for KaTeX-based renderers
-	// (Obsidian, VS Code preview, etc.) to recognize `$$…$$` as display math.
-	// Putting the locator after a space on the same line confuses the parser
-	// — it sees the trailing `$` as an unmatched math-mode toggle.
-	const separator = isDisplayEquationOnly(body) ? "\n" : " ";
-	return `${prefix}${body}${separator}<!-- ${paragraph.id} -->${formatParagraphNote(paragraph)}${layoutHazardNote(paragraph, ctx)}`;
+	// Locator + metadata. The `docx:p` note already carries the locator as its
+	// leading token (like `docx:cell`), so when it's present the bare `<!-- pN -->`
+	// would just duplicate `pN` — emit only the note. Plain paragraphs (no note)
+	// get the bare locator. Either way every paragraph shows its addressable pN.
+	const note = formatParagraphNote(paragraph);
+	const locatorOrNote = note !== "" ? note : ` <!-- ${paragraph.id} -->`;
+	const trailing = `${locatorOrNote}${layoutHazardNote(paragraph, ctx)}`;
+	// Display equations need their trailing comments on a new line for KaTeX-based
+	// renderers (Obsidian, VS Code preview, …) to recognize `$$…$$` as display
+	// math — a comment after a space on the same line leaves the trailing `$`
+	// looking like an unmatched math-mode toggle. Each piece begins with a leading
+	// space; swap the first for the newline in that case.
+	if (isDisplayEquationOnly(body)) {
+		return `${prefix}${body}\n${trailing.replace(/^ /, "")}`;
+	}
+	return `${prefix}${body}${trailing}`;
 }
 
 /** The `<!-- docx:p pN style="Caption" align="center" -->` annotation, or "" when
@@ -744,6 +755,42 @@ function formatParagraphNote(paragraph: Paragraph): string {
 	}
 	if (paragraph.alignment && paragraph.alignment !== "left") {
 		pairs.push(["align", paragraph.alignment]);
+	}
+	// Direct spacing/indent overrides — deviation-only by construction (the reader
+	// surfaces these fields only when set directly on the paragraph, and skips a
+	// list/quote's structural indent). Values use the same units as the flags so an
+	// agent can read the note and re-apply: points for spacing, inches for indent,
+	// a multiple for line spacing.
+	const spacing = paragraph.spacing;
+	if (spacing) {
+		if (spacing.before !== undefined)
+			pairs.push(["space-before", twipsToPoints(spacing.before)]);
+		if (spacing.after !== undefined)
+			pairs.push(["space-after", twipsToPoints(spacing.after)]);
+		if (spacing.line !== undefined) {
+			// "auto" → a bare multiple (1.5); "exact"/"atLeast" → a point value
+			// tagged with the rule ("18pt exact"). Both forms feed straight back
+			// through `--line-spacing` (parseLineSpacing accepts each), so the note
+			// round-trips for all three rules.
+			const rule = spacing.lineRule ?? "auto";
+			pairs.push([
+				"line-spacing",
+				rule === "auto"
+					? String(Number.parseFloat((spacing.line / 240).toFixed(2)))
+					: `${twipsToPoints(spacing.line)} ${rule}`,
+			]);
+		}
+	}
+	const indent = paragraph.indent;
+	if (indent) {
+		if (indent.left !== undefined)
+			pairs.push(["indent-left", `${twipsToInches(indent.left)}in`]);
+		if (indent.right !== undefined)
+			pairs.push(["indent-right", `${twipsToInches(indent.right)}in`]);
+		if (indent.firstLine !== undefined)
+			pairs.push(["first-line", `${twipsToInches(indent.firstLine)}in`]);
+		if (indent.hanging !== undefined)
+			pairs.push(["hanging", `${twipsToInches(indent.hanging)}in`]);
 	}
 	if (pairs.length === 0) return "";
 	return ` ${formatNote("p", pairs, [paragraph.id])}`;

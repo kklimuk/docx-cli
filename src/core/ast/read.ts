@@ -101,6 +101,7 @@ function readBlocks(
 				document.body.blockReferences.set(sectionId, inlineSectPr);
 				registerSectPrChange(document, inlineSectPr.node, state, sectionId);
 			}
+			registerPprChange(document, child, state, id);
 			registerParagraphMarkChanges(document, child, state, id);
 			continue;
 		}
@@ -169,6 +170,29 @@ function registerSectPrChange(
 	document.trackedChangeReferences.set(id, {
 		node: change,
 		parent: sectPr.children,
+		blockId,
+	});
+}
+
+/** Register a `<w:pPr><w:pPrChange>` paragraph-property revision as a `tcN`, so
+ * `track-changes list/accept/reject` can target it. Mirrors `registerSectPrChange`;
+ * `trackedChangeKindForTag` maps the `w:pPrChange` tag to the `pPrChange` kind.
+ * Registered AFTER inline sectPrChange and BEFORE the paragraph-mark so the tcN
+ * order matches the apply walk (run-level → sectPrChange → pPrChange → mark). */
+function registerPprChange(
+	document: Document,
+	paragraph: XmlNode,
+	state: WalkState,
+	blockId: string,
+): void {
+	const pPr = paragraph.findChild("w:pPr");
+	if (!pPr) return;
+	const change = pPr.findChild("w:pPrChange");
+	if (!change) return;
+	const id = `tc${state.trackedChangeIndex++}`;
+	document.trackedChangeReferences.set(id, {
+		node: change,
+		parent: pPr.children,
 		blockId,
 	});
 }
@@ -629,6 +653,56 @@ function applyParagraphProperties(
 			Math.round((leftTwips - baseListLeft) / 720),
 		);
 	}
+
+	const spacingNode = paragraphProperties.findChild("w:spacing");
+	if (spacingNode) {
+		const spacing: NonNullable<Paragraph["spacing"]> = {};
+		const before = intAttr(spacingNode, "w:before");
+		const after = intAttr(spacingNode, "w:after");
+		const line = intAttr(spacingNode, "w:line");
+		const lineRule = spacingNode.getAttribute("w:lineRule");
+		if (before !== undefined) spacing.before = before;
+		if (after !== undefined) spacing.after = after;
+		if (line !== undefined) spacing.line = line;
+		if (lineRule === "auto" || lineRule === "exact" || lineRule === "atLeast")
+			spacing.lineRule = lineRule;
+		if (Object.keys(spacing).length > 0) paragraph.spacing = spacing;
+	}
+
+	// Indentation — direct formatting. For a list (`numPr`) or blockquote, the
+	// LEFT indent is STRUCTURAL: it encodes list nesting / quote depth (recovered
+	// into `paragraph.list`/`quoteDepth` above), so surfacing it as a direct
+	// `indent.left` would be misleading and `--indent-left` would fight the
+	// structure — skip just the left slot there. The other three (right /
+	// firstLine / hanging) are never structural, so surface them on every
+	// paragraph (a Quote with a right indent or hanging indent would otherwise be
+	// silently dropped on read-back). `read --ast` stays lossless for the common
+	// case; structural left indent still round-trips via in-place XML mutation.
+	const indNode = paragraphProperties.findChild("w:ind");
+	if (indNode) {
+		const indent: NonNullable<Paragraph["indent"]> = {};
+		const structural =
+			paragraph.list !== undefined || paragraph.quoteDepth !== undefined;
+		if (!structural) {
+			const left = intAttr(indNode, "w:left") ?? intAttr(indNode, "w:start");
+			if (left !== undefined) indent.left = left;
+		}
+		const right = intAttr(indNode, "w:right") ?? intAttr(indNode, "w:end");
+		const firstLine = intAttr(indNode, "w:firstLine");
+		const hanging = intAttr(indNode, "w:hanging");
+		if (right !== undefined) indent.right = right;
+		if (firstLine !== undefined) indent.firstLine = firstLine;
+		if (hanging !== undefined) indent.hanging = hanging;
+		if (Object.keys(indent).length > 0) paragraph.indent = indent;
+	}
+}
+
+/** Read an integer twips attribute, or undefined when absent/non-numeric. */
+function intAttr(node: XmlNode, attr: string): number | undefined {
+	const raw = node.getAttribute(attr);
+	if (raw === undefined) return undefined;
+	const value = Number(raw);
+	return Number.isFinite(value) ? value : undefined;
 }
 
 /** A single <w:r> can contain a mix of <w:t>, <w:tab>, <w:br>, <w:drawing>,
@@ -1285,9 +1359,10 @@ function readCellBlocks(
 				node: child,
 				parent: cell.children,
 			});
-			// Cell paragraphs can carry a tracked paragraph-mark too; register it
-			// here (top-level paragraphs do this in readBlocks) so the map mirrors
-			// the apply walk and tcN ids stay in document order.
+			// Cell paragraphs can carry a tracked paragraph-property change and a
+			// paragraph-mark too; register both here (top-level paragraphs do this in
+			// readBlocks) so the map mirrors the apply walk and tcN ids stay in order.
+			registerPprChange(document, child, state, id);
 			registerParagraphMarkChanges(document, child, state, id);
 			continue;
 		}

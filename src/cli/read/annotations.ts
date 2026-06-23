@@ -71,6 +71,13 @@ export function twipsToInches(twips: number): string {
 	return `${Number.parseFloat(inches.toFixed(3))}`;
 }
 
+/** Format a twip count as a points string (e.g. `6pt`) for read annotations —
+ * the inverse of the `--space-before`/`--space-after` flag unit, so an agent can
+ * read the note and re-apply the value directly. */
+export function twipsToPoints(twips: number): string {
+	return `${Number.parseFloat((twips / 20).toFixed(2))}pt`;
+}
+
 /** Format an EMU count (914400 per inch) as inches, trimming trailing zeros.
  * Image extents (`<wp:extent>`) are in EMU; `read --ast` carries the raw EMU. */
 export function emuToInches(emu: number): string {

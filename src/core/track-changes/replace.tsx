@@ -1,6 +1,11 @@
 import type { Document } from "../ast/document";
 import type { BlockRangeReference } from "../ast/document/body";
-import { applyParagraphOptionsInPlace, type ParagraphOptions } from "../blocks";
+import {
+	applyParagraphOptionsInPlace,
+	hasParagraphProperties,
+	type ParagraphOptions,
+	wrapPprChange,
+} from "../blocks";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import { Del, Ins, markParagraphMarkAs } from "./emit";
 import {
@@ -47,6 +52,20 @@ export function applyFormattingPreservingEdit(
 		: buildUntrackedRuns(ops, fallbackRpr);
 
 	const { nonRuns } = partitionParagraphRuns(paragraph);
+	// Paragraph properties riding along with the text edit (`--style`/`--alignment`/
+	// `--space-*`/`--line-spacing`/`--indent-*`/`--tabs`) are a real tracked
+	// revision under tracking: snapshot the prior `<w:pPr>` into a `<w:pPrChange>`
+	// BEFORE the in-place mutation so reject restores it (accept drops the marker).
+	// Mirrors `Edit.paragraphProperties`; without this the change applied silently
+	// and survived reject.
+	if (tracked && hasParagraphProperties(paragraphOptions)) {
+		let pPr = nonRuns.find((child) => child.tag === "w:pPr");
+		if (!pPr) {
+			pPr = new XmlNode("w:pPr");
+			nonRuns.unshift(pPr);
+		}
+		wrapPprChange(pPr, makeMetaMinter(document, authorFlag)());
+	}
 	applyParagraphOptionsInPlace(nonRuns, paragraphOptions);
 	nonRuns.push(...runChildren);
 	paragraph.children = nonRuns;

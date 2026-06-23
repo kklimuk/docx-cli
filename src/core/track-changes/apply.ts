@@ -181,6 +181,7 @@ function trackedChangeKindForTag(tag: string): TrackedChangeKind | null {
 	if (tag === "w:moveFrom") return "moveFrom";
 	if (tag === "w:moveTo") return "moveTo";
 	if (tag === "w:sectPrChange") return "sectPrChange";
+	if (tag === "w:pPrChange") return "pPrChange";
 	return null;
 }
 
@@ -206,7 +207,11 @@ function actionFor(target: ChangeFound, verb: ApplyVerb): ChangeAction {
 			return verb === "accept" ? "merge" : "delete";
 		}
 	}
-	if (target.kind === "sectPrChange" || target.kind === "tblGridChange") {
+	if (
+		target.kind === "sectPrChange" ||
+		target.kind === "tblGridChange" ||
+		target.kind === "pPrChange"
+	) {
 		return verb === "accept" ? "delete" : "restore";
 	}
 	if (target.kind === "rowIns")
@@ -248,7 +253,11 @@ function applyAccept(target: ChangeFound): void {
 		unwrapNode(target.node, target.parent);
 		return;
 	}
-	if (target.node.tag === "w:sectPrChange") {
+	if (
+		target.node.tag === "w:sectPrChange" ||
+		target.node.tag === "w:pPrChange"
+	) {
+		// Accept a property snapshot: drop the marker, keep the new live props.
 		deleteNode(target.node, target.parent);
 		return;
 	}
@@ -278,6 +287,16 @@ function applyReject(target: ChangeFound): void {
 	}
 	if (target.node.tag === "w:sectPrChange") {
 		restoreSectPrSnapshot(target.node, target.parent);
+		return;
+	}
+	if (target.node.tag === "w:pPrChange") {
+		// Reject: restore the prior pPr children from the snapshot (the marker,
+		// which lived among pPr.children, is dropped with them). Preserve any live
+		// `<w:sectPr>`: a section boundary is NOT a tracked paragraph property (it's
+		// excluded from the snapshot, and tracked separately via sectPrChange), so
+		// the pPrChange snapshot omits it — wiping it on restore would silently
+		// drop the section break.
+		restorePropertySnapshot(target.node, target.parent, "w:pPr", ["w:sectPr"]);
 		return;
 	}
 	// del / moveFrom: contents stored as <w:delText>; restore to <w:t> and unwrap.
@@ -348,12 +367,22 @@ function restorePropertySnapshot(
 	node: XmlNode,
 	parent: XmlNode[],
 	innerTag: string,
+	preserveTags: readonly string[] = [],
 ): void {
 	const snapshot = node.findChild(innerTag);
+	// Carry forward any live children the snapshot deliberately doesn't model
+	// (e.g. a paragraph's `<w:sectPr>` for a pPrChange) so the wholesale replace
+	// doesn't drop them. They re-append after the restored snapshot children,
+	// which keeps CT_PPr order (sectPr sorts after the snapshot's other props).
+	const preserved =
+		preserveTags.length > 0
+			? parent.filter((child) => preserveTags.includes(child.tag))
+			: [];
 	parent.length = 0;
 	if (snapshot) {
 		for (const child of snapshot.children) parent.push(child);
 	}
+	for (const child of preserved) parent.push(child);
 }
 
 /** Reconcile each table's `<w:tblGrid>` column count with its widest row after

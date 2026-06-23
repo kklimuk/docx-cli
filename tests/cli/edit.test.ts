@@ -4,7 +4,7 @@ import { Pkg } from "@core/ast/document/package";
 import { clearFormatting, resolveClearTags } from "@core/edit/clear-formatting";
 import { XmlNode } from "@core/parser";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml } from "./helpers";
+import { freshFixture, readDocumentXml, trackedKinds } from "./helpers";
 
 const FIXTURE = "tests/fixtures/word-formatted.docx";
 // Layout (built by tests/fixtures/setup/word-formatted.ts):
@@ -2795,5 +2795,416 @@ describe("docx edit — set run formatting (the inverse of --clear)", () => {
 		const result = await runCli("edit", docPath, "--at", "s0", "--bold");
 		expect(result.exitCode).not.toBe(0);
 		expect((result.parsed as { error?: string }).error).toContain("Section");
+	});
+});
+
+describe("docx edit — paragraph spacing & indentation", () => {
+	type PropPara = {
+		id: string;
+		type: string;
+		spacing?: Record<string, unknown>;
+		indent?: Record<string, unknown>;
+	};
+	async function readProps(docPath: string, id: string): Promise<PropPara> {
+		const result = await runCli("read", docPath, "--ast");
+		const blocks = (result.parsed as { blocks: PropPara[] }).blocks;
+		return blocks.find((b) => b.id === id) ?? { id, type: "paragraph" };
+	}
+	const oneLine = (label: string) => docFrom(label, "Just one line.\n");
+
+	test("sets spacing (points→twips) and line-spacing (multiple→240ths)", async () => {
+		const docPath = await oneLine("sp-basic");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--space-before",
+					"12",
+					"--space-after",
+					"6",
+					"--line-spacing",
+					"1.5",
+				)
+			).exitCode,
+		).toBe(0);
+		const p = await readProps(docPath, "p0");
+		expect(p.spacing).toEqual({
+			before: 240,
+			after: 120,
+			line: 360,
+			lineRule: "auto",
+		});
+	});
+
+	test("line-spacing accepts named aliases (single/double)", async () => {
+		const docPath = await oneLine("sp-alias");
+		await runCli("edit", docPath, "--at", "p0", "--line-spacing", "double");
+		expect((await readProps(docPath, "p0")).spacing).toEqual({
+			line: 480,
+			lineRule: "auto",
+		});
+	});
+
+	test("sets indentation (inches→twips), bare and with 'in' suffix", async () => {
+		const docPath = await oneLine("ind-basic");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"0.5in",
+			"--first-line",
+			"0.25",
+		);
+		expect((await readProps(docPath, "p0")).indent).toEqual({
+			left: 720,
+			firstLine: 360,
+		});
+	});
+
+	test("merges onto existing spacing/indent (only the named attribute changes)", async () => {
+		const docPath = await oneLine("merge");
+		await runCli("edit", docPath, "--at", "p0", "--indent-left", "1in");
+		await runCli("edit", docPath, "--at", "p0", "--first-line", "0.5in");
+		// The second edit adds firstLine without clobbering left.
+		expect((await readProps(docPath, "p0")).indent).toEqual({
+			left: 1440,
+			firstLine: 720,
+		});
+	});
+
+	test("--first-line clears --hanging (same slot) on a later edit", async () => {
+		const docPath = await oneLine("slot");
+		await runCli("edit", docPath, "--at", "p0", "--hanging", "0.5in");
+		await runCli("edit", docPath, "--at", "p0", "--first-line", "0.25in");
+		const indent = (await readProps(docPath, "p0")).indent ?? {};
+		expect(indent.firstLine).toBe(360);
+		expect(indent.hanging).toBeUndefined();
+	});
+
+	test("applies across a range", async () => {
+		const docPath = await docFrom("range", "One.\n\nTwo.\n\nThree.\n");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0-p2", "--line-spacing", "2"))
+				.exitCode,
+		).toBe(0);
+		for (const id of ["p0", "p1", "p2"]) {
+			expect((await readProps(docPath, id)).spacing).toEqual({
+				line: 480,
+				lineRule: "auto",
+			});
+		}
+	});
+
+	test("rejects --first-line together with --hanging", async () => {
+		const docPath = await oneLine("mutex");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--first-line",
+			"0.5in",
+			"--hanging",
+			"0.25in",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"mutually exclusive",
+		);
+	});
+
+	test("rejects a non-numeric measure", async () => {
+		const docPath = await oneLine("bad-unit");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-after",
+			"lots",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"Invalid --space-after",
+		);
+	});
+
+	test("read markdown annotates direct spacing/indent (deviation-only, re-appliable units)", async () => {
+		const docPath = await oneLine("annotate");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-after",
+			"6",
+			"--indent-left",
+			"0.5in",
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain('space-after="6pt"');
+		expect(md).toContain('indent-left="0.5in"');
+	});
+
+	test("batch sets spacing/indent per entry", async () => {
+		const docPath = await docFrom("sp-batch", "Alpha.\n\nBeta.\n");
+		const batch = join(tempWorkspace("sp-batch-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${[
+				JSON.stringify({ at: "p0", "space-after": 12 }),
+				JSON.stringify({ at: "p1", "indent-left": 0.5 }),
+			].join("\n")}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		expect((await readProps(docPath, "p0")).spacing).toEqual({ after: 240 });
+		expect((await readProps(docPath, "p1")).indent).toEqual({ left: 720 });
+	});
+
+	describe("under track-changes (w:pPrChange)", () => {
+		async function trackedDoc(label: string): Promise<string> {
+			const docPath = await oneLine(label);
+			await runCli("track-changes", "on", docPath);
+			return docPath;
+		}
+
+		test("records a tracked pPrChange that list surfaces with prior/current", async () => {
+			const docPath = await trackedDoc("tc-list");
+			await runCli("edit", docPath, "--at", "p0", "--space-after", "12");
+			const result = await runCli("track-changes", "list", docPath);
+			const changes = result.parsed as Array<{
+				kind: string;
+				blockId: string;
+				current?: { spacing?: { after?: number } };
+			}>;
+			const ppr = changes.find((c) => c.kind === "pPrChange");
+			expect(ppr).toBeDefined();
+			expect(ppr?.blockId).toBe("p0");
+			expect(ppr?.current?.spacing?.after).toBe(240);
+		});
+
+		test("accept keeps the new spacing and drops the marker", async () => {
+			const docPath = await trackedDoc("tc-accept");
+			await runCli("edit", docPath, "--at", "p0", "--space-after", "12");
+			expect(
+				(await runCli("track-changes", "accept", docPath, "--all")).exitCode,
+			).toBe(0);
+			expect((await readProps(docPath, "p0")).spacing).toEqual({ after: 240 });
+			expect(await trackedKinds(docPath)).not.toContain("pPrChange");
+		});
+
+		test("reject restores the prior paragraph properties", async () => {
+			const docPath = await trackedDoc("tc-reject");
+			await runCli("edit", docPath, "--at", "p0", "--space-after", "12");
+			expect(
+				(await runCli("track-changes", "reject", docPath, "--all")).exitCode,
+			).toBe(0);
+			// Prior state had no direct spacing — reject removes it.
+			expect((await readProps(docPath, "p0")).spacing).toBeUndefined();
+			expect(await trackedKinds(docPath)).not.toContain("pPrChange");
+		});
+	});
+
+	// Regressions from the adversarial code review of the spacing/indent feature.
+	describe("review regressions", () => {
+		test("line-spacing accepts exact/atLeast point forms (round-trips the read note)", async () => {
+			const docPath = await oneLine("ls-exact");
+			await runCli("edit", docPath, "--at", "p0", "--line-spacing", "15pt");
+			expect((await readProps(docPath, "p0")).spacing).toEqual({
+				line: 300,
+				lineRule: "exact",
+			});
+			// The read note shows a re-appliable, rule-tagged value.
+			expect((await runCli("read", docPath)).stdout).toContain(
+				'line-spacing="15pt exact"',
+			);
+
+			const atLeast = await oneLine("ls-atleast");
+			await runCli(
+				"edit",
+				atLeast,
+				"--at",
+				"p0",
+				"--line-spacing",
+				"15pt atLeast",
+			);
+			expect((await readProps(atLeast, "p0")).spacing).toEqual({
+				line: 300,
+				lineRule: "atLeast",
+			});
+		});
+
+		test("signed indents accept a negative outdent; hanging stays unsigned", async () => {
+			const docPath = await oneLine("neg-indent");
+			expect(
+				(await runCli("edit", docPath, "--at", "p0", "--indent-left", "-0.5"))
+					.exitCode,
+			).toBe(0);
+			expect((await readProps(docPath, "p0")).indent).toEqual({ left: -720 });
+
+			const bad = await oneLine("neg-hanging");
+			const result = await runCli(
+				"edit",
+				bad,
+				"--at",
+				"p0",
+				"--hanging",
+				"-0.5",
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect((result.parsed as { error?: string }).error).toContain(
+				"Invalid --hanging",
+			);
+		});
+
+		test("spacing/indent on a character span is rejected, not silently dropped", async () => {
+			const docPath = await oneLine("span-drop");
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0:0-4",
+				"--text",
+				"XXXX",
+				"--space-after",
+				"6",
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect((result.parsed as { error?: string }).error).toContain(
+				"character span",
+			);
+		});
+
+		test("spacing/indent with --markdown is rejected, not silently dropped", async () => {
+			const docPath = await oneLine("md-drop");
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				"--markdown",
+				"New paragraph.",
+				"--space-after",
+				"12",
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect((result.parsed as { error?: string }).error).toContain(
+				"can't be combined with --markdown",
+			);
+		});
+
+		test("--code threads spacing onto every code paragraph", async () => {
+			const docPath = await docFrom("code-spacing", "One.\n\nTwo.\n");
+			expect(
+				(
+					await runCli(
+						"edit",
+						docPath,
+						"--at",
+						"p0",
+						"--code",
+						"a = 1\nb = 2",
+						"--language",
+						"python",
+						"--space-after",
+						"12",
+					)
+				).exitCode,
+			).toBe(0);
+			for (const id of ["p0", "p1"]) {
+				expect((await readProps(docPath, id)).spacing).toEqual({ after: 240 });
+			}
+		});
+
+		describe("ride-along props under tracking record a pPrChange", () => {
+			async function trackedDoc(label: string): Promise<string> {
+				const docPath = await oneLine(label);
+				await runCli("track-changes", "on", docPath);
+				return docPath;
+			}
+
+			test("preserve path (--text + --space-after): tracked, reject restores", async () => {
+				const docPath = await trackedDoc("ride-preserve");
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Revised line.",
+					"--space-after",
+					"12",
+				);
+				expect(await trackedKinds(docPath)).toContain("pPrChange");
+				await runCli("track-changes", "reject", docPath, "--all");
+				expect((await readProps(docPath, "p0")).spacing).toBeUndefined();
+			});
+
+			test("non-preserve path (--text + --bold + --indent-left): tracked, reject restores", async () => {
+				const docPath = await trackedDoc("ride-nonpreserve");
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Bold revised.",
+					"--bold",
+					"--indent-left",
+					"0.5",
+				);
+				expect(await trackedKinds(docPath)).toContain("pPrChange");
+				await runCli("track-changes", "reject", docPath, "--all");
+				expect((await readProps(docPath, "p0")).indent).toBeUndefined();
+			});
+		});
+
+		// A section-boundary paragraph carries an inline <w:pPr><w:sectPr>. Tracking
+		// a paragraph-property edit on it must NOT clone the sectPr into the
+		// pPrChange snapshot (CT_PPrBase forbids it — Word "unreadable content" +
+		// a duplicated break), and reject must keep the live section break.
+		describe("pPrChange on a section-boundary paragraph", () => {
+			const SECTIONS = "tests/fixtures/sections.docx";
+			async function sectionDoc(label: string): Promise<string> {
+				const docPath = await freshCopy(label);
+				await Bun.write(docPath, Bun.file(SECTIONS));
+				await runCli("track-changes", "on", docPath);
+				return docPath;
+			}
+			async function sectionBreakCount(docPath: string): Promise<number> {
+				const result = await runCli("read", docPath, "--ast");
+				const blocks = (result.parsed as { blocks: Array<{ type: string }> })
+					.blocks;
+				return blocks.filter((b) => b.type === "sectionBreak").length;
+			}
+
+			test("snapshot excludes sectPr; break count is preserved", async () => {
+				const docPath = await sectionDoc("sect-ppr");
+				const before = await sectionBreakCount(docPath);
+				// p2 carries the first inline sectPr (s0 follows it).
+				expect(
+					(await runCli("edit", docPath, "--at", "p2", "--space-after", "12"))
+						.exitCode,
+				).toBe(0);
+				const xml = await readDocumentXml(docPath);
+				const pprChange = xml.match(/<w:pPrChange[\s\S]*?<\/w:pPrChange>/)?.[0];
+				expect(pprChange).toBeDefined();
+				expect(pprChange).not.toContain("w:sectPr");
+				expect(await sectionBreakCount(docPath)).toBe(before);
+			});
+
+			test("reject keeps the section break", async () => {
+				const docPath = await sectionDoc("sect-reject");
+				const before = await sectionBreakCount(docPath);
+				await runCli("edit", docPath, "--at", "p2", "--space-after", "12");
+				await runCli("track-changes", "reject", docPath, "--all");
+				expect(await sectionBreakCount(docPath)).toBe(before);
+			});
+		});
 	});
 });

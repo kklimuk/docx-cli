@@ -29,6 +29,7 @@ const CORE_FIXTURES = [
 	"equations.docx", // OMML coverage: <m:f> <m:rad> <m:nary> <m:lim> <m:acc> <m:d> <m:m> <m:eqArr> <m:bar> <m:box> + 70+ formulas (statistics, engineering, chemistry)
 	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`) + CodeBlock/Code rStyle/lowlight colors (incl. 6E7781 comment token, formerly code-blocks.docx)
 	"word-formatted.docx", // run-level rPr (color/themeColor, shd, u@color, vertAlign, smallCaps, caps; p4) + bold/italic edit-preservation layout (p0-p3); absorbed run-formatting.docx
+	"letter.docx", // paragraph pPr: <w:spacing> (before/after/line) + <w:ind> (left/right/firstLine/hanging), authored via insert/edit
 ] as const;
 
 const EXTRA_FIXTURES = [

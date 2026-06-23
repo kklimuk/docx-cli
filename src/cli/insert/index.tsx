@@ -12,6 +12,7 @@ import type { TableBorders, TableLayout } from "@core/table";
 import type { parseArgs } from "util";
 import {
 	parseRunsArg,
+	parseSpacingIndentFlags,
 	parseTaskFlag,
 	rejectMarkdownInText,
 	rejectShellMangledValue,
@@ -98,6 +99,14 @@ Paragraph options (incompatible with --markdown / --markdown-file, which carry
 their own block styling):
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
+  --space-before PT  Space above the paragraph, in points (e.g. 12)
+  --space-after PT   Space below the paragraph, in points (e.g. 6)
+  --line-spacing N   Line spacing: a multiple (1, 1.5, 2), a name (single,
+                     double), or an exact point height (15pt, or "15pt atLeast")
+  --indent-left IN   Left indent, in inches (e.g. 0.5 or 0.5in; negative outdents)
+  --indent-right IN  Right indent, in inches (negative outdents into the margin)
+  --first-line IN    First-line indent, in inches (negative ok; mutex w/ --hanging)
+  --hanging IN       Hanging indent, in inches (mutex with --first-line)
   --task STATE       Make the new paragraph a GFM task list item. STATE is
                      "checked" (☒) or "unchecked" (☐). Requires --text or --runs.
                      If the anchor is itself a list paragraph, inherits its numId
@@ -418,6 +427,13 @@ const OPTION_SPEC = {
 	"markdown-file": { type: "string" },
 	style: { type: "string" },
 	alignment: { type: "string" },
+	"space-before": { type: "string" },
+	"space-after": { type: "string" },
+	"line-spacing": { type: "string" },
+	"indent-left": { type: "string" },
+	"indent-right": { type: "string" },
+	"first-line": { type: "string" },
+	hanging: { type: "string" },
 	color: { type: "string" },
 	bold: { type: "boolean" },
 	italic: { type: "boolean" },
@@ -563,6 +579,13 @@ export const MARKDOWN_INCOMPATIBLE_FLAGS = [
 	"task",
 	"list",
 	"list-level",
+	"space-before",
+	"space-after",
+	"line-spacing",
+	"indent-left",
+	"indent-right",
+	"first-line",
+	"hanging",
 ] as const;
 
 const CONTENT_KINDS = [
@@ -1011,6 +1034,13 @@ export async function parseParagraphOptions(
 		(out as ParagraphOptions & { explicitLevel?: number }).explicitLevel =
 			level;
 	}
+
+	const spacingIndent = parseSpacingIndentFlags(values);
+	if ("error" in spacingIndent) {
+		return fail("USAGE", spacingIndent.error, spacingIndent.hint);
+	}
+	if (spacingIndent.spacing) out.spacing = spacingIndent.spacing;
+	if (spacingIndent.indent) out.indent = spacingIndent.indent;
 
 	return out;
 }

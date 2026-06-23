@@ -3,9 +3,13 @@ import type { BlockRangeReference, BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
 	applyParagraphOptionsInPlace,
+	ensureParagraphProperties,
+	hasParagraphProperties,
+	injectPprChange,
 	insertPprChildInOrder,
 	Paragraph,
 	type ParagraphOptions,
+	wrapPprChange,
 } from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
 import { Comments } from "../comments";
@@ -158,6 +162,30 @@ export class Edit {
 		}
 
 		if (tracked) {
+			// Paragraph properties riding along with the content edit (style/alignment/
+			// spacing/indent/tabs) are a tracked revision: snapshot the OLD paragraph's
+			// prior `<w:pPr>` into a `<w:pPrChange>` on the new paragraph's pPr so reject
+			// restores it. The fresh pPr already holds the NEW props, so we can't use
+			// `wrapPprChange` (which snapshots current children) — supply the prior
+			// snapshot explicitly via `injectPprChange`. `applyTrackedRangeReplace`'s
+			// `replacePPr` then carries this pPr (marker included) onto the live node.
+			if (
+				hasParagraphProperties(spec.paragraphOptions) &&
+				anchorTarget?.tag === "w:p"
+			) {
+				const priorPpr = blockRef.node.findChild("w:pPr");
+				const priorChildren = priorPpr
+					? priorPpr.children.filter(
+							(child) =>
+								child.tag !== "w:pPrChange" && child.tag !== "w:sectPr",
+						)
+					: [];
+				injectPprChange(
+					ensureParagraphProperties(anchorTarget),
+					priorChildren,
+					new TrackChanges(this.document).mintMeta(opts.authorFlag),
+				);
+			}
 			applyTrackedRangeReplace(
 				this.document,
 				blockRef.parent,
@@ -179,14 +207,18 @@ export class Edit {
 		return anchorTarget ?? blockRef.node;
 	}
 
-	/** Style-only edit: re-apply paragraph properties (`--style`/`--alignment`)
-	 *  in place, keeping every existing run. The symmetric "restyle without
-	 *  retyping" to the content path's `--style` ride-along — Word's `<w:pPrChange>`
-	 *  isn't modeled, so (like the ride-along) this applies directly rather than as
-	 *  a tracked revision, regardless of the document's track-changes toggle. */
+	/** Properties-only edit: re-apply paragraph properties (`--style`/`--alignment`/
+	 *  `--space-*`/`--line-spacing`/`--indent-*`/`--tabs`) in place, keeping every
+	 *  existing run — the "restyle without retyping" twin of the content path's
+	 *  ride-along. Under track-changes (the doc toggle or `opts.track`), the prior
+	 *  `<w:pPr>` is snapshotted into a `<w:pPrChange>` BEFORE the mutation, so the
+	 *  change is a real tracked revision (accept drops the marker, reject restores
+	 *  the prior pPr) — empirically the shape Word emits for ANY paragraph-property
+	 *  change. Mirrors `Edit.section`/`wrapSectPrChange`. */
 	paragraphProperties(
 		blockRef: BlockReference,
 		options: ParagraphOptions,
+		opts: { authorFlag?: string; track?: boolean } = {},
 	): XmlNode {
 		if (blockRef.node.tag !== "w:p") {
 			throw new EditError(
@@ -195,6 +227,12 @@ export class Edit {
 			);
 		}
 		this.document.ensureStyles().ensureReferencedStyle(options.style);
+		if (opts.track ?? this.document.isTrackChangesEnabled()) {
+			wrapPprChange(
+				ensureParagraphProperties(blockRef.node),
+				new TrackChanges(this.document).mintMeta(opts.authorFlag),
+			);
+		}
 		applyParagraphOptionsInPlace(blockRef.node.children, options);
 		return blockRef.node;
 	}
@@ -488,7 +526,11 @@ function canPreserveFormatting(
  *  with `startIndex === endIndex` (M=1, N=K), so multi-line code lands cleanly. */
 function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 	if (spec.kind === "code") {
-		return buildCodeBlockParagraphs(spec.content, spec.language);
+		return buildCodeBlockParagraphs(
+			spec.content,
+			spec.language,
+			spec.paragraphOptions,
+		);
 	}
 	if (spec.kind === "text") {
 		return [
