@@ -2389,3 +2389,411 @@ describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)"
 		expect(line).not.toContain("drop me");
 	});
 });
+
+// Set run formatting on EXISTING text (the inverse of --clear). Reads richer
+// rPr fields than SpanRun (underline/highlight/font/size/vertAlign/caps).
+type FormatRun = {
+	type: string;
+	text?: string;
+	bold?: boolean;
+	italic?: boolean;
+	strike?: boolean;
+	color?: string;
+	highlight?: string;
+	shade?: string;
+	underline?: string;
+	font?: string;
+	sizeHalfPoints?: number;
+	vertAlign?: string;
+	smallCaps?: boolean;
+	allCaps?: boolean;
+};
+
+async function readFormatRuns(
+	docPath: string,
+	blockId: string,
+): Promise<FormatRun[]> {
+	const result = await runCli("read", docPath, "--ast");
+	const blocks = (
+		result.parsed as { blocks: Array<{ id: string; runs?: FormatRun[] }> }
+	).blocks;
+	return blocks.find((candidate) => candidate.id === blockId)?.runs ?? [];
+}
+
+const run = (runs: FormatRun[], text: string): FormatRun | undefined =>
+	runs.find((candidate) => candidate.text === text);
+
+describe("docx edit — set run formatting (the inverse of --clear)", () => {
+	test("span: --bold --color sets formatting on existing text, splitting the run and leaving neighbors untouched", async () => {
+		const docPath = await freshCopy("set-span-basic");
+		// p0:16-19 is "fox" in the plain sentence.
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:16-19",
+			"--bold",
+			"--color",
+			"C00000",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readFormatRuns(docPath, "p0");
+		expect(flat(runs as SpanRun[])).toBe(
+			"The quick brown fox jumps over the lazy dog.",
+		);
+		const fox = run(runs, "fox");
+		expect(fox?.bold).toBe(true);
+		expect(fox?.color).toBe("C00000");
+		// Neighbors stay plain.
+		expect(run(runs, "The quick brown ")?.bold).toBeUndefined();
+		expect(run(runs, " jumps over the lazy dog.")?.bold).toBeUndefined();
+	});
+
+	test("set MERGES with existing rPr: adds italic, replaces color, keeps bold", async () => {
+		const docPath = await freshCopy("set-merge");
+		// p1:4-13 is "MESSENGER" [bold, #800080].
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1:4-13",
+			"--italic",
+			"--color",
+			"008000",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const messenger = run(await readFormatRuns(docPath, "p1"), "MESSENGER");
+		expect(messenger?.bold).toBe(true); // kept
+		expect(messenger?.italic).toBe(true); // added
+		expect(messenger?.color).toBe("008000"); // replaced, not duplicated
+	});
+
+	test("whole paragraph: --font --size applies to every run and merges with existing formatting", async () => {
+		const docPath = await freshCopy("set-whole-font");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--font",
+			"Times New Roman",
+			"--size",
+			"12",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readFormatRuns(docPath, "p2");
+		// Every run gets the font + size (24 half-points = 12pt)…
+		for (const candidate of runs.filter((entry) => entry.type === "text")) {
+			expect(candidate.font).toBe("Times New Roman");
+			expect(candidate.sizeHalfPoints).toBe(24);
+		}
+		// …while the pre-existing bold/italic survive.
+		expect(run(runs, "Bold")?.bold).toBe(true);
+		expect(run(runs, "italic")?.italic).toBe(true);
+	});
+
+	test("enum + toggle properties: highlight, underline, strike, superscript", async () => {
+		const docPath = await freshCopy("set-enums");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0:4-9", // "quick"
+					"--highlight",
+					"yellow",
+					"--underline",
+					"--strike",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(
+			(await runCli("edit", docPath, "--at", "p0:16-19", "--superscript"))
+				.exitCode,
+		).toBe(0);
+
+		const runs = await readFormatRuns(docPath, "p0");
+		const quick = run(runs, "quick");
+		expect(quick?.highlight).toBe("yellow");
+		expect(quick?.underline).toBe("single");
+		expect(quick?.strike).toBe(true);
+		expect(run(runs, "fox")?.vertAlign).toBe("superscript");
+	});
+
+	test("range: --at pN-pM --bold formats every paragraph in the range", async () => {
+		const docPath = await freshCopy("set-range");
+		const result = await runCli("edit", docPath, "--at", "p0-p2", "--bold");
+		expect(result.exitCode).toBe(0);
+		// Every text run in p0, p1, p2 is now bold.
+		for (const id of ["p0", "p1", "p2"]) {
+			const runs = await readFormatRuns(docPath, id);
+			for (const candidate of runs.filter((entry) => entry.type === "text")) {
+				expect(candidate.bold).toBe(true);
+			}
+		}
+	});
+
+	test("ride-along: --text replaces a span AND formats the new text in one call", async () => {
+		const docPath = await freshCopy("set-ride-span");
+		// Replace "fatally flawed" (p1:17-31) with "CRITICAL", bold + underlined.
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1:17-31",
+			"--text",
+			"CRITICAL",
+			"--bold",
+			"--underline",
+		);
+		expect(result.exitCode).toBe(0);
+		const critical = run(await readFormatRuns(docPath, "p1"), "CRITICAL");
+		expect(critical?.bold).toBe(true);
+		expect(critical?.underline).toBe("single");
+	});
+
+	test("ride-along: whole-paragraph --text --color colors the new text", async () => {
+		const docPath = await freshCopy("set-ride-whole");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Recolored line.",
+			"--color",
+			"0000FF",
+		);
+		expect(result.exitCode).toBe(0);
+		const runs = await readFormatRuns(docPath, "p0");
+		expect(flat(runs as SpanRun[])).toBe("Recolored line.");
+		expect(runs.some((candidate) => candidate.color === "0000FF")).toBe(true);
+	});
+
+	test("the resulting <w:rPr> children stay in CT_RPr order (Word-valid)", async () => {
+		const docPath = await freshCopy("set-order");
+		// p4:0-6 ("color ") carries ONLY <w:color>. Setting font (rank 1) + bold
+		// (rank 2) must land BEFORE the existing <w:color> (rank 18).
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p4:0-6",
+					"--font",
+					"Arial",
+					"--bold",
+				)
+			).exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		const rPr = xml.match(/<w:rPr>(?:(?!<\/w:rPr>).)*?FF0000.*?<\/w:rPr>/s);
+		expect(rPr).not.toBeNull();
+		const order = [...(rPr?.[0].matchAll(/<w:([a-zA-Z]+)/g) ?? [])].map(
+			(match) => match[1],
+		);
+		expect(order).toEqual(["rPr", "rFonts", "b", "color"]);
+	});
+
+	test("batch: standalone set entries format many targets from one read", async () => {
+		const docPath = await freshCopy("set-batch");
+		const batch = join(tempWorkspace("set-batch-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${[
+				JSON.stringify({ at: "p0:0-3", italic: true }),
+				JSON.stringify({ at: "p1:4-13", highlight: "cyan" }),
+				JSON.stringify({ at: "p3", font: "Georgia" }),
+			].join("\n")}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+
+		expect(run(await readFormatRuns(docPath, "p0"), "The")?.italic).toBe(true);
+		expect(
+			run(await readFormatRuns(docPath, "p1"), "MESSENGER")?.highlight,
+		).toBe("cyan");
+		for (const candidate of (await readFormatRuns(docPath, "p3")).filter(
+			(entry) => entry.type === "text",
+		)) {
+			expect(candidate.font).toBe("Georgia");
+		}
+	});
+
+	test("rejects --superscript with --subscript", async () => {
+		const docPath = await freshCopy("set-supsub");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--superscript",
+			"--subscript",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"mutually exclusive",
+		);
+	});
+
+	test("rejects an out-of-range --highlight", async () => {
+		const docPath = await freshCopy("set-bad-highlight");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--highlight",
+			"neon",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"Invalid --highlight",
+		);
+	});
+
+	test("rejects an invalid --size", async () => {
+		const docPath = await freshCopy("set-bad-size");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--size",
+			"huge",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"Invalid --size",
+		);
+	});
+
+	test("rejects combining --clear with set-formatting", async () => {
+		const docPath = await freshCopy("set-clear-conflict");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--clear",
+			"bold",
+			"--italic",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"separate calls",
+		);
+	});
+
+	test("rejects combining run formatting with --style", async () => {
+		const docPath = await freshCopy("set-style-conflict");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--bold",
+			"--style",
+			"Heading1",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"separate calls",
+		);
+	});
+
+	test("rejects set-formatting ride-along on a range content replace (not silently dropped)", async () => {
+		const docPath = await freshCopy("set-range-content");
+		// --font rides along via setFormat (color/bold/italic instead fold into the
+		// content build); on a range that ride-along is rejected, not dropped.
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--text",
+			"replacement",
+			"--font",
+			"Arial",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"separate call",
+		);
+	});
+
+	test("rejects --clear on a range content replace (not silently dropped)", async () => {
+		const docPath = await freshCopy("clear-range-content");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--runs",
+			'[{"type":"text","text":"x","bold":true}]',
+			"--clear",
+			"bold",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"separate call",
+		);
+	});
+
+	test("normalizes a leading '#' in --color to schema-valid hex", async () => {
+		const docPath = await freshCopy("set-hash-color");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:0-3",
+			"--color",
+			"#C00000",
+		);
+		expect(result.exitCode).toBe(0);
+		// Stored as ST_HexColor (no '#').
+		expect(run(await readFormatRuns(docPath, "p0"), "The")?.color).toBe(
+			"C00000",
+		);
+	});
+
+	test("batch: a falsy boolean toggle is not a silent success (set only turns ON)", async () => {
+		const docPath = await freshCopy("set-batch-falsy");
+		const batch = join(tempWorkspace("set-batch-falsy-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0:0-3", bold: false })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		// {bold:false} carries no settable formatting — it must error, not report
+		// success while doing nothing.
+		expect(result.exitCode).not.toBe(0);
+	});
+
+	test("batch: underline:false does not turn underline ON", async () => {
+		const docPath = await freshCopy("set-batch-underline-false");
+		const batch = join(tempWorkspace("set-batch-uf-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0:0-3", bold: true, underline: false })}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		const the = run(await readFormatRuns(docPath, "p0"), "The");
+		expect(the?.bold).toBe(true);
+		expect(the?.underline).toBeUndefined();
+	});
+
+	test("section locators reject run-formatting flags (a section has no runs)", async () => {
+		const docPath = await freshCopy("set-on-section");
+		// p0 isn't a section, but the guard fires in validateSectionEdit before any
+		// resolve — use an sN-shaped locator to hit it.
+		const result = await runCli("edit", docPath, "--at", "s0", "--bold");
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain("Section");
+	});
+});

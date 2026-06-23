@@ -10,8 +10,13 @@ import {
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
 import { Comments } from "../comments";
 import { clearFormatting as clearRunFormatting } from "./clear-formatting";
+import {
+	type RunFormat,
+	setFormatting as setRunFormatting,
+} from "./set-formatting";
 
 export { CLEARABLE_ATTRS, resolveClearTags } from "./clear-formatting";
+export type { RunFormat } from "./set-formatting";
 
 import {
 	extractCommentMarkers,
@@ -302,6 +307,49 @@ export class Edit {
 			);
 		}
 		clearRunFormatting(node, span, tags);
+	}
+
+	/** Set run-level formatting (bold/italic/underline/color/highlight/font/size/
+	 *  …) on a whole paragraph (`span` null) or just the runs overlapping a
+	 *  character span — keeping the text. The inverse of `clearFormatting`: where
+	 *  clear strips an `<w:rPr>` child, set adds/replaces it (find-or-creating the
+	 *  rPr, splicing children in CT_RPr order). Like clear, it mutates rPr in place
+	 *  so unmodelled run properties survive, and — like `paragraphProperties` and
+	 *  clear — it applies DIRECTLY regardless of the track-changes toggle: Word's
+	 *  `<w:rPrChange>` isn't modeled, so a formatting change is never recorded as a
+	 *  tracked revision (see `src/cli/track-changes` — rPrChange/pPrChange are
+	 *  out of scope for accept/reject). */
+	setFormatting(
+		blockRef: BlockReference,
+		span: { start: number; end: number } | null,
+		format: RunFormat,
+	): void {
+		if (blockRef.node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"Run-formatting flags require a paragraph or character-span locator",
+			);
+		}
+		setRunFormatting(blockRef.node, span, format);
+	}
+
+	/** Like `setFormatting` but targets a paragraph node directly — used by the
+	 *  combined content+format edit, where the content step may have spliced in a
+	 *  fresh paragraph node (so the original blockRef is stale): `paragraph()` /
+	 *  `span()` returns the resulting node and we format THAT. */
+	setFormattingNode(
+		node: XmlNode,
+		span: { start: number; end: number } | null,
+		format: RunFormat,
+	): void {
+		if (node.tag !== "w:p") {
+			throw new EditError(
+				"USAGE",
+				"Run formatting can't apply: the new content isn't a single paragraph",
+				"Drop the formatting flags (a table/structural block has no runs to format), or set them separately with `edit --at <pN> …` after the content edit.",
+			);
+		}
+		setRunFormatting(node, span, format);
 	}
 
 	/** Range replace: `pN-pM`. No formatting preservation (Word's empirical

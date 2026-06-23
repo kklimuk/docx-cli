@@ -52,6 +52,7 @@ export {
 	Edit,
 	EditError,
 	type ParagraphContentSpec,
+	type RunFormat,
 	resolveClearTags,
 } from "./edit";
 export { Fonts, type SetDefaultFontResult } from "./fonts";

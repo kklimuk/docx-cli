@@ -33,8 +33,20 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *       the former run-formatting.docx fixture; appended last so p0-p3 stay
  *       byte-stable. This is the run-formatting LibreOffice round-trip surface.
  *
- * Built by dogfooding the CLI's `--runs` JSON path; doubles as a smoke
- * test for `create` + `insert --runs`.
+ * Authoring channel — dogfoods the `edit` SET-run-formatting verbs (the inverse
+ * of `--clear`): p1 and p2 are authored as PLAIN text via `create`/`insert
+ * --text`, then their formatting is applied in place with
+ * `edit --at <span> --bold/--italic/--color`. (See tests/fixtures/setup/CLAUDE.md
+ * — re-author with the CLI once the verbs exist.) Two paragraphs stay on `--runs`
+ * because the SET verbs can't reproduce their shapes:
+ *   - p3's identical-rPr mid-word splits (a SET would coalesce them to one run).
+ *   - p4, the emitter's full-rPr round-trip surface: it needs a theme color (no
+ *     `--color` theme token) and a wavyDouble+colored underline (`--underline`
+ *     sets `single` only); and authoring its OTHER runs as plain-then-`edit`
+ *     wouldn't work either — `insert` blends PLAIN inserted runs into the anchor
+ *     paragraph's formatting (here p3 is all-italic), so plain seed runs would
+ *     inherit italic. Every run carrying its own rPr (the `--runs` form) is the
+ *     only shape that keeps p4 italic-free.
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -46,8 +58,14 @@ async function cli(...args: string[]): Promise<string> {
 	return result.stdout.toString();
 }
 
+/** Apply run formatting to a span in place via the SET verbs. */
+async function setFormat(span: string, ...flags: string[]): Promise<void> {
+	await cli("edit", out, "--at", span, ...flags);
+}
+
 mkdirSync(dirname(out), { recursive: true });
 
+// p0: plain.
 await cli(
 	"create",
 	out,
@@ -60,30 +78,39 @@ await cli(
 	"--force",
 );
 
-const p1Runs = JSON.stringify([
-	{ type: "text", text: "The " },
-	{ type: "text", text: "MESSENGER", bold: true, color: "800080" },
-	{ type: "text", text: " is " },
-	{ type: "text", text: "fatally flawed", italic: true },
-	{ type: "text", text: "." },
-]);
-await cli("insert", out, "--after", "p0", "--runs", p1Runs);
+// p1: plain text, then SET MESSENGER bold+purple and "fatally flawed" italic.
+//     "The " 0-4 | "MESSENGER" 4-13 | " is " 13-17 | "fatally flawed" 17-31 | "." 31-32
+await cli(
+	"insert",
+	out,
+	"--after",
+	"p0",
+	"--text",
+	"The MESSENGER is fatally flawed.",
+);
+await setFormat("p1:4-13", "--bold", "--color", "800080");
+await setFormat("p1:17-31", "--italic");
 
-const p2Runs = JSON.stringify([
-	{ type: "text", text: "Bold", bold: true },
-	{ type: "text", text: " then " },
-	{ type: "text", text: "italic", italic: true },
-	{ type: "text", text: " then plain." },
-]);
-await cli("insert", out, "--after", "p1", "--runs", p2Runs);
+// p2: plain text, then SET "Bold" bold and "italic" italic.
+//     "Bold" 0-4 | " then " 4-10 | "italic" 10-16 | " then plain." 16-28
+await cli(
+	"insert",
+	out,
+	"--after",
+	"p1",
+	"--text",
+	"Bold then italic then plain.",
+);
+await setFormat("p2:0-4", "--bold");
+await setFormat("p2:10-16", "--italic");
 
-// p3: every run italic, but the splits land mid-word. This is the shape
-// Word produces after iterative editing — adjacent runs with identical
-// rPr that just happen to break across letters of "messenger" and
-// "flawed". The B3 token extractor must concatenate before tokenizing or
-// it will see ["Rating:", " ", "The", " ", "me"] from run 0 and
-// ["ssenger", ...] from run 1, never matching new text's clean
-// ["messenger"] token.
+// p3: every run italic, but the splits land mid-word. This is the shape Word
+// produces after iterative editing — adjacent runs with identical rPr that just
+// happen to break across letters of "messenger" and "flawed". A SET edit would
+// coalesce these into one run, so this shape can only be authored via --runs.
+// The B3 token extractor must concatenate before tokenizing or it will see
+// ["Rating:", " ", "The", " ", "me"] from run 0 and ["ssenger", ...] from run 1,
+// never matching new text's clean ["messenger"] token.
 const p3Runs = JSON.stringify([
 	{ type: "text", text: "Rating: The me", italic: true },
 	{ type: "text", text: "ssenger is fatally f", italic: true },
@@ -94,10 +121,9 @@ await cli("insert", out, "--after", "p2", "--runs", p3Runs);
 // p4: every run-level rPr property the CLI emits through core/blocks.tsx —
 // direct + theme color, named highlight, shading fill, underline (plain +
 // styled + colored), super/subscript, small/all caps, a custom font, a custom
-// size. Absorbed verbatim from the former run-formatting.docx fixture so this
-// one doc carries both the edit-preservation layout (p0-p3) and the full
-// run-formatting round-trip surface. Appended as a trailing paragraph so the
-// p0-p3 locators edit-span/edit-formatting hard-pin do not shift.
+// size. Each run carries its own rPr (see the docstring for why plain-then-edit
+// would inherit p3's italic) — this is the emitter's full round-trip surface.
+// Appended last so the p0-p3 locators the edit tests hard-pin do not shift.
 const p4Runs = JSON.stringify([
 	{ type: "text", text: "color ", color: "FF0000" },
 	{
@@ -139,6 +165,13 @@ const doc = JSON.parse(verifyJson) as {
 			bold?: boolean;
 			italic?: boolean;
 			color?: string;
+			highlight?: string;
+			underline?: string;
+			font?: string;
+			sizeHalfPoints?: number;
+			vertAlign?: string;
+			smallCaps?: boolean;
+			allCaps?: boolean;
 		}>;
 	}>;
 };
@@ -150,7 +183,14 @@ for (const paragraph of paragraphs) {
 			const flags: string[] = [];
 			if (run.bold) flags.push("b");
 			if (run.italic) flags.push("i");
+			if (run.underline) flags.push(`u:${run.underline}`);
 			if (run.color) flags.push(`#${run.color}`);
+			if (run.highlight) flags.push(`hl:${run.highlight}`);
+			if (run.font) flags.push(run.font);
+			if (run.sizeHalfPoints) flags.push(`${run.sizeHalfPoints / 2}pt`);
+			if (run.vertAlign) flags.push(run.vertAlign);
+			if (run.smallCaps) flags.push("smallCaps");
+			if (run.allCaps) flags.push("allCaps");
 			const tag = flags.length > 0 ? ` [${flags.join(",")}]` : "";
 			return `"${run.text ?? ""}"${tag}`;
 		})

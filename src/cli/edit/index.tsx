@@ -13,6 +13,7 @@ import {
 	type ParagraphContentSpec,
 	parseLocator,
 	type Run,
+	type RunFormat,
 	resolveClearTags,
 	type SectionType,
 	type XmlNode,
@@ -24,6 +25,7 @@ import {
 	EquationStaleError,
 	Equations,
 } from "@core/equation";
+import { firstInvalidRunFormat } from "@core/run-formatting";
 import type { parseArgs } from "util";
 import {
 	parseRunsArg,
@@ -147,10 +149,27 @@ Paragraph options:
   \`docx edit doc.docx --at p9-p38 --tabs right\` (the exact "fix-all" command
   \`read\` prints at the top when lines wrap; it skips paragraphs with no tab stops).
 
-Run options (only with --text):
-  --color HEX       Run color, hex (e.g., 800080 for purple)
+Run formatting (the inverse of --clear — SET formatting on EXISTING text):
+  Pass any of these ALONE (no content flag) to format the text already there,
+  keeping it. Target a span (pN:S-E), a whole paragraph (pN), or a range (pN-pM)
+  — paste a span straight from \`docx find\`. They also ride along with --text to
+  fill AND format in one call (e.g. \`--text "Title" --bold\`).
   --bold            Bold
   --italic          Italic
+  --underline       Underline (single). Other styles via --runs JSON.
+  --strike          Strikethrough
+  --color HEX       Text color, hex (e.g., 800080 for purple; no '#')
+  --highlight NAME  Highlighter color (yellow, green, cyan, magenta, red, …)
+  --shade HEX       Background fill, arbitrary hex (no '#')
+  --font NAME       Font family (e.g., "Times New Roman")
+  --size PT         Font size in points (e.g., 12 or 11.5)
+  --caps            ALL CAPS (display only — the text stays as typed)
+  --smallcaps       Small caps
+  --superscript     Superscript    --subscript    Subscript
+  To turn a property OFF, use --clear (e.g. \`--clear bold\`). Like --clear and
+  --style, formatting changes apply DIRECTLY — they are NOT recorded as tracked
+  changes (Word's <w:rPrChange> isn't modeled), regardless of --track / the
+  document's track-changes toggle.
 
 Code options (only with --code / --code-file):
   --language LANG   Syntax-highlight via lowlight (37 common languages bundled).
@@ -207,6 +226,8 @@ Examples:
   docx find doc.docx "fill in state"            # → p4:25-38
   docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
   docx edit doc.docx --at p4:25-38 --clear highlight   # un-highlight that span
+  docx edit doc.docx --at p4:4-13 --bold --color C00000 # bold + red that span
+  docx edit doc.docx --at p2 --font "Times New Roman" --size 12  # restyle a paragraph's runs
   docx edit doc.docx --at p4 --text "Delaware" --clear highlight  # fill + un-highlight
   docx edit doc.docx --at p2 --clear all               # strip all run formatting
   docx edit doc.docx --at p3 --text "Replaced." --style Heading2
@@ -221,6 +242,7 @@ Batch JSONL example (one edit per line):
   {"at": "p4:25-38", "text": "Delaware"}
   {"at": "t0:r1c2:p0", "text": "$4.2M"}
   {"at": "p9", "clear": "highlight"}
+  {"at": "p3:0-5", "bold": true, "color": "C00000"}
   {"at": "t1:r1c1:p0", "text": "June 8, 2026", "clear": "highlight"}
   {"at": "p1", "markdown": "## Revised heading"}
 `;
@@ -313,30 +335,30 @@ function spanLocatorTarget(
 	return { blockId: target.blockId, span: target.span };
 }
 
-/** Span edit: replace the addressed characters in place via the Edit lens.
- *  v1 accepts only `--text` (the replacement inherits the existing run's
- *  rPr); formatting/paragraph flags belong to whole-paragraph edits. */
+/** Span edit: address the characters in place via the Edit lens. Accepts
+ *  `--text` (replace the characters, inheriting the run's rPr), `--clear` (strip
+ *  formatting from the span), and the run-formatting flags (`--bold`/`--color`/…,
+ *  which SET formatting on the span). `--text` may ride along with `--clear`
+ *  and/or formatting flags to fill-then-format the just-written range in one
+ *  call. Paragraph properties (`--style`/`--alignment`) stay whole-paragraph. */
 async function commitSpanEdit(
 	document: Document,
 	spanTarget: { blockId: string; span: { start: number; end: number } },
 	opts: ValidatedOptions,
 ): Promise<number> {
 	const spec = opts.spec;
-	if (spec.kind !== "text" && spec.kind !== "clear") {
+	if (
+		spec.kind !== "text" &&
+		spec.kind !== "clear" &&
+		spec.kind !== "setFormat"
+	) {
 		return fail(
 			"USAGE",
-			"A character-span locator (pN:S-E) supports --text or --clear. Use a whole-paragraph locator (pN) for --markdown/--runs/--code.",
+			"A character-span locator (pN:S-E) supports --text, --clear, or run-formatting flags (--bold/--color/--font/…). Use a whole-paragraph locator (pN) for --markdown/--runs/--code.",
 			HELP,
 		);
 	}
 	if (spec.kind === "text") {
-		if (spec.format.color || spec.format.bold || spec.format.italic) {
-			return fail(
-				"USAGE",
-				"--color/--bold/--italic aren't supported on a character span — the replacement inherits the existing run's formatting. Edit the whole paragraph (pN) to set uniform run formatting.",
-				HELP,
-			);
-		}
 		if (spec.paragraphOptions.style || spec.paragraphOptions.alignment) {
 			return fail(
 				"USAGE",
@@ -352,26 +374,28 @@ async function commitSpanEdit(
 	if (opts.dryRun) return respondDryRun(opts);
 
 	try {
+		const edit = new Edit(document);
 		if (spec.kind === "clear") {
-			new Edit(document).clearFormatting(blockRef, spanTarget.span, spec.tags);
+			edit.clearFormatting(blockRef, spanTarget.span, spec.tags);
+		} else if (spec.kind === "setFormat") {
+			edit.setFormatting(blockRef, spanTarget.span, spec.format);
 		} else {
-			const edit = new Edit(document);
 			edit.span(blockRef, spanTarget.span, spec.text, {
 				authorFlag: opts.authorFlag,
 				track: resolveTracked(document, opts.trackFlag),
 			});
-			// Combined `--text … --clear highlight` on a span: strip the named
-			// formatting from the JUST-REPLACED range (offsets shift to the new
-			// text length). This is the `find --highlight | edit` one-shot.
+			// Combined `--text … --clear/--bold` on a span: clear then set the named
+			// formatting on the JUST-REPLACED range (offsets shift to the new text
+			// length). This is the `find … | edit` fill-and-format one-shot.
+			const replaced = {
+				start: spanTarget.span.start,
+				end: spanTarget.span.start + spec.text.length,
+			};
 			if (opts.clearTags) {
-				edit.clearFormattingNode(
-					blockRef.node,
-					{
-						start: spanTarget.span.start,
-						end: spanTarget.span.start + spec.text.length,
-					},
-					opts.clearTags,
-				);
+				edit.clearFormattingNode(blockRef.node, replaced, opts.clearTags);
+			}
+			if (opts.setFormat) {
+				edit.setFormattingNode(blockRef.node, replaced, opts.setFormat);
 			}
 		}
 	} catch (error) {
@@ -429,6 +453,8 @@ async function commitBlockEdit(
 			});
 		} else if (opts.spec.kind === "clear") {
 			edit.clearFormatting(blockRef, null, opts.spec.tags);
+		} else if (opts.spec.kind === "setFormat") {
+			edit.setFormatting(blockRef, null, opts.spec.format);
 		} else if (opts.spec.kind === "paragraphProps") {
 			resultNode = edit.paragraphProperties(
 				blockRef,
@@ -437,10 +463,15 @@ async function commitBlockEdit(
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
 		}
-		// Combined content + `--clear`: strip the named formatting from the
-		// post-edit paragraph (e.g. `--text "June 8, 2026" --clear highlight`).
+		// Combined content + `--clear`/run-formatting: strip then set the named
+		// formatting on the post-edit paragraph (e.g. `--text "June 8, 2026"
+		// --clear highlight` or `--text "Title" --bold`). Clear runs first so an
+		// explicit set wins on any shared property.
 		if (opts.clearTags && resultNode) {
 			edit.clearFormattingNode(resultNode, null, opts.clearTags);
+		}
+		if (opts.setFormat && resultNode) {
+			edit.setFormattingNode(resultNode, null, opts.setFormat);
 		}
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -479,6 +510,26 @@ async function commitRangeEdit(
 	}
 	if (opts.spec.kind === "paragraphProps") {
 		return commitRangeProps(document, opts, opts.spec.paragraphOptions);
+	}
+	if (opts.spec.kind === "setFormat") {
+		return commitRangeSetFormat(document, opts, opts.spec.format);
+	}
+	// Run-formatting/clear flags riding along with a range content replace would
+	// have to re-find every spliced-in paragraph; do it in a second, explicit call
+	// instead. Reject loudly rather than silently dropping the ride-along.
+	if (opts.setFormat) {
+		return fail(
+			"USAGE",
+			"Set run formatting on a replaced range in a separate call: `edit --at pN-pM --bold` (or --color/--font/…) after the content edit.",
+			HELP,
+		);
+	}
+	if (opts.clearTags) {
+		return fail(
+			"USAGE",
+			"Strip run formatting on a replaced range in a separate call: `edit --at pN-pM --clear bold` (or --clear highlight/…) after the content edit.",
+			HELP,
+		);
 	}
 
 	const rangeRef: BlockRangeReference | number = await resolveBlockRangeOrFail(
@@ -560,6 +611,45 @@ async function commitRangeProps(
 			options.tabs !== undefined
 				? `No non-list paragraphs with tab stops in ${opts.locator} — --tabs only adjusts tab-using lines (the ones \`read\` flags with docx:layout), and skips bullets.`
 				: `No paragraphs in ${opts.locator} to restyle.`,
+		);
+	}
+
+	await document.save(opts.outputPath);
+	return emitEditAck(opts);
+}
+
+/** Run-formatting RANGE edit (`--at pN-pM --bold`, etc.): set the formatting on
+ *  every paragraph in the range, in place, keeping all text. Tables and other
+ *  non-paragraph blocks in the range are skipped. */
+async function commitRangeSetFormat(
+	document: Document,
+	opts: ValidatedOptions,
+	format: RunFormat,
+): Promise<number> {
+	const rangeRef = await resolveBlockRangeOrFail(document, opts.locator);
+	if (typeof rangeRef === "number") return rangeRef;
+	if (opts.dryRun) return respondDryRun(opts);
+
+	let applied = 0;
+	try {
+		const edit = new Edit(document);
+		for (let index = rangeRef.startIndex; index <= rangeRef.endIndex; index++) {
+			const node = rangeRef.parent[index];
+			if (!node || node.tag !== "w:p") continue;
+			edit.setFormatting({ node, parent: rangeRef.parent }, null, format);
+			applied++;
+		}
+	} catch (error) {
+		if (error instanceof EditError) {
+			return fail(error.code, error.message, error.hint);
+		}
+		throw error;
+	}
+
+	if (applied === 0) {
+		return fail(
+			"BLOCK_NOT_FOUND",
+			`No paragraphs in ${opts.locator} to format.`,
 		);
 	}
 
@@ -697,6 +787,35 @@ async function validateSingleShotOptions(
 		clearTags = parsed;
 	}
 
+	// Run-formatting flags riding along with a content edit: apply the content,
+	// then SET this formatting on the result (the set-side twin of clearTags). For
+	// a WHOLE-PARAGRAPH `--text`, color/bold/italic land on the freshly built runs
+	// via the text spec, so we drop them from the ride-along. On a SPAN, `edit.span`
+	// only replaces text (it ignores the text spec's format), so every flag rides.
+	let setFormat: RunFormat | undefined;
+	if (
+		spec.kind === "text" ||
+		spec.kind === "runs" ||
+		spec.kind === "code" ||
+		spec.kind === "markdown"
+	) {
+		const parsed = parseRunFormat(values);
+		if (parsed && "error" in parsed) {
+			return fail("USAGE", parsed.error, parsed.hint);
+		}
+		if (parsed) {
+			const ride: RunFormat = { ...parsed };
+			if (spec.kind === "text" && !spanLocatorTarget(locator)) {
+				ride.color = undefined;
+				ride.bold = undefined;
+				ride.italic = undefined;
+			}
+			if (Object.values(ride).some((value) => value !== undefined)) {
+				setFormat = ride;
+			}
+		}
+	}
+
 	return {
 		filePath,
 		locator,
@@ -707,6 +826,7 @@ async function validateSingleShotOptions(
 		dryRun: Boolean(values["dry-run"]),
 		noFormatting: Boolean(values["no-formatting"]),
 		...(clearTags ? { clearTags } : {}),
+		...(setFormat ? { setFormat } : {}),
 		...(tabsDirective ? { tabsDirective } : {}),
 	};
 }
@@ -742,6 +862,16 @@ const OPTION_SPEC = {
 	color: { type: "string" },
 	bold: { type: "boolean" },
 	italic: { type: "boolean" },
+	underline: { type: "boolean" },
+	strike: { type: "boolean" },
+	caps: { type: "boolean" },
+	smallcaps: { type: "boolean" },
+	superscript: { type: "boolean" },
+	subscript: { type: "boolean" },
+	font: { type: "string" },
+	size: { type: "string" },
+	highlight: { type: "string" },
+	shade: { type: "string" },
 	author: { type: "string" },
 	track: { type: "boolean" },
 	"no-formatting": { type: "boolean" },
@@ -766,6 +896,12 @@ type ValidatedOptions = {
 	 *  paragraph locators only. Undefined when --clear isn't combined with
 	 *  content (clear-alone is the `{kind:"clear"}` spec instead). */
 	clearTags?: Set<string>;
+	/** Run-formatting flags (`--bold`/`--color`/`--font`/…) riding along with a
+	 *  content flag: apply the content edit, THEN set this formatting on the
+	 *  resulting run(s). The set-side twin of `clearTags`. Undefined when no
+	 *  format flag rides content (a content-free format edit is the `{kind:
+	 *  "setFormat"}` spec instead). */
+	setFormat?: RunFormat;
 	/** `--tabs`: replace/clear the paragraph's tab stops. Parsed pre-open (the
 	 *  document isn't loaded yet), resolved to concrete twips in `run()` once the
 	 *  section's content width is available. */
@@ -794,6 +930,7 @@ type EditSpec =
 	  }
 	| { kind: "task"; checked: boolean }
 	| { kind: "clear"; tags: Set<string> }
+	| { kind: "setFormat"; format: RunFormat }
 	| { kind: "paragraphProps"; paragraphOptions: ParagraphOptions }
 	| {
 			kind: "equation";
@@ -821,6 +958,16 @@ async function validateSectionEdit(
 		return fail(
 			"USAGE",
 			"Section locators (sN) take --columns and --type, not --text/--runs",
+			HELP,
+		);
+	}
+	// A section break has no runs — run-formatting/clear flags would silently do
+	// nothing, so reject them with a targeted message (mirrors the --task/--equation
+	// guards) instead of letting them fall through to the columns/type check.
+	if (hasRunFormatFlags(values) || values.clear !== undefined) {
+		return fail(
+			"USAGE",
+			"Section locators (sN) take --columns and --type — run-formatting flags (--bold/--color/--font/…) and --clear apply to a paragraph's runs, which a section break has none of.",
 			HELP,
 		);
 	}
@@ -856,6 +1003,92 @@ async function parseClearTagsOrFail(
 		);
 	}
 	return tags;
+}
+
+/** The flags that SET run formatting on existing text (the inverse of `--clear`).
+ *  `color`/`bold`/`italic` are shared with the `--text` content ride-along; the
+ *  rest are set-only. Used to detect a content-free format edit and to reject
+ *  nonsensical combinations (e.g. with `--equation`/`--task`). */
+const RUN_FORMAT_FLAGS = [
+	"bold",
+	"italic",
+	"underline",
+	"strike",
+	"caps",
+	"smallcaps",
+	"superscript",
+	"subscript",
+	"color",
+	"font",
+	"size",
+	"highlight",
+	"shade",
+] as const;
+
+/** True when the invocation carries any run-formatting flag. Booleans default to
+ *  `false` from parseArgs (not undefined), so we test against both. */
+function hasRunFormatFlags(values: RawValues): boolean {
+	return RUN_FORMAT_FLAGS.some(
+		(flag) => values[flag] !== undefined && values[flag] !== false,
+	);
+}
+
+/** Normalize a hex color for `<w:rPr>` (`w:color`/`w:shd@w:fill`): strip a single
+ *  leading `#` so `--color "#FF0000"` becomes the schema-valid `FF0000` the help
+ *  promises (ST_HexColor has no `#`). Other values pass through unchanged (Word
+ *  degrades unknown colors gracefully, matching the `--runs`/markdown ingress). */
+export function normalizeHexColor(value: string): string {
+	return value.startsWith("#") ? value.slice(1) : value;
+}
+
+/** Build a `RunFormat` from the formatting flags, or `null` if none are set.
+ *  Returns a `{ error }` shape on a bad value (size, mutually-exclusive
+ *  super/subscript, or an out-of-range highlight) so the caller can `fail()`. */
+function parseRunFormat(
+	values: RawValues,
+): RunFormat | null | { error: string; hint?: string } {
+	const format: RunFormat = {};
+	if (values.bold) format.bold = true;
+	if (values.italic) format.italic = true;
+	if (values.strike) format.strike = true;
+	if (values.caps) format.allCaps = true;
+	if (values.smallcaps) format.smallCaps = true;
+	if (values.underline) format.underline = "single";
+	if (values.color !== undefined)
+		format.color = normalizeHexColor(values.color as string);
+	if (values.font !== undefined) format.font = values.font as string;
+	if (values.highlight !== undefined)
+		format.highlight = values.highlight as string;
+	if (values.shade !== undefined)
+		format.shade = normalizeHexColor(values.shade as string);
+
+	if (values.superscript && values.subscript) {
+		return { error: "--superscript and --subscript are mutually exclusive" };
+	}
+	if (values.superscript) format.vertAlign = "superscript";
+	if (values.subscript) format.vertAlign = "subscript";
+
+	if (values.size !== undefined) {
+		const points = Number.parseFloat(values.size as string);
+		if (!Number.isFinite(points) || points <= 0) {
+			return {
+				error: `Invalid --size: ${values.size}`,
+				hint: "Pass a positive point size, e.g. --size 12 or --size 11.5.",
+			};
+		}
+		format.sizeHalfPoints = Math.round(points * 2);
+	}
+
+	const invalid = firstInvalidRunFormat(format);
+	if (invalid) {
+		return {
+			error: `Invalid --${invalid.field}: ${invalid.value}`,
+			hint: `Use ${invalid.valid}.`,
+		};
+	}
+
+	if (Object.keys(format).length === 0) return null;
+	return format;
 }
 
 async function validateParagraphEdit(
@@ -899,6 +1132,13 @@ async function validateParagraphEdit(
 			"task",
 		].some((flag) => values[flag] !== undefined);
 		if (!hasContent) {
+			if (hasRunFormatFlags(values)) {
+				return fail(
+					"USAGE",
+					"Strip formatting (--clear) and set formatting (--bold/--color/--font/…) can't combine in one call — do them in separate calls.",
+					HELP,
+				);
+			}
 			const tags = await parseClearTagsOrFail(clearFlag);
 			if (typeof tags === "number") return tags;
 			return { kind: "clear", tags };
@@ -943,6 +1183,13 @@ async function validateParagraphEdit(
 				HELP,
 			);
 		}
+		if (hasRunFormatFlags(values)) {
+			return fail(
+				"USAGE",
+				"--equation/--display/--inline can't combine with run-formatting flags (--bold/--color/--font/…)",
+				HELP,
+			);
+		}
 		const displayMode: boolean | undefined = displayFlag
 			? true
 			: inlineFlag
@@ -972,6 +1219,13 @@ async function validateParagraphEdit(
 				HELP,
 			);
 		}
+		if (hasRunFormatFlags(values)) {
+			return fail(
+				"USAGE",
+				"--task can't combine with run-formatting flags (--bold/--color/--font/…)",
+				HELP,
+			);
+		}
 		const checked = parseTaskFlag(taskFlag);
 		if (checked === null) {
 			return fail(
@@ -994,21 +1248,40 @@ async function validateParagraphEdit(
 		markdownFile !== undefined,
 	].filter(Boolean).length;
 	if (contentFlags === 0) {
+		const hasProps = Boolean(
+			paragraphOptions.style ||
+				paragraphOptions.alignment ||
+				values.tabs !== undefined,
+		);
+		// Run-formatting edit: `--bold`/`--color`/`--font`/… with no content SET
+		// the formatting on the EXISTING runs in place (a span, whole paragraph, or
+		// range), keeping the text — the inverse of `--clear`.
+		if (hasRunFormatFlags(values)) {
+			if (hasProps) {
+				return fail(
+					"USAGE",
+					"Set run formatting (--bold/--color/--font/…) and paragraph properties (--style/--alignment/--tabs) in separate calls, or use --text to set both on new content.",
+					HELP,
+				);
+			}
+			const parsed = parseRunFormat(values);
+			if (parsed === null) {
+				return fail("USAGE", "No run-formatting flags to apply", HELP);
+			}
+			if ("error" in parsed) return fail("USAGE", parsed.error, parsed.hint);
+			return { kind: "setFormat", format: parsed };
+		}
 		// Properties-only edit: `--style`/`--alignment`/`--tabs` with no content
 		// keeps the paragraph's existing runs and just re-applies the paragraph
 		// properties. (Re-styling shouldn't force a dummy --text that would otherwise
 		// replace the content and could drop direct run formatting.) `--tabs` alone
 		// is the tab-stop cure for the `read` LEFT-tab wrapping warning.
-		if (
-			paragraphOptions.style ||
-			paragraphOptions.alignment ||
-			values.tabs !== undefined
-		) {
+		if (hasProps) {
 			return { kind: "paragraphProps", paragraphOptions };
 		}
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation — or --style/--alignment/--tabs to adjust the paragraph in place",
+			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation — or run-formatting flags (--bold/--color/--font/--size/--underline/…) to format the EXISTING text, or --style/--alignment/--tabs to adjust the paragraph in place",
 			HELP,
 		);
 	}

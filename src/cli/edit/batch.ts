@@ -11,6 +11,7 @@ import {
 	MarkdownImportError,
 	parseLocator,
 	type Run,
+	type RunFormat,
 	resolveClearTags,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
@@ -29,6 +30,7 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
+import { normalizeHexColor } from "./index";
 import { parseTabsValue, resolveTabsDirective } from "./tabs";
 
 type RawValues = Record<
@@ -38,8 +40,11 @@ type RawValues = Record<
 
 /** `docx edit --batch FILE.jsonl`: apply many edits from one read. Each JSONL
  *  line is `{ at, <one content field> }` — content is `text`, `clear`,
- *  `markdown`, `runs`, `code`, or `task` (plus per-entry `style`/`alignment`/
- *  `color`/`bold`/`italic`/`author`). All entries resolve against the document
+ *  `markdown`, `runs`, or `task`, OR a content-free run-formatting entry (set
+ *  `bold`/`italic`/`underline`/`strike`/`color`/`highlight`/`shade`/`font`/`size`/
+ *  `caps`/`smallcaps`/`superscript`/`subscript` on the existing text — the inverse
+ *  of `clear`), plus per-entry `style`/`alignment`/`author`. All entries resolve
+ *  against the document
  *  AS READ — we hold live node refs, so an edit to one paragraph never
  *  invalidates another's locator. Same-paragraph spans apply in descending
  *  offset order (so earlier offsets stay valid); a paragraph may take one
@@ -174,12 +179,42 @@ const SINGLE_SHOT_FLAGS = [
 	"color",
 	"bold",
 	"italic",
+	"underline",
+	"strike",
+	"caps",
+	"smallcaps",
+	"superscript",
+	"subscript",
+	"font",
+	"size",
+	"highlight",
+	"shade",
 ] as const;
 
 // `clear` is NOT in here — it's a modifier that can stand alone OR ride along
 // with one content key (fill text AND strip formatting in one entry, e.g.
 // {at, text, clear:"highlight"} — the canonical form-fill + un-highlight move).
 const CONTENT_KEYS = ["text", "markdown", "runs", "code", "task"] as const;
+
+// Run-formatting keys (the inverse of `clear`): like `clear`, they can stand
+// alone (set formatting on existing text) OR ride along with one content key
+// (fill text AND format it). `color`/`bold`/`italic` are shared with the
+// whole-paragraph `text` build; the rest are set-only.
+const SET_KEYS = [
+	"bold",
+	"italic",
+	"underline",
+	"strike",
+	"caps",
+	"smallcaps",
+	"superscript",
+	"subscript",
+	"color",
+	"font",
+	"size",
+	"highlight",
+	"shade",
+] as const;
 
 type EntryOptions = {
 	authorFlag?: string;
@@ -209,14 +244,15 @@ async function resolveEntry(
 ): Promise<ResolvedEntry> {
 	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
 	const hasClear = raw.clear !== undefined;
+	const hasSet = SET_KEYS.some((key) => raw[key] !== undefined);
 	const hasProps =
 		raw.style !== undefined ||
 		raw.alignment !== undefined ||
 		raw.tabs !== undefined;
-	if (present.length === 0 && !hasClear && !hasProps) {
+	if (present.length === 0 && !hasClear && !hasSet && !hasProps) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, "clear", or "style"/"alignment"/"tabs" to adjust in place`,
+			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, "clear", run-formatting (bold/color/font/…), or "style"/"alignment"/"tabs" to adjust in place`,
 		);
 	}
 	if (present.length > 1) {
@@ -225,10 +261,20 @@ async function resolveEntry(
 			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
 		);
 	}
-	// A content key, "clear" alone, a content key + "clear" (fill then strip), or
-	// "style"/"alignment" alone (restyle in place, keeping the runs).
-	const kind = (present[0] ?? (hasClear ? "clear" : "props")) as
+	// A content-free set-formatting entry can't also carry clear/style/alignment —
+	// those are separate operations (do them in separate entries).
+	if (present.length === 0 && hasSet && (hasClear || hasProps)) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: set-formatting (bold/color/font/…) can't combine with "clear"/"style"/"alignment" in one entry — use separate entries`,
+		);
+	}
+	// A content key, "set" alone (format existing text), "clear" alone, a content
+	// key + "set"/"clear" (fill then format/strip), or "style"/"alignment" alone.
+	const kind = (present[0] ??
+		(hasSet ? "set" : hasClear ? "clear" : "props")) as
 		| (typeof CONTENT_KEYS)[number]
+		| "set"
 		| "clear"
 		| "props";
 
@@ -302,7 +348,7 @@ async function buildApply(
 	document: Document,
 	raw: Record<string, unknown>,
 	index: number,
-	kind: (typeof CONTENT_KEYS)[number] | "clear" | "props",
+	kind: (typeof CONTENT_KEYS)[number] | "set" | "clear" | "props",
 	blockRef: BlockReference,
 	span: { start: number; end: number } | null,
 	opts: EntryOptions,
@@ -310,6 +356,19 @@ async function buildApply(
 	const author = typeof raw.author === "string" ? raw.author : opts.authorFlag;
 	const clearTags =
 		raw.clear !== undefined ? resolveClearOrThrow(raw.clear, index) : null;
+
+	// Set-formatting entry (no content key): SET the named formatting on the
+	// existing text — a span or whole paragraph (the inverse of "clear").
+	if (kind === "set") {
+		const format = readRunFormat(raw, index);
+		if (!format) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: no run-formatting fields to apply`,
+			);
+		}
+		return () => new Edit(document).setFormatting(blockRef, span, format);
+	}
 
 	// Style-only entry (no content key): restyle the paragraph in place, keeping
 	// its runs. Mirrors single-shot `edit --at pN --style X`.
@@ -338,22 +397,25 @@ async function buildApply(
 	if (span) {
 		if (kind === "text") {
 			const text = requireString(raw.text, index, "text");
-			rejectSpanFormatFlags(raw, index);
-			if (clearTags) {
-				// `find --highlight` emits span locators, so {at:span, text, clear}
-				// is the natural one-shot: replace the span, then strip formatting
-				// from the just-written range (offsets shift to the new length).
+			rejectSpanParagraphFlags(raw, index);
+			// On a span, `edit.span` only replaces text (it ignores run format), so
+			// EVERY formatting key — including color/bold/italic — rides along.
+			const ride = readRunFormatRideAlong(raw, index, false);
+			if (clearTags || ride) {
+				// `find` emits span locators, so {at:span, text, clear/bold/…} is the
+				// natural one-shot: replace the span, then clear/set formatting on the
+				// just-written range (offsets shift to the new length).
 				return () => {
 					const edit = new Edit(document);
 					edit.span(blockRef, span, text, {
 						authorFlag: author,
 						track: opts.track,
 					});
-					edit.clearFormattingNode(
-						blockRef.node,
-						{ start: span.start, end: span.start + text.length },
-						clearTags,
-					);
+					const replaced = { start: span.start, end: span.start + text.length };
+					if (clearTags) {
+						edit.clearFormattingNode(blockRef.node, replaced, clearTags);
+					}
+					if (ride) edit.setFormattingNode(blockRef.node, replaced, ride);
 				};
 			}
 			return () =>
@@ -364,13 +426,15 @@ async function buildApply(
 		}
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: a character span (${raw.at}) supports only "text" or "clear"`,
+			`entry ${index}: a character span (${raw.at}) supports "text", "clear", or run-formatting (bold/color/font/…)`,
 			"Use a whole-paragraph locator (pN) for markdown/runs/code/task.",
 		);
 	}
 
 	// Whole-paragraph content → a closure returning the resulting paragraph node
-	// (so a trailing clear targets the post-edit node, not the replaced one).
+	// (so a trailing clear/set-format targets the post-edit node, not the
+	// replaced one). For `text`, color/bold/italic land on the new runs via the
+	// content build, so they're excluded from the ride-along (the rest still ride).
 	const contentNode = await buildWholeParagraphContent(
 		document,
 		raw,
@@ -380,10 +444,13 @@ async function buildApply(
 		author,
 		opts,
 	);
-	if (!clearTags) return () => void contentNode();
+	const ride = readRunFormatRideAlong(raw, index, kind === "text");
+	if (!clearTags && !ride) return () => void contentNode();
 	return () => {
 		const node = contentNode();
-		new Edit(document).clearFormattingNode(node, null, clearTags);
+		const edit = new Edit(document);
+		if (clearTags) edit.clearFormattingNode(node, null, clearTags);
+		if (ride) edit.setFormattingNode(node, null, ride);
 	};
 }
 
@@ -554,20 +621,10 @@ function requireString(value: unknown, index: number, field: string): string {
 	return value;
 }
 
-function rejectSpanFormatFlags(
+function rejectSpanParagraphFlags(
 	raw: Record<string, unknown>,
 	index: number,
 ): void {
-	if (
-		raw.color !== undefined ||
-		raw.bold !== undefined ||
-		raw.italic !== undefined
-	) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: --color/--bold/--italic aren't supported on a character span — the replacement inherits the run's formatting`,
-		);
-	}
 	if (
 		raw.style !== undefined ||
 		raw.alignment !== undefined ||
@@ -578,6 +635,92 @@ function rejectSpanFormatFlags(
 			`entry ${index}: style/alignment/tabs apply to a whole paragraph, not a character span`,
 		);
 	}
+}
+
+/** Build a `RunFormat` from an entry's set-formatting keys (the inverse of
+ *  `clear`). Throws `EntryError` on a bad value. Returns null if none are set.
+ *  `underline` accepts a style string (e.g. "double") or a boolean (→ "single"). */
+function readRunFormat(
+	raw: Record<string, unknown>,
+	index: number,
+): RunFormat | null {
+	const format: RunFormat = {};
+	// Boolean toggles only turn a property ON (matching single-shot parseRunFormat);
+	// a falsy value (false/0/null) is ignored — turning a property OFF is `clear`'s
+	// job, not set's.
+	if (raw.bold) format.bold = true;
+	if (raw.italic) format.italic = true;
+	if (raw.strike) format.strike = true;
+	if (raw.caps) format.allCaps = true;
+	if (raw.smallcaps) format.smallCaps = true;
+	// `underline` accepts a style string (e.g. "double") or `true` (→ "single");
+	// a falsy non-string is ignored (so `underline:false` doesn't turn it ON).
+	if (typeof raw.underline === "string") format.underline = raw.underline;
+	else if (raw.underline === true) format.underline = "single";
+	if (raw.underlineColor !== undefined) {
+		format.underlineColor = normalizeHexColor(
+			requireString(raw.underlineColor, index, "underlineColor"),
+		);
+	}
+	if (raw.color !== undefined)
+		format.color = normalizeHexColor(requireString(raw.color, index, "color"));
+	if (raw.font !== undefined)
+		format.font = requireString(raw.font, index, "font");
+	if (raw.highlight !== undefined) {
+		format.highlight = requireString(raw.highlight, index, "highlight");
+	}
+	if (raw.shade !== undefined)
+		format.shade = normalizeHexColor(requireString(raw.shade, index, "shade"));
+	if (raw.superscript && raw.subscript) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "superscript" and "subscript" are mutually exclusive`,
+		);
+	}
+	if (raw.superscript) format.vertAlign = "superscript";
+	if (raw.subscript) format.vertAlign = "subscript";
+	if (raw.size !== undefined) {
+		const points =
+			typeof raw.size === "number"
+				? raw.size
+				: Number.parseFloat(String(raw.size));
+		if (!Number.isFinite(points) || points <= 0) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: "size" must be a positive point size (e.g. 12 or 11.5)`,
+			);
+		}
+		format.sizeHalfPoints = Math.round(points * 2);
+	}
+	const invalid = firstInvalidRunFormat(format);
+	if (invalid) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: invalid ${invalid.field} "${invalid.value}"`,
+			`Use ${invalid.valid}.`,
+		);
+	}
+	if (Object.keys(format).length === 0) return null;
+	return format;
+}
+
+/** The set-formatting that rides along with a content edit. `excludeBasic` drops
+ *  color/bold/italic (the whole-paragraph `text` build already applies them to
+ *  the new runs); on a span every key rides since `edit.span` ignores format. */
+function readRunFormatRideAlong(
+	raw: Record<string, unknown>,
+	index: number,
+	excludeBasic: boolean,
+): RunFormat | null {
+	const format = readRunFormat(raw, index);
+	if (!format) return null;
+	if (excludeBasic) {
+		format.color = undefined;
+		format.bold = undefined;
+		format.italic = undefined;
+	}
+	if (!Object.values(format).some((value) => value !== undefined)) return null;
+	return format;
 }
 
 function readTextFormat(

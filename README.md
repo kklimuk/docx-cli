@@ -170,6 +170,10 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #   --code "..." | --code-file PATH [--language LANG]
 #   --equation "x^2 + y^2" [--display]   (insert; edit also accepts --inline)
 #   --clear bold,italic,highlight,color,size,font,…|all   (edit; strip run formatting, keep text)
+#   --bold --italic --underline --strike --color HEX --highlight NAME --shade HEX --font NAME --size PT
+#       --caps --smallcaps --superscript --subscript   (edit; SET run formatting on EXISTING text —
+#       the inverse of --clear. Alone they format a span/paragraph/range in place; with --text they
+#       fill AND format. Like --clear, applied directly — not recorded as a tracked change.)
 #   --task checked|unchecked | --list bullet|ordered [--list-level N]   (insert)
 #   --task checked|unchecked                                            (edit, flip in place)
 #   --table --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (insert)
