@@ -790,6 +790,54 @@ describe("generated .docx is valid OOXML", () => {
 		);
 		await assertValidDocx(docPath);
 	});
+
+	// Deleting a table cell's ONLY paragraph must NOT leave a bare `<w:tc/>` — a
+	// `<w:tc>` requires at least one `<w:p>` (CT_Tc), and Word reports the empty
+	// form as unreadable. The cell-safe removal blanks the paragraph in place
+	// instead. (xmllint passes a `<w:tc/>` as well-formed, so this is asserted
+	// explicitly.) Backs both `docx delete` and `docx edit --text ""`.
+	test("delete a cell's last paragraph blanks it (no empty <w:tc/>)", async () => {
+		const docPath = join(tempWorkspace("validity-cell-delete"), "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"| A | B |\n| --- | --- |\n| only | x |",
+		);
+		const result = await runCli("delete", docPath, "--at", "t0:r0c0:p0");
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:tc/>");
+		await assertValidDocx(docPath);
+	});
+
+	test("delete --batch a cell's last paragraph blanks it too (no empty <w:tc/>)", async () => {
+		const docPath = join(
+			tempWorkspace("validity-cell-delete-batch"),
+			"out.docx",
+		);
+		await runCli("create", docPath, "--text", "seed");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"| A | B |\n| --- | --- |\n| only | x |",
+		);
+		const batch = join(
+			tempWorkspace("validity-cell-delete-batch-file"),
+			"b.jsonl",
+		);
+		await Bun.write(batch, `${JSON.stringify({ at: "t0:r0c0:p0" })}\n`);
+		const result = await runCli("delete", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).not.toContain("<w:tc/>");
+		await assertValidDocx(docPath);
+	});
 });
 
 /** Assert every XML part of `docPath` is namespace-well-formed and every

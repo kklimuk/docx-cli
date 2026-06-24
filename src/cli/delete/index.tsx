@@ -5,7 +5,6 @@ import {
 	removeInlineSectPr,
 	resolveAuthor,
 	resolveDate,
-	TrackChanges,
 } from "@core";
 import { Comments, findContainingParagraph } from "@core/comments";
 import { XmlNode } from "@core/parser";
@@ -13,6 +12,7 @@ import {
 	applyTrackedRangeDelete,
 	applyUntrackedRangeDelete,
 	assertParagraphOnlyTrackedRange,
+	removeParagraphLine,
 	TrackedRangeConflictError,
 } from "@core/track-changes/replace";
 import {
@@ -68,6 +68,14 @@ Batch (--batch PATH | -):
   --dry-run         Print what would be removed; do not write the file
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
+
+Last-paragraph safety:
+  A container that requires a paragraph keeps one. A table cell must hold at
+  least one paragraph (OOXML), and the document body can't be left with only its
+  section properties — so deleting the LAST paragraph of a cell (or the body's
+  sole paragraph) blanks it in place (leaves an empty paragraph) instead of
+  removing it, never producing an invalid empty <w:tc/> or <w:body>. (The same
+  removal backs \`docx edit --at pN --text ""\`.)
 
 Tracked behavior:
   When tracking is on, paragraph deletion wraps runs in <w:del> and marks
@@ -259,15 +267,21 @@ async function commitBlockDelete(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
-	if (resolveTracked(document, opts.trackFlag)) {
-		if (blockRef.node.tag !== "w:p") {
-			return fail(
-				"TRACKED_CHANGE_CONFLICT",
-				"Tracked deletion of non-paragraph blocks (e.g., tables) is not supported",
-				"Use `docx track-changes off` first, or delete table contents row-by-row.",
-			);
-		}
-		new TrackChanges(document).applyDeletion(blockRef.node, opts.authorFlag);
+	const tracked = resolveTracked(document, opts.trackFlag);
+	if (blockRef.node.tag === "w:p") {
+		// Paragraph removal goes through the shared, cell-safe helper (it blanks
+		// rather than deletes a cell's last paragraph, so we never emit a bare
+		// `<w:tc/>`), tracked or not.
+		removeParagraphLine(document, blockRef, {
+			track: tracked,
+			author: opts.authorFlag,
+		});
+	} else if (tracked) {
+		return fail(
+			"TRACKED_CHANGE_CONFLICT",
+			"Tracked deletion of non-paragraph blocks (e.g., tables) is not supported",
+			"Use `docx track-changes off` first, or delete table contents row-by-row.",
+		);
 	} else {
 		blockRef.parent.splice(targetIndex, 1);
 	}

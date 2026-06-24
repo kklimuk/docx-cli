@@ -270,6 +270,57 @@ export function applyUntrackedRangeDelete(
 	parent.splice(startIndex, endIndex - startIndex + 1);
 }
 
+/** Remove a single paragraph "line" — the honest verb behind `delete --at pN`
+ *  AND the form-fill blank move (`edit --text ""` / a `{ "at": "pN" }`-style
+ *  removal in an `edit --batch`). Weak agents reach for "blank the line" far
+ *  more than the separate `delete` verb, so the edit surface routes here too.
+ *
+ *  **Last-paragraph safety:** a container that requires a paragraph must keep
+ *  one. A `<w:tc>` must contain at least one `<w:p>` (ECMA-376 CT_Tc) — splicing
+ *  out a cell's only paragraph yields an empty `<w:tc/>` Word reports as
+ *  unreadable — and the document `<w:body>` likewise can't be left with only its
+ *  `<w:sectPr>`. So when the target is the LAST paragraph in its container (a
+ *  cell, OR the body's sole paragraph) we BLANK it in place (keep the `<w:p>`,
+ *  drop its content) instead of removing it. Otherwise the line is removed
+ *  outright: tracked → `<w:del>` content + paragraph-mark del (accept merges it
+ *  forward); untracked → splice by live `indexOf` (so batch callers holding node
+ *  refs stay valid as siblings shift). */
+export function removeParagraphLine(
+	document: Document,
+	blockRef: { node: XmlNode; parent: XmlNode[] },
+	opts: { track: boolean; author?: string },
+): void {
+	const { node, parent } = blockRef;
+	const isLastParagraph =
+		parent.filter((child) => child.tag === "w:p").length <= 1;
+
+	if (isLastParagraph) {
+		// The container (a `<w:tc>`, or the document `<w:body>`) requires a
+		// paragraph — keep the `<w:p>`, just empty it, so we never emit a bare
+		// `<w:tc/>` or an empty `<w:body>`.
+		if (opts.track) {
+			new TrackChanges(document).applyContentDeletion(node, opts.author);
+		} else {
+			blankParagraphInPlace(node);
+		}
+		return;
+	}
+
+	if (opts.track) {
+		new TrackChanges(document).applyDeletion(node, opts.author);
+		return;
+	}
+	const index = parent.indexOf(node);
+	if (index >= 0) parent.splice(index, 1);
+}
+
+/** Drop a paragraph's content, keeping its `<w:pPr>` (and any inline
+ *  `<w:sectPr>` it carries) so the now-empty `<w:p>` stays valid. */
+function blankParagraphInPlace(paragraph: XmlNode): void {
+	const pPr = paragraph.findChild("w:pPr");
+	paragraph.children = pPr ? [pPr] : [];
+}
+
 function convertParagraphContentToDeleted(
 	paragraph: XmlNode,
 	mintMeta: () => TrackedMeta,

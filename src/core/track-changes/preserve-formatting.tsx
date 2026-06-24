@@ -47,9 +47,13 @@ export type OldToken = { text: string; rPr: XmlNode | null };
  *
  *  Approach: walk recursively, descending through visible-in-accepted-view
  *  wrappers. Concatenate every visible run's text once, build a per-
- *  character rPr index, then tokenize the full string and look up rPr at
- *  each token's first character. Lossy in the (rare) case of mid-word
- *  formatting transitions — agents who need that should use `--runs` JSON.
+ *  character rPr index, then tokenize the full string and tag each token with
+ *  the rPr covering the MOST of its characters (`dominantRpr`). Using the bulk
+ *  formatting (not the first character) keeps a token that glues differently-
+ *  formatted characters — e.g. a plain `[` bracket fused to an underlined word in
+ *  a fill-in-the-blank placeholder — from inheriting a stray edge char's format
+ *  and coming out ragged. Still lossy for genuine mid-word format changes (a word
+ *  half bold) — agents who need that should use `--runs` JSON.
  *
  *  Caller (`applyFormattingPreservingEdit`) must strip all run-bearing
  *  wrappers from the rebuild — their content was just flattened into the
@@ -81,7 +85,7 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 	const tokens: OldToken[] = [];
 	let offset = 0;
 	for (const text of tokenTexts) {
-		const rPrSource = charToRpr[offset] ?? null;
+		const rPrSource = dominantRpr(charToRpr, offset, text.length);
 		tokens.push({
 			text,
 			rPr: rPrSource ? rPrSource.clone() : null,
@@ -89,6 +93,49 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 		offset += text.length;
 	}
 	return tokens;
+}
+
+/** The rPr covering the MOST characters of a token (ties → first seen), not just
+ *  its first character. A token can glue characters from differently-formatted
+ *  runs — e.g. a fill-in-the-blank placeholder `[Evaluating …]` where the `[`
+ *  bracket is plain but the word is underlined, so the token `[Evaluating` spans
+ *  a plain char and an underlined run. First-character lookup made that token
+ *  inherit the bracket's (plain) rPr while its underlined neighbors inherited
+ *  underline — so a whole-paragraph `--text` replace came out RAGGED (first word
+ *  un-formatted, the rest formatted). Taking the bulk formatting fixes that.
+ *
+ *  Buckets by STRUCTURAL rPr (serialized), NOT by node reference: `extractOldTokens`
+ *  glues a word split across several `<w:r>` (the "me"+"ssenger" case), and those
+ *  sub-runs are SEPARATE XmlNodes even when format-identical. Reference-keyed
+ *  counting would split identical underlined sub-runs into separate buckets and let
+ *  one longer plain neighbor out-vote them, dropping the underline (the bug this
+ *  function exists to fix). Structural keying counts all format-identical chars
+ *  together. */
+function dominantRpr(
+	charToRpr: ReadonlyArray<XmlNode | null>,
+	start: number,
+	length: number,
+): XmlNode | null {
+	// key = serialized rPr ("" for plain/null); value keeps a first-seen
+	// representative node + its running count. Insertion order is char order, so a
+	// tie resolves to the first-seen formatting.
+	const counts = new Map<string, { node: XmlNode | null; count: number }>();
+	for (let index = start; index < start + length; index++) {
+		const rPr = charToRpr[index] ?? null;
+		const key = rPr ? XmlNode.serialize([rPr]) : "";
+		const entry = counts.get(key);
+		if (entry) entry.count += 1;
+		else counts.set(key, { node: rPr, count: 1 });
+	}
+	let dominant: XmlNode | null = null;
+	let best = -1;
+	for (const { node, count } of counts.values()) {
+		if (count > best) {
+			best = count;
+			dominant = node;
+		}
+	}
+	return dominant;
 }
 
 /** A wrapper whose content is visible in the accepted view: tracked

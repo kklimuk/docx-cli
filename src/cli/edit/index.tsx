@@ -26,6 +26,7 @@ import {
 	Equations,
 } from "@core/equation";
 import { firstInvalidRunFormat } from "@core/run-formatting";
+import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
 	parseRunsArg,
@@ -83,12 +84,21 @@ ${AT_FORMS}
                     --columns/--type; eqN takes --equation/--display/--inline.
                     A character span (pN:S-E, or a cell paragraph
                     tN:rRcC:pK:S-E) replaces just those characters with --text,
-                    inheriting the existing run's formatting — paste a locator
-                    straight from \`docx find\`. See \`docx info locators\`.
+                    inheriting the existing run's formatting (keeps bold/font) —
+                    paste a locator straight from \`docx find\`. This is how you
+                    fill a formatted/tabbed template line: a tab is preserved,
+                    so replace the text on EITHER side of it (find the bold label,
+                    find the value) — no need to rebuild --runs. \`docx replace
+                    OLD NEW\` does the same by phrase. See \`docx info locators\`.
 
 Paragraph content (one required for paragraph / range locators — UNLESS you pass
 only --style/--alignment below, which restyle the paragraph in place):
-  --text TEXT       Replace with a single-run paragraph
+  --text TEXT       Replace with a single-run paragraph. Empty --text ("")
+                    REMOVES the line (same as \`docx delete --at pN\`; a table
+                    cell's last paragraph is blanked, not deleted, so the cell
+                    stays valid). To keep an empty spacer paragraph, use
+                    --runs '[]'. On a SPAN locator (pN:S-E) empty --text instead
+                    deletes just those characters.
   --runs JSON       Replace with custom runs (Run[] JSON)
   --code TEXT       Replace with a code block — newlines split into one
                     CodeBlock-styled paragraph per source line
@@ -208,10 +218,14 @@ Batch (--batch PATH | -):
   ALSO carry "clear" alongside its content — whole paragraph OR span — to fill
   then strip formatting in one entry ({ "at": p, "text": "...", "clear": "highlight" })
   — the form-fill + un-highlight move; "clear" alone (no content) is also valid.
+  To REMOVE a line in the same sweep, give an entry empty "text" ({ "at": "pN",
+  "text": "" }) or "delete": true — both drop the paragraph (a table cell's last
+  paragraph is blanked, not deleted). So a form-fill is ONE batch: fill the
+  cells that have values, remove the leftover placeholder lines.
   All locators address the document AS READ. A paragraph takes one whole-
   paragraph edit OR several non-overlapping spans (applied right-to-left so
-  offsets stay valid). Range (pN-pM), section (sN), and equation (eqN) edits
-  run one at a time, not in a batch. Don't mix --batch with --at/--text/etc.
+  offsets stay valid) OR one removal. Range (pN-pM), section (sN), and equation
+  (eqN) edits run one at a time, not in a batch. Don't mix --batch with --at/--text/etc.
   Tip: a value reaches docx-cli verbatim through the JSONL file — no shell in the
   way — so prefer --batch for money ($1,250.00), regex, or other shell-special
   text. (A bare --text value may also start with "-"; it no longer needs "=".)
@@ -237,6 +251,7 @@ Output:
 Examples:
   docx find doc.docx "fill in state"            # → p4:25-38
   docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
+  docx edit doc.docx --at p5 --text ""                 # remove a placeholder line
   docx edit doc.docx --at p4:25-38 --clear highlight   # un-highlight that span
   docx edit doc.docx --at p4:4-13 --bold --color C00000 # bold + red that span
   docx edit doc.docx --at p2 --font "Times New Roman" --size 12  # restyle a paragraph's runs
@@ -256,6 +271,8 @@ Batch JSONL example (one edit per line):
   {"at": "p9", "clear": "highlight"}
   {"at": "p3:0-5", "bold": true, "color": "C00000"}
   {"at": "t1:r1c1:p0", "text": "June 8, 2026", "clear": "highlight"}
+  {"at": "t0:r0c0:p5", "text": ""}          # remove a leftover placeholder line
+  {"at": "p7", "delete": true}              # same, explicit
   {"at": "p1", "markdown": "## Revised heading"}
 `;
 
@@ -470,6 +487,14 @@ async function commitBlockEdit(
 				authorFlag: opts.authorFlag,
 				track,
 			});
+		} else if (opts.spec.kind === "removeLine") {
+			// Empty `--text` on a whole paragraph removes the line (cell-safe — a
+			// table cell's last paragraph is blanked, not deleted). Same path as
+			// `docx delete --at pN`.
+			removeParagraphLine(document, blockRef, {
+				track,
+				author: opts.authorFlag,
+			});
 		} else if (opts.spec.kind === "clear") {
 			edit.clearFormatting(blockRef, null, opts.spec.tags);
 		} else if (opts.spec.kind === "setFormat") {
@@ -528,6 +553,13 @@ async function commitRangeEdit(
 		return fail(
 			"USAGE",
 			"--equation takes a single equation locator (eqN), not a paragraph range",
+			HELP,
+		);
+	}
+	if (opts.spec.kind === "removeLine") {
+		return fail(
+			"USAGE",
+			"Empty --text removes a single paragraph, not a range — use `docx delete --at pN-pM` to remove a span of paragraphs.",
 			HELP,
 		);
 	}
@@ -987,6 +1019,7 @@ type EditSpec =
 			paragraphOptions: ParagraphOptions;
 	  }
 	| { kind: "task"; checked: boolean }
+	| { kind: "removeLine" }
 	| { kind: "clear"; tags: Set<string> }
 	| { kind: "setFormat"; format: RunFormat }
 	| { kind: "paragraphProps"; paragraphOptions: ParagraphOptions }
@@ -1361,19 +1394,34 @@ async function validateParagraphEdit(
 	}
 
 	if (text !== undefined) {
-		// Whole-paragraph empty --text leaves an invisible, space-consuming blank
-		// paragraph rather than removing the line — a weak-agent trap (the instinct
-		// is "set the inapplicable section to empty → it's gone"). Redirect to the
-		// honest verb. A SPAN locator (pN:S-E) is EXEMPT: there `--text ""` deletes
-		// just those characters in place (the paragraph keeps its other content) — a
-		// legitimate, common move (e.g. strip an inline `[Note: …]`).
+		// Whole-paragraph empty --text REMOVES the line (the move weak agents
+		// reach for when clearing a placeholder). It routes to the same cell-safe
+		// removal as `docx delete --at pN` — splice the paragraph, or, when it's a
+		// table cell's last paragraph, blank it in place so the `<w:tc>` keeps a
+		// paragraph. A SPAN locator (pN:S-E) is EXEMPT: there `--text ""` deletes
+		// just those characters in place. To keep an empty spacer paragraph
+		// instead of removing the line, pass `--runs '[]'`.
 		const at = values.at as string | undefined;
 		if (text === "" && !(at && spanLocatorTarget(at))) {
-			return fail(
-				"USAGE",
-				`Empty --text leaves a blank paragraph in place, it doesn't remove the line.`,
-				`To DELETE the paragraph: \`docx delete --at ${at ?? "pN"}\` (or \`docx delete --batch\` for many). To delete just SOME characters, use a span locator (\`--at pN:S-E --text ""\`). To blank the paragraph but keep an empty spacer, pass --runs '[]'. Help:\n${HELP}`,
-			);
+			// Removal is exclusive — a co-passed --clear / run-format / paragraph
+			// flag would silently no-op (the removed line has no node to format), and
+			// the --batch path already rejects the same combo, so reject here too.
+			if (
+				values.clear !== undefined ||
+				hasRunFormatFlags(values) ||
+				paragraphOptions.style !== undefined ||
+				paragraphOptions.alignment !== undefined ||
+				paragraphOptions.spacing !== undefined ||
+				paragraphOptions.indent !== undefined ||
+				values.tabs !== undefined
+			) {
+				return fail(
+					"USAGE",
+					"Empty --text removes the line and can't combine with --clear / run-formatting / --style/--alignment/--tabs — drop those flags, or use --runs '[]' to keep an empty (formatted) spacer paragraph.",
+					HELP,
+				);
+			}
+			return { kind: "removeLine" };
 		}
 		const rejected = await rejectMarkdownInText(text, HELP);
 		if (typeof rejected === "number") return rejected;

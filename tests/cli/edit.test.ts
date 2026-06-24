@@ -20,6 +20,7 @@ type Run = {
 	text?: string;
 	bold?: boolean;
 	italic?: boolean;
+	underline?: string;
 	color?: string;
 	trackedChange?: { kind: string };
 };
@@ -504,6 +505,55 @@ describe("docx edit --text — regression: mid-word run splits", () => {
 		expect(trackedTexts).not.toContain("messenger");
 		expect(trackedTexts).not.toContain("Rating:");
 		expect(trackedTexts).not.toContain("The");
+	});
+
+	// A token can glue characters from differently-formatted runs — the classic
+	// case is a fill-in-the-blank placeholder "[underlined value]" where the "["
+	// bracket is plain but the word is underlined, so the token "[value" spans
+	// both. First-CHARACTER rPr lookup made that one token inherit the bracket's
+	// (plain) format while its underlined neighbors kept underline, so a whole-
+	// paragraph --text replace came out RAGGED (first word un-underlined, rest
+	// underlined — the mnda adversarial-review defect). dominantRpr (bulk format
+	// per token) makes the replacement formatting CONSISTENT.
+	test("wholesale --text replace of a mixed-underline placeholder is consistent (no ragged half-underline)", async () => {
+		const workspace = tempWorkspace("regression-ragged-fill");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "seed", "--force");
+		// "[" (plain) + underlined content + "]" (plain) — the mnda placeholder shape.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--runs",
+			JSON.stringify([
+				{ type: "text", text: "[" },
+				{
+					type: "text",
+					text: "Placeholder value goes here",
+					underline: "single",
+				},
+				{ type: "text", text: "]" },
+			]),
+		);
+		// Whole-paragraph replace with a brand-new value.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Brand new filled value text",
+		);
+		const textRuns = (await readParagraph(docPath, "p0")).filter(
+			(run) => run.type === "text" && (run.text ?? "").trim().length > 0,
+		);
+		expect(textRuns.length).toBeGreaterThan(0);
+		// Every run carries the SAME underline state — no first-word/rest split.
+		const underlineStates = new Set(
+			textRuns.map((run) => run.underline ?? "none"),
+		);
+		expect(underlineStates.size).toBe(1);
 	});
 });
 
@@ -2333,32 +2383,91 @@ describe("edit --tabs (tab-stop cure)", () => {
 	});
 });
 
-// The empty-text trap (Sonnet-surfaced): `--text ""` leaves an invisible blank
-// paragraph, not a removed line. We reject it and disambiguate — `delete` to
-// remove, `--runs '[]'` to blank but keep.
-describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)", () => {
-	test("single-shot empty --text points at delete", async () => {
-		const docPath = await docFrom("empty-text", "Drop me.\n");
-		const result = await runCli("edit", docPath, "--at", "p0", "--text", "");
-		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ code: "USAGE" });
-		expect((result.parsed as { hint: string }).hint).toContain(
-			"delete --at p0",
+// Empty `--text` on a WHOLE paragraph REMOVES the line — the move weak agents
+// reach for to clear a placeholder (field evidence: they keep typing `text:""`
+// expecting the line gone). It routes through the same cell-safe path as
+// `docx delete`. A SPAN's `--text ""` still deletes just those characters, and
+// `--runs '[]'` still keeps an empty spacer paragraph.
+describe("edit --text '' removes the line (cell-safe)", () => {
+	test("single-shot empty --text removes the paragraph", async () => {
+		const docPath = await docFrom("empty-text", "keep me\n\ndrop me\n");
+		const result = await runCli("edit", docPath, "--at", "p1", "--text", "");
+		expect(result.exitCode).toBe(0);
+		const ast = JSON.parse((await runCli("read", docPath, "--ast")).stdout) as {
+			blocks: { runs?: { text?: string }[] }[];
+		};
+		const texts = ast.blocks.flatMap((b) =>
+			(b.runs ?? []).map((run) => run.text),
 		);
+		expect(texts).toContain("keep me");
+		expect(texts).not.toContain("drop me");
 	});
 
-	test("batch empty text points at delete --batch", async () => {
-		const docPath = await docFrom("empty-text-batch", "Drop me.\n");
+	test("batch text:'' and delete:true both remove the line", async () => {
+		const docPath = await docFrom("empty-text-batch", "a\n\nb\n\nc\n\nd\n");
 		const batch = join(tempWorkspace("empty-text-batch-file"), "b.jsonl");
-		await Bun.write(batch, `${JSON.stringify({ at: "p0", text: "" })}\n`);
-		const result = await runCli("edit", docPath, "--batch", batch);
-		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { hint: string }).hint).toContain(
-			"delete --batch",
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p1", text: "" })}\n${JSON.stringify({
+				at: "p3",
+				delete: true,
+			})}\n`,
 		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		const ast = JSON.parse((await runCli("read", docPath, "--ast")).stdout) as {
+			blocks: { runs?: { text?: string }[] }[];
+		};
+		const texts = ast.blocks.flatMap((b) =>
+			(b.runs ?? []).map((run) => run.text),
+		);
+		expect(texts).toContain("a");
+		expect(texts).toContain("c");
+		expect(texts).not.toContain("b");
+		expect(texts).not.toContain("d");
 	});
 
-	test("--runs '[]' is the keep-an-empty-paragraph escape", async () => {
+	// A `<w:tc>` must keep at least one `<w:p>` (ECMA-376 CT_Tc). Removing a
+	// cell's last paragraph BLANKS it in place rather than emitting an invalid
+	// empty `<w:tc/>` (the latent corruption the old plain delete produced).
+	test("a table cell's last paragraph is blanked, not deleted (no empty <w:tc/>)", async () => {
+		const docPath = await docFrom(
+			"empty-text-cell",
+			"| A | B |\n| --- | --- |\n| only | x |\n",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--text",
+			"",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:tc/>");
+		// Re-read: the table is intact, the neighbor cell + body rows survive.
+		const reread = (await runCli("read", docPath)).stdout;
+		expect(reread).toContain("B");
+		expect(reread).toContain("only");
+	});
+
+	test("tracked empty --text wraps the removed line in <w:del>", async () => {
+		const docPath = await docFrom("empty-text-tracked", "keep\n\ngone\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await trackedKinds(docPath)).toContain("del");
+	});
+
+	test("--runs '[]' still keeps an empty spacer paragraph", async () => {
 		const docPath = await docFrom("empty-runs", "Blank me.\n");
 		const result = await runCli("edit", docPath, "--at", "p0", "--runs", "[]");
 		expect(result.exitCode).toBe(0);
@@ -2370,9 +2479,8 @@ describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)"
 
 	// A SPAN locator is exempt: `--at pN:S-E --text ""` deletes just those chars in
 	// place (the paragraph keeps its other content) — the natural "strip an inline
-	// [Note: …]" move. The whole-paragraph guard must NOT block it (it did before,
-	// forcing a delete-span → error → replace detour that bloated a résumé run).
-	test("span --text '' deletes just those characters (not rejected)", async () => {
+	// [Note: …]" move.
+	test("span --text '' deletes just those characters (not the line)", async () => {
 		const docPath = await docFrom("empty-span", "Keep [drop me] this.\n");
 		const result = await runCli(
 			"edit",
@@ -2387,6 +2495,128 @@ describe("edit --text '' is rejected (use delete, or --runs [] to keep a blank)"
 			.stdout;
 		expect(line).toContain("Keep  this.");
 		expect(line).not.toContain("drop me");
+	});
+
+	test("removal can't combine with other fields in a batch entry", async () => {
+		const docPath = await docFrom("empty-text-combo", "x\n");
+		const batch = join(tempWorkspace("empty-text-combo-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", delete: true, text: "y" })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("delete:true is rejected on a character span", async () => {
+		const docPath = await docFrom("empty-span-delete", "Keep this.\n");
+		const batch = join(tempWorkspace("empty-span-delete-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0:0-4", delete: true })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	// Single-shot removal is EXCLUSIVE — a co-passed --clear / run-format flag
+	// would silently no-op (no node to format), and the batch path already rejects
+	// it, so the two surfaces must agree.
+	test("single-shot empty --text rejects a --clear ride-along (matches batch)", async () => {
+		const docPath = await docFrom("empty-text-clear", "drop me\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"",
+			"--clear",
+			"highlight",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("single-shot empty --text rejects a run-format ride-along", async () => {
+		const docPath = await docFrom("empty-text-bold", "drop me\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"",
+			"--bold",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	// Tracked removal of a cell's LAST paragraph: content is <w:del>'d WITHOUT a
+	// paragraph-mark del, so accept-all leaves a valid empty <w:p> (never <w:tc/>).
+	test("tracked empty --text on a cell's last paragraph + accept leaves a valid empty cell", async () => {
+		const docPath = await docFrom(
+			"empty-cell-tracked",
+			"| A | B |\n| --- | --- |\n| only | x |\n",
+		);
+		await runCli("track-changes", "on", docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--text",
+			"",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		await runCli("track-changes", "accept", docPath, "--all");
+		expect(await readDocumentXml(docPath)).not.toContain("<w:tc/>");
+		const reread = (await runCli("read", docPath)).stdout;
+		expect(reread).toContain("B");
+		expect(reread).toContain("only");
+	});
+});
+
+// M2: `dominantRpr` must bucket by STRUCTURAL rPr, not node reference — a word
+// glued from several format-identical runs (the split-run case) keeps its
+// formatting instead of being out-voted by one longer plain neighbor.
+describe("edit --text — dominant rPr on split-format tokens", () => {
+	const SPLIT_RUNS =
+		'[{"type":"text","text":"ab"},{"type":"text","text":"cd","underline":"single"},{"type":"text","text":"ef","underline":"single"},{"type":"text","text":"gh","underline":"single"},{"type":"text","text":" XXX"}]';
+
+	test("a word split across format-identical underlined runs keeps the underline", async () => {
+		const docPath = await docFrom("m2-split", "seed\n");
+		await runCli("edit", docPath, "--at", "p0", "--runs", SPLIT_RUNS);
+		await runCli("edit", docPath, "--at", "p0", "--text", "abcdefgh YYY");
+		const word = (await readParagraph(docPath, "p0")).find(
+			(run) => run.text === "abcdefgh",
+		);
+		// 6 underlined chars (across 3 runs) out-vote the 2 plain → token stays underlined.
+		expect(word?.underline).toBe("single");
+	});
+
+	test("the dominant rPr also wins under tracking (accepted runs keep the underline)", async () => {
+		const docPath = await docFrom("m2-split-track", "seed\n");
+		await runCli("edit", docPath, "--at", "p0", "--runs", SPLIT_RUNS);
+		await runCli("track-changes", "on", docPath);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"abcdefgh ZZZ",
+			"--track",
+		);
+		await runCli("track-changes", "accept", docPath, "--all");
+		const word = (await readParagraph(docPath, "p0")).find(
+			(run) => run.text === "abcdefgh",
+		);
+		expect(word?.underline).toBe("single");
 	});
 });
 

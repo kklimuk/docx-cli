@@ -20,6 +20,7 @@ import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
 } from "@core/run-formatting";
+import { removeParagraphLine } from "@core/track-changes/replace";
 import {
 	parseSpacingIndentFlags,
 	parseTaskFlag,
@@ -268,39 +269,6 @@ async function resolveEntry(
 	index: number,
 	opts: EntryOptions,
 ): Promise<ResolvedEntry> {
-	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
-	const hasClear = raw.clear !== undefined;
-	const hasSet = SET_KEYS.some((key) => raw[key] !== undefined);
-	const hasProps = PARAGRAPH_PROP_KEYS.some((key) => raw[key] !== undefined);
-	if (present.length === 0 && !hasClear && !hasSet && !hasProps) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, "clear", run-formatting (bold/color/font/…), or "style"/"alignment"/"tabs" to adjust in place`,
-		);
-	}
-	if (present.length > 1) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
-		);
-	}
-	// A content-free set-formatting entry can't also carry clear/style/alignment —
-	// those are separate operations (do them in separate entries).
-	if (present.length === 0 && hasSet && (hasClear || hasProps)) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: set-formatting (bold/color/font/…) can't combine with "clear"/"style"/"alignment" in one entry — use separate entries`,
-		);
-	}
-	// A content key, "set" alone (format existing text), "clear" alone, a content
-	// key + "set"/"clear" (fill then format/strip), or "style"/"alignment" alone.
-	const kind = (present[0] ??
-		(hasSet ? "set" : hasClear ? "clear" : "props")) as
-		| (typeof CONTENT_KEYS)[number]
-		| "set"
-		| "clear"
-		| "props";
-
 	const at = raw.at;
 	if (typeof at !== "string" || at.length === 0) {
 		throw new EntryError("USAGE", `entry ${index}: "at" is required`);
@@ -353,6 +321,83 @@ async function resolveEntry(
 	}
 
 	const span = target.span ?? null;
+	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
+	const hasClear = raw.clear !== undefined;
+	const hasSet = SET_KEYS.some((key) => raw[key] !== undefined);
+	const hasProps = PARAGRAPH_PROP_KEYS.some((key) => raw[key] !== undefined);
+
+	if (raw.delete !== undefined && typeof raw.delete !== "boolean") {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "delete" must be true (a boolean)`,
+		);
+	}
+	const wantsDelete = raw.delete === true;
+	// Line removal — the move weak agents reach for to clear a placeholder: an
+	// explicit `"delete": true`, OR empty whole-paragraph "text" (a span's
+	// `text:""` still deletes just those characters in place). It removes the
+	// line via the same cell-safe path as `docx delete` and is EXCLUSIVE — it
+	// can't carry any other field.
+	const isWholeEmptyText =
+		!span &&
+		!wantsDelete &&
+		present.length === 1 &&
+		present[0] === "text" &&
+		raw.text === "";
+	if (wantsDelete && span) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "delete" removes a whole paragraph, not a character span (${at}) — clear span text with {"at":"${at}","text":""}.`,
+		);
+	}
+	if (wantsDelete || isWholeEmptyText) {
+		const carriesMore =
+			hasClear || hasSet || hasProps || (wantsDelete && present.length > 0);
+		if (carriesMore) {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: removing the line (empty "text" / "delete": true) can't combine with other fields — drop them, or use "runs": [] to keep an empty spacer paragraph.`,
+			);
+		}
+		const author =
+			typeof raw.author === "string" ? raw.author : opts.authorFlag;
+		const apply = () =>
+			removeParagraphLine(document, blockRef, {
+				track: opts.track,
+				author,
+			});
+		return { index, locatorString: at, node: blockRef.node, span: null, apply };
+	}
+
+	if (present.length === 0 && !hasClear && !hasSet && !hasProps) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: no content — provide one of ${CONTENT_KEYS.join(", ")}, "clear", run-formatting (bold/color/font/…), "style"/"alignment"/"tabs", or "delete": true / empty "text" to remove the line`,
+		);
+	}
+	if (present.length > 1) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: provide exactly one content field, got ${present.join(", ")}`,
+		);
+	}
+	// A content-free set-formatting entry can't also carry clear/style/alignment —
+	// those are separate operations (do them in separate entries).
+	if (present.length === 0 && hasSet && (hasClear || hasProps)) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: set-formatting (bold/color/font/…) can't combine with "clear"/"style"/"alignment" in one entry — use separate entries`,
+		);
+	}
+	// A content key, "set" alone (format existing text), "clear" alone, a content
+	// key + "set"/"clear" (fill then format/strip), or "style"/"alignment" alone.
+	const kind = (present[0] ??
+		(hasSet ? "set" : hasClear ? "clear" : "props")) as
+		| (typeof CONTENT_KEYS)[number]
+		| "set"
+		| "clear"
+		| "props";
+
 	const apply = await buildApply(
 		document,
 		raw,
@@ -494,16 +539,10 @@ async function buildWholeParagraphContent(
 ): Promise<() => XmlNode> {
 	const paragraphOptions = readParagraphOptions(document, raw, index);
 	if (kind === "text") {
+		// Whole-paragraph empty "text" never reaches here — `resolveEntry`
+		// intercepts it as a line removal (the cell-safe `removeParagraphLine`
+		// path). A non-empty whole-paragraph text fill lands as usual.
 		const text = requireString(raw.text, index, "text");
-		// Empty text leaves a blank space-consuming paragraph, not a removed line —
-		// redirect to the delete batch (the honest verb for removals).
-		if (text === "") {
-			throw new EntryError(
-				"USAGE",
-				`entry ${index}: empty "text" leaves a blank paragraph in place, it doesn't remove the line (${raw.at}).`,
-				'Remove lines with `docx delete --batch` ({ "at": "pN" } per line). To keep an empty spacer, use "runs": [] instead.',
-			);
-		}
 		const format = readTextFormat(raw, index);
 		return () =>
 			new Edit(document).paragraph(

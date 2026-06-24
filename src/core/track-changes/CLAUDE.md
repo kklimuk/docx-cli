@@ -5,7 +5,7 @@ Five files behind the `@core/track-changes` barrel ([index.tsx](index.tsx)):
 - [index.tsx](index.tsx) — the `TrackChanges` lens + small free helpers (`resolveAuthor`, `resolveDate`, `convertTextToDelText`)
 - [apply.ts](apply.ts) — accept/reject state machine: `previewTrackedChanges`, `applyTrackedChanges`, `collectTrackedChanges`, the `actionFor` dispatch table, body-side note pairing, table-grid resync
 - [emit.tsx](emit.tsx) — leaf primitives: `<Ins meta>`, `<Del meta>`, `markParagraphMarkAs(paragraph, kind, meta)` (drops a self-closing ins/del marker into `<w:pPr><w:rPr>`)
-- [replace.tsx](replace.tsx) — range edit/delete shapes empirically validated against Word: `applyTrackedRangeReplace`, `applyTrackedRangeDelete`, `applyUntrackedRangeReplace`, `applyUntrackedRangeDelete`, the shared `assertParagraphOnlyTrackedRange` guard + `TrackedRangeConflictError`, and `applyFormattingPreservingEdit` (the word-level diff for `edit --text`)
+- [replace.tsx](replace.tsx) — range edit/delete shapes empirically validated against Word: `applyTrackedRangeReplace`, `applyTrackedRangeDelete`, `applyUntrackedRangeReplace`, `applyUntrackedRangeDelete`, the shared `assertParagraphOnlyTrackedRange` guard + `TrackedRangeConflictError`, `applyFormattingPreservingEdit` (the word-level diff for `edit --text`), and `removeParagraphLine` — the cell-safe single-paragraph removal shared by `docx delete --at pN` and `docx edit --at pN --text ""` (a `<w:tc>`'s last paragraph is blanked, not deleted, so we never emit an invalid empty `<w:tc/>`)
 - [preserve-formatting.tsx](preserve-formatting.tsx) — the LCS-based word-level diff that drives `applyFormattingPreservingEdit`: `extractOldTokens`, `tokenize`, `diffTokens`, `buildTrackedRuns`, `buildUntrackedRuns`
 
 ## TrackChanges lens API
@@ -18,6 +18,7 @@ Five files behind the `@core/track-changes` barrel ([index.tsx](index.tsx)):
 - `preview(target, verb)` — accept/reject preview for `--dry-run`. Throws `TrackedChangeNotFoundError` on unknown id.
 - `accept(target)` / `reject(target)` — apply; returns `ChangeRecord[]`. Caller saves.
 - `applyInsertion(paragraph, authorFlag?)` / `applyDeletion(paragraph, authorFlag?)` — wrap a freshly-built paragraph's trackable children (`w:r`, `m:oMath`, `m:oMathPara`) in `<w:ins>` / `<w:del>` and mark its paragraph break. Used by `Insert.paragraph` and `delete --at pN` under tracking. Non-trackable siblings (e.g. `<w:pPr>`) pass through at their existing positions via `wrapContiguousTrackable`.
+- `applyContentDeletion(paragraph, authorFlag?)` — `applyDeletion` WITHOUT the paragraph-mark del: wraps content in `<w:del>` but keeps the `<w:p>`. Used by `removeParagraphLine` (replace.tsx) for a table cell's last paragraph, where accept-all must leave a valid empty paragraph rather than merge the cell away.
 
 ## The reader is the single source of `tcN` ids
 

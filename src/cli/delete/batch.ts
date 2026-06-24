@@ -2,9 +2,9 @@ import {
 	type BlockReference,
 	LocatorParseError,
 	LocatorResolveError,
-	TrackChanges,
 	type XmlNode,
 } from "@core";
+import { removeParagraphLine } from "@core/track-changes/replace";
 import { readJsonlObjects } from "../parse-helpers";
 import {
 	EXIT,
@@ -135,11 +135,18 @@ export async function runDeleteBatch(
 	}
 
 	for (const { ref } of refs) {
-		if (tracked) {
-			new TrackChanges(document).applyDeletion(ref.node, authorFlag);
+		if (ref.node.tag === "w:p") {
+			// Paragraph removal goes through the shared, cell-safe helper (blanks
+			// rather than deletes a cell's last paragraph). Tracked → `<w:del>`;
+			// untracked → splice by live `indexOf` (earlier removals shift
+			// siblings, but the held node ref stays valid).
+			removeParagraphLine(document, ref, {
+				track: tracked,
+				author: authorFlag,
+			});
 		} else {
-			// Find the CURRENT index each time — earlier removals shift siblings,
-			// but the held node ref stays valid, so indexOf is always right.
+			// Non-paragraph block (a table; tracked non-`<w:p>` was already
+			// rejected above). Splice by the CURRENT index.
 			const index = ref.parent.indexOf(ref.node);
 			if (index >= 0) ref.parent.splice(index, 1);
 		}

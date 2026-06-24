@@ -143,6 +143,22 @@ export class TrackChanges {
 		markParagraphMarkAs(paragraph, "del", mintMeta());
 	}
 
+	/** Wrap a paragraph's content in `<w:del>` WITHOUT marking the paragraph
+	 * break deleted — empties the line's text while keeping the `<w:p>` itself.
+	 * The tracked counterpart of blanking a paragraph in place: used when the
+	 * target is the ONLY paragraph in its container (a `<w:tc>` must keep at
+	 * least one `<w:p>`), so accept-all leaves a valid empty paragraph rather
+	 * than an empty `<w:tc/>`. See `removeParagraphLine` in [replace.tsx](./replace.tsx). */
+	applyContentDeletion(paragraph: XmlNode, authorFlag?: string): void {
+		const mintMeta = this.metaMinter(authorFlag);
+		paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => {
+			const converted = runs.map((child) =>
+				child.tag === "w:r" ? convertTextToDelText(child) : child,
+			);
+			return <Del meta={mintMeta()}>{converted}</Del>;
+		});
+	}
+
 	/** A revision-meta minter backed by one allocator + a fixed author/date —
 	 * for operations that emit several coupled revisions in one call. Pass a
 	 * shared `allocator` to keep ids monotonic across SEVERAL calls (e.g. every
