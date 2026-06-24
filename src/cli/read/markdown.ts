@@ -130,7 +130,7 @@ export function renderMarkdown(
 		referencedEndnoteIds: new Set(),
 		referencedTrackedChanges: new Map(),
 		orderedCounters: new Map(),
-		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)),
+		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)?.geometry),
 		governingColumns: computeGoverningColumns(blocks),
 		wrappingTabLines: [],
 	};
@@ -573,20 +573,45 @@ function formatImageNote(run: ImageRun, contentEmu: number): string {
 }
 
 /** The section break carrying the document-wide geometry — the trailing
- * (mandatory) sectPr, which is the last section break. Scans from the end for the
- * last break declaring ANY geometry. Keying on page width alone would miss a
- * sectPr that sets non-default `<w:pgMar>` but inherits `<w:pgSz>` (legal — pgSz
- * is schema-optional), hiding the margin deviation AND computing the wrong
- * content width. formatPageNote / contentWidthEmu supply per-field defaults, so a
- * margins-only break is safe to return. */
-function documentGeometry(blocks: Block[]): SectionBreak | undefined {
-	for (let index = blocks.length - 1; index >= 0; index--) {
-		const block = blocks[index];
-		if (block?.type === "sectionBreak" && hasGeometry(block)) {
-			return block;
-		}
-	}
-	return undefined;
+ * Returns the FIRST geometry-bearing section (page 1 — what the reader sees first
+ * and the most intuitive "document geometry"), plus whether any later
+ * geometry-bearing section DIFFERS from it. The `varies` flag is the honesty
+ * guard: a multi-section doc can mix page setups (e.g. one landscape section), and
+ * a single doc-level note would otherwise claim page 1's geometry for the whole
+ * file — the exact trap that read "landscape" while page 1 rendered portrait.
+ * Keying on any-geometry (not page width alone) catches a margins-only sectPr that
+ * inherits `<w:pgSz>` (legal — pgSz is schema-optional). */
+function documentGeometry(
+	blocks: Block[],
+): { geometry: SectionBreak; varies: boolean } | undefined {
+	const geometric = blocks.filter(
+		(block): block is SectionBreak =>
+			block.type === "sectionBreak" && hasGeometry(block),
+	);
+	const first = geometric[0];
+	if (!first) return undefined;
+	const signature = geometrySignature(first);
+	const varies = geometric.some(
+		(block) => geometrySignature(block) !== signature,
+	);
+	return { geometry: first, varies };
+}
+
+/** A comparable signature of a section's RESOLVED page geometry (defaults filled,
+ * size orientation-normalized) — used to detect whether sections share one page
+ * setup. Mirrors the fields `formatPageNote` surfaces. */
+function geometrySignature(block: SectionBreak): string {
+	const width = block.pageWidth ?? DEFAULT_PAGE.width;
+	const height = block.pageHeight ?? DEFAULT_PAGE.height;
+	const orientation =
+		block.pageOrientation ?? (width > height ? "landscape" : "portrait");
+	const short = Math.min(width, height);
+	const long = Math.max(width, height);
+	const top = block.marginTop ?? DEFAULT_PAGE.margin;
+	const right = block.marginRight ?? DEFAULT_PAGE.margin;
+	const bottom = block.marginBottom ?? DEFAULT_PAGE.margin;
+	const left = block.marginLeft ?? DEFAULT_PAGE.margin;
+	return [orientation, short, long, top, right, bottom, left].join(",");
 }
 
 /** True when a section break declares any page geometry (size, orientation, or
@@ -611,8 +636,11 @@ function hasGeometry(block: SectionBreak): boolean {
  * number for layout and image-overflow reasoning. A DROPPED read-time hint —
  * geometry survives edits via in-place mutation; `read --ast` carries exact
  * twips. */
-function formatPageNote(geometry: SectionBreak | undefined): string {
-	if (!geometry) return "";
+function formatPageNote(
+	document: { geometry: SectionBreak; varies: boolean } | undefined,
+): string {
+	if (!document) return "";
+	const { geometry, varies } = document;
 	const width = geometry.pageWidth ?? DEFAULT_PAGE.width;
 	const height = geometry.pageHeight ?? DEFAULT_PAGE.height;
 	const left = geometry.marginLeft ?? DEFAULT_PAGE.margin;
@@ -644,10 +672,18 @@ function formatPageNote(geometry: SectionBreak | undefined): string {
 			]);
 		}
 	}
-	// Nothing deviated → no note (the document is plain default Letter).
-	if (pairs.length === 0) return "";
+	// Nothing deviated AND geometry is uniform → no note (plain default Letter).
+	// When sections VARY, emit even if page 1 is default, so the note never
+	// implies a uniform geometry the document doesn't have.
+	if (pairs.length === 0 && !varies) return "";
 	pairs.push(["text-width", `${twipsToInches(width - left - right)}in`]);
-	return formatNote("page", pairs);
+	// `varies` warns that LATER sections differ from page 1 (this note describes
+	// page 1 / the leading section only) — re-apply per section, or `read --ast`.
+	if (varies) pairs.push(["varies", "by-section"]);
+	// Lead with the section's locator (like docx:cell/docx:p) so an agent can
+	// re-apply: `docx sections --at sN --orientation/--size/--margins …`. The
+	// orientation/size/margins values above are emitted in the exact flag units.
+	return formatNote("page", pairs, [geometry.id]);
 }
 
 function isCodeBlockParagraph(block: Block): block is Paragraph {

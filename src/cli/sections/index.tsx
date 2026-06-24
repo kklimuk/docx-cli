@@ -5,14 +5,16 @@ import {
 	EditError,
 	Insert,
 	InsertError,
-	isSectionType,
+	inheritPageGeometry,
 	type Locator,
 	LocatorParseError,
+	type PageGeometry,
 	parseLocator,
 	type SectionType,
 	TrackChanges,
 } from "@core";
 import type { XmlNode } from "@core/parser";
+import { parseSectionFlags } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -29,42 +31,73 @@ import {
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx sections — multi-column layout & section breaks
+/** The parsed section flags (columns/type + page geometry) plus a derived flag
+ *  for "any page geometry was requested" — page geometry is only valid on an
+ *  existing section (sN), never on a range/paragraph column wrap. */
+type SectionFlags = {
+	columns?: number;
+	sectionType?: SectionType;
+} & PageGeometry;
+
+function hasPageGeometry(flags: SectionFlags): boolean {
+	return (
+		flags.pageSize !== undefined ||
+		flags.orientation !== undefined ||
+		flags.margins !== undefined
+	);
+}
+
+const HELP = `docx sections — multi-column layout, section breaks & page setup
 
 Usage:
-  docx sections FILE --at LOCATOR --columns N [options]
+  docx sections FILE --at LOCATOR (--columns N | page setup) [options]
 
-The verb for section layout — multi-column flow and section breaks — so you
-don't have to hand-build them with the right OOXML semantics. This is the ONLY
-way to add/change column layout; \`insert\` no longer takes --section (a raw
-section break formats the content ABOVE it, which is the classic off-by-one).
-Two addressing modes:
+The verb for everything that lives in a \`<w:sectPr>\` — multi-column flow,
+section breaks, AND page geometry (margins / orientation / size) — so you don't
+have to hand-build them with the right OOXML semantics. This is the ONLY way to
+add/change column layout; \`insert\` no longer takes --section (a raw section
+break formats the content ABOVE it, which is the classic off-by-one).
 
+Addressing:
+  --at sN      Edit an EXISTING section break sN in place — its columns, type,
+               and/or page geometry. PAGE SETUP applies to the whole document via
+               its trailing section break (the LAST sN — s0 in a single-section
+               doc; \`docx read FILE\` prints the section's id on the
+               \`<!-- docx:page sN … -->\` note when geometry deviates from default).
   --at pN-pM   Wrap the paragraph range pN…pM in its own N-column section
-               (inserts the bounding continuous section breaks for you, so the
-               columns land on EXACTLY pN…pM). Also accepts a single paragraph
-               (--at pN). THIS is how you put text in columns — name the range.
-  --at sN      Set the column count on an EXISTING section break sN (the section
-               whose content ENDS at sN). Equivalent to \`edit --at sN --columns N\`.
+               (inserts the bounding continuous breaks). Also accepts a single
+               paragraph (--at pN). THIS is how you put text in columns — name the
+               range. (Column wrap only; set page geometry on the resulting sN.)
 
-Options:
-  --at LOCATOR      Paragraph range (pN-pM), single paragraph (pN), or section (sN)
+Column / break options:
   --columns N       Number of columns (>= 1; use 1 to collapse back to single column)
-  --type T          Section type for the wrapping break: continuous (default),
-                    nextPage, evenPage, oddPage, nextColumn. Only meaningful with
-                    a pN-pM/pN range; with sN it overrides the section's type.
+  --type T          Section type: continuous (default), nextPage, evenPage,
+                    oddPage, nextColumn. With a range it's the wrapping break's
+                    type; with sN it overrides the section's type.
+
+Page-setup options (with --at sN — set the document/section page geometry in place):
+  --orientation O   portrait | landscape (landscape swaps the page dimensions)
+  --size SIZE       letter | legal | tabloid | a4 | a3 | a5, or WxH inches
+                    (e.g. 8.5x11in, 8.5x14). A W>H size implies landscape.
+  --margins M       One inch value (uniform, e.g. 1 or 1in) OR four comma-separated
+                    values in CSS order top,right,bottom,left (e.g. 1,1,1,1.5).
+                    Negative values are allowed (content into the margin).
+
+General:
+  --at LOCATOR      Section (sN), paragraph range (pN-pM), or single paragraph (pN)
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   --track           Record as a tracked change even when the doc toggle is off
+                    (page/column/type edits record as ONE <w:sectPrChange>)
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -v, --verbose     Print the full success ack JSON
   -h, --help        Show this help
 
-Agent tip: VERIFY LAYOUT VISUALLY. \`docx read\` shows the section as a
-\`<!-- docx:section … cols="N" -->\` annotation but NOT how the columns actually
-flow on the page (balance, overflow). After setting columns, render and look:
+Agent tip: VERIFY LAYOUT VISUALLY. \`docx read\` shows columns as a
+\`<!-- docx:section … cols="N" -->\` annotation and page geometry as a leading
+\`<!-- docx:page sN orientation=… margins=… -->\` note, but NOT how content flows
+on the page. After a layout change, render and look:
   docx render FILE --out pages/
-Adjust the range and re-render until the columns read the way you intended.
 
 Output:
   Prints a one-line confirmation on success (exit 0); --verbose prints {ok:true, …}. Positional ids shift
@@ -74,13 +107,19 @@ Output:
 Examples:
   docx sections doc.docx --at p4-p9 --columns 2
   docx sections doc.docx --at p4-p9 --columns 3 --type continuous
-  docx sections doc.docx --at s2 --columns 1     # collapse section s2 to one column
+  docx sections doc.docx --at s2 --columns 1            # collapse section s2 to one column
+  docx sections doc.docx --at s0 --orientation landscape # whole-doc landscape (trailing sN)
+  docx sections doc.docx --at s0 --margins 1in --size letter
+  docx sections doc.docx --at s0 --margins 0.75,1,0.75,1 # top,right,bottom,left
 `;
 
 const OPTION_SPEC = {
 	at: { type: "string" },
 	columns: { type: "string" },
 	type: { type: "string" },
+	orientation: { type: "string" },
+	size: { type: "string" },
+	margins: { type: "string" },
 	author: { type: "string" },
 	track: { type: "boolean" },
 	...SAVE_FLAGS,
@@ -88,13 +127,18 @@ const OPTION_SPEC = {
 
 type Options = {
 	filePath: string;
-	count: number;
-	sectionType?: SectionType;
+	flags: SectionFlags;
 	authorFlag?: string;
 	trackFlag: boolean;
 	outputPath?: string;
 	dryRun: boolean;
 };
+
+// Wrapping a range/paragraph in a fresh section is a COLUMN operation — page
+// geometry has no meaning there (it applies to an existing sectPr), so reject it
+// with a pointer to the right move.
+const WRAP_REJECTS_GEOMETRY =
+	"--orientation/--size/--margins set page geometry on an EXISTING section (--at sN); they don't apply to a column wrap. Wrap the range first, then `docx sections --at sN --orientation/--size/--margins …` (the trailing sN is the whole document).";
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
@@ -112,25 +156,13 @@ export async function run(args: string[]): Promise<number> {
 	if (!at) {
 		return fail(
 			"USAGE",
-			"Missing --at LOCATOR (a range pN-pM or a section sN)",
+			"Missing --at LOCATOR (a section sN, or a range pN-pM to wrap in columns)",
 			HELP,
 		);
 	}
 
-	const count = parseCount(parsed.values.columns as string | undefined);
-	if (typeof count === "number" && Number.isNaN(count)) {
-		return fail("USAGE", `--columns must be a positive integer`, HELP);
-	}
-	if (count === undefined) return fail("USAGE", "Missing --columns N", HELP);
-
-	const typeRaw = parsed.values.type as string | undefined;
-	if (typeRaw !== undefined && !isSectionType(typeRaw)) {
-		return fail(
-			"USAGE",
-			`Invalid --type: ${typeRaw}`,
-			"Valid values: continuous, nextPage, evenPage, oddPage, nextColumn",
-		);
-	}
+	const flags = await parseSectionFlags(parsed.values);
+	if (typeof flags === "number") return flags;
 
 	let locator: Locator;
 	try {
@@ -147,17 +179,26 @@ export async function run(args: string[]): Promise<number> {
 
 	const opts: Options = {
 		filePath,
-		count,
-		sectionType: typeRaw,
+		flags,
 		authorFlag: parsed.values.author as string | undefined,
 		trackFlag: Boolean(parsed.values.track),
 		outputPath: parsed.values.output as string | undefined,
 		dryRun: Boolean(parsed.values["dry-run"]),
 	};
 
-	// pN-pM range, or a single pN paragraph, gets wrapped in a fresh section.
-	// sN edits an existing section's column count in place.
+	// pN-pM range, or a single pN paragraph, gets wrapped in a fresh column
+	// section (requires --columns; page geometry not allowed). sN edits an
+	// existing section in place — columns, type, and/or page geometry.
 	if (locator.kind === "blockRange") {
+		if (hasPageGeometry(flags))
+			return fail("USAGE", WRAP_REJECTS_GEOMETRY, HELP);
+		if (flags.columns === undefined) {
+			return fail(
+				"USAGE",
+				"Wrapping a range in a section needs --columns N",
+				HELP,
+			);
+		}
 		const range = await resolveBlockRangeOrFail(document, at);
 		if (typeof range === "number") return range;
 		return wrapRange(
@@ -174,21 +215,42 @@ export async function run(args: string[]): Promise<number> {
 	if (typeof blockRef === "number") return blockRef;
 
 	if (blockRef.node.tag === "w:sectPr") {
+		if (
+			flags.columns === undefined &&
+			flags.sectionType === undefined &&
+			!hasPageGeometry(flags)
+		) {
+			return fail(
+				"USAGE",
+				"Section edit needs --columns, --type, --orientation, --size, or --margins",
+				HELP,
+			);
+		}
 		return editSection(document, blockRef, at, opts);
 	}
 	if (blockRef.node.tag === "w:p") {
+		if (hasPageGeometry(flags))
+			return fail("USAGE", WRAP_REJECTS_GEOMETRY, HELP);
+		if (flags.columns === undefined) {
+			return fail(
+				"USAGE",
+				"Wrapping a paragraph in a section needs --columns N",
+				HELP,
+			);
+		}
 		const index = blockRef.parent.indexOf(blockRef.node);
 		return wrapRange(document, blockRef.parent, index, index, at, opts);
 	}
 	return fail(
 		"INVALID_LOCATOR",
-		`columns needs a section (sN) or a paragraph range (pN-pM); ${at} is neither`,
+		`--at needs a section (sN) or a paragraph range (pN-pM); ${at} is neither`,
 		HELP,
 	);
 }
 
-/** Set the column count on an existing section break — the thin-wrapper path,
- * identical to `edit --at sN --columns N`. */
+/** Edit an existing section break in place — columns, type, and/or page geometry
+ * (margins/orientation/size). The thin-wrapper path, identical to
+ * `edit --at sN …` for columns/type; page geometry rides the same Edit.section. */
 async function editSection(
 	document: Document,
 	blockRef: BlockReference,
@@ -196,11 +258,13 @@ async function editSection(
 	opts: Options,
 ): Promise<number> {
 	try {
-		new Edit(document).section(
-			blockRef,
-			{ columns: opts.count, sectionType: opts.sectionType },
-			{ authorFlag: opts.authorFlag, track: opts.trackFlag },
-		);
+		new Edit(document).section(blockRef, opts.flags, {
+			authorFlag: opts.authorFlag,
+			// resolveTracked folds in the doc toggle — passing the raw `--track`
+			// boolean (false) would short-circuit Edit.section's `track ?? toggle`
+			// and skip tracking even when the document toggle is on.
+			track: resolveTracked(document, opts.trackFlag),
+		});
 	} catch (error) {
 		if (error instanceof EditError) return fail(error.code, error.message);
 		throw error;
@@ -246,6 +310,11 @@ async function wrapRange(
 	}
 
 	const governing = governingColumns(parent, endIndex + 1);
+	// The section currently governing the wrapped range — its page geometry
+	// (size/orientation/margins) must flow into the fresh sentinel sectPrs, or
+	// the wrap silently reverts those new sections to portrait-Letter (the
+	// "landscape vanishes after adding columns" footgun).
+	const governingGeometry = governingSectPr(parent, endIndex + 1);
 	const track = resolveTracked(document, opts.trackFlag);
 	const insert = new Insert(document);
 	// Shared allocator so the two tracked inserts don't mint duplicate revision
@@ -277,8 +346,8 @@ async function wrapRange(
 			{ node: endNode, parent },
 			{
 				kind: "section",
-				columns: opts.count,
-				sectionType: opts.sectionType ?? "continuous",
+				columns: opts.flags.columns,
+				sectionType: opts.flags.sectionType ?? "continuous",
 			},
 			{},
 			{ placement: "after", authorFlag: opts.authorFlag, track, allocator },
@@ -299,6 +368,16 @@ async function wrapRange(
 		if (error instanceof InsertError)
 			return fail(error.code, error.message, error.hint);
 		throw error;
+	}
+
+	// Carry the governing section's page geometry onto every fresh sentinel sectPr
+	// so the wrap preserves the document's size/orientation/margins (each section's
+	// geometry is independent — without this the new sections revert to portrait).
+	if (governingGeometry) {
+		for (const block of [...afterBlocks, ...beforeBlocks]) {
+			const sectPr = block.findChild("w:pPr")?.findChild("w:sectPr");
+			if (sectPr) inheritPageGeometry(sectPr, governingGeometry);
+		}
 	}
 
 	if (opts.dryRun) {
@@ -343,17 +422,25 @@ function columnsOf(sectPr: XmlNode): number {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
-/** Parse `--count`. Returns undefined when absent, NaN-number on invalid, or
- * the positive integer. */
-function parseCount(raw: string | undefined): number | undefined {
-	if (raw === undefined) return undefined;
-	// Require pure digits — bare `Number.parseInt` would silently TRUNCATE
-	// "2.5" → 2 and "1e2" → 1, both of which then pass the `>= 1` check and
-	// write a wrong column count with no error.
-	if (!/^\d+$/.test(raw.trim())) return Number.NaN;
-	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isFinite(parsed) || parsed < 1) return Number.NaN;
-	return parsed;
+/** The `<w:sectPr>` governing the block at/after `fromIndex` — the first section
+ * break scanning forward (an inline sectPr in a paragraph's pPr, or the trailing
+ * body sectPr). Its page geometry is what a fresh column-wrap section inherits.
+ * Returns undefined only if no sectPr follows (shouldn't happen — the trailing
+ * one is mandatory). */
+function governingSectPr(
+	parent: XmlNode[],
+	fromIndex: number,
+): XmlNode | undefined {
+	for (let index = fromIndex; index < parent.length; index++) {
+		const node = parent[index];
+		if (!node) continue;
+		if (node.tag === "w:sectPr") return node;
+		if (node.tag === "w:p") {
+			const inline = node.findChild("w:pPr")?.findChild("w:sectPr");
+			if (inline) return inline;
+		}
+	}
+	return undefined;
 }
 
 async function commit(
@@ -361,6 +448,11 @@ async function commit(
 	opts: Options,
 	meta: { at: string; mode: "section" | "range"; dryRunOnly?: boolean },
 ): Promise<number> {
+	// `columnCount` rides along for --verbose/JSON consumers when columns were set
+	// (a page-only edit has none). `locator` (not the count) is the salient field
+	// the ack summarizer reports, so a page edit prints "sections s0", not a count.
+	const columnCount =
+		opts.flags.columns !== undefined ? { columnCount: opts.flags.columns } : {};
 	if (opts.dryRun || meta.dryRunOnly) {
 		// Dry-run previews always print (no `ok` field), even without --verbose.
 		await respond({
@@ -368,7 +460,7 @@ async function commit(
 			dryRun: true,
 			path: opts.filePath,
 			locator: meta.at,
-			columnCount: opts.count,
+			...columnCount,
 			mode: meta.mode,
 			...(opts.outputPath ? { output: opts.outputPath } : {}),
 		});
@@ -376,17 +468,13 @@ async function commit(
 	}
 	await document.save(opts.outputPath);
 	const destination = opts.outputPath ?? opts.filePath;
-	// `locator` (not `count`) is the salient field: the generic ack summarizer
-	// reads `count` as a CHANGE tally and would print "columns 2 changes" for a
-	// 2-column layout. The locator yields the right one-liner ("columns p2-p4");
-	// the column count rides as `columnCount` for --verbose/JSON consumers.
 	await respondAck(
 		{
 			ok: true,
 			operation: "sections",
 			path: destination,
 			locator: meta.at,
-			columnCount: opts.count,
+			...columnCount,
 			mode: meta.mode,
 		},
 		renderVerifyHint(destination),

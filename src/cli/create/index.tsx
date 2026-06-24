@@ -1,11 +1,14 @@
 import {
+	applyPageGeometry,
 	Document,
 	literalParagraphs,
 	MarkdownImport,
 	MarkdownImportError,
+	type PageGeometry,
 	type XmlNode,
 } from "@core";
 import { buildBlankPackage } from "@core/create";
+import { parseSectionFlags } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -39,6 +42,11 @@ Options:
                      Footnote/endnote bodies keep bold/italic + hyperlinks;
                      footnote labels renumber to [^fnN] on import. (Under
                      track-changes, note bodies flatten to plain text.)
+  --orientation O    Page orientation: portrait (default) | landscape
+  --size SIZE        Page size: letter (default) | legal | tabloid | a4 | a3 | a5,
+                     or WxH inches (e.g. 8.5x14in). A W>H size implies landscape.
+  --margins M        Page margins: one inch value (uniform, e.g. 1in) OR four
+                     comma-separated top,right,bottom,left (e.g. 1,1,1,1.5).
   --force            Overwrite if FILE already exists
   --dry-run          Print what would be created; do not write the file
   -v, --verbose      Print the success ack JSON (default: a one-line confirmation)
@@ -56,6 +64,8 @@ Examples:
   cat draft.md | docx create out.docx --from -
   docx create out.docx --text-file reviewer-notes.txt
   cat notes.txt | docx create out.docx --text-file -
+  docx create out.docx --from draft.md --orientation landscape --size a4
+  docx create out.docx --text "Memo" --margins 1.25in
 
 For a doc that opens with a code block, chain create with insert:
   docx create out.docx
@@ -71,6 +81,9 @@ export async function run(args: string[]): Promise<number> {
 			text: { type: "string" },
 			"text-file": { type: "string" },
 			from: { type: "string" },
+			orientation: { type: "string" },
+			size: { type: "string" },
+			margins: { type: "string" },
 			force: { type: "boolean" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -106,6 +119,21 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
+	// Page geometry (--orientation/--size/--margins). parseSectionFlags also reads
+	// columns/type, which `create` doesn't expose (unknown flags are rejected by
+	// parseArgs), so only the geometry slice is ever populated here.
+	const sectionFlags = await parseSectionFlags(parsed.values);
+	if (typeof sectionFlags === "number") return sectionFlags;
+	const geometry: PageGeometry = {
+		pageSize: sectionFlags.pageSize,
+		orientation: sectionFlags.orientation,
+		margins: sectionFlags.margins,
+	};
+	const hasGeometry =
+		geometry.pageSize !== undefined ||
+		geometry.orientation !== undefined ||
+		geometry.margins !== undefined;
+
 	const dryRun = Boolean(parsed.values["dry-run"]);
 	// `create`'s positional FILE *is* the destination (unlike the mutators,
 	// which edit an existing FILE and use -o to write elsewhere) — so there's no
@@ -128,6 +156,7 @@ export async function run(args: string[]): Promise<number> {
 			...(text !== undefined ? { text } : {}),
 			...(textFilePath !== undefined ? { textFile: textFilePath } : {}),
 			...(fromPath !== undefined ? { from: fromPath } : {}),
+			...(hasGeometry ? { page: geometry } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -157,6 +186,14 @@ export async function run(args: string[]): Promise<number> {
 		const applied = await applyLiteralToBody(destination, textFilePath);
 		if (typeof applied === "number") return applied;
 		blockCount = applied.blockCount;
+	}
+
+	// Apply page geometry to the fresh doc's trailing <w:sectPr> by re-opening
+	// (same build → re-open → mutate → save pattern --from/--text-file use). No
+	// tracking: a brand-new document has no prior state to snapshot.
+	if (hasGeometry) {
+		const applied = await applyGeometryToBody(destination, geometry);
+		if (typeof applied === "number") return applied;
 	}
 
 	await respondAck({
@@ -229,6 +266,28 @@ async function applyLiteralToBody(
 
 	const document = await Document.open(docxPath);
 	return replacePlaceholderAndSave(document, literalParagraphs(source));
+}
+
+/** Re-open the freshly-written doc and apply page geometry to its trailing
+ *  `<w:sectPr>` (the document-wide one buildBlankPackage emits). Returns an exit
+ *  code on failure, or void on success. */
+async function applyGeometryToBody(
+	docxPath: string,
+	geometry: PageGeometry,
+): Promise<number | undefined> {
+	const document = await Document.open(docxPath);
+	const sectPr = document.body.body.children
+		.filter((child) => child.tag === "w:sectPr")
+		.pop();
+	if (!sectPr) {
+		return fail(
+			"USAGE",
+			"Internal: trailing <w:sectPr> not found in blank-package body",
+		);
+	}
+	applyPageGeometry(sectPr, geometry);
+	await document.save();
+	return undefined;
 }
 
 /** Replace the blank package's single seed `<w:p>` with `blocks` and save.

@@ -43,10 +43,18 @@ These are paragraph properties — set them in place; you don't need to retype t
 text. `docx read` shows the current spacing/indent as `docx:p … space-after="…"`
 hints, and `docx read --ast` shows the exact values.
 
+## Fit it on one page (page margins)
+
+The default 1-inch margins waste space. Set the **page margins to 0.5 inch** on all
+four sides so the résumé fits on a single page. This is page setup (a section/page
+property), not a paragraph property — set it once for the whole document. `docx read`
+surfaces page geometry as a `docx:page … margins="…"` note.
+
 ## What "done" looks like
 
 Every placeholder (name, contact, school, degree, dates, position, bullets) is
 replaced with the candidate's real details, the `[Note: ...]` helper text is gone,
 the section headings (Education / Experience / Leadership & Activities) keep their
-heading style, the dates still right-align against the tab stop, and the layout has
-breathing room — space before the section headings and after the entries.
+heading style, the dates still right-align against the tab stop, the layout has
+breathing room — space before the section headings and after the entries — and the
+page margins are 0.5 inch so it fits on one page.

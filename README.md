@@ -115,11 +115,14 @@ clean):
   on their own line — never a bare `---` (that's a thematic break, and emitting it
   for a section silently turned layout into border paragraphs). A hand-authored
   `---` now unambiguously means a thematic break.
-- **Page geometry** rides a leading `<!-- docx:page orientation="landscape"
+- **Page geometry** rides a leading `<!-- docx:page sN orientation="landscape"
   size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
-  US-Letter-portrait-1″ — `text-width` is the usable column width. Exact twips are
-  in `read --ast` (on each section break: `pageWidth`/`pageHeight`/`pageOrientation`/
-  `margin*`).
+  US-Letter-portrait-1″ — `text-width` is the usable column width, and the leading
+  `sN` is the section to re-apply against. Exact twips are in `read --ast` (on each
+  section break: `pageWidth`/`pageHeight`/`pageOrientation`/`margin*`). Set it with
+  `docx sections --at sN --orientation/--size/--margins` (the trailing `sN` is the
+  whole document) or at `create` time; under track-changes it records as one
+  `<w:sectPrChange>` (accept/reject in Word).
 - **Tables** carry a leading `<!-- docx:table t0 widths="1,2,3in" borders="double" -->`
   when columns are uneven or borders deviate from the default, plus a per-cell
   `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699" -->`
@@ -134,12 +137,12 @@ clean):
 ### Mutate (change FILE in place; `--dry-run`, `-v` everywhere; `-o PATH` on every mutator except `create`, whose positional FILE is already the output)
 
 ```sh
-docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--force]
+docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--orientation O] [--size SIZE] [--margins M] [--force]
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
-docx sections FILE --at LOCATOR --columns N [--type T]    # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (recount an existing section). Multi-column layout lives HERE, not in insert.
+docx sections FILE --at LOCATOR [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit an existing section's columns/type/page geometry). Multi-column layout AND page setup (margins/orientation/size) live HERE; the trailing sN is the whole-document page geometry.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 

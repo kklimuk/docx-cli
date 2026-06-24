@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
-import { readMarkdown } from "./helpers";
+import { readDocumentXml, readMarkdown, trackedKinds } from "./helpers";
 
 const SECTIONS_FIXTURE = join(
 	import.meta.dir,
@@ -656,8 +656,8 @@ describe("docx:layout hazard — tab alignment inside a multi-column section", (
 });
 
 describe("docx:page note (deviation-only page geometry)", () => {
-	/** Rewrite a created doc's trailing sectPr geometry (no authoring verb sets
-	 *  page setup yet) so we can exercise non-default geometry. */
+	/** Rewrite a created doc's trailing sectPr geometry directly (faster than the
+	 *  authoring verb, and decoupled from it) so we can exercise the read note. */
 	async function withGeometry(
 		path: string,
 		pgSz: string,
@@ -700,6 +700,9 @@ describe("docx:page note (deviation-only page geometry)", () => {
 		expect(md).not.toContain("size=");
 		expect(md).toContain('margins="0.5in"');
 		expect(md).toContain('text-width="10in"'); // 15840 − 720 − 720 = 14400tw = 10in
+		// The note leads with the trailing section's locator so an agent can
+		// re-apply via `sections --at sN …` (matches docx:cell / docx:p).
+		expect(md).toMatch(/<!-- docx:page s\d+ /);
 	});
 
 	// <w:pgSz> is schema-optional — a section can set non-default margins yet
@@ -745,6 +748,319 @@ describe("docx:page note (deviation-only page geometry)", () => {
 			.pop();
 		expect(trailing?.pageWidth).toBe(11906);
 		expect(trailing?.marginLeft).toBe(1134);
+	});
+
+	// Regression: the note must describe page 1 and flag when later sections
+	// differ — it used to report the TRAILING section, so a doc that was landscape
+	// only on its last section read as "landscape" while page 1 was portrait.
+	test("mixed-geometry doc flags varies=by-section (note describes page 1)", async () => {
+		const doc = join(tempWorkspace("page-varies"), "x.docx");
+		await runCli("create", doc, "--text", "Title.");
+		await runCli("insert", doc, "--at-end", "--text", "Body one.");
+		await runCli("insert", doc, "--at-end", "--text", "Body two.");
+		// Wrap a middle range to mint sections, then set ONLY the body section
+		// landscape — leaving page 1 (s0) portrait-default.
+		await runCli("sections", doc, "--at", "p1-p2", "--columns", "2");
+		await runCli("sections", doc, "--at", "s1", "--orientation", "landscape");
+		const md = await readMarkdown(doc);
+		expect(md).toContain("docx:page s0"); // note describes the FIRST section
+		expect(md).toContain('varies="by-section"');
+		// Page 1 is default portrait, so no orientation deviation is claimed.
+		expect(md).not.toContain('orientation="landscape"');
+	});
+
+	test("a uniform default-Letter doc emits no varies flag (and no note)", async () => {
+		const doc = join(tempWorkspace("page-uniform"), "x.docx");
+		await runCli("create", doc, "--text", "Body.");
+		const md = await readMarkdown(doc);
+		expect(md).not.toContain("docx:page");
+		expect(md).not.toContain("varies=");
+	});
+});
+
+describe("page setup (docx sections --at sN: margins / orientation / size)", () => {
+	async function plainDoc(label: string): Promise<string> {
+		const doc = join(tempWorkspace(label), "x.docx");
+		await runCli("create", doc, "--text", "Body.");
+		return doc;
+	}
+	async function trailingSection(doc: string): Promise<SectionBlock> {
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Block[];
+		};
+		const trailing = ast.blocks
+			.filter((block): block is SectionBlock => block.type === "sectionBreak")
+			.pop();
+		if (!trailing) throw new Error("no section break");
+		return trailing;
+	}
+
+	test("orientation landscape swaps page dimensions + sets w:orient", async () => {
+		const doc = await plainDoc("pg-orient");
+		expect(
+			(
+				await runCli(
+					"sections",
+					doc,
+					"--at",
+					"s0",
+					"--orientation",
+					"landscape",
+				)
+			).exitCode,
+		).toBe(0);
+		const s = await trailingSection(doc);
+		expect(s.pageWidth).toBe(15840);
+		expect(s.pageHeight).toBe(12240);
+		expect(s.pageOrientation).toBe("landscape");
+	});
+
+	test("named --size legal sets exact dimensions", async () => {
+		const doc = await plainDoc("pg-legal");
+		await runCli("sections", doc, "--at", "s0", "--size", "legal");
+		const s = await trailingSection(doc);
+		expect(s.pageWidth).toBe(12240);
+		expect(s.pageHeight).toBe(20160);
+	});
+
+	test("WxH --size with W>H implies landscape", async () => {
+		const doc = await plainDoc("pg-wxh");
+		await runCli("sections", doc, "--at", "s0", "--size", "11x8.5in");
+		const s = await trailingSection(doc);
+		expect(s.pageWidth).toBe(15840);
+		expect(s.pageHeight).toBe(12240);
+		expect(s.pageOrientation).toBe("landscape");
+	});
+
+	test("--margins uniform and 4-tuple (CSS order top,right,bottom,left)", async () => {
+		const uniform = await plainDoc("pg-mar-uniform");
+		await runCli("sections", uniform, "--at", "s0", "--margins", "1in");
+		const u = await trailingSection(uniform);
+		expect([u.marginTop, u.marginRight, u.marginBottom, u.marginLeft]).toEqual([
+			1440, 1440, 1440, 1440,
+		]);
+
+		const four = await plainDoc("pg-mar-four");
+		await runCli(
+			"sections",
+			four,
+			"--at",
+			"s0",
+			"--margins",
+			"0.75,1,0.75,1.25",
+		);
+		const f = await trailingSection(four);
+		expect([f.marginTop, f.marginRight, f.marginBottom, f.marginLeft]).toEqual([
+			1080, 1440, 1080, 1800,
+		]);
+	});
+
+	test("emits CT_SectPr in valid child order (pgSz → pgMar → cols → sectPrChange)", async () => {
+		const doc = await plainDoc("pg-order");
+		await runCli(
+			"sections",
+			doc,
+			"--at",
+			"s0",
+			"--size",
+			"a4",
+			"--margins",
+			"1in",
+			"--columns",
+			"2",
+		);
+		const xml = await readDocumentXml(doc);
+		const sectPr = xml.match(/<w:sectPr>[\s\S]*?<\/w:sectPr>/)?.[0] ?? "";
+		const order = ["w:pgSz", "w:pgMar", "w:cols"].map((tag) =>
+			sectPr.indexOf(`<${tag}`),
+		);
+		expect(order.every((index) => index !== -1)).toBe(true);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+
+	test("the read note round-trips: re-applying its margins/size reproduces them", async () => {
+		const doc = await plainDoc("pg-roundtrip");
+		await runCli(
+			"sections",
+			doc,
+			"--at",
+			"s0",
+			"--size",
+			"legal",
+			"--margins",
+			"1.5in",
+		);
+		const before = await trailingSection(doc);
+		// Read the note, parse its size/margins, feed them back into a fresh doc.
+		const md = await readMarkdown(doc);
+		const size = md.match(/size="([^"]+)"/)?.[1];
+		const margins = md.match(/margins="([^"]+)"/)?.[1];
+		expect(size).toBeDefined();
+		expect(margins).toBeDefined();
+		const doc2 = await plainDoc("pg-roundtrip2");
+		await runCli(
+			"sections",
+			doc2,
+			"--at",
+			"s0",
+			"--size",
+			size as string,
+			"--margins",
+			margins as string,
+		);
+		const after = await trailingSection(doc2);
+		expect(after.pageWidth).toBe(before.pageWidth);
+		expect(after.pageHeight).toBe(before.pageHeight);
+		expect(after.marginTop).toBe(before.marginTop);
+		expect(after.marginLeft).toBe(before.marginLeft);
+	});
+
+	test("page geometry is rejected on a column-wrap range (--at pN-pM)", async () => {
+		const doc = join(tempWorkspace("pg-wrap"), "x.docx");
+		await runCli("create", doc, "--text", "One.\nTwo.\nThree.");
+		const result = await runCli(
+			"sections",
+			doc,
+			"--at",
+			"p0-p2",
+			"--columns",
+			"2",
+			"--orientation",
+			"landscape",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"EXISTING section",
+		);
+	});
+
+	test("an sN edit with no flag at all is rejected", async () => {
+		const doc = await plainDoc("pg-noflag");
+		const result = await runCli("sections", doc, "--at", "s0");
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"--columns, --type, --orientation, --size, or --margins",
+		);
+	});
+
+	test("invalid --size and --orientation are rejected", async () => {
+		const doc = await plainDoc("pg-bad");
+		expect(
+			(await runCli("sections", doc, "--at", "s0", "--size", "huge")).exitCode,
+		).not.toBe(0);
+		expect(
+			(await runCli("sections", doc, "--at", "s0", "--orientation", "sideways"))
+				.exitCode,
+		).not.toBe(0);
+	});
+
+	describe("under track-changes (one <w:sectPrChange> for the whole edit)", () => {
+		async function trackedDoc(label: string): Promise<string> {
+			const doc = await plainDoc(label);
+			await runCli("track-changes", "on", doc);
+			return doc;
+		}
+
+		test("records a sectPrChange with prior/current page geometry", async () => {
+			const doc = await trackedDoc("pg-tc-list");
+			await runCli(
+				"sections",
+				doc,
+				"--at",
+				"s0",
+				"--orientation",
+				"landscape",
+				"--margins",
+				"2in",
+			);
+			expect(await trackedKinds(doc)).toContain("sectPrChange");
+			const changes = (await runCli("track-changes", "list", doc))
+				.parsed as Array<{
+				kind: string;
+				prior?: { pageOrientation?: string; marginTop?: number };
+				current?: { pageOrientation?: string; marginTop?: number };
+			}>;
+			const change = changes.find((c) => c.kind === "sectPrChange");
+			expect(change?.prior?.pageOrientation).toBeUndefined(); // prior = portrait
+			expect(change?.prior?.marginTop).toBe(1440);
+			expect(change?.current?.pageOrientation).toBe("landscape");
+			expect(change?.current?.marginTop).toBe(2880);
+		});
+
+		test("accept keeps the new geometry; reject restores the prior", async () => {
+			const accept = await trackedDoc("pg-tc-accept");
+			await runCli(
+				"sections",
+				accept,
+				"--at",
+				"s0",
+				"--orientation",
+				"landscape",
+			);
+			await runCli("track-changes", "accept", accept, "--all");
+			const a = await trailingSection(accept);
+			expect(a.pageOrientation).toBe("landscape");
+			expect(await trackedKinds(accept)).not.toContain("sectPrChange");
+
+			const reject = await trackedDoc("pg-tc-reject");
+			await runCli(
+				"sections",
+				reject,
+				"--at",
+				"s0",
+				"--orientation",
+				"landscape",
+				"--margins",
+				"2in",
+			);
+			await runCli("track-changes", "reject", reject, "--all");
+			const r = await trailingSection(reject);
+			expect(r.pageWidth).toBe(12240); // back to portrait Letter
+			expect(r.pageHeight).toBe(15840);
+			expect(r.marginTop).toBe(1440); // back to 1in
+		});
+	});
+
+	// Regression: a column wrap mints fresh sentinel sectPrs. Page geometry is
+	// per-section, so without inheritance the new sections silently revert to
+	// portrait-Letter — the "landscape vanishes after adding columns" blocker.
+	test("column-wrap preserves the document's page geometry on every section", async () => {
+		const doc = join(tempWorkspace("pg-wrap-inherit"), "x.docx");
+		await runCli(
+			"create",
+			doc,
+			"--text",
+			"Title.",
+			"--orientation",
+			"landscape",
+			"--margins",
+			"0.5in",
+		);
+		// Wrap a middle range in 2 columns (needs ≥3 paragraphs to wrap p1).
+		await runCli("insert", doc, "--at-end", "--text", "Body one.");
+		await runCli("insert", doc, "--at-end", "--text", "Body two.");
+		expect(
+			(await runCli("sections", doc, "--at", "p1-p2", "--columns", "2"))
+				.exitCode,
+		).toBe(0);
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Block[];
+		};
+		const sections = ast.blocks.filter(
+			(block): block is SectionBlock => block.type === "sectionBreak",
+		);
+		expect(sections.length).toBeGreaterThanOrEqual(2); // wrap added breaks
+		// EVERY section keeps the landscape geometry + 0.5in margins.
+		for (const s of sections) {
+			expect(s.pageWidth).toBe(15840);
+			expect(s.pageHeight).toBe(12240);
+			expect(s.pageOrientation).toBe("landscape");
+			expect(s.marginTop).toBe(720);
+		}
+		// The read note reports landscape with NO varies flag (uniform geometry).
+		const md = await readMarkdown(doc);
+		expect(md).toContain('orientation="landscape"');
+		expect(md).not.toContain("varies=");
 	});
 });
 

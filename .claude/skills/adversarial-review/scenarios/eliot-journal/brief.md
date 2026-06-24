@@ -24,6 +24,9 @@ figure**.
 5. End with a short single-column **colophon** section: "Compiled June 2026. All poems
    in the public domain." Make the words **"public domain"** a **hyperlink** to
    https://www.gutenberg.org/ebooks/1321 (The Waste Land on Project Gutenberg).
+6. Print the journal in **landscape** — set the whole document's page orientation to
+   landscape so the wide page carries the two columns comfortably. (Page orientation is
+   a section/page-setup property — set it, don't fake it by resizing anything.)
 
 ## What "done" looks like
 

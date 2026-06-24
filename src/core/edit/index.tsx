@@ -30,7 +30,13 @@ import {
 } from "../comments/markers";
 import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
 import type { XmlNode } from "../parser";
-import { applyColumns, applySectionType, wrapSectPrChange } from "../sections";
+import {
+	applyColumns,
+	applyPageGeometry,
+	applySectionType,
+	type PageGeometry,
+	wrapSectPrChange,
+} from "../sections";
 import { flipCheckboxTracked, flipCheckboxUntracked } from "../task-list";
 import {
 	resolveAuthor,
@@ -57,7 +63,7 @@ export class Edit {
 
 	section(
 		blockRef: BlockReference,
-		spec: { columns?: number; sectionType?: SectionType },
+		spec: { columns?: number; sectionType?: SectionType } & PageGeometry,
 		opts: { authorFlag?: string; track?: boolean } = {},
 	): void {
 		if (blockRef.node.tag !== "w:sectPr") {
@@ -67,6 +73,8 @@ export class Edit {
 			);
 		}
 		if (opts.track ?? this.document.isTrackChangesEnabled()) {
+			// One snapshot captures the WHOLE prior sectPr (cols/type/pgSz/pgMar), so
+			// any combination of the mutations below records as a single sectPrChange.
 			wrapSectPrChange(
 				blockRef.node,
 				new TrackChanges(this.document).mintMeta(opts.authorFlag),
@@ -74,6 +82,11 @@ export class Edit {
 		}
 		applyColumns(blockRef.node, spec.columns);
 		applySectionType(blockRef.node, spec.sectionType);
+		applyPageGeometry(blockRef.node, {
+			pageSize: spec.pageSize,
+			orientation: spec.orientation,
+			margins: spec.margins,
+		});
 	}
 
 	taskToggle(

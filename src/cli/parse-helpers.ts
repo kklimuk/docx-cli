@@ -1,4 +1,9 @@
-import { isSectionType, type Run, type SectionType } from "@core";
+import {
+	isSectionType,
+	type PageGeometry,
+	type Run,
+	type SectionType,
+} from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import {
 	firstInvalidRunFormat,
@@ -155,17 +160,28 @@ type RawValues = Record<
 	string | boolean | (string | boolean)[] | undefined
 >;
 
-/** Parse `--columns N` and `--type T` section flags from a parseArgs result.
- *  Shared by `docx sections` and `edit --at sN`. Returns a fail() exit
- *  code on invalid values. */
+/** Parse the section flags from a parseArgs result — columns/type PLUS page
+ *  geometry (`--orientation`/`--size`/`--margins`). Shared by `docx sections`,
+ *  `edit --at sN`, and (the geometry slice) `docx create`. Returns a fail() exit
+ *  code on invalid values. Page geometry is normalized for `applyPageGeometry`:
+ *  `pageSize` is portrait (width ≤ height), and a `WxH` size with `W > H` implies
+ *  `orientation: "landscape"` unless `--orientation` says otherwise. */
 export async function parseSectionFlags(
 	values: RawValues,
-): Promise<{ columns?: number; sectionType?: SectionType } | number> {
-	const out: { columns?: number; sectionType?: SectionType } = {};
+): Promise<
+	({ columns?: number; sectionType?: SectionType } & PageGeometry) | number
+> {
+	const out: { columns?: number; sectionType?: SectionType } & PageGeometry =
+		{};
 
 	const columnsRaw = values.columns as string | undefined;
 	if (columnsRaw !== undefined) {
-		const columns = Number.parseInt(columnsRaw, 10);
+		// Require pure digits — a bare `Number.parseInt` would silently TRUNCATE
+		// "2.5" → 2 and "1e2" → 1, both of which then pass the `> 0` check and write
+		// a wrong column count with no error.
+		const columns = /^\d+$/.test(columnsRaw.trim())
+			? Number.parseInt(columnsRaw, 10)
+			: Number.NaN;
 		if (!Number.isFinite(columns) || columns <= 0) {
 			return fail(
 				"USAGE",
@@ -187,7 +203,121 @@ export async function parseSectionFlags(
 		out.sectionType = sectionTypeRaw;
 	}
 
+	const orientationRaw = values.orientation as string | undefined;
+	if (orientationRaw !== undefined) {
+		if (orientationRaw !== "portrait" && orientationRaw !== "landscape") {
+			return fail(
+				"USAGE",
+				`Invalid --orientation: ${orientationRaw}`,
+				"Valid values: portrait, landscape",
+			);
+		}
+		out.orientation = orientationRaw;
+	}
+
+	const sizeRaw = values.size as string | undefined;
+	if (sizeRaw !== undefined) {
+		const parsed = parsePageSize(sizeRaw);
+		if (isError(parsed)) return fail("USAGE", parsed.error, parsed.hint);
+		out.pageSize = { width: parsed.width, height: parsed.height };
+		// A WxH size whose width exceeds its height means landscape — honor it
+		// unless --orientation was given explicitly.
+		if (parsed.impliedLandscape && out.orientation === undefined) {
+			out.orientation = "landscape";
+		}
+	}
+
+	const marginsRaw = values.margins as string | undefined;
+	if (marginsRaw !== undefined) {
+		const parsed = parseMargins(marginsRaw);
+		if (isError(parsed)) return fail("USAGE", parsed.error, parsed.hint);
+		out.margins = parsed;
+	}
+
 	return out;
+}
+
+/** Named page sizes → portrait `{ width, height }` in twips. */
+const PAGE_SIZES: Record<string, { width: number; height: number }> = {
+	letter: { width: 12240, height: 15840 },
+	legal: { width: 12240, height: 20160 },
+	tabloid: { width: 15840, height: 24480 },
+	ledger: { width: 15840, height: 24480 },
+	a3: { width: 16838, height: 23811 },
+	a4: { width: 11906, height: 16838 },
+	a5: { width: 8391, height: 11906 },
+};
+
+/** Parse `--size` — a named size (letter/legal/tabloid/a4/a3/a5) or `WxH` inches
+ *  (`8.5x11`, `8.5x11in`). Returns portrait-normalized twips plus whether the
+ *  literal `WxH` was landscape-shaped (width > height). */
+function parsePageSize(
+	raw: string,
+):
+	| { width: number; height: number; impliedLandscape: boolean }
+	| SpacingIndentError {
+	const value = raw.trim().toLowerCase();
+	const named = PAGE_SIZES[value];
+	if (named) {
+		return {
+			width: named.width,
+			height: named.height,
+			impliedLandscape: false,
+		};
+	}
+	const match = value.match(
+		/^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in)?$/,
+	);
+	if (match) {
+		const a = Math.round(
+			Number.parseFloat(match[1] as string) * TWIPS_PER_INCH,
+		);
+		const b = Math.round(
+			Number.parseFloat(match[2] as string) * TWIPS_PER_INCH,
+		);
+		return {
+			width: Math.min(a, b),
+			height: Math.max(a, b),
+			impliedLandscape: a > b,
+		};
+	}
+	return {
+		error: `Invalid --size: ${raw}`,
+		hint: "Use a name (letter, legal, tabloid, a4, a3, a5) or WxH inches (e.g. 8.5x11in).",
+	};
+}
+
+/** Parse `--margins` — one inch value (uniform) or four comma-separated values in
+ *  CSS order (top,right,bottom,left), matching the `docx:page margins=…` read
+ *  note. Inches → twips; signed (a negative margin pulls content into the margin,
+ *  which Word allows). A trailing `in` on any part is accepted. */
+function parseMargins(
+	raw: string,
+):
+	| { top: number; right: number; bottom: number; left: number }
+	| SpacingIndentError {
+	const parts = raw
+		.trim()
+		.split(",")
+		.map((part) => part.trim());
+	if (parts.length !== 1 && parts.length !== 4) {
+		return {
+			error: `Invalid --margins: ${raw}`,
+			hint: "Use one inch value (uniform, e.g. 1in) or four comma-separated top,right,bottom,left (e.g. 1,1,1,1.5).",
+		};
+	}
+	const twips: number[] = [];
+	for (const part of parts) {
+		const value = inchesToTwips(part, "margins");
+		if (isError(value)) return value;
+		twips.push(value);
+	}
+	if (twips.length === 1) {
+		const [uniform] = twips as [number];
+		return { top: uniform, right: uniform, bottom: uniform, left: uniform };
+	}
+	const [top, right, bottom, left] = twips as [number, number, number, number];
+	return { top, right, bottom, left };
 }
 
 /** Dedupe a list of `--at` comment-id strings while preserving the caller's

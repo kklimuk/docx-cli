@@ -254,3 +254,72 @@ describe("docx create --text-file (literal body)", () => {
 		expect((result.parsed as { code: string }).code).toBe("USAGE");
 	});
 });
+
+describe("docx create — page setup", () => {
+	type Section = {
+		type: string;
+		pageWidth?: number;
+		pageHeight?: number;
+		pageOrientation?: string;
+		marginTop?: number;
+		marginLeft?: number;
+	};
+	async function trailingSection(path: string): Promise<Section> {
+		const read = await runCli("read", path, "--ast");
+		const trailing = (read.parsed as { blocks: Section[] }).blocks
+			.filter((block) => block.type === "sectionBreak")
+			.pop();
+		if (!trailing) throw new Error("no section break");
+		return trailing;
+	}
+
+	test("--orientation/--size/--margins land on the trailing sectPr", async () => {
+		const workspace = tempWorkspace("create-page");
+		const docPath = join(workspace, "out.docx");
+		expect(
+			(
+				await runCli(
+					"create",
+					docPath,
+					"--text",
+					"Memo.",
+					"--orientation",
+					"landscape",
+					"--size",
+					"a4",
+					"--margins",
+					"1in",
+				)
+			).exitCode,
+		).toBe(0);
+		const s = await trailingSection(docPath);
+		// A4 landscape: the long edge (16838) becomes the width.
+		expect(s.pageWidth).toBe(16838);
+		expect(s.pageHeight).toBe(11906);
+		expect(s.pageOrientation).toBe("landscape");
+		expect(s.marginTop).toBe(1440);
+		expect(s.marginLeft).toBe(1440);
+	});
+
+	test("composes with --from (markdown body + page geometry)", async () => {
+		const workspace = tempWorkspace("create-page-from");
+		const md = join(workspace, "x.md");
+		await Bun.write(md, "# Title\n\nBody paragraph.\n");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--from", md, "--margins", "0.5in");
+		const s = await trailingSection(docPath);
+		expect(s.marginTop).toBe(720);
+		// The markdown body still imported (the geometry pass didn't clobber it).
+		const read = await runCli("read", docPath, "--ast");
+		const blocks = (read.parsed as { blocks: Array<{ style?: string }> })
+			.blocks;
+		expect(blocks.some((block) => block.style === "Heading1")).toBe(true);
+	});
+
+	test("a plain create (no page flags) stays default Letter — no page note", async () => {
+		const workspace = tempWorkspace("create-page-default");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Body.");
+		expect((await runCli("read", docPath)).stdout).not.toContain("docx:page");
+	});
+});

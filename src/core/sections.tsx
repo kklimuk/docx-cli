@@ -47,6 +47,17 @@ export type SectionProperties = {
 	marginLeft?: number;
 };
 
+/** Page-geometry intent for `applyPageGeometry` — the authorable subset of a
+ *  `<w:sectPr>`. `pageSize` is PORTRAIT-normalized (`width <= height`); the final
+ *  `<w:pgSz w:w/w:h>` is arranged by `orientation` (landscape swaps them). Each
+ *  field is independent: pass only what changes. Margins are twips, signed (a
+ *  negative margin pulls content into the header/footer area, which Word allows). */
+export type PageGeometry = {
+	pageSize?: { width: number; height: number };
+	orientation?: "portrait" | "landscape";
+	margins?: { top: number; right: number; bottom: number; left: number };
+};
+
 /** Extract columns / sectionType / page geometry from a list of sectPr children
  * (works for both the live sectPr's children and a sectPrChange snapshot's
  * inner sectPr children). Geometry (`<w:pgSz>`/`<w:pgMar>`) is read in twips. */
@@ -155,7 +166,7 @@ export function applyColumns(
 		existing.setAttribute("w:num", String(columns));
 		return;
 	}
-	insertBeforeSectPrChange(sectPr, <w.cols w-num={String(columns)} />);
+	insertSectPrChildInOrder(sectPr, <w.cols w-num={String(columns)} />);
 }
 
 /** Set or unset <w:type w:val="T"/> inside an existing <w:sectPr>. Pass
@@ -177,26 +188,129 @@ export function applySectionType(
 		existing.setAttribute("w:val", sectionType);
 		return;
 	}
-	const node = <w.type w-val={sectionType} />;
-	const colsIndex = sectPr.children.findIndex(
-		(child) => child.tag === "w:cols",
-	);
-	if (colsIndex !== -1) {
-		sectPr.children.splice(colsIndex, 0, node);
-		return;
-	}
-	insertBeforeSectPrChange(sectPr, node);
+	insertSectPrChildInOrder(sectPr, <w.type w-val={sectionType} />);
 }
 
-// Per ECMA-376 §17.6.18, <w:sectPrChange> must be the LAST child of <w:sectPr>.
-// Append before any existing sectPrChange so the schema order survives a
-// tracked edit that adds a new sectPr property.
-function insertBeforeSectPrChange(sectPr: XmlNode, node: XmlNode): void {
-	const changeIndex = sectPr.children.findIndex(
-		(child) => child.tag === "w:sectPrChange",
+/** Apply page geometry (size / orientation / margins) to an existing <w:sectPr>,
+ * in place. Size + orientation are coupled (Word stores landscape as swapped
+ * `<w:pgSz w:w/w:h>` PLUS `w:orient="landscape"`), so they're resolved together
+ * from the current sectPr state + the requested deltas:
+ *   - target size pair = requested `pageSize` (portrait-normalized) else the
+ *     current pgSz (min/max) else US-Letter;
+ *   - target orientation = requested `orientation` else the current one (the
+ *     `w:orient` attr, or `w > h`) else portrait;
+ *   - emit `w:w`/`w:h` as (short,long) for portrait or (long,short) for landscape,
+ *     and set/clear `w:orient` accordingly (portrait is the default → attr dropped).
+ * Margins are independent — each provided edge overwrites its `<w:pgMar>` attr.
+ * Pass `undefined` fields to leave them untouched. CT_SectPr order is preserved
+ * via `insertSectPrChildInOrder`. */
+export function applyPageGeometry(
+	sectPr: XmlNode,
+	geometry: PageGeometry,
+): void {
+	if (geometry.pageSize || geometry.orientation) {
+		const pgSz = findOrCreateSectPrChild(sectPr, "w:pgSz");
+		const currentWidth = twipsAttr(pgSz, "w:w");
+		const currentHeight = twipsAttr(pgSz, "w:h");
+		const requested = geometry.pageSize;
+		const short = requested
+			? Math.min(requested.width, requested.height)
+			: Math.min(currentWidth ?? 12240, currentHeight ?? 15840);
+		const long = requested
+			? Math.max(requested.width, requested.height)
+			: Math.max(currentWidth ?? 12240, currentHeight ?? 15840);
+		const currentOrient =
+			pgSz.getAttribute("w:orient") ??
+			((currentWidth ?? 0) > (currentHeight ?? 0) ? "landscape" : "portrait");
+		const orientation = geometry.orientation ?? currentOrient;
+		const landscape = orientation === "landscape";
+		pgSz.setAttribute("w:w", String(landscape ? long : short));
+		pgSz.setAttribute("w:h", String(landscape ? short : long));
+		if (landscape) pgSz.setAttribute("w:orient", "landscape");
+		else delete pgSz.attributes["w:orient"];
+	}
+	if (geometry.margins) {
+		const pgMar = findOrCreateSectPrChild(sectPr, "w:pgMar");
+		pgMar.setAttribute("w:top", String(geometry.margins.top));
+		pgMar.setAttribute("w:right", String(geometry.margins.right));
+		pgMar.setAttribute("w:bottom", String(geometry.margins.bottom));
+		pgMar.setAttribute("w:left", String(geometry.margins.left));
+	}
+}
+
+/** Copy a source sectPr's page geometry (`<w:pgSz>` size/orientation + `<w:pgMar>`
+ *  margins) into `target`, but ONLY for the parts `target` doesn't already set.
+ *  Page geometry is per-section in OOXML, so splitting a section (a column wrap
+ *  minting fresh sentinel sectPrs) would otherwise drop the document's size/
+ *  orientation/margins and silently revert those sections to the portrait-Letter
+ *  default — the landscape-disappears-after-columns footgun. Clones the whole node
+ *  (preserving attrs we don't model: header/footer/gutter). */
+export function inheritPageGeometry(target: XmlNode, source: XmlNode): void {
+	for (const tag of ["w:pgSz", "w:pgMar"] as const) {
+		if (target.findChild(tag)) continue;
+		const node = source.findChild(tag);
+		if (node) insertSectPrChildInOrder(target, node.clone());
+	}
+}
+
+/** Find a sectPr child by tag, or create + splice it at its CT_SectPr slot. */
+function findOrCreateSectPrChild(sectPr: XmlNode, tag: string): XmlNode {
+	const existing = sectPr.findChild(tag);
+	if (existing) return existing;
+	const created = new XmlNode(tag);
+	insertSectPrChildInOrder(sectPr, created);
+	return created;
+}
+
+// CT_SectPr child sequence (ECMA-376 §17.6.17), the subset we emit or step over.
+// Word REJECTS an out-of-order sectPr ("unreadable content"); <w:sectPrChange>
+// must be LAST (§17.6.18). Any code adding a child to an existing sectPr must
+// splice via `insertSectPrChildInOrder`, never `push`.
+const SECTPR_CHILD_ORDER = [
+	"w:headerReference",
+	"w:footerReference",
+	"w:footnotePr",
+	"w:endnotePr",
+	"w:type",
+	"w:pgSz",
+	"w:pgMar",
+	"w:paperSrc",
+	"w:pgBorders",
+	"w:lnNumType",
+	"w:pgNumType",
+	"w:cols",
+	"w:formProt",
+	"w:vAlign",
+	"w:noEndnote",
+	"w:titlePg",
+	"w:textDirection",
+	"w:bidi",
+	"w:rtlGutter",
+	"w:docGrid",
+	"w:printerSettings",
+	"w:sectPrChange",
+] as const;
+
+/** Rank a sectPr child by CT_SectPr position. Unknown tags rank just before
+ *  `<w:sectPrChange>` so they still land ahead of the trailing change marker. */
+function sectPrChildRank(tag: string): number {
+	const index = SECTPR_CHILD_ORDER.indexOf(
+		tag as (typeof SECTPR_CHILD_ORDER)[number],
 	);
-	if (changeIndex === -1) sectPr.children.push(node);
-	else sectPr.children.splice(changeIndex, 0, node);
+	if (index >= 0) return index;
+	return SECTPR_CHILD_ORDER.indexOf("w:sectPrChange") - 0.5;
+}
+
+/** Splice `child` into `sectPr.children` at its canonical CT_SectPr position:
+ *  before the first existing child that ranks after it (so a new `<w:pgSz>` lands
+ *  after `<w:type>` but before `<w:cols>`, and everything before `<w:sectPrChange>`). */
+function insertSectPrChildInOrder(sectPr: XmlNode, child: XmlNode): void {
+	const rank = sectPrChildRank(child.tag);
+	const at = sectPr.children.findIndex(
+		(existing) => sectPrChildRank(existing.tag) > rank,
+	);
+	if (at < 0) sectPr.children.push(child);
+	else sectPr.children.splice(at, 0, child);
 }
 
 /** Delete an inline <w:sectPr> (lives inside a paragraph's <w:pPr>). The

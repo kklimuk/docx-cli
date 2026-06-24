@@ -97,9 +97,12 @@ export {
 	renderDocxPages,
 } from "./render";
 export {
+	applyPageGeometry,
 	getPageContentWidthEmu,
+	inheritPageGeometry,
 	isSectionType,
 	isTrailingSectPr,
+	type PageGeometry,
 	readSectionProperties,
 	removeInlineSectPr,
 	type SectionProperties,
