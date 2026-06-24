@@ -1,5 +1,13 @@
+import { normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
 
+import {
+	type MarginalKind,
+	type MarginalType,
+	marginalConfig,
+	marginalPartNameFromTarget,
+} from "../marginals/config";
+import { marginalText } from "../marginals/text";
 import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
 import { readSectionProperties } from "../sections";
@@ -14,6 +22,7 @@ import type {
 	EquationRun,
 	Hyperlink,
 	ImageRun,
+	Marginal,
 	Paragraph,
 	Run,
 	SectionBreak,
@@ -54,6 +63,8 @@ export function buildBody(document: Document, path: string): Body {
 		comments: [],
 		footnotes: [],
 		endnotes: [],
+		headers: [],
+		footers: [],
 		body,
 	});
 	document.body = doc;
@@ -72,8 +83,66 @@ export function buildBody(document: Document, path: string): Body {
 	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
 	doc.footnotes = document.footnotes?.toNotes() ?? [];
 	doc.endnotes = document.endnotes?.toNotes() ?? [];
+	const marginals = readMarginals(document);
+	doc.headers = marginals.headers;
+	doc.footers = marginals.footers;
 
 	return doc;
+}
+
+/** Resolve every section's `<w:headerReference>` / `<w:footerReference>` into the
+ *  AST `Marginal[]` exposed on `Body.headers` / `Body.footers`. Runs after the
+ *  block walk (so each sectPr has its `sN`), resolves the reference's rId →
+ *  relationship Target → part name → the loaded part tree (in `MarginalsView`),
+ *  and reads the part text with fields as tokens. One entry per reference, so a
+ *  document-wide marginal (one part, referenced from each section) appears once
+ *  per section. Locators `hdr0`/`ftr0` are positional in document order. */
+function readMarginals(document: Document): {
+	headers: Marginal[];
+	footers: Marginal[];
+} {
+	const headers: Marginal[] = [];
+	const footers: Marginal[] = [];
+	if (!document.marginals) return { headers, footers };
+	let headerIndex = 0;
+	let footerIndex = 0;
+	for (const block of document.body.blocks) {
+		if (block.type !== "sectionBreak") continue;
+		const sectPr = document.body.blockReferences.get(block.id)?.node;
+		if (!sectPr) continue;
+		for (const child of sectPr.children) {
+			const kind = marginalKindForTag(child.tag);
+			if (!kind) continue;
+			const rId = child.getAttribute("r:id");
+			if (!rId) continue;
+			const relationship = document.relationships.findByRid(rId);
+			const target = relationship?.getAttribute("Target");
+			if (!target) continue;
+			const tree = document.marginals.partTree(
+				marginalPartNameFromTarget(target),
+			);
+			if (!tree) continue;
+			const type = (child.getAttribute("w:type") ?? "default") as MarginalType;
+			const id = `${marginalConfig(kind).locatorPrefix}${
+				kind === "header" ? headerIndex++ : footerIndex++
+			}`;
+			const marginal: Marginal = {
+				id,
+				kind,
+				type,
+				sectionId: block.id,
+				text: marginalText(tree),
+			};
+			(kind === "header" ? headers : footers).push(marginal);
+		}
+	}
+	return { headers, footers };
+}
+
+function marginalKindForTag(tag: string): MarginalKind | undefined {
+	if (tag === "w:headerReference") return "header";
+	if (tag === "w:footerReference") return "footer";
+	return undefined;
 }
 
 function readBlocks(
@@ -596,7 +665,7 @@ function applyParagraphProperties(
 		const stops = tabsNode
 			.findChildren("w:tab")
 			.map((tab) => ({
-				align: tab.getAttribute("w:val") ?? "left",
+				align: normalizeTabAlign(tab.getAttribute("w:val")),
 				pos: Number(tab.getAttribute("w:pos") ?? "0"),
 			}))
 			.filter((stop) => Number.isFinite(stop.pos));

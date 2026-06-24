@@ -27,6 +27,7 @@ export type {
 	EquationRun,
 	Hyperlink,
 	ImageRun,
+	Marginal,
 	Note as Footnote,
 	NoteRefRun as FootnoteRefRun,
 	Paragraph,
@@ -81,6 +82,14 @@ export {
 	parseRowAt,
 	parseTableAt,
 } from "./locators";
+export {
+	type MarginalField,
+	type MarginalKind,
+	type MarginalSpec,
+	Marginals,
+	type MarginalType,
+} from "./marginals";
+export { isMarginalType, MARGINAL_TYPES } from "./marginals/config";
 export {
 	MarkdownImport,
 	MarkdownImportError,

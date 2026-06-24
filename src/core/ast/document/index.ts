@@ -4,6 +4,7 @@ import type { Body, TrackedChangeReference } from "./body";
 import { CommentsView } from "./comments";
 import { ContentTypesView } from "./content-types";
 import { CorePropertiesView } from "./core-properties";
+import { MarginalsView } from "./marginals";
 import { NotesView } from "./notes";
 import { NumberingView } from "./numbering";
 import { Pkg } from "./package";
@@ -23,6 +24,7 @@ export class Document {
 	coreProperties?: CorePropertiesView;
 	settings?: SettingsView;
 	styles?: StylesView;
+	marginals?: MarginalsView;
 
 	body!: Body;
 	trackedChangeReferences: Map<string, TrackedChangeReference> = new Map();
@@ -39,6 +41,7 @@ export class Document {
 		coreProperties?: CorePropertiesView;
 		settings?: SettingsView;
 		styles?: StylesView;
+		marginals?: MarginalsView;
 	}) {
 		this.pkg = init.pkg;
 		this.documentTree = init.documentTree;
@@ -51,6 +54,7 @@ export class Document {
 		this.coreProperties = init.coreProperties;
 		this.settings = init.settings;
 		this.styles = init.styles;
+		this.marginals = init.marginals;
 	}
 
 	static async open(path: string): Promise<Document> {
@@ -67,6 +71,7 @@ export class Document {
 			footnotes: await NotesView.fromPackage(pkg, "footnote"),
 			endnotes: await NotesView.fromPackage(pkg, "endnote"),
 			comments: await CommentsView.fromPackage(pkg),
+			marginals: await MarginalsView.fromPackage(pkg),
 		});
 
 		view.body = buildBody(view, pkg.path);
@@ -136,6 +141,7 @@ export class Document {
 		this.footnotes?.writeTo(this.pkg);
 		this.endnotes?.writeTo(this.pkg);
 		this.comments?.writeTo(this.pkg);
+		this.marginals?.writeTo(this.pkg);
 		await this.pkg.save(path);
 	}
 	/** Convenience over `view.settings?.isTrackChangesEnabled() ?? false` —
@@ -198,6 +204,17 @@ export class Document {
 		const settings = this.ensureSettings();
 		settings.ensureNotePr("footnote");
 		settings.ensureNotePr("endnote");
+	}
+
+	/** Materialize the marginals (headers/footers) view if absent. Unlike the
+	 * single-part views, this owns MANY parts; per-part relationship +
+	 * content-type registration is done lazily by the `Marginals` lens as it
+	 * mints each `word/header{N}.xml` / `word/footer{N}.xml`, so there's no
+	 * `MarginalsView.register`. Cached on the view; only serialized if non-empty. */
+	ensureMarginals(): MarginalsView {
+		if (this.marginals) return this.marginals;
+		this.marginals = new MarginalsView();
+		return this.marginals;
 	}
 
 	/** Materialize the optional comments part if absent (mints rel +

@@ -7,6 +7,7 @@ import {
 	type ImageRun,
 	type Locator,
 	LocatorParseError,
+	type Marginal,
 	type Paragraph,
 	parseLocator,
 	type Run,
@@ -102,6 +103,12 @@ type RenderContext = {
 	 *  right-edge LEFT tab). Collected by `layoutHazardNote` during the walk so
 	 *  `renderMarkdown` can emit one consolidated summary + single-call cure. */
 	wrappingTabLines: string[];
+	/** Per-section `docx:header`/`docx:footer` hint lines, keyed by section id, for
+	 *  marginals whose text DIFFERS by section. Co-located with each section break
+	 *  in the body (the trailing section's land at the end) so a multi-section doc's
+	 *  header/footer hints sit next to the section they govern, not bunched at the
+	 *  top. UNIFORM marginals (same across every section) stay in the head block. */
+	marginalsBySection: Map<string, string[]>;
 };
 
 export function renderMarkdown(
@@ -122,6 +129,15 @@ export function renderMarkdown(
 	const commentIndex = options.showComments
 		? buildCommentIndex(blocks, options)
 		: emptyCommentIndex();
+	// Header/footer hints split two ways: UNIFORM marginals (identical across
+	// every section — document chrome) ride the head block; PER-SECTION marginals
+	// (the header/footer differs by section) co-locate with their section break in
+	// the body (the trailing section's land at the end), so the agent sees each
+	// next to the section it governs instead of bunched at the top.
+	const sectionCount = blocks.filter(
+		(block) => block.type === "sectionBreak",
+	).length;
+	const marginal = formatMarginalNotes(doc.headers, doc.footers, sectionCount);
 	const ctx: RenderContext = {
 		options,
 		baseline,
@@ -133,21 +149,31 @@ export function renderMarkdown(
 		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)?.geometry),
 		governingColumns: computeGoverningColumns(blocks),
 		wrappingTabLines: [],
+		marginalsBySection: marginal.bySection,
 	};
 
+	// Sections render at their START (where their content begins), not at the
+	// sectPr's physical end, so each section's `docx:section` + header/footer
+	// annotation reads right before the content it governs (`applies-to="… (below)"`).
+	// This is a read-view choice — the AST and `sN` addressing are unchanged.
+	const sectionsByStart = computeSectionStarts(blocks);
 	const parts: string[] = [];
 	let cursor = 0;
 	while (cursor < blocks.length) {
+		// Emit the annotation of every section whose content STARTS here, before the
+		// section's first block.
+		for (const entry of sectionsByStart.get(cursor) ?? []) {
+			const startNote = renderSectionStart(entry, blocks, ctx);
+			if (startNote) parts.push(startNote);
+		}
 		const block = blocks[cursor];
 		if (!block) {
 			cursor++;
 			continue;
 		}
-		// The trailing mandatory section break is implicit OOXML structure that
-		// `create`/`insert` re-add automatically. Rendering it as `---` would
-		// re-import as a stray thematic-break paragraph that accretes on every
-		// read → create → read cycle, so suppress the final section break.
-		if (block.type === "sectionBreak" && cursor === blocks.length - 1) {
+		// Section breaks no longer render in place — their annotation was emitted at
+		// the section's start (above).
+		if (block.type === "sectionBreak") {
 			cursor++;
 			continue;
 		}
@@ -168,7 +194,7 @@ export function renderMarkdown(
 			cursor = lookahead;
 			continue;
 		}
-		const rendered = renderBlock(block, ctx, blocks, cursor);
+		const rendered = renderBlock(block, ctx);
 		if (rendered !== null) parts.push(rendered);
 		cursor++;
 	}
@@ -211,9 +237,18 @@ export function renderMarkdown(
 	// the per-line hints alone got ignored by both Haiku and Sonnet across repeated
 	// reads, so lead with a single command that cures them all.
 	const wrapSummary = formatWrappingTabSummary(ctx.wrappingTabLines);
-	const headLines = [baseNote, pageNote, trackNote, wrapSummary].filter(
-		(line) => line.length > 0,
-	);
+	// Only the UNIFORM header/footer hints (identical across every section) ride
+	// the head block next to the page note — document chrome. Per-section ones
+	// were already emitted next to their section in the body loop above. Content
+	// lives in the comment attribute, so the importer's blanket `docx:` drop keeps
+	// a read → create rebuild from duplicating it into the body.
+	const headLines = [
+		baseNote,
+		pageNote,
+		...marginal.uniform,
+		trackNote,
+		wrapSummary,
+	].filter((line) => line.length > 0);
 	const head = headLines.length > 0 ? `${headLines.join("\n")}\n\n` : "";
 	return `${head}${parts.join("\n\n")}\n`;
 }
@@ -349,18 +384,63 @@ function slotKey(paragraphId: string, runIndex: number): string {
 	return `${paragraphId}#${runIndex}`;
 }
 
-function renderBlock(
-	block: Block,
-	ctx: RenderContext,
-	blocks: Block[],
-	index: number,
-): string | null {
+function renderBlock(block: Block, ctx: RenderContext): string | null {
 	if (block.type === "paragraph") return renderParagraph(block, ctx);
 	if (block.type === "table") return renderTable(block, ctx);
-	if (block.type === "sectionBreak") {
-		return renderSectionBreak(block, governedRange(blocks, index));
-	}
+	// Section breaks render at their section's start (see `renderSectionStart`),
+	// not here.
 	return null;
+}
+
+type SectionStart = {
+	block: SectionBreak;
+	breakIndex: number;
+	isTrailing: boolean;
+};
+
+/** Map each section's CONTENT-START index to the section(s) beginning there. A
+ *  section spans from the block after the previous break (or 0) through its own
+ *  break; it STARTS at that first block. The trailing mandatory sectPr is the
+ *  last block. */
+function computeSectionStarts(blocks: Block[]): Map<number, SectionStart[]> {
+	const starts = new Map<number, SectionStart[]>();
+	let sectionStart = 0;
+	for (let index = 0; index < blocks.length; index++) {
+		if (blocks[index]?.type !== "sectionBreak") continue;
+		const entry: SectionStart = {
+			block: blocks[index] as SectionBreak,
+			breakIndex: index,
+			isTrailing: index === blocks.length - 1,
+		};
+		const group = starts.get(sectionStart) ?? [];
+		group.push(entry);
+		starts.set(sectionStart, group);
+		sectionStart = index + 1;
+	}
+	return starts;
+}
+
+/** Render a section's annotation at its content START: the `docx:section` note
+ *  (deviation-only, `applies-to="… (below)"`) plus its per-section header/footer
+ *  hints. The trailing mandatory sectPr keeps its `docx:section` note suppressed
+ *  (implicit structure) but still surfaces its header/footer at the section's
+ *  start. Returns null when there's nothing to emit. */
+function renderSectionStart(
+	entry: SectionStart,
+	blocks: Block[],
+	ctx: RenderContext,
+): string | null {
+	const marginalLines = ctx.marginalsBySection.get(entry.block.id);
+	if (entry.isTrailing) {
+		return marginalLines && marginalLines.length > 0
+			? marginalLines.join("\n")
+			: null;
+	}
+	return renderSectionBreak(
+		entry.block,
+		governedRange(blocks, entry.breakIndex),
+		marginalLines,
+	);
 }
 
 /** Map each block id to the column count of the section that governs it (the
@@ -510,7 +590,11 @@ function governedRange(blocks: Block[], index: number): string | undefined {
  * `docx sections` / edit-in-place manage layout), and a
  * hand-authored `---` now unambiguously means a thematic break. cols/type are
  * shown for the section; document geometry rides the leading `docx:page` note. */
-function renderSectionBreak(block: SectionBreak, governs?: string): string {
+function renderSectionBreak(
+	block: SectionBreak,
+	governs?: string,
+	marginalLines?: string[],
+): string {
 	const pairs: NotePair[] = [];
 	if (block.columns !== undefined && block.columns > 1) {
 		pairs.push(["cols", block.columns]);
@@ -519,11 +603,18 @@ function renderSectionBreak(block: SectionBreak, governs?: string): string {
 	// State the scope only on a section that already deviates (multi-column or a
 	// non-default type) — a bare single-column break doesn't need it, and it's
 	// exactly the layout-bearing sections where the "which side?" trap bites. The
-	// `(above)` tag spells out that the columns/type govern the content ABOVE.
+	// note renders at the section's START, so `(below)` spells out that the
+	// columns/type govern the content that FOLLOWS.
 	if (governs !== undefined && pairs.length > 0) {
-		pairs.push(["applies-to", `${governs} (above)`]);
+		pairs.push(["applies-to", `${governs} (below)`]);
 	}
-	return formatNote("section", pairs, [block.id]);
+	const note = formatNote("section", pairs, [block.id]);
+	// Co-locate this section's per-section header/footer hints right under its
+	// break, so they read next to the content they govern.
+	if (marginalLines && marginalLines.length > 0) {
+		return [note, ...marginalLines].join("\n");
+	}
+	return note;
 }
 
 /** Canonical default page geometry — US Letter portrait, 1″ margins. Geometry
@@ -684,6 +775,76 @@ function formatPageNote(
 	// re-apply: `docx sections --at sN --orientation/--size/--margins …`. The
 	// orientation/size/margins values above are emitted in the exact flag units.
 	return formatNote("page", pairs, [geometry.id]);
+}
+
+/** Build the `<!-- docx:header … -->` / `<!-- docx:footer … -->` hints, split into
+ *  UNIFORM (identical across every section — head block, no section token) and
+ *  PER-SECTION (text differs by section — co-located with each section break,
+ *  keyed by `sN`). Deviation-only: the `type` attr is omitted when `default`.
+ *  Content rides the `text` attribute so the importer's `docx:`-comment drop can't
+ *  re-inject it into the body. */
+function formatMarginalNotes(
+	headers: Marginal[],
+	footers: Marginal[],
+	sectionCount: number,
+): { uniform: string[]; bySection: Map<string, string[]> } {
+	const uniform: string[] = [];
+	const bySection = new Map<string, string[]>();
+	const emit = (sectionId: string | null, line: string): void => {
+		if (sectionId === null) {
+			uniform.push(line);
+			return;
+		}
+		const group = bySection.get(sectionId) ?? [];
+		group.push(line);
+		bySection.set(sectionId, group);
+	};
+	collectMarginalNotes("header", headers, sectionCount, emit);
+	collectMarginalNotes("footer", footers, sectionCount, emit);
+	return { uniform, bySection };
+}
+
+function collectMarginalNotes(
+	noteType: "header" | "footer",
+	marginals: Marginal[],
+	sectionCount: number,
+	emit: (sectionId: string | null, line: string) => void,
+): void {
+	const byType = new Map<string, Marginal[]>();
+	for (const marginal of marginals) {
+		const group = byType.get(marginal.type) ?? [];
+		group.push(marginal);
+		byType.set(marginal.type, group);
+	}
+	for (const [placement, group] of byType) {
+		const distinctText = new Set(group.map((marginal) => marginal.text));
+		const typePairs: NotePair[] =
+			placement === "default" ? [] : [["type", placement]];
+		// Document chrome (ONE head line, no sN) ONLY when the marginal is identical
+		// AND present on EVERY section. A marginal on a SUBSET of sections — even
+		// with identical text — gets per-section lines keyed by `sN`, so it's never
+		// mislabeled as covering sections it doesn't (e.g. a header only on the
+		// trailing section would otherwise imply the earlier sections carry it too).
+		const coversEverySection = group.length >= sectionCount;
+		if (distinctText.size === 1 && coversEverySection) {
+			const first = group[0];
+			if (!first) continue;
+			emit(null, formatNote(noteType, [...typePairs, ["text", first.text]]));
+			continue;
+		}
+		// Differs by section, or only covers some → one line per section, co-located
+		// via its `sN`.
+		for (const marginal of group) {
+			emit(
+				marginal.sectionId,
+				formatNote(
+					noteType,
+					[...typePairs, ["text", marginal.text]],
+					[marginal.sectionId],
+				),
+			);
+		}
+	}
 }
 
 function isCodeBlockParagraph(block: Block): block is Paragraph {

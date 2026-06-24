@@ -33,6 +33,27 @@ const NOTE_PR_SUCCESSORS = new Set<string>([
 	"w:chartTrackingRefBased",
 ]);
 
+/** CT_Settings elements that follow `<w:evenAndOddHeaders/>` (§17.15.1.78 pos 43)
+ *  but PRECEDE `<w:footnotePr>`/`<w:endnotePr>` and the note-pr tail. The toggle
+ *  must insert before the first of THESE too — otherwise on the canonical Word
+ *  template (`…defaultTabStop, characterSpacingControl, compat…`) it would skip
+ *  past `characterSpacingControl` (pos 57) and land out of order. Covers the
+ *  mid-tail elements that realistically occur; Word/LibreOffice tolerate the rest. */
+const EVEN_AND_ODD_SUCCESSORS = new Set<string>([
+	"w:footnotePr",
+	"w:endnotePr",
+	"w:characterSpacingControl",
+	"w:doNotUseMarginsForDrawingGridOrigin",
+	"w:displayHangulFixedWidth",
+	"w:noPunctuationKerning",
+	"w:printTwoOnOne",
+	"w:strictFirstAndLastChars",
+	"w:savePreviewPicture",
+	"w:updateFields",
+	"w:hdrShapeDefaults",
+	...NOTE_PR_SUCCESSORS,
+]);
+
 export class SettingsView {
 	tree: XmlNode[];
 
@@ -121,6 +142,38 @@ export class SettingsView {
 		);
 		if (successorIndex === -1) root.children.push(node);
 		else root.children.splice(successorIndex, 0, node);
+	}
+
+	/** Ensure `<w:evenAndOddHeaders/>` is present — the DOCUMENT-level toggle that
+	 *  makes Word honor `even`-type header/footer references (without it, an even
+	 *  marginal is ignored and the default applies to every page). Idempotent.
+	 *  In CT_Settings (§17.15.1.78) it sits before `<w:footnotePr>`/`<w:endnotePr>`
+	 *  and the `<w:compat>` tail, so we insert before the first of those present
+	 *  (Word/LibreOffice are lenient about settings order; append is a safe
+	 *  fallback when none is present). */
+	ensureEvenAndOddHeaders(): void {
+		const root = this.ensureSettingsRoot();
+		if (root.children.some((child) => child.tag === "w:evenAndOddHeaders")) {
+			return;
+		}
+		const node = <w.evenAndOddHeaders />;
+		const successorIndex = root.children.findIndex((child) =>
+			EVEN_AND_ODD_SUCCESSORS.has(child.tag),
+		);
+		if (successorIndex === -1) root.children.push(node);
+		else root.children.splice(successorIndex, 0, node);
+	}
+
+	/** Remove `<w:evenAndOddHeaders/>` — the counterpart to `ensureEvenAndOddHeaders`,
+	 *  called when the last `even`-type header/footer is cleared (it's a document-
+	 *  level toggle, so a stale one leaves even pages blank instead of inheriting
+	 *  the default). No-op when absent. */
+	removeEvenAndOddHeaders(): void {
+		const root = XmlNode.findRoot(this.tree, "w:settings");
+		if (!root) return;
+		root.children = root.children.filter(
+			(child) => child.tag !== "w:evenAndOddHeaders",
+		);
 	}
 
 	private ensureSettingsRoot(): XmlNode {

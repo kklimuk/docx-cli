@@ -2,6 +2,7 @@ import {
 	applyPageGeometry,
 	Document,
 	literalParagraphs,
+	Marginals,
 	MarkdownImport,
 	MarkdownImportError,
 	type PageGeometry,
@@ -47,6 +48,11 @@ Options:
                      or WxH inches (e.g. 8.5x14in). A W>H size implies landscape.
   --margins M        Page margins: one inch value (uniform, e.g. 1in) OR four
                      comma-separated top,right,bottom,left (e.g. 1,1,1,1.5).
+  --header TEXT      Add a page header with this text (all pages)
+  --footer TEXT      Add a page footer with this text (all pages)
+  --page-numbers     Add centered page numbers in the footer (mutex with --footer).
+                     For richer footers (date, "Page X of Y", alignment, fields)
+                     use 'docx footers set' after create.
   --force            Overwrite if FILE already exists
   --dry-run          Print what would be created; do not write the file
   -v, --verbose      Print the success ack JSON (default: a one-line confirmation)
@@ -84,6 +90,9 @@ export async function run(args: string[]): Promise<number> {
 			orientation: { type: "string" },
 			size: { type: "string" },
 			margins: { type: "string" },
+			header: { type: "string" },
+			footer: { type: "string" },
+			"page-numbers": { type: "boolean" },
 			force: { type: "boolean" },
 			"dry-run": { type: "boolean" },
 			verbose: { type: "boolean", short: "v" },
@@ -134,6 +143,23 @@ export async function run(args: string[]): Promise<number> {
 		geometry.orientation !== undefined ||
 		geometry.margins !== undefined;
 
+	// Header/footer (--header/--footer text + --page-numbers footer). Applied via
+	// the Marginals lens after content + geometry land (so the two-zone tab, if it
+	// were used here, would see the final page size). --footer and --page-numbers
+	// both set the footer, so they're mutually exclusive.
+	const header = parsed.values.header as string | undefined;
+	const footer = parsed.values.footer as string | undefined;
+	const pageNumbers = Boolean(parsed.values["page-numbers"]);
+	if (footer !== undefined && pageNumbers) {
+		return fail(
+			"USAGE",
+			"--footer and --page-numbers both set the footer — pass one (use 'docx footers set' for a footer with text AND page numbers).",
+		);
+	}
+	const marginals = { header, footer, pageNumbers };
+	const hasMarginals =
+		header !== undefined || footer !== undefined || pageNumbers;
+
 	const dryRun = Boolean(parsed.values["dry-run"]);
 	// `create`'s positional FILE *is* the destination (unlike the mutators,
 	// which edit an existing FILE and use -o to write elsewhere) — so there's no
@@ -157,6 +183,7 @@ export async function run(args: string[]): Promise<number> {
 			...(textFilePath !== undefined ? { textFile: textFilePath } : {}),
 			...(fromPath !== undefined ? { from: fromPath } : {}),
 			...(hasGeometry ? { page: geometry } : {}),
+			...(hasMarginals ? { marginals } : {}),
 		});
 		return EXIT.OK;
 	}
@@ -193,6 +220,13 @@ export async function run(args: string[]): Promise<number> {
 	// tracking: a brand-new document has no prior state to snapshot.
 	if (hasGeometry) {
 		const applied = await applyGeometryToBody(destination, geometry);
+		if (typeof applied === "number") return applied;
+	}
+
+	// Headers/footers, applied after geometry so the part lands on the final
+	// trailing sectPr (same re-open-and-mutate pattern as the geometry step).
+	if (hasMarginals) {
+		const applied = await applyMarginalsToBody(destination, marginals);
 		if (typeof applied === "number") return applied;
 	}
 
@@ -286,6 +320,39 @@ async function applyGeometryToBody(
 		);
 	}
 	applyPageGeometry(sectPr, geometry);
+	await document.save();
+	return undefined;
+}
+
+/** Re-open the freshly-written doc and apply create-time headers/footers to its
+ *  trailing `<w:sectPr>` (document-wide) via the `Marginals` lens. */
+async function applyMarginalsToBody(
+	docxPath: string,
+	marginals: { header?: string; footer?: string; pageNumbers: boolean },
+): Promise<number | undefined> {
+	const document = await Document.open(docxPath);
+	const sectPr = document.body.body.children
+		.filter((child) => child.tag === "w:sectPr")
+		.pop();
+	if (!sectPr) {
+		return fail(
+			"USAGE",
+			"Internal: trailing <w:sectPr> not found in blank-package body",
+		);
+	}
+	const lens = new Marginals(document);
+	if (marginals.header !== undefined) {
+		lens.set([sectPr], "header", "default", { text: marginals.header });
+	}
+	if (marginals.footer !== undefined) {
+		lens.set([sectPr], "footer", "default", { text: marginals.footer });
+	}
+	if (marginals.pageNumbers) {
+		lens.set([sectPr], "footer", "default", {
+			field: { type: "page" },
+			align: "center",
+		});
+	}
 	await document.save();
 	return undefined;
 }

@@ -31,6 +31,8 @@ const JSON_SCHEMA = {
 		"comments",
 		"footnotes",
 		"endnotes",
+		"headers",
+		"footers",
 	],
 	properties: {
 		schemaVersion: { const: 1 },
@@ -48,6 +50,8 @@ const JSON_SCHEMA = {
 		comments: { type: "array", items: { $ref: "#/$defs/Comment" } },
 		footnotes: { type: "array", items: { $ref: "#/$defs/Footnote" } },
 		endnotes: { type: "array", items: { $ref: "#/$defs/Footnote" } },
+		headers: { type: "array", items: { $ref: "#/$defs/Marginal" } },
+		footers: { type: "array", items: { $ref: "#/$defs/Marginal" } },
 	},
 	$defs: {
 		Block: {
@@ -246,6 +250,17 @@ const JSON_SCHEMA = {
 			required: ["id", "text"],
 			properties: {
 				id: { type: "string" },
+				text: { type: "string" },
+			},
+		},
+		Marginal: {
+			type: "object",
+			required: ["id", "kind", "type", "sectionId", "text"],
+			properties: {
+				id: { type: "string" },
+				kind: { enum: ["header", "footer"] },
+				type: { enum: ["default", "first", "even"] },
+				sectionId: { type: "string" },
 				text: { type: "string" },
 			},
 		},

@@ -35,7 +35,9 @@ const TOP_LEVEL_MUTATORS = new Set([
 const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	comments: new Set(["add", "reply", "resolve", "delete"]),
 	endnotes: new Set(["add", "edit", "delete"]),
+	footers: new Set(["set", "clear"]),
 	footnotes: new Set(["add", "edit", "delete"]),
+	headers: new Set(["set", "clear"]),
 	images: new Set(["replace", "delete"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
 	styles: new Set(["set-default-font"]),

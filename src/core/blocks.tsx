@@ -104,6 +104,18 @@ export type ParagraphOptions = {
  *  `w:pos` in twips (absolute from the left text margin). */
 export type TabStop = { align: string; pos: number };
 
+/** Normalize a tab stop's `w:val` to the canonical alignment vocabulary so the
+ *  AST reader, the `docx:layout` wrap detector, and the page-setup tab-reflow cure
+ *  all classify a stop the same way (they were diverging on the LTR-aware aliases
+ *  `start`/`end` and a missing/empty val). `start`→`left`, `end`→`right`, missing
+ *  or empty→`left`; everything else (center/right/decimal/bar/clear/num) passes
+ *  through. Keep the three consumers reading through THIS function. */
+export function normalizeTabAlign(raw: string | undefined): string {
+	if (raw === undefined || raw === "" || raw === "start") return "left";
+	if (raw === "end") return "right";
+	return raw;
+}
+
 type EmittableTextFormatting = Pick<
 	TextRun,
 	| "color"

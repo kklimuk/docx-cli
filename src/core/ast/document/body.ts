@@ -4,6 +4,7 @@ import type {
 	Block,
 	Comment,
 	DocProperties,
+	Marginal,
 	Note,
 	TrackedChangeKind,
 } from "../types";
@@ -16,6 +17,8 @@ export class Body {
 	comments: Comment[];
 	footnotes: Note[];
 	endnotes: Note[];
+	headers: Marginal[];
+	footers: Marginal[];
 
 	body: XmlNode;
 	blockReferences: Map<string, BlockReference> = new Map();
@@ -30,6 +33,8 @@ export class Body {
 		comments: Comment[];
 		footnotes: Note[];
 		endnotes: Note[];
+		headers: Marginal[];
+		footers: Marginal[];
 		body: XmlNode;
 	}) {
 		this.path = init.path;
@@ -38,6 +43,8 @@ export class Body {
 		this.comments = init.comments;
 		this.footnotes = init.footnotes;
 		this.endnotes = init.endnotes;
+		this.headers = init.headers;
+		this.footers = init.footers;
 		this.body = init.body;
 	}
 
@@ -134,6 +141,8 @@ export class Body {
 			comments: this.comments,
 			footnotes: this.footnotes,
 			endnotes: this.endnotes,
+			headers: this.headers,
+			footers: this.footers,
 		};
 	}
 }

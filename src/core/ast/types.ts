@@ -284,6 +284,23 @@ export type Note = {
 	text: string;
 };
 
+/** A header or footer, surfaced on `Body.headers` / `Body.footers`. One entry per
+ *  `<w:sectPr>` reference, so a document-wide header (one shared part referenced
+ *  from every section) appears once per section. `id` (`hdr0` / `ftr0`) is the
+ *  positional handle; `sectionId` is the owning section's `sN`; `type` is the
+ *  placement (`default` = all/odd pages, `first`, `even`); `text` renders fields
+ *  as `{page}` / `{pages}` / `{date}` / `{styleref:NAME}` / `{filename}` / `{title}`
+ *  / `{author}` tokens (the cached field value is not shown). Authored via
+ *  `docx headers`/`docx footers` (the `--at sN --type T` address) — `read --markdown`
+ *  surfaces it deviation-only as a `<!-- docx:header … -->` hint the importer drops. */
+export type Marginal = {
+	id: string;
+	kind: "header" | "footer";
+	type: "default" | "first" | "even";
+	sectionId: string;
+	text: string;
+};
+
 export type TrackedChange = {
 	id: string;
 	kind: TrackedChangeKind;

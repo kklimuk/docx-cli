@@ -303,8 +303,13 @@ function sectPrChildRank(tag: string): number {
 
 /** Splice `child` into `sectPr.children` at its canonical CT_SectPr position:
  *  before the first existing child that ranks after it (so a new `<w:pgSz>` lands
- *  after `<w:type>` but before `<w:cols>`, and everything before `<w:sectPrChange>`). */
-function insertSectPrChildInOrder(sectPr: XmlNode, child: XmlNode): void {
+ *  after `<w:type>` but before `<w:cols>`, and everything before `<w:sectPrChange>`).
+ *  Exported for the `Marginals` lens, which splices `<w:headerReference>` /
+ *  `<w:footerReference>` / `<w:titlePg>` into existing sectPrs. */
+export function insertSectPrChildInOrder(
+	sectPr: XmlNode,
+	child: XmlNode,
+): void {
 	const rank = sectPrChildRank(child.tag);
 	const at = sectPr.children.findIndex(
 		(existing) => sectPrChildRank(existing.tag) > rank,
