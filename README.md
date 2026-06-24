@@ -95,6 +95,8 @@ docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--page
 docx comments      list FILE [--include-resolved] [--thread cN]
 docx footnotes     list FILE
 docx endnotes      list FILE
+docx headers       list FILE
+docx footers       list FILE
 docx images        list FILE
 docx hyperlinks    list FILE
 docx track-changes list FILE
@@ -119,10 +121,15 @@ clean):
   size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
   US-Letter-portrait-1″ — `text-width` is the usable column width, and the leading
   `sN` is the section to re-apply against. Exact twips are in `read --ast` (on each
-  section break: `pageWidth`/`pageHeight`/`pageOrientation`/`margin*`). Set it with
-  `docx sections --at sN --orientation/--size/--margins` (the trailing `sN` is the
-  whole document) or at `create` time; under track-changes it records as one
-  `<w:sectPrChange>` (accept/reject in Word).
+  section break: `pageWidth`/`pageHeight`/`pageOrientation`/`margin*`). Set it for the
+  WHOLE document with `docx sections --orientation/--size/--margins` (no `--at` →
+  every section gets it, so a multi-section doc doesn't leave the trailing section
+  behind), one section with `docx sections --at sN …`, or at `create` time; under
+  track-changes it records as one `<w:sectPrChange>` per section (accept/reject in Word).
+  Changing margins/size also **auto-realigns right-edge tab columns** (résumé
+  dates/locations): a LEFT tab calibrated to the old margins would overflow and wrap
+  at the new width, so page setup converts each to a RIGHT tab flush at the new
+  margin and reports how many it fixed — no second `--tabs right` step needed.
 - **Tables** carry a leading `<!-- docx:table t0 widths="1,2,3in" borders="double" -->`
   when columns are uneven or borders deviate from the default, plus a per-cell
   `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699" -->`
@@ -133,18 +140,33 @@ clean):
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds
   image shows just its size). `overflow` flags an image wider than the usable text
   column (`ImageRun.floating`/`wrap`/`align` + EMU extents in `read --ast`).
+- **Headers / footers** surface as `<!-- docx:header text="Quarterly Report" -->`
+  / `<!-- docx:footer text="Page {page} of {pages}" -->` notes (the `type` attr
+  appears only for `first`/`even`). Fields read as tokens — `{page}` `{pages}`
+  `{date}` `{time}` `{styleref:NAME}` `{filename}` `{title}` `{author}` (`{time}`
+  read-only). A marginal that's
+  the same on every section rides the top; one that **differs by section** renders at
+  that section's **start** (alongside the `docx:section` note, which also renders at
+  the section's start with `applies-to="… (below)"`), so each hint reads right before
+  the content it governs. The text lives in the comment attribute
+  so the importer drops it (it can't re-inject into the body); full entries are in
+  `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
+  headers`/`docx footers`.
 
 ### Mutate (change FILE in place; `--dry-run`, `-v` everywhere; `-o PATH` on every mutator except `create`, whose positional FILE is already the output)
 
 ```sh
-docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--orientation O] [--size SIZE] [--margins M] [--force]
+docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--orientation O] [--size SIZE] [--margins M] [--header "..."] [--footer "..." | --page-numbers] [--force]
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
-docx sections FILE --at LOCATOR [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit an existing section's columns/type/page geometry). Multi-column layout AND page setup (margins/orientation/size) live HERE; the trailing sN is the whole-document page geometry.
+docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
+#   Keeps the run's formatting (bold/font) and any tabs — the no-rebuild way to fill a
+#   formatted/tabbed template line (e.g. "**Org Name**⇥Date"); don't hand-build --runs to refill it.
+#   A span edit (find → edit --at pN:S-E --text NEW) does the same by locator.
 
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys
 # on each JSONL line mirror the command's flags; all locators address the doc as
@@ -170,8 +192,11 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #       and prints ONE consolidated fix-all summary at the top): swaps the fragile LEFT tab for a RIGHT tab
 #       flush at the margin so a long value (e.g. a city) never wraps. Rides along with --text, works
 #       per-entry in --batch, and on a RANGE (edit --at pN-pM --tabs right) cures every tab line at once.
-#   edit --text ""      rejected (it would leave an invisible blank paragraph) — use `delete` to remove the
-#       line, or `--runs '[]'` to blank it but keep an empty spacer.
+#   edit --text ""      REMOVES the line (same as `delete`; a table cell's last paragraph is blanked, not
+#       deleted, so the cell stays valid). In --batch, `{"at":"pN","text":""}` or `{"at":"pN","delete":true}`
+#       removes a line — so a form-fill is ONE sweep: fill the cells with values, drop the leftover
+#       placeholder lines. Use `--runs '[]'` to blank a paragraph but keep an empty spacer. A SPAN's
+#       `--text ""` (pN:S-E) still deletes just those characters.
 #   --runs '[{"type":"text","text":"X","bold":true}]'
 #   --text-file PATH                               # (insert/create) LITERAL multi-paragraph text, NOT parsed — every char verbatim,
 #       each newline = a new paragraph. For prose GFM would corrupt: "3. note" stays "3.", *x* / [t](u) / bare URLs / {++x++} untouched.
@@ -202,6 +227,17 @@ docx footnotes delete FILE --at fnN
 docx endnotes  add    FILE --at pN[:offset] (--text "..." | --runs JSON | --markdown TEXT)
 docx endnotes  edit   FILE --at enN (--text "..." | --runs JSON | --markdown TEXT)
 docx endnotes  delete FILE --at enN
+
+# Headers & footers (one shared impl — "marginals"). Default placement is every
+# page, all sections (--at sN targets one). Content: ONE primary source, except
+# --text + one field = two-zone (text left, field right at a content-edge tab).
+docx headers set   FILE [--at sN] [--type default|first|even | --first-page | --even | --odd] \
+                        [--text "..."] [--align left|center|right] \
+                        [--page-number [--of-pages] | --date [--date-format FMT] | --style-ref STYLE | --field filename|title|author] \
+                        [--track] [--author NAME]
+docx headers clear FILE [--at sN] [--type T | --first-page | --even | --odd]
+docx footers set   FILE …   # identical flags, kind=footer (e.g. --page-number --of-pages → "Page X of Y")
+docx footers clear FILE …
 
 docx images extract FILE --to DIR [--at imgN]            # --to = output directory; --at picks one image
 docx images replace FILE --at imgN --with ./new.png
@@ -248,13 +284,13 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 | Command class | Default stdout on success | `--verbose` |
 | ------------- | ------------------------- | ----------- |
 | **Mutator that mints a new handle** — `comments add`→`cN`, `comments reply`→`cN`, `footnotes/endnotes add`→`fnN`/`enN`, `hyperlinks add`→`linkN`, `insert`→the new `pN` | the bare locator(s), **one per line** (a multi-block `--markdown` insert prints several) | full `{ok:true,…}` ack |
-| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `tables *`, `track-changes accept/reject` & toggle | **one-line confirmation** — `<operation> <target>` (e.g. `edit t1:r0c1:p0`, `edit 7 changes`, `replace 0 occurrences replaced`) (exit `0`) | full `{ok:true,…}` ack |
+| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `headers/footers set/clear`, `tables *`, `track-changes accept/reject` & toggle | **one-line confirmation** — `<operation> <target>` (e.g. `edit t1:r0c1:p0`, `edit 7 changes`, `replace 0 occurrences replaced`) (exit `0`) | full `{ok:true,…}` ack |
 | `find` | matched span locators, one per line (no matches → nothing, exit `0`) | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
 | `wc` | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`) | `--json` → `{ words, scope, view, sections? }` |
 | `outline` | indented `LOCATOR⇥TEXT` tree (two spaces per level) | `--json` → nested `[{ id, locator, level, style, text, children }]` |
 | `read` | GFM Markdown, each paragraph trailed by `<!-- pN -->` | `--ast` → the JSON AST body (`docx info schema`) |
 | `render` | image paths, one per line | `--verbose` → `{ok, operation, path, engine, output, pages}` |
-| `* list` (all six `list` verbs) | a **bare JSON array**; each item's `id` is its `--at` handle | — |
+| `* list` (all eight `list` verbs) | a **bare JSON array**; each item's `id` is its `--at` handle | — |
 
 `--dry-run` always prints a preview object (no `ok`) and writes nothing; it wins over `-o/--output`.
 
@@ -267,6 +303,7 @@ Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are de
 | `pN` / `tN` / `sN` (block ids) | `docx read FILE` (the `<!-- pN -->` trailers), `docx read FILE --ast`, `docx outline FILE` (heading `pN`s), or `docx render` page images | `read`, `edit`, `insert`, `delete`, `wc`, `find` results |
 | `cN` (comment) | `docx comments list FILE` | `comments reply/resolve/delete --at` |
 | `fnN` / `enN` (foot/endnote) | `docx footnotes list FILE` / `docx endnotes list FILE` | `footnotes/endnotes edit/delete --at` |
+| `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast`) | addressed by section+type, not the id: `headers/footers set --at sN --type T` |
 | `imgN` (image) | `docx images list FILE` | `images extract/replace/delete --at` |
 | `linkN` (hyperlink) | `docx hyperlinks list FILE` | `hyperlinks replace/delete --at` |
 | `tcN` (tracked change) | `docx track-changes list FILE` | `track-changes accept/reject --at` |

@@ -4,6 +4,13 @@ Fill the attached `invoice.docx` with the real values below **and swap its logo*
 Keep the table layout and the formatting intact — only the text content and the logo
 change.
 
+The template has more placeholder *lines* than some sections need (e.g. the "from"
+address spans two lines but the real address fits on one; each line item has a
+"Description N" sub-line). **Fill the lines you use and remove the leftover
+placeholder lines** so no template text is left behind — clear a line by giving it
+empty text (`{ "at": "pN", "text": "" }` in an `edit --batch`, or `docx edit --at pN
+--text ""`).
+
 ## Header / "from"
 
 - Company: **Northwind Robotics, Inc.**
@@ -26,7 +33,9 @@ change.
 There are **four** line items, but the table only has rows for three. Fill the three
 existing item rows, then **insert a new row** for the fourth (use the table tools —
 don't type over a totals row), and fill it. After they're in, **set the line-items
-table's column widths** so Description is the widest column.
+table's column widths** so Description is the widest column — while keeping the Price
+and Amount columns wide enough to show the dollar values (e.g. `$10,100.00`) on one
+line without wrapping.
 
 | Description | Quantity | Price | Amount |
 | --- | --- | --- | --- |
@@ -58,6 +67,9 @@ images first to find the right one to target.
 ## What "done" looks like
 
 All `Item 1/2/3`, `$0.00`, `Customer name`, `Your Company Name`, etc. placeholders
-are replaced with the values above; the three tables are still present and unbroken;
-the top-left logo is now the new mark from `assets/logo.svg` (a green ink-blob); and
-the footer's payment mark is untouched (the document still has two embedded images).
+are replaced with the values above — and leftover placeholder lines (the extra
+address line, the "Description N" sub-lines) are removed, not left behind; the three
+tables are still present and unbroken; the line-items columns are sized so Description
+is widest and no dollar value wraps; the top-left logo is now the new mark from
+`assets/logo.svg` (a green ink-blob); and the footer's payment mark is untouched (the
+document still has two embedded images).

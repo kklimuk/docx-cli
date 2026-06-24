@@ -27,6 +27,10 @@ figure**.
 6. Print the journal in **landscape** — set the whole document's page orientation to
    landscape so the wide page carries the two columns comfortably. (Page orientation is
    a section/page-setup property — set it, don't fake it by resizing anything.)
+7. Add page **chrome**: a running **header** with the collection title ("A T. S. Eliot
+   Reader") and a **footer** with centered page numbers ("Page X of Y"). These are
+   header/footer parts — author them with `docx headers set` / `docx footers set`
+   (e.g. `docx footers set journal.docx --page-number --of-pages`), not body text.
 
 ## What "done" looks like
 

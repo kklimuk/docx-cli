@@ -15,15 +15,17 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   insert    FILE  Insert a paragraph, image, table, equation, code block, markdown, or page break (--after/--before LOCATOR; --track; --batch for many inserts in one read). For COLUMN layout use "docx sections", not insert.
   delete    FILE  Remove a paragraph, range, table, or section break (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
   find      FILE [QUERY]  Find spans by text, OR by formatting (--highlight/--color/--bold/--italic/--underline); returns locators for --at
-  replace   FILE PATTERN REPL  Substitute text spans, sed-style (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern script)
+  replace   FILE PATTERN REPL  Substitute text spans, sed-style — KEEPS the run's formatting (bold/font) and any tabs, so it fills bold/tabbed template lines without rebuilding runs (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern fill)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
-  sections  FILE  Multi-column layout & section breaks — put a paragraph range in N columns (--at pN-pM --columns N) or recount a section (--at sN). The ONLY way to do columns; insert does not.
+  sections  FILE  Multi-column layout, section breaks & PAGE SETUP — columns on a range (--at pN-pM --columns N); page margins/orientation/size for the WHOLE document ("--margins 0.5" with NO --at sets every section) or one section (--at sN). The ONLY way to do columns; insert does not.
   styles    FILE  List the styles you can apply (--used for ones in use; --at ID to describe one) — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
   comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
   footnotes …     Add (--at | --anchor PHRASE), edit, delete, list footnotes (--text/--runs/--markdown bodies)
   endnotes  …     Add (--at | --anchor PHRASE), edit, delete, list endnotes (--text/--runs/--markdown bodies)
+  headers   …     Set/list/clear page headers — --text, page numbers, date, fields; --first-page/--even; default = whole document
+  footers   …     Set/list/clear page footers — e.g. "footers set FILE --page-number --of-pages" for "Page X of Y"
   images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Restructure tables — insert/delete rows & columns, merge/unmerge, set widths, borders
@@ -38,6 +40,13 @@ one-at-a-time — edit / insert / replace / delete and comments (add/resolve/del
 all take --batch FILE.jsonl (one JSON change per line; "-" reads stdin). Every locator
 addresses the document AS READ, so ids stay valid across the whole batch — one
 read, one write, no re-reading between changes. See "<command> --help".
+
+FILL FORMATTED / TABBED LINES WITHOUT REBUILDING RUNS: to fill a template line that
+carries formatting (bold/font) or tab stops — e.g. "**Org Name**⇥Date" — replace just
+the TEXT and the formatting + tabs are kept automatically: "docx replace OLD NEW"
+(batchable), or a span edit ("docx find" → "docx edit --at pN:S-E --text NEW"). Both
+preserve the run's bold/font and the surrounding tabs. Do NOT hand-build "--runs" JSON
+to re-create a line you're just refilling — that's slow and drops formatting.
 
 VERIFY LAYOUT VISUALLY — ONLY WHEN LAYOUT IS THE QUESTION: "docx read" is the source of
 truth for CONTENT, so if you filled text, replaced placeholders, edited cells, or added

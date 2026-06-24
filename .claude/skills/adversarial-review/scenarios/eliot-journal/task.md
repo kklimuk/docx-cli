@@ -7,7 +7,8 @@ with an embedded **frontispiece figure + caption**, a TWO-COLUMN body section ho
 the poems with their titles as headings and verse line breaks preserved (plus at least
 two editor's **footnotes**), and a closing single-column colophon section containing a
 **hyperlink**. Set the whole document to **landscape** orientation (the wide page suits
-the two-column verse).
+the two-column verse). Add a **running header** with the collection title ("A T. S.
+Eliot Reader") and **centered page numbers** in the footer ("Page X of Y").
 
 ## Resolution criteria
 
@@ -19,4 +20,8 @@ frontispiece image is embedded with a caption; at least two footnotes are presen
 list`); the title and colophon are single-column. The page is **landscape** (`docx read
 --ast` shows the trailing section's `pageOrientation: "landscape"` with `pageWidth >
 pageHeight`, or `docx read` shows the `docx:page … orientation="landscape"` note).
-Multi-section structure renders cleanly.
+A **running header** carries the collection title and the **footer shows page numbers**
+(`docx headers list` shows a header with the title; `docx footers list` shows a footer
+whose text is a page-number field — e.g. "Page {page} of {pages}"; the render shows the
+title at the top and a page number at the bottom of each page). Multi-section structure
+renders cleanly.

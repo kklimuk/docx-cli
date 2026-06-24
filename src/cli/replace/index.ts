@@ -49,9 +49,14 @@ Options:
 
 Within-paragraph matches only. Run formatting (rPr) on the surrounding text
 is preserved; the replacement run inherits the rPr of the first run that
-overlaps the matched span. When a single invocation produces multiple
-replacements in the same paragraph, they're applied in reverse offset order
-so earlier offsets don't shift before being applied.
+overlaps the matched span. Tabs and other runs in the paragraph are left in
+place — only the matched text changes. So this is the no-rebuild way to FILL a
+formatted/tabbed template line: \`replace "Organization Name" "Northwind Robotics"\`
+on a "**Organization Name**⇥Date" line keeps the bold and the tab; don't
+hand-build \`edit --runs\` JSON to refill a line. \`--batch\` fills many at once.
+When a single invocation produces multiple replacements in the same paragraph,
+they're applied in reverse offset order so earlier offsets don't shift before
+being applied.
 
 By default the PATTERN is normalized: balanced markdown emphasis around
 non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match

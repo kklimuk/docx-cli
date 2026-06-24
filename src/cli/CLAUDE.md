@@ -13,16 +13,31 @@ HTML comments, built via `formatNote` / `htmlAttr` in [read/annotations.ts](read
 These are read-time VISIBILITY hints — the importer DROPS them all (the structure
 survives edits in place, `read --ast` is lossless, and the authoring verbs manage
 it), emitted **deviation-only** (only what differs from the document default).
-Today: `docx:section` (with an `applies-to="pX..pY (above)"` scope on deviating
-sections), `docx:page`, `docx:table`, per-cell merge/shading hints, a head
-`docx:track-changes on` when the doc's tracking toggle is enabled, and
+Today: `docx:section` (rendered at the section's START, with an
+`applies-to="pX..pY (below)"` scope on deviating sections), `docx:page`,
+`docx:table`, per-cell merge/shading hints, a head
+`docx:track-changes on` when the doc's tracking toggle is enabled,
+`docx:header`/`docx:footer` notes (the content in a `text` attr — so the importer's
+`docx:` drop can't re-inject it into the body — with fields as `{page}`/`{date}`/…
+tokens; `type` attr only for `first`/`even`). Section annotations render at the
+section's START (where its content begins), not the sectPr's physical end, so each
+reads right before the content it governs (`computeSectionStarts`/`renderSectionStart`
+in `read/markdown.ts`). A UNIFORM marginal (same across every section) rides the head
+block instead; a marginal whose text DIFFERS by section renders at that section's
+start. And
 `docx:layout` on a tab-aligned paragraph that wraps — either inside a multi-column
 section (tab stops wrap mid-line there) or a line whose trailing content sits on a
 right-edge LEFT tab so a long value overflows the margin (the résumé
 `San`/`Francisco` split). The latter warn names its cure: `edit --at pN --tabs
 right` swaps the LEFT tab for a RIGHT tab flush at the margin (in `cli/edit/tabs.ts`,
 emitted via `ParagraphOptions.tabs`), so the content right-aligns instead of
-wrapping. Both are render-only breaks Markdown can't show.
+wrapping. Both are render-only breaks Markdown can't show. **`docx sections`
+page-setup now CURES the right-edge-tab case for you**: changing margins/size
+(doc-wide, or on a single-section doc) auto-applies that same `--tabs right` cure
+to every fragile right-edge tab — calibrated to the OLD margins, it would wrap at
+the new width — so the agent doesn't have to act on the hint (weak agents dismiss
+it as "informational"). The hint still fires for cases page-setup can't reach (a
+hand-set tab, a multi-section per-section edit).
 The per-paragraph `docx:p` note carries `style`/`align` plus direct paragraph
 spacing/indent (`space-before`/`space-after`/`line-spacing`/`indent-left`/
 `indent-right`/`first-line`/`hanging`, in points/inches/multiples so an agent can
