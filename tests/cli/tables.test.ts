@@ -500,6 +500,74 @@ describe("docx tables insert-row", () => {
 		expect(newRow?.cells.reduce((s, c) => s + span(c), 0)).toBe(3);
 	});
 
+	test("inserted row inherits the sibling cells' paragraph alignment (invoice jc footgun)", async () => {
+		// The invoice defect: a numeric column is right-aligned in the data rows,
+		// but `insert-row` cloned only the gridSpan/merge structure — not the cells'
+		// `<w:jc>` — so the new row's number landed left-aligned, out of column.
+		const doc = await newTableDoc("ins-row-jc", 2, 2);
+		await runCli("edit", doc, "--at", "t0:r1c1:p0", "--alignment", "right");
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			doc,
+			"--at",
+			"t0",
+			"--position",
+			"2",
+		);
+		expect(result.exitCode).toBe(0);
+		const pkg = await Pkg.open(doc);
+		const xml = await pkg.readText("word/document.xml");
+		const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map((m) => m[0]);
+		// Both the sibling data row AND the inserted row now carry jc=right — the
+		// new row mirrors the alignment, not just the column structure.
+		const rightAligned = rows.filter((row) =>
+			/<w:jc w:val="right"/.test(row),
+		).length;
+		expect(rightAligned).toBe(2);
+	});
+
+	test("inherited alignment also applies under a gridSpan'd cell", async () => {
+		// 3 grid columns; merge cols 1+2 of the data row into one spanned cell and
+		// right-align it. The inserted row mirrors the span AND the alignment.
+		const merged = await newTableDoc("ins-row-jc-span", 2, 3);
+		await runCli("tables", "merge", merged, "--at", "t0:r1c1-r1c2");
+		await runCli("edit", merged, "--at", "t0:r1c1:p0", "--alignment", "right");
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			merged,
+			"--at",
+			"t0",
+			"--position",
+			"2",
+		);
+		expect(result.exitCode).toBe(0);
+		const t = await table(merged);
+		const newRow = t.rows[2];
+		// The inserted row's spanned cell exists (gridSpan 2) — and the whole table
+		// now carries two right-aligned cells (sibling + inserted), not one.
+		expect(newRow?.cells[1]?.gridSpan).toBe(2);
+		const xml = await (await Pkg.open(merged)).readText("word/document.xml");
+		const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map((m) => m[0]);
+		expect(rows.filter((row) => /<w:jc w:val="right"/.test(row)).length).toBe(
+			2,
+		);
+	});
+
+	test("inherited alignment survives a tracked insert-row", async () => {
+		const doc = await newTableDoc("ins-row-jc-track", 2, 2);
+		await runCli("edit", doc, "--at", "t0:r1c1:p0", "--alignment", "right");
+		await runCli("track-changes", "on", doc);
+		await runCli("tables", "insert-row", doc, "--at", "t0", "--position", "2");
+		await runCli("track-changes", "accept", doc, "--all");
+		const xml = await (await Pkg.open(doc)).readText("word/document.xml");
+		const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map((m) => m[0]);
+		expect(rows.filter((row) => /<w:jc w:val="right"/.test(row)).length).toBe(
+			2,
+		);
+	});
+
 	test("--cells limit counts logical (visible) columns on a merged table", async () => {
 		const merged = await newTableDoc("ins-row-span-limit", 2, 3);
 		await runCli("tables", "merge", merged, "--at", "t0:r1c1-r1c2");

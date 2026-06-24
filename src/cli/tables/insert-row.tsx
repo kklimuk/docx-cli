@@ -51,6 +51,11 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
+The new row mirrors the neighbor row's structure AND look: it copies each cell's
+gridSpan pattern and inherits the neighbor cell's paragraph properties
+(alignment, spacing, indent) — so an inserted numeric column stays right-aligned
+in column with the rows above, not left-aligned out of column.
+
 A row inserted inside a vertical merge extends the merge through the new row
 (its cell in the merged column becomes a vMerge continuation) — matching Word.
 A row inserted below the merge is a normal independent row.
@@ -237,16 +242,35 @@ function buildRow(grid: Grid, position: number, cellTexts: string[]): XmlNode {
 			col += continued.colSpan;
 			continue;
 		}
-		const refSpan = spans ? (cellAt(spans, col)?.colSpan ?? 1) : 1;
+		const refCell = spans ? cellAt(spans, col) : undefined;
+		const refSpan = refCell?.colSpan ?? 1;
 		cells.push(
 			<TableCell gridSpan={refSpan > 1 ? refSpan : undefined}>
-				<Paragraph text={cellTexts[logical] ?? ""} />
+				{cellParagraph(cellTexts[logical] ?? "", refCell?.node)}
 			</TableCell>,
 		);
 		logical += 1;
 		col += refSpan;
 	}
 	return <w.tr>{cells}</w.tr>;
+}
+
+/** Build an inserted cell's paragraph, inheriting the reference (sibling-row)
+ * cell's paragraph properties so the new row lines up with the rows above —
+ * alignment (`<w:jc>`), spacing, and indent. Without this an inserted numeric
+ * column falls back to the left-aligned default and sits visibly out of column
+ * with the right-aligned values above it (the invoice "Calibration kit" row).
+ * `<w:pPr>` carries only properties (no content), so cloning it wholesale is
+ * safe; `<Paragraph>` with no options emits no `<w:pPr>`, so the clone becomes
+ * the paragraph's sole (and correctly first) `<w:pPr>`. */
+function cellParagraph(
+	text: string,
+	referenceCell: XmlNode | undefined,
+): XmlNode {
+	const paragraph = <Paragraph text={text} />;
+	const pPr = referenceCell?.findChild("w:p")?.findChild("w:pPr");
+	if (pPr) paragraph.children.unshift(pPr.clone());
+	return paragraph;
 }
 
 /** Index in `table.children` at which to splice a row inserted at logical
