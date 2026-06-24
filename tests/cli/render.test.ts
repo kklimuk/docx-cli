@@ -12,6 +12,13 @@ import { runCli, tempWorkspace } from "./harness";
  * USAGE errors) always run. */
 const LIBREOFFICE_AVAILABLE = await detectLibreOffice();
 
+/** LibreOffice cold-start (the first soffice launch) routinely exceeds bun's 5s
+ * default per-test timeout under load — e.g. right after the adversarial-review
+ * harness has been rendering — so the docx→PDF→rasterize e2e tests flake at
+ * exactly 5001ms. Give them generous headroom; a slow cold-start is latency, not
+ * a failure. (They still run in ~2-3s when LibreOffice is warm.) */
+const RENDER_TIMEOUT = 60_000;
+
 async function detectLibreOffice(): Promise<boolean> {
 	const probe = async (cmd: string[]): Promise<boolean> => {
 		const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
@@ -89,80 +96,99 @@ describe("docx render — pages spec parser", () => {
 describe.skipIf(!LIBREOFFICE_AVAILABLE)(
 	"docx render — end-to-end (libreoffice)",
 	() => {
-		test("renders a fixture into one PNG per page", async () => {
-			const workspace = tempWorkspace("render-e2e");
-			const docPath = join(workspace, "out.docx");
-			const outDir = join(workspace, "pages");
-			await runCli("create", docPath, "--text", "Page one.");
-			const result = await runCli(
-				"render",
-				docPath,
-				"--engine",
-				"libreoffice",
-				"--out",
-				outDir,
-			);
-			expect(result.exitCode).toBe(0);
-			const ack = result.parsed as {
-				ok: boolean;
-				engine: string;
-				output: string;
-				pages: string[];
-			};
-			expect(ack.ok).toBe(true);
-			expect(ack.engine).toBe("libreoffice");
-			expect(ack.output).toBe(outDir);
-			expect(ack.pages.length).toBeGreaterThanOrEqual(1);
-			for (const pagePath of ack.pages) {
-				expect(existsSync(pagePath)).toBe(true);
-				expect(pagePath).toMatch(/page-\d{3}\.png$/);
-			}
-		});
+		test(
+			"renders a fixture into one PNG per page",
+			async () => {
+				const workspace = tempWorkspace("render-e2e");
+				const docPath = join(workspace, "out.docx");
+				const outDir = join(workspace, "pages");
+				await runCli("create", docPath, "--text", "Page one.");
+				const result = await runCli(
+					"render",
+					docPath,
+					"--engine",
+					"libreoffice",
+					"--out",
+					outDir,
+				);
+				expect(result.exitCode).toBe(0);
+				const ack = result.parsed as {
+					ok: boolean;
+					engine: string;
+					output: string;
+					pages: string[];
+				};
+				expect(ack.ok).toBe(true);
+				expect(ack.engine).toBe("libreoffice");
+				expect(ack.output).toBe(outDir);
+				expect(ack.pages.length).toBeGreaterThanOrEqual(1);
+				for (const pagePath of ack.pages) {
+					expect(existsSync(pagePath)).toBe(true);
+					expect(pagePath).toMatch(/page-\d{3}\.png$/);
+				}
+			},
+			RENDER_TIMEOUT,
+		);
 
-		test("--pages range produces a subset", async () => {
-			// Build a multi-page doc by inserting page breaks.
-			const workspace = tempWorkspace("render-pages-subset");
-			const docPath = join(workspace, "out.docx");
-			const outDir = join(workspace, "pages");
-			await runCli("create", docPath, "--text", "Page one.");
-			await runCli("insert", docPath, "--after", "p0", "--page-break");
-			await runCli("insert", docPath, "--after", "p1", "--text", "Page two.");
-			await runCli("insert", docPath, "--after", "p2", "--page-break");
-			await runCli("insert", docPath, "--after", "p3", "--text", "Page three.");
+		test(
+			"--pages range produces a subset",
+			async () => {
+				// Build a multi-page doc by inserting page breaks.
+				const workspace = tempWorkspace("render-pages-subset");
+				const docPath = join(workspace, "out.docx");
+				const outDir = join(workspace, "pages");
+				await runCli("create", docPath, "--text", "Page one.");
+				await runCli("insert", docPath, "--after", "p0", "--page-break");
+				await runCli("insert", docPath, "--after", "p1", "--text", "Page two.");
+				await runCli("insert", docPath, "--after", "p2", "--page-break");
+				await runCli(
+					"insert",
+					docPath,
+					"--after",
+					"p3",
+					"--text",
+					"Page three.",
+				);
 
-			const result = await runCli(
-				"render",
-				docPath,
-				"--engine",
-				"libreoffice",
-				"--out",
-				outDir,
-				"--pages",
-				"1-2",
-			);
-			const ack = result.parsed as { ok: boolean; pages: string[] };
-			expect(ack.ok).toBe(true);
-			expect(ack.pages.length).toBe(2);
-		});
+				const result = await runCli(
+					"render",
+					docPath,
+					"--engine",
+					"libreoffice",
+					"--out",
+					outDir,
+					"--pages",
+					"1-2",
+				);
+				const ack = result.parsed as { ok: boolean; pages: string[] };
+				expect(ack.ok).toBe(true);
+				expect(ack.pages.length).toBe(2);
+			},
+			RENDER_TIMEOUT,
+		);
 
-		test("--format jpg emits jpgs", async () => {
-			const workspace = tempWorkspace("render-jpg");
-			const docPath = join(workspace, "out.docx");
-			const outDir = join(workspace, "pages");
-			await runCli("create", docPath, "--text", "JPG test.");
-			const result = await runCli(
-				"render",
-				docPath,
-				"--engine",
-				"libreoffice",
-				"--out",
-				outDir,
-				"--format",
-				"jpg",
-			);
-			const ack = result.parsed as { ok: boolean; pages: string[] };
-			expect(ack.ok).toBe(true);
-			expect(ack.pages[0]).toMatch(/\.jpg$/);
-		});
+		test(
+			"--format jpg emits jpgs",
+			async () => {
+				const workspace = tempWorkspace("render-jpg");
+				const docPath = join(workspace, "out.docx");
+				const outDir = join(workspace, "pages");
+				await runCli("create", docPath, "--text", "JPG test.");
+				const result = await runCli(
+					"render",
+					docPath,
+					"--engine",
+					"libreoffice",
+					"--out",
+					outDir,
+					"--format",
+					"jpg",
+				);
+				const ack = result.parsed as { ok: boolean; pages: string[] };
+				expect(ack.ok).toBe(true);
+				expect(ack.pages[0]).toMatch(/\.jpg$/);
+			},
+			RENDER_TIMEOUT,
+		);
 	},
 );
