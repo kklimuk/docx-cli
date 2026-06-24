@@ -3,6 +3,7 @@ import {
 	type Document,
 	Edit,
 	EditError,
+	getPageContentWidthEmu,
 	Insert,
 	InsertError,
 	inheritPageGeometry,
@@ -13,6 +14,7 @@ import {
 	type SectionType,
 	TrackChanges,
 } from "@core";
+import { normalizeTabAlign, type TabStop } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
 import { parseSectionFlags } from "../parse-helpers";
 import {
@@ -59,11 +61,17 @@ add/change column layout; \`insert\` no longer takes --section (a raw section
 break formats the content ABOVE it, which is the classic off-by-one).
 
 Addressing:
+  (no --at)    PAGE SETUP for the WHOLE document: pass only --margins/
+               --orientation/--size with no locator and EVERY section gets it.
+               This is the "set it once for the whole document" path — each
+               section has its own geometry, so on a multi-section doc this sets
+               them all (incl. the trailing governing section that a per-section
+               sweep tends to miss). Columns/type still need --at (which section?).
   --at sN      Edit an EXISTING section break sN in place — its columns, type,
-               and/or page geometry. PAGE SETUP applies to the whole document via
-               its trailing section break (the LAST sN — s0 in a single-section
-               doc; \`docx read FILE\` prints the section's id on the
-               \`<!-- docx:page sN … -->\` note when geometry deviates from default).
+               and/or page geometry. Use this to target ONE section's geometry;
+               omit --at (above) to set the whole document. \`docx read FILE\`
+               prints the section's id on the \`<!-- docx:page sN … -->\` note when
+               geometry deviates from default.
   --at pN-pM   Wrap the paragraph range pN…pM in its own N-column section
                (inserts the bounding continuous breaks). Also accepts a single
                paragraph (--at pN). THIS is how you put text in columns — name the
@@ -75,13 +83,20 @@ Column / break options:
                     oddPage, nextColumn. With a range it's the wrapping break's
                     type; with sN it overrides the section's type.
 
-Page-setup options (with --at sN — set the document/section page geometry in place):
+Page-setup options (no --at = whole document; --at sN = that one section):
   --orientation O   portrait | landscape (landscape swaps the page dimensions)
   --size SIZE       letter | legal | tabloid | a4 | a3 | a5, or WxH inches
                     (e.g. 8.5x11in, 8.5x14). A W>H size implies landscape.
   --margins M       One inch value (uniform, e.g. 1 or 1in) OR four comma-separated
                     values in CSS order top,right,bottom,left (e.g. 1,1,1,1.5).
                     Negative values are allowed (content into the margin).
+
+  Changing margins/size auto-fixes tab columns: a template's right-edge LEFT tab
+  (résumé dates/locations) calibrated to the old margins would overflow and WRAP
+  at the new width, so page setup converts each to a RIGHT tab flush at the new
+  margin (the \`--tabs right\` cure, applied for you). The ack reports how many were
+  realigned. (Doc-wide, or a single-section doc; per-section edits on a
+  multi-section doc don't reflow — \`read\`'s docx:layout hint flags those.)
 
 General:
   --at LOCATOR      Section (sN), paragraph range (pN-pM), or single paragraph (pN)
@@ -105,12 +120,13 @@ Output:
   edits. Errors print {code, error, hint?} + nonzero exit.
 
 Examples:
+  docx sections doc.docx --margins 0.5                  # 0.5in margins, WHOLE document (every section)
+  docx sections doc.docx --orientation landscape        # whole-doc landscape (every section)
+  docx sections doc.docx --margins 0.75,1,0.75,1        # top,right,bottom,left, whole document
   docx sections doc.docx --at p4-p9 --columns 2
   docx sections doc.docx --at p4-p9 --columns 3 --type continuous
   docx sections doc.docx --at s2 --columns 1            # collapse section s2 to one column
-  docx sections doc.docx --at s0 --orientation landscape # whole-doc landscape (trailing sN)
-  docx sections doc.docx --at s0 --margins 1in --size letter
-  docx sections doc.docx --at s0 --margins 0.75,1,0.75,1 # top,right,bottom,left
+  docx sections doc.docx --at s2 --margins 0.5          # just section s2's margins
 `;
 
 const OPTION_SPEC = {
@@ -153,26 +169,9 @@ export async function run(args: string[]): Promise<number> {
 	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const at = parsed.values.at as string | undefined;
-	if (!at) {
-		return fail(
-			"USAGE",
-			"Missing --at LOCATOR (a section sN, or a range pN-pM to wrap in columns)",
-			HELP,
-		);
-	}
 
 	const flags = await parseSectionFlags(parsed.values);
 	if (typeof flags === "number") return flags;
-
-	let locator: Locator;
-	try {
-		locator = parseLocator(at);
-	} catch (error) {
-		if (error instanceof LocatorParseError) {
-			return fail("INVALID_LOCATOR", error.message, HELP);
-		}
-		throw error;
-	}
 
 	const document = await openOrFail(filePath);
 	if (typeof document === "number") return document;
@@ -185,6 +184,37 @@ export async function run(args: string[]): Promise<number> {
 		outputPath: parsed.values.output as string | undefined,
 		dryRun: Boolean(parsed.values["dry-run"]),
 	};
+
+	// No --at: page geometry is a DOCUMENT property, so `sections --margins/
+	// --orientation/--size` (no locator) applies it to EVERY section. Each
+	// `<w:sectPr>` carries its own pgMar/pgSz, so "uniform margins" on a
+	// multi-section doc means setting them all — and the trailing governing
+	// section is the easy one to miss (the resume s3 trap). Columns/type still
+	// need a target (which section?), so reject those without --at.
+	if (!at) {
+		if (
+			hasPageGeometry(flags) &&
+			flags.columns === undefined &&
+			flags.sectionType === undefined
+		) {
+			return editAllSections(document, opts);
+		}
+		return fail(
+			"USAGE",
+			"Missing --at LOCATOR (a section sN, or a range pN-pM to wrap in columns). To set PAGE GEOMETRY for the whole document, omit --at and pass only --margins/--orientation/--size.",
+			HELP,
+		);
+	}
+
+	let locator: Locator;
+	try {
+		locator = parseLocator(at);
+	} catch (error) {
+		if (error instanceof LocatorParseError) {
+			return fail("INVALID_LOCATOR", error.message, HELP);
+		}
+		throw error;
+	}
 
 	// pN-pM range, or a single pN paragraph, gets wrapped in a fresh column
 	// section (requires --columns; page geometry not allowed). sN edits an
@@ -257,19 +287,184 @@ async function editSection(
 	at: string,
 	opts: Options,
 ): Promise<number> {
+	// resolveTracked folds in the doc toggle — passing the raw `--track` boolean
+	// (false) would short-circuit Edit.section's `track ?? toggle` and skip
+	// tracking even when the document toggle is on.
+	const track = resolveTracked(document, opts.trackFlag);
 	try {
 		new Edit(document).section(blockRef, opts.flags, {
 			authorFlag: opts.authorFlag,
-			// resolveTracked folds in the doc toggle — passing the raw `--track`
-			// boolean (false) would short-circuit Edit.section's `track ?? toggle`
-			// and skip tracking even when the document toggle is on.
-			track: resolveTracked(document, opts.trackFlag),
+			track,
 		});
 	} catch (error) {
 		if (error instanceof EditError) return fail(error.code, error.message);
 		throw error;
 	}
-	return commit(document, opts, { at, mode: "section" });
+	// A single-section doc's only sectPr governs the whole body, so a geometry
+	// edit here is effectively doc-wide — re-align fragile margin tabs too (the
+	// editAllSections path does this for multi-section docs). For a targeted
+	// section in a MULTI-section doc we don't reflow (we'd need per-section
+	// paragraph governance); `read`'s docx:layout hint still surfaces it there.
+	let realignedTabs = 0;
+	if (hasPageGeometry(opts.flags) && countSections(document) === 1) {
+		realignedTabs = reflowMarginTabs(document, {
+			track,
+			authorFlag: opts.authorFlag,
+		});
+	}
+	return commit(document, opts, { at, mode: "section", realignedTabs });
+}
+
+/** Number of `<w:sectPr>` sections in the document (inline + trailing). */
+function countSections(document: Document): number {
+	let count = 0;
+	for (const id of document.body.blockReferences.keys()) {
+		if (/^s\d+$/.test(id)) count++;
+	}
+	return count;
+}
+
+/** Doc-wide page setup: apply the page geometry (margins/orientation/size) to
+ * EVERY section in the document. Each `<w:sectPr>` has its own geometry, so this
+ * is the "set it once for the whole document" affordance — it sets all of them
+ * (including the trailing governing section a per-section sweep tends to miss).
+ * Reuses the per-section `Edit.section` path, so under tracking each section
+ * records its own `<w:sectPrChange>`. */
+async function editAllSections(
+	document: Document,
+	opts: Options,
+): Promise<number> {
+	const sectionIds = [...document.body.blockReferences.keys()]
+		.filter((id) => /^s\d+$/.test(id))
+		.sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)));
+	if (sectionIds.length === 0) {
+		return fail("BLOCK_NOT_FOUND", "No sections found to set page geometry on");
+	}
+	const track = resolveTracked(document, opts.trackFlag);
+	try {
+		const edit = new Edit(document);
+		for (const id of sectionIds) {
+			// Each section's <w:sectPr> mutates in place (no structural change), so
+			// the other held refs stay valid across the loop.
+			const blockRef = document.body.blockReferences.get(id);
+			if (!blockRef) continue;
+			edit.section(blockRef, opts.flags, {
+				authorFlag: opts.authorFlag,
+				track,
+			});
+		}
+	} catch (error) {
+		if (error instanceof EditError) return fail(error.code, error.message);
+		throw error;
+	}
+	const realignedTabs = reflowMarginTabs(document, {
+		track,
+		authorFlag: opts.authorFlag,
+	});
+	return commit(document, opts, {
+		at: `${sectionIds.length} section${sectionIds.length === 1 ? "" : "s"}`,
+		mode: "section",
+		realignedTabs,
+	});
+}
+
+/** After a page-geometry change, re-align right-edge tab columns to the NEW text
+ * margin — so we FIX the wrap instead of just warning about it. A template's
+ * right-edge LEFT tab (the résumé date/location columns) is calibrated to the
+ * ORIGINAL margins; widening the text area leaves it short of the new margin so
+ * long values overflow and WRAP in render (the `docx:layout` hazard `read`
+ * flags). Weak agents dismiss that hint as "informational" and ship the wrap, so
+ * page setup applies the `--tabs right` cure itself: each fragile right-edge LEFT
+ * tab becomes a RIGHT tab flush at the new margin. Returns the count realigned.
+ *
+ * Scope: body paragraphs only (cell tabs are table-relative, not page-margin),
+ * non-list (a bullet's tab is the structural bullet-to-text gap), used (a real
+ * tab run), right-edge (pos in the last ~30% of the text width), and not already
+ * robust (no existing RIGHT tab). Keep this predicate in lockstep with
+ * `layoutHazardNote` in `cli/read/markdown.ts` — flag and cure must agree. */
+function reflowMarginTabs(
+	document: Document,
+	opts: { track: boolean; authorFlag?: string },
+): number {
+	const textWidthTwips = Math.round(getPageContentWidthEmu(document) / 635);
+	const bodyChildren = document.body.findBodyChildren();
+	const edit = new Edit(document);
+	let realigned = 0;
+	for (let index = 0; index < bodyChildren.length; index++) {
+		const node = bodyChildren[index];
+		if (!node || node.tag !== "w:p") continue;
+		// A multi-column section's tab stops are column-relative, so the right-margin
+		// cure doesn't apply (a right tab at the full text width lands outside the
+		// narrower column) — `layoutHazardNote`'s `cols>1` branch deliberately
+		// offers no cure, so skip those paragraphs here too.
+		if (governingColumns(bodyChildren, index) > 1) continue;
+		const tabs = reflowedTabStops(node, textWidthTwips);
+		if (!tabs) continue;
+		edit.paragraphProperties(
+			{ node, parent: bodyChildren },
+			{ tabs },
+			{ authorFlag: opts.authorFlag, track: opts.track },
+		);
+		realigned++;
+	}
+	return realigned;
+}
+
+/** The paragraph's tab stops after curing fragile right-edge LEFT/center tabs,
+ * or `null` when there's nothing to cure (so the caller skips it). PRESERVES every
+ * non-fragile stop (a legit mid-line LEFT tab, a decimal/bar stop, …) and swaps
+ * only the fragile right-edge one(s) for a SINGLE right tab flush at the new
+ * margin — never the whole-paragraph `--tabs right` wipe (that dropped legit
+ * stops). Mirrors `layoutHazardNote`'s single-column predicate in
+ * `cli/read/markdown.ts` (right-edge, leftish, used, no existing right tab,
+ * non-list); both classify a stop through `normalizeTabAlign`. */
+function reflowedTabStops(
+	node: XmlNode,
+	textWidthTwips: number,
+): TabStop[] | null {
+	const pPr = node.findChild("w:pPr");
+	if (!pPr) return null;
+	if (pPr.findChild("w:numPr")) return null; // list — structural bullet tab
+	const stops = (pPr.findChild("w:tabs")?.findChildren("w:tab") ?? [])
+		.map((tab) => ({
+			align: normalizeTabAlign(tab.getAttribute("w:val")),
+			pos: Number(tab.getAttribute("w:pos") ?? "NaN"),
+		}))
+		.filter((stop) => Number.isFinite(stop.pos));
+	if (stops.length === 0) return null;
+	// An existing RIGHT tab already right-aligns robustly — leave the paragraph.
+	if (stops.some((stop) => stop.align === "right")) return null;
+	const isFragile = (stop: TabStop): boolean =>
+		(stop.align === "left" || stop.align === "center") &&
+		stop.pos > textWidthTwips * 0.7;
+	if (!stops.some(isFragile)) return null;
+	// Only when the tab is actually USED — a `<w:tab/>` CHARACTER in a run (the
+	// thing that wraps), not just a stop definition. Keeps flag and cure aligned.
+	if (!paragraphUsesTabCharacter(node)) return null;
+	// Keep every non-fragile stop; replace the fragile right-edge one(s) with ONE
+	// right tab at the margin. Sorted ascending (Word expects ordered stops).
+	const merged: TabStop[] = [
+		...stops.filter((stop) => !isFragile(stop)),
+		{ align: "right", pos: textWidthTwips },
+	];
+	merged.sort((left, right) => left.pos - right.pos);
+	return merged;
+}
+
+/** True if a run in the paragraph contains a `<w:tab/>` CHARACTER. Searches every
+ * non-`<w:pPr>` subtree — inside `<w:pPr>` a `<w:tab>` is a STOP definition, not
+ * a character, so it's skipped. */
+function paragraphUsesTabCharacter(node: XmlNode): boolean {
+	for (const child of node.children) {
+		if (child.tag === "w:pPr") continue;
+		if (containsTabCharacter(child)) return true;
+	}
+	return false;
+}
+
+function containsTabCharacter(node: XmlNode): boolean {
+	if (node.tag === "w:tab") return true;
+	return node.children.some(containsTabCharacter);
 }
 
 /** Wrap [startIndex..endIndex] in its own N-column continuous section by
@@ -446,13 +641,22 @@ function governingSectPr(
 async function commit(
 	document: Document,
 	opts: Options,
-	meta: { at: string; mode: "section" | "range"; dryRunOnly?: boolean },
+	meta: {
+		at: string;
+		mode: "section" | "range";
+		dryRunOnly?: boolean;
+		realignedTabs?: number;
+	},
 ): Promise<number> {
 	// `columnCount` rides along for --verbose/JSON consumers when columns were set
 	// (a page-only edit has none). `locator` (not the count) is the salient field
 	// the ack summarizer reports, so a page edit prints "sections s0", not a count.
 	const columnCount =
 		opts.flags.columns !== undefined ? { columnCount: opts.flags.columns } : {};
+	// Surface the auto tab re-alignment so the agent KNOWS the wrap was cured (and
+	// doesn't go re-fix it) — both in the JSON ack and the one-line confirmation.
+	const realigned = meta.realignedTabs ?? 0;
+	const realignedField = realigned > 0 ? { realignedTabs: realigned } : {};
 	if (opts.dryRun || meta.dryRunOnly) {
 		// Dry-run previews always print (no `ok` field), even without --verbose.
 		await respond({
@@ -461,6 +665,7 @@ async function commit(
 			path: opts.filePath,
 			locator: meta.at,
 			...columnCount,
+			...realignedField,
 			mode: meta.mode,
 			...(opts.outputPath ? { output: opts.outputPath } : {}),
 		});
@@ -468,6 +673,10 @@ async function commit(
 	}
 	await document.save(opts.outputPath);
 	const destination = opts.outputPath ?? opts.filePath;
+	const realignedNote =
+		realigned > 0
+			? `re-aligned ${realigned} right-edge tab column${realigned === 1 ? "" : "s"} to the new margin (would have wrapped in render). `
+			: "";
 	await respondAck(
 		{
 			ok: true,
@@ -475,9 +684,10 @@ async function commit(
 			path: destination,
 			locator: meta.at,
 			...columnCount,
+			...realignedField,
 			mode: meta.mode,
 		},
-		renderVerifyHint(destination),
+		realignedNote + renderVerifyHint(destination),
 	);
 	return EXIT.OK;
 }

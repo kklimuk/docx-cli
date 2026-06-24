@@ -567,14 +567,14 @@ describe("section breaks render as docx:section, not bare ---", () => {
 	test("a mid-doc section is an own-line docx:section hint with cols/type", async () => {
 		const md = await readMarkdown(SECTIONS_FIXTURE);
 		expect(md).not.toContain("---");
-		// A deviating section also states the locator range it governs — the
-		// content ABOVE the break — so the off-by-one "which side?" trap is explicit.
+		// The note renders at the section's START and states the locator range it
+		// governs — the content BELOW it — so the off-by-one "which side?" trap is explicit.
 		expect(md).toContain(
-			'<!-- docx:section s1 cols="2" type="continuous" applies-to="p3..p7 (above)" -->',
+			'<!-- docx:section s1 cols="2" type="continuous" applies-to="p3..p7 (below)" -->',
 		);
 		// cols=1 is the default → suppressed; type still shown (with scope).
 		expect(md).toContain(
-			'<!-- docx:section s0 type="continuous" applies-to="p0..p2 (above)" -->',
+			'<!-- docx:section s0 type="continuous" applies-to="p0..p2 (below)" -->',
 		);
 		// The trailing mandatory section break is suppressed entirely.
 		expect(md).not.toContain("docx:section s7");
@@ -1061,6 +1061,238 @@ describe("page setup (docx sections --at sN: margins / orientation / size)", () 
 		const md = await readMarkdown(doc);
 		expect(md).toContain('orientation="landscape"');
 		expect(md).not.toContain("varies=");
+	});
+});
+
+describe("page setup, whole document (docx sections --margins/… with no --at)", () => {
+	// A doc with THREE sections (two inline sectPrs from a column wrap + the
+	// trailing body sectPr) — the multi-section shape where a per-section margin
+	// sweep silently misses the trailing governing section (the resume s3 trap).
+	async function multiSectionDoc(label: string): Promise<string> {
+		const doc = join(tempWorkspace(label), "x.docx");
+		await runCli("create", doc, "--text", "Alpha.");
+		await runCli("insert", doc, "--at-end", "--text", "Beta.");
+		await runCli("insert", doc, "--at-end", "--text", "Gamma.");
+		await runCli("sections", doc, "--at", "p1", "--columns", "2");
+		return doc;
+	}
+	async function allSections(doc: string): Promise<SectionBlock[]> {
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Block[];
+		};
+		return ast.blocks.filter(
+			(block): block is SectionBlock => block.type === "sectionBreak",
+		);
+	}
+
+	test("--margins with no --at sets EVERY section (the resume s3 trap)", async () => {
+		const doc = await multiSectionDoc("pg-all-margins");
+		expect((await allSections(doc)).length).toBeGreaterThanOrEqual(3);
+		const result = await runCli("sections", doc, "--margins", "0.5");
+		expect(result.exitCode).toBe(0);
+		for (const s of await allSections(doc)) {
+			expect([
+				s.marginTop,
+				s.marginRight,
+				s.marginBottom,
+				s.marginLeft,
+			]).toEqual([720, 720, 720, 720]);
+		}
+	});
+
+	test("--orientation with no --at sets every section landscape", async () => {
+		const doc = await multiSectionDoc("pg-all-orient");
+		expect(
+			(await runCli("sections", doc, "--orientation", "landscape")).exitCode,
+		).toBe(0);
+		for (const s of await allSections(doc)) {
+			expect(s.pageOrientation).toBe("landscape");
+		}
+	});
+
+	test("no --at and no page geometry is still a USAGE error", async () => {
+		const doc = await multiSectionDoc("pg-all-noflag");
+		const result = await runCli("sections", doc);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain("--at");
+	});
+
+	test("--columns with no --at is rejected (columns need a target section)", async () => {
+		const doc = await multiSectionDoc("pg-all-cols");
+		const result = await runCli("sections", doc, "--columns", "2");
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain("--at");
+	});
+
+	test("tracked doc-wide margins records a sectPrChange per section", async () => {
+		const doc = await multiSectionDoc("pg-all-tracked");
+		await runCli("track-changes", "on", doc);
+		const sectionCount = (await allSections(doc)).length;
+		await runCli("sections", doc, "--margins", "0.5");
+		const sectPrChanges = (await trackedKinds(doc)).filter(
+			(kind) => kind === "sectPrChange",
+		).length;
+		expect(sectPrChanges).toBe(sectionCount);
+	});
+});
+
+describe("page setup auto-realigns wrapping tab columns", () => {
+	// A résumé-style line: a bold org with a right-edge LEFT tab holding a long
+	// location. The LEFT tab at 6.1in (~8784tw) is right-edge for the default 1in
+	// margins (text width 9360tw) — so it's the fragile wrap hazard `read` flags.
+	async function fragileTabDoc(label: string): Promise<string> {
+		const doc = join(tempWorkspace(label), "x.docx");
+		await runCli("create", doc, "--text", "Priya Raman");
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Northwind Robotics","bold":true},{"type":"tab"},{"type":"text","text":"San Francisco, CA"}]',
+		);
+		await runCli("edit", doc, "--at", "p1", "--tabs", "left@6.1in");
+		return doc;
+	}
+	async function tabStops(
+		doc: string,
+		id: string,
+	): Promise<Array<{ align: string; pos: number }>> {
+		const ast = (await runCli("read", doc, "--ast")).parsed as {
+			blocks: Array<{
+				id: string;
+				tabStops?: Array<{ align: string; pos: number }>;
+			}>;
+		};
+		return ast.blocks.find((block) => block.id === id)?.tabStops ?? [];
+	}
+
+	test("doc-wide margins cure the wrap — fragile LEFT tab → RIGHT tab at the new margin", async () => {
+		const doc = await fragileTabDoc("pg-reflow");
+		expect(await readMarkdown(doc)).toContain("docx:layout"); // flagged before
+		const result = await runCli("sections", doc, "--margins", "0.5");
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { realignedTabs?: number }).realignedTabs).toBe(1);
+		// 0.5in margins on letter → text width 12240 − 720 − 720 = 10800tw.
+		expect(await tabStops(doc, "p1")).toEqual([{ align: "right", pos: 10800 }]);
+		expect(await readMarkdown(doc)).not.toContain("docx:layout"); // cured
+	});
+
+	test("a non-fragile mid-line LEFT tab is left untouched", async () => {
+		const doc = join(tempWorkspace("pg-reflow-midline"), "x.docx");
+		await runCli("create", doc, "--text", "Name");
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"A"},{"type":"tab"},{"type":"text","text":"B"}]',
+		);
+		await runCli("edit", doc, "--at", "p1", "--tabs", "left@3in"); // mid-line
+		const result = await runCli("sections", doc, "--margins", "0.5");
+		expect(
+			(result.parsed as { realignedTabs?: number }).realignedTabs,
+		).toBeUndefined();
+		expect(await tabStops(doc, "p1")).toEqual([{ align: "left", pos: 4320 }]);
+	});
+
+	test("an existing RIGHT tab is already robust — not touched", async () => {
+		const doc = join(tempWorkspace("pg-reflow-right"), "x.docx");
+		await runCli("create", doc, "--text", "Name");
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Org"},{"type":"tab"},{"type":"text","text":"Date"}]',
+		);
+		await runCli("edit", doc, "--at", "p1", "--tabs", "right@6.1in");
+		const result = await runCli("sections", doc, "--margins", "0.5");
+		expect(
+			(result.parsed as { realignedTabs?: number }).realignedTabs,
+		).toBeUndefined();
+	});
+
+	test("single-section --at s0 margins also realigns fragile tabs", async () => {
+		const doc = await fragileTabDoc("pg-reflow-at-s0");
+		const result = await runCli(
+			"sections",
+			doc,
+			"--at",
+			"s0",
+			"--margins",
+			"0.5",
+		);
+		expect((result.parsed as { realignedTabs?: number }).realignedTabs).toBe(1);
+		expect(await tabStops(doc, "p1")).toEqual([{ align: "right", pos: 10800 }]);
+	});
+
+	test("tracked margins record the tab reflow as a pPrChange; reject restores the LEFT tab", async () => {
+		const doc = await fragileTabDoc("pg-reflow-tracked");
+		await runCli("track-changes", "on", doc);
+		await runCli("sections", doc, "--margins", "0.5");
+		expect(await trackedKinds(doc)).toContain("pPrChange");
+		await runCli("track-changes", "reject", doc, "--all");
+		expect(
+			(await tabStops(doc, "p1")).some((tab) => tab.align === "left"),
+		).toBe(true);
+	});
+
+	// Regression: the cure must PRESERVE non-fragile stops, not wipe the whole
+	// <w:tabs> — a line with a legit mid-line LEFT tab AND a fragile right-edge one
+	// keeps the mid-line tab and only the right-edge one becomes a right tab.
+	test("preserves a non-fragile mid-line tab while curing the fragile one", async () => {
+		const doc = join(tempWorkspace("pg-reflow-preserve"), "x.docx");
+		await runCli("create", doc, "--text", "Name");
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"A"},{"type":"tab"},{"type":"text","text":"B"},{"type":"tab"},{"type":"text","text":"C"}]',
+		);
+		await runCli("edit", doc, "--at", "p1", "--tabs", "left@3in,left@6.1in");
+		const result = await runCli("sections", doc, "--margins", "0.5");
+		expect((result.parsed as { realignedTabs?: number }).realignedTabs).toBe(1);
+		// mid-line left@3in (4320tw) survives; the fragile left@6.1in becomes right@10800.
+		expect(await tabStops(doc, "p1")).toEqual([
+			{ align: "left", pos: 4320 },
+			{ align: "right", pos: 10800 },
+		]);
+	});
+
+	// Regression: a multi-column section's tab stops are column-relative — the
+	// right-margin cure doesn't apply, so reflow must skip it.
+	test("skips reflow in a multi-column section", async () => {
+		const doc = join(tempWorkspace("pg-reflow-cols"), "x.docx");
+		await runCli("create", doc, "--text", "Body alpha.");
+		await runCli(
+			"insert",
+			doc,
+			"--after",
+			"p0",
+			"--runs",
+			'[{"type":"text","text":"Org"},{"type":"tab"},{"type":"text","text":"Date"}]',
+		);
+		await runCli("edit", doc, "--at", "p1", "--tabs", "left@6.1in");
+		const result = await runCli(
+			"sections",
+			doc,
+			"--at",
+			"s0",
+			"--columns",
+			"2",
+			"--margins",
+			"0.5",
+		);
+		expect(
+			(result.parsed as { realignedTabs?: number }).realignedTabs,
+		).toBeUndefined();
+		// The fragile tab is LEFT untouched (no full-width right tab in a column).
+		expect(await tabStops(doc, "p1")).toEqual([{ align: "left", pos: 8784 }]);
 	});
 });
 
