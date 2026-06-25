@@ -1770,7 +1770,12 @@ describe("import — docx: annotations are dropped, never reconstructed", () => 
 		};
 		// Only the trailing mandatory sectPr — the docx:section comment was dropped.
 		expect(ast.blocks.filter((b) => b.type === "sectionBreak")).toHaveLength(1);
-		expect(await read(doc)).not.toContain("docx:section");
+		// The imported note was NOT reconstructed: no cols="2" section comes back,
+		// and no second section (s1). The bare trailing s0 marker every doc carries
+		// is not the dropped note.
+		const md = await read(doc);
+		expect(md).not.toContain('cols="2"');
+		expect(md).not.toContain("docx:section s1");
 	});
 
 	test("inline docx:cell / docx:p / docx:image hints don't break the parse or leak as text", async () => {

@@ -425,7 +425,6 @@ function renderBlock(block: Block, ctx: RenderContext): string | null {
 type SectionStart = {
 	block: SectionBreak;
 	breakIndex: number;
-	isTrailing: boolean;
 };
 
 /** Map each section's CONTENT-START index to the section(s) beginning there. A
@@ -440,7 +439,6 @@ function computeSectionStarts(blocks: Block[]): Map<number, SectionStart[]> {
 		const entry: SectionStart = {
 			block: blocks[index] as SectionBreak,
 			breakIndex: index,
-			isTrailing: index === blocks.length - 1,
 		};
 		const group = starts.get(sectionStart) ?? [];
 		group.push(entry);
@@ -451,25 +449,18 @@ function computeSectionStarts(blocks: Block[]): Map<number, SectionStart[]> {
 }
 
 /** Render a section's annotation at its content START: the `docx:section` note
- *  (deviation-only, `applies-to="… (below)"`) plus its per-section header/footer
- *  hints. The trailing mandatory sectPr keeps its `docx:section` note suppressed
- *  (implicit structure) but still surfaces its header/footer at the section's
- *  start. Returns null when there's nothing to emit. */
+ *  (cols/type deviation-only, `applies-to="… (below)"`) plus its per-section
+ *  header/footer hints. EVERY section emits its marker — the trailing mandatory
+ *  sectPr included — so the read consistently shows where each section begins. */
 function renderSectionStart(
 	entry: SectionStart,
 	blocks: Block[],
 	ctx: RenderContext,
-): string | null {
-	const marginalLines = ctx.marginalsBySection.get(entry.block.id);
-	if (entry.isTrailing) {
-		return marginalLines && marginalLines.length > 0
-			? marginalLines.join("\n")
-			: null;
-	}
+): string {
 	return renderSectionBreak(
 		entry.block,
 		governedRange(blocks, entry.breakIndex),
-		marginalLines,
+		ctx.marginalsBySection.get(entry.block.id),
 	);
 }
 
@@ -630,11 +621,15 @@ function renderSectionBreak(
 		pairs.push(["cols", block.columns]);
 	}
 	if (block.sectionType !== undefined) pairs.push(["type", block.sectionType]);
+	// EVERY section break gets a `docx:section sN` marker — including a contentless
+	// one (default single-column, no explicit type; geometry rides the `docx:page`
+	// note) and the trailing mandatory sectPr — so the read consistently shows
+	// where each section begins (and the sN locator an agent addresses). cols/type
+	// appear only when they deviate; a bare section is just `<!-- docx:section sN -->`.
 	// State the scope only on a section that already deviates (multi-column or a
-	// non-default type) — a bare single-column break doesn't need it, and it's
-	// exactly the layout-bearing sections where the "which side?" trap bites. The
-	// note renders at the section's START, so `(below)` spells out that the
-	// columns/type govern the content that FOLLOWS.
+	// non-default type) — it's exactly the layout-bearing sections where the
+	// "which side?" trap bites. The note renders at the section's START, so
+	// `(below)` spells out that the columns/type govern the content that FOLLOWS.
 	if (governs !== undefined && pairs.length > 0) {
 		pairs.push(["applies-to", `${governs} (below)`]);
 	}

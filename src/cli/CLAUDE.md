@@ -22,7 +22,11 @@ Today: `docx:section` (rendered at the section's START, with an
 tokens; `type` attr only for `first`/`even`). Section annotations render at the
 section's START (where its content begins), not the sectPr's physical end, so each
 reads right before the content it governs (`computeSectionStarts`/`renderSectionStart`
-in `read/markdown.ts`). A UNIFORM marginal (same across every section) rides the head
+in `read/markdown.ts`). **`docx:section` is the one annotation that's deviation-only
+in its ATTRIBUTES but not its presence: EVERY section emits a `<!-- docx:section sN -->`
+marker — a contentless default-single-column section and the trailing mandatory
+sectPr included — so the read consistently flags where each section begins (and the
+`sN` an agent addresses); `cols`/`type`/`applies-to` appear only when they deviate.** A UNIFORM marginal (same across every section) rides the head
 block instead; a marginal whose text DIFFERS by section renders at that section's
 start. And
 `docx:layout` on a tab-aligned paragraph that wraps — either inside a multi-column

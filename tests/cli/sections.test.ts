@@ -576,8 +576,22 @@ describe("section breaks render as docx:section, not bare ---", () => {
 		expect(md).toContain(
 			'<!-- docx:section s0 type="continuous" applies-to="p0..p2 (below)" -->',
 		);
-		// The trailing mandatory section break is suppressed entirely.
-		expect(md).not.toContain("docx:section s7");
+		// EVERY section emits its marker — the trailing mandatory section included.
+		expect(md).toContain(
+			'<!-- docx:section s7 cols="2" type="continuous" applies-to="p30..p33 (below)" -->',
+		);
+	});
+
+	test("a contentless section break (no cols / no explicit type) still emits a bare docx:section marker", async () => {
+		// mnda.docx has a non-trailing section boundary (s0) with default everything
+		// — 1 column, no explicit type — plus the trailing s1. Both still get a bare
+		// `<!-- docx:section sN -->` marker (cols/type are deviation-only, but the
+		// marker itself always shows so the read consistently flags every section).
+		const md = await readMarkdown("tests/fixtures/mnda.docx");
+		expect(md).toContain("<!-- docx:section s0 -->");
+		expect(md).toContain("<!-- docx:section s1 -->");
+		// The doc's geometry deviation (0.75in margins) still rides the docx:page note.
+		expect(md).toContain("docx:page s0");
 	});
 });
 
@@ -1329,6 +1343,10 @@ describe("section layout is pure-visibility on import", () => {
 		};
 		// Only the trailing mandatory sectPr — the `---` became a border paragraph.
 		expect(ast.blocks.filter((b) => b.type === "sectionBreak")).toHaveLength(1);
-		expect(await readMarkdown(doc)).not.toContain("docx:section");
+		// The `---` did NOT create a second section — only the trailing s0 marker
+		// shows (every doc has one), never a reconstructed s1.
+		const md = await readMarkdown(doc);
+		expect(md).toContain("<!-- docx:section s0 -->");
+		expect(md).not.toContain("docx:section s1");
 	});
 });
