@@ -91,7 +91,7 @@ docx outline FILE [--style-prefix S] [--json]
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
 docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
-docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [formatting]            # define a new custom style
+docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [--next STYLEID] [formatting]   # define a new custom style
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
 
 docx comments      list FILE [--include-resolved] [--thread cN]
@@ -115,6 +115,15 @@ normal edits in place, `read --ast` is the lossless view, and `docx sections` /
 (only when a value differs from the document default, so a plain document stays
 clean):
 
+- **Per-paragraph style/spacing/indent** — the most common annotation — rides a
+  `<!-- docx:p pN style="Caption" align="center" space-after="6pt" line-spacing="1" indent-left="0.25in" -->`
+  note, emitted deviation-only (only the attrs that differ from the style/document
+  default). Each attribute maps to the matching `edit`/`insert` flag (`--style`,
+  `--alignment`, `--space-before`/`--space-after`, `--line-spacing`,
+  `--indent-left`/`--indent-right`/`--first-line`/`--hanging`), so an agent reads a
+  value and re-applies it. The paragraph's locator rides this note as its leading `pN`
+  token, so an annotated paragraph does NOT also get a bare `<!-- pN -->` (only
+  undeviating paragraphs get the bare locator). Full properties are in `read --ast`.
 - **Section breaks** render as `<!-- docx:section sN cols="2" type="continuous" -->`
   on their own line — never a bare `---` (that's a thematic break, and emitting it
   for a section silently turned layout into border paragraphs). A hand-authored
@@ -122,7 +131,12 @@ clean):
 - **Page geometry** rides a leading `<!-- docx:page sN orientation="landscape"
   size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
   US-Letter-portrait-1″ — `text-width` is the usable column width, and the leading
-  `sN` is the section to re-apply against. Exact twips are in `read --ast` (on each
+  `sN` is the section to re-apply against. A `varies="by-section"` attribute is added
+  when a later section's page setup differs from the leading one — and in that case
+  the note fires **even if page 1 is plain default Letter-portrait-1″** (it then shows
+  just `text-width` + `varies="by-section"`), warning that the geometry shown describes
+  only the leading section; use `read --ast` for every section's exact geometry.
+  Exact twips are in `read --ast` (on each
   section break: `pageWidth`/`pageHeight`/`pageOrientation`/`margin*`). Set it for the
   WHOLE document with `docx sections --orientation/--size/--margins` (no `--at` →
   every section gets it, so a multi-section doc doesn't leave the trailing section
@@ -154,6 +168,11 @@ clean):
   so the importer drops it (it can't re-inject into the body); full entries are in
   `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
   headers`/`docx footers`.
+- **Track-changes state** rides a head `<!-- docx:track-changes on -->` line when the
+  document's tracking toggle is enabled (deviation-only — off emits nothing), so an
+  agent sees that subsequent edits will be redlined without inspecting `settings.xml`.
+  Toggle it with `docx track-changes FILE on|off`; the three tracked-change read views
+  (`--accepted`/`--current`/`--baseline`) are covered under the review loop below.
 
 ### Mutate (change FILE in place; `--dry-run`, `-v` everywhere; `-o PATH` on every mutator except `create`, whose positional FILE is already the output)
 
@@ -162,7 +181,7 @@ docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --f
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
-docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN
+docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN | tN:rRcC:pK (cell paragraph)
 docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
 docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
@@ -197,7 +216,9 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #   edit --text ""      REMOVES the line (same as `delete`; a table cell's last paragraph is blanked, not
 #       deleted, so the cell stays valid). In --batch, `{"at":"pN","text":""}` or `{"at":"pN","delete":true}`
 #       removes a line — so a form-fill is ONE sweep: fill the cells with values, drop the leftover
-#       placeholder lines. Use `--runs '[]'` to blank a paragraph but keep an empty spacer. A SPAN's
+#       placeholder lines. Use `--runs '[]'` to blank a paragraph but keep an empty spacer. (Empty
+#       `--text` can't ride along with --clear/run-formatting/--style/--alignment/--tabs — those exit
+#       with a USAGE error; use `--runs '[]'` to keep a formatted empty spacer instead.) A SPAN's
 #       `--text ""` (pN:S-E) still deletes just those characters.
 #   --runs '[{"type":"text","text":"X","bold":true}]'
 #   --text-file PATH                               # (insert/create) LITERAL multi-paragraph text, NOT parsed — every char verbatim,
@@ -210,6 +231,9 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #       --caps --smallcaps --superscript --subscript   (edit; SET run formatting on EXISTING text —
 #       the inverse of --clear. Alone they format a span/paragraph/range in place; with --text they
 #       fill AND format. Like --clear, applied directly — not recorded as a tracked change.)
+#       NOTE: in a single no-content call (or one --batch entry) these run-format SET flags and the
+#       paragraph properties (--style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/
+#       --hanging/--tabs) can't ride together — use separate calls/entries, or add --text to set both.
 #   --task checked|unchecked | --list bullet|ordered [--list-level N]   (insert)
 #   --task checked|unchecked                                            (edit, flip in place)
 #   --table --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (insert)
@@ -290,7 +314,7 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 | `find` | matched span locators, one per line (no matches → nothing, exit `0`) | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
 | `wc` | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`) | `--json` → `{ words, scope, view, sections? }` |
 | `outline` | indented `LOCATOR⇥TEXT` tree (two spaces per level) | `--json` → nested `[{ id, locator, level, style, text, children }]` |
-| `read` | GFM Markdown, each paragraph trailed by `<!-- pN -->` | `--ast` → the JSON AST body (`docx info schema`) |
+| `read` | GFM Markdown; each paragraph carries its `pN` locator once — a trailing bare `<!-- pN -->` on plain paragraphs, or the leading token of its `<!-- docx:p pN … -->` note when one is emitted | `--ast` → the JSON AST body (`docx info schema`) |
 | `render` | image paths, one per line | `--verbose` → `{ok, operation, path, engine, output, pages}` |
 | `* list` (all eight `list` verbs) | a **bare JSON array**; each item's `id` is its `--at` handle | — |
 
@@ -337,7 +361,7 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
 | ---- | ----------- |
 | `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks) | `read --from/--to`, `insert --after/--before`, `wc`, `comments add` |
 | `pN`, `pN:S-E`, `pN-pM`, `sN`, `eqN`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range) |
-| `pN`, `pN-pM`, `tN`, `sN` | `delete --at` |
+| `pN`, `pN-pM`, `tN`, `sN`, `tN:rRcC:pK` | `delete --at` |
 | `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans) | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results |
 | `pN[:offset]` (point) | `footnotes/endnotes add --at` |
 | `cN` / `fnN` / `enN` / `imgN` / `linkN` / `tcN` (entities) | the matching noun's `--at` (the `c`/`fn`/`en`/`img`/`link`/`tc` prefix is optional) |

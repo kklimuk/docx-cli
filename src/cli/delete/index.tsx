@@ -46,6 +46,9 @@ Locator (required, unless --batch):
                     sN     inline section break — strips the <w:sectPr> from
                            its owning paragraph (the paragraph itself stays);
                            rejects the trailing section break (mandatory in OOXML)
+                    tN:rRcC:pK  paragraph K of a table cell — removed, but
+                           blanked in place if it's the cell's only/last
+                           paragraph so the cell stays valid
                     Discover ids with \`docx read FILE --ast\`. See
                     \`docx info locators\`.
 
