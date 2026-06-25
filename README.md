@@ -283,14 +283,22 @@ docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
 
 docx track-changes on|off FILE
+docx track-changes list   FILE [--json]
 docx track-changes accept FILE (--at tcN [--at tcM ...] | --at revN | --all)
 docx track-changes reject FILE (--at tcN [--at tcM ...] | --at revN | --all)
-# A del+ins REPLACE pair shares a "group": "revN" in `list`; `--at revN` accepts/rejects
-# both halves in one call (no re-list between them — tcN ids renumber after each accept).
+docx track-changes apply  FILE [--accept H ...] [--reject H ...]
+# `list` defaults to a text table, one LOGICAL change per line (revN collapses a del+ins
+# pair onto one line); `--json` for the raw array. A del+ins REPLACE pair shares a
+# "group": "revN"; `--at revN` accepts/rejects both halves in one call.
+# To FINALIZE a review (accept some, reject the rest), use `apply` — it takes both decision
+# lists in ONE call, resolved against the original ids, so nothing renumbers mid-operation
+# and the file is never left half-finalized. Doing it as separate accept then reject calls
+# renumbers the ids between them. After a subset accept/reject/apply, the confirmation
+# re-lists what remains with its renumbered handles.
 ```
 
 > **One rule to memorize: addressing an existing thing is always `--at`.**
-> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN`. `images extract --to DIR` is an *output directory*, not a locator.
+> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to *confine* the substitution to one paragraph). `images extract --to DIR` is an *output directory*, not a locator.
 
 ## Output contract
 

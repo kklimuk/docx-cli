@@ -1,6 +1,14 @@
 # src/cli/track-changes
 
-`docx track-changes on|off FILE` toggles `<w:trackChanges/>` in settings.xml (the legacy `FILE on|off` order is still accepted). `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them. The unwrap/delete logic lives in [apply.ts](apply.ts).
+`docx track-changes on|off FILE` toggles `<w:trackChanges/>` in settings.xml (the legacy `FILE on|off` order is still accepted). `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them; `apply FILE --accept H … --reject H …` does BOTH in one atomic call. The unwrap/delete logic lives in [run-apply.ts](run-apply.ts) (the shared accept/reject engine `runApply`) and [apply.ts](apply.ts) (the `apply` finalize verb); the lower-level state machine is in `@core/track-changes`.
+
+## `list` is text-first; `apply` is the finalize verb
+
+Two ergonomics fixes for the contract-finalize death spiral (a weak agent doing a sequence of single-id accept/reject calls, hitting id renumbering, then `reject --all` as a panic "cleanup"):
+
+- **`list` defaults to a text table, one LOGICAL change per line** (`--json` for the array). A del+ins replace pair collapses onto ONE `revN` line, so the handle an agent reaches for is the atomic one. The rendering (`collectTrackedChangeRecords` + `renderTrackedChangeTable`) lives in [list-view.ts](list-view.ts), shared with the post-apply "remaining" view.
+- **After a SUBSET `accept`/`reject`/`apply`, the confirmation re-prints what REMAINS** with its renumbered handles (`remainingTrackedChangesBlock` in [list-view.ts](list-view.ts)), so the next call addresses live ids — the renumber is shown, not hidden. Skipped for `--all`, `--dry-run`, and `--verbose` (the JSON ack is the machine contract). **Never `writeStdout("")`** — Bun's stdout sink discards a prior write when the next one is empty, which would swallow the ack; callers guard `if (remaining) await writeStdout(remaining)`.
+- **`track-changes apply FILE --accept H … --reject H …`** finalizes in ONE call: both decision lists resolve against the ORIGINAL pre-mutation tree (via `applyTrackedDecisions` → one reverse-preorder pass over the merged set), so nothing renumbers between an accept and a reject and no half-finalized file is ever persisted (there is no undo). Handles are `tcN` or `revN`; an id in both lists, or an unknown id, errors before any write. This is the safe way to apply a review; separate `accept` then `reject` calls renumber between them.
 
 ## Track-changes is doc-level, not per-command
 
@@ -31,9 +39,9 @@ Still out of scope: `<w:rPrChange>` (RUN-property revisions) and `<w:customXmlDe
 
 ## revN revision groups — a derived view for atomic replace accept/reject
 
-A tracked text *replace* surfaces as two `tcN`s (a `<w:del>` + an adjacent `<w:ins>`). Accepting them one at a time forces a re-`list` between each, because `tcN` ids renumber after every accept — the `contract-finalize` friction. [`groups.ts`](groups.ts) (`revisionGroups`) pairs an adjacent del+ins / ins+del **on the same paragraph** into one `revN` handle: `list` tags both halves with a shared `"group": "revN"`, and `apply.ts` expands `--at revN` to the member `tcN`s (`expandRevisionTargets`) **before** handing them to the accept/reject engine. So `accept --at revN` is one call for one logical change.
+A tracked text *replace* surfaces as two `tcN`s (a `<w:del>` + an adjacent `<w:ins>`). Accepting them one at a time forces a re-`list` between each, because `tcN` ids renumber after every accept — the `contract-finalize` friction. [`groups.ts`](groups.ts) (`revisionGroups`) pairs an adjacent del+ins / ins+del **on the same paragraph** into one `revN` handle: `list` tags both halves with a shared `"group": "revN"`, and the CLI verbs expand `--at revN` (or `--accept/--reject revN`) to the member `tcN`s (`expandRevisionTargets`) **before** handing them to the core accept/reject engine. So `accept --at revN` is one call for one logical change.
 
-This is a **pure CLI-layer derived view** — it never touches the reader, the `tcN` ids, or `apply.ts`'s core. `revisionGroups` is computed identically (sort by tcN index, then pair) in both `list.ts` and `apply.ts`, so they can't disagree. Grouping is conservative: only plain `ins`/`del` pair (not moveFrom/moveTo, paragraph-mark, table, or property revisions), so `ins+ins` (a paragraph insert's run + paragraph-mark) and `del+del` never group. Solo changes get no `group`. `revN` is addressing sugar only — `tcN` stays the granular handle.
+This is a **pure CLI-layer derived view** — it never touches the reader, the `tcN` ids, or the core state machine. `revisionGroups` is computed identically (sort by tcN index, then pair) in `list-view.ts` (the `list` table), `run-apply.ts` (`accept`/`reject`), and `apply.ts` (`apply`), so they can't disagree. Grouping is conservative: only plain `ins`/`del` pair (not moveFrom/moveTo, paragraph-mark, table, or property revisions), so `ins+ins` (a paragraph insert's run + paragraph-mark) and `del+del` never group. Solo changes get no `group`. `revN` is addressing sugar only — `tcN` stays the granular handle.
 
 ## tcN ids: one walk, one source of truth
 

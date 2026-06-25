@@ -281,6 +281,7 @@ const COMMANDS: string[][] = [
 	["track-changes", "list"],
 	["track-changes", "accept"],
 	["track-changes", "reject"],
+	["track-changes", "apply"],
 ];
 
 // Commands that take a locator advertise the unified `--at` (or the placement /

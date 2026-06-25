@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
-import { runCli, tempWorkspace } from "./harness";
+import { runCli, spawnCli, tempWorkspace } from "./harness";
 import { freshFixture as copyFixture } from "./helpers";
 
 describe("docx track-changes", () => {
@@ -1428,6 +1428,36 @@ describe("docx track-changes revision groups (revN)", () => {
 		expect(del?.group).toBe("rev0");
 	});
 
+	test("the text-first default collapses the pair onto one revN line", async () => {
+		const docPath = await replacePair("rev-text");
+		// spawn the real binary so the harness does NOT inject --json — this is the
+		// human/agent-facing default view.
+		const result = await spawnCli("track-changes", "list", docPath);
+		expect(result.exitCode).toBe(0);
+		// One logical line keyed by the revN handle, showing old → new (the edit
+		// consolidates to the minimal diff, so the del/ins text is "90"/"30")...
+		expect(result.stdout).toMatch(/rev0\s+replace\s+p0\s+"90"\s+→\s+"30"/);
+		// ...and NOT a bare JSON array, and NOT the granular tcN halves as rows.
+		expect(result.stdout).not.toContain('"id":"tc0"');
+		expect(result.stdout).toContain("(1 logical)");
+		expect(result.stdout).toContain("--at <handle>");
+	});
+
+	test("the text-first default shows the moved text for moveFrom/moveTo rows", async () => {
+		// moveFrom/moveTo carry the moved run text (like ins/del); the table must
+		// not render them blank. Regression: describeSolo originally only quoted
+		// ins/del, so move rows showed verb+block but an empty description.
+		// spawn so the harness does NOT inject --json — exercise the text table.
+		const result = await spawnCli(
+			"track-changes",
+			"list",
+			"tests/fixtures/tracked-moves.docx",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toMatch(/move-from\s+\S+\s+"the moved sentence"/);
+		expect(result.stdout).toMatch(/move-to\s+\S+\s+"the moved sentence"/);
+	});
+
 	test("accept --at revN applies both halves in one call", async () => {
 		const docPath = await replacePair("rev-accept");
 		const result = await runCli(
@@ -1443,6 +1473,74 @@ describe("docx track-changes revision groups (revN)", () => {
 		const read = (await runCli("read", docPath)).stdout;
 		expect(read).toContain("Net 30");
 		expect(read).not.toContain("Net 90");
+	});
+
+	test("a subset accept re-shows the remaining changes with their renumbered ids", async () => {
+		// Two tracked replaces → accepting one leaves the other. The default
+		// (non-verbose) confirmation re-prints what remains so an agent never
+		// addresses a stale id — the contract-finalize death-spiral antidote.
+		const workspace = tempWorkspace("subset-reshow");
+		const docPath = join(workspace, "doc.docx");
+		// `--text` is single-paragraph; insert the second paragraph so the two
+		// tracked edits below give two independent replaces (rev0 on p0, rev1 on p1).
+		await runCli("create", docPath, "--text", "Payment due Net 90 today.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Term is five years total.",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Payment due Net 30 today.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Term is one year total.",
+		);
+		// spawn so the harness does NOT inject --verbose — this is the agent default.
+		const result = await spawnCli(
+			"track-changes",
+			"accept",
+			docPath,
+			"--at",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain(
+			"Remaining (ids renumbered after this accept)",
+		);
+		// The still-pending second edit is shown with a live handle, so the next
+		// call addresses current ids rather than a stale guess.
+		expect(result.stdout).toMatch(/^\s+(tc|rev)\d+\s+\w/m);
+		expect(result.stdout).toContain("five years");
+	});
+
+	test("a subset op that clears everything keeps its ack and prints no remaining block", async () => {
+		const docPath = await replacePair("subset-clear");
+		const result = await spawnCli(
+			"track-changes",
+			"accept",
+			docPath,
+			"--at",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).not.toContain("Remaining");
+		// The ack must survive — an empty remaining-block write must NOT discard it
+		// (Bun's stdout sink drops a prior write on a subsequent empty one).
+		expect(result.stdout).toContain("track-changes.accept");
 	});
 
 	test("reject --at revN reverts both halves in one call", async () => {
@@ -1489,5 +1587,170 @@ describe("docx track-changes revision groups (revN)", () => {
 		);
 		const changes = await list(docPath);
 		expect(changes.every((c) => c.group === undefined)).toBe(true);
+	});
+});
+
+// `track-changes apply` — finalize in ONE atomic, pre-mutation-resolved call:
+// accept some + reject some, no id renumbering between them, no half-finalized
+// intermediate file. The capstone for the contract-finalize death spiral.
+describe("docx track-changes apply (mixed accept+reject)", () => {
+	/** A doc with two independent tracked replaces → rev0 (Net 90→30) and
+	 *  rev1 (five→one year). */
+	async function twoReplaces(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "doc.docx");
+		// `--text` is single-paragraph, so build the second paragraph with insert
+		// (before tracking) — then two tracked edits give two independent replace
+		// pairs: rev0 (Net 90→30) on p0, rev1 (five→one year) on p1.
+		await runCli("create", docPath, "--text", "Payment due Net 90 today.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Term is five years total.",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Payment due Net 30 today.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Term is one year total.",
+		);
+		return docPath;
+	}
+
+	async function listCount(docPath: string): Promise<number> {
+		return (
+			(await runCli("track-changes", "list", docPath)).parsed as unknown[]
+		).length;
+	}
+
+	test("accepts and rejects in one call, resolved against the original ids", async () => {
+		const docPath = await twoReplaces("apply-mixed");
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+			"--reject",
+			"rev1",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			ok: true,
+			operation: "track-changes.apply",
+		});
+		// rev0 accepted → Net 30 stands; rev1 rejected → reverts to five years.
+		expect(await listCount(docPath)).toBe(0);
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).toContain("Net 30");
+		expect(read).not.toContain("Net 90");
+		expect(read).toContain("five years");
+		expect(read).not.toContain("one year");
+	});
+
+	test("a handle named in both --accept and --reject is a usage error (no write)", async () => {
+		const docPath = await twoReplaces("apply-conflict");
+		const before = await listCount(docPath);
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+			"--reject",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		// Nothing was applied — the doc is untouched.
+		expect(await listCount(docPath)).toBe(before);
+	});
+
+	test("an unknown handle errors before anything is written", async () => {
+		const docPath = await twoReplaces("apply-unknown");
+		const before = await listCount(docPath);
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev9",
+		);
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "TRACKED_CHANGE_NOT_FOUND" });
+		expect(await listCount(docPath)).toBe(before);
+	});
+
+	test("requires at least one of --accept / --reject", async () => {
+		const docPath = await twoReplaces("apply-empty");
+		const result = await runCli("track-changes", "apply", docPath);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("--dry-run previews both decisions without writing", async () => {
+		const docPath = await twoReplaces("apply-dry");
+		const before = await listCount(docPath);
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+			"--reject",
+			"rev1",
+			"--dry-run",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			operation: "track-changes.apply",
+			dryRun: true,
+		});
+		// Still all there — dry-run touched nothing.
+		expect(await listCount(docPath)).toBe(before);
+		// The preview's `applied[]` is in DOCUMENT order (by tcN), matching the real
+		// apply ack — not accept-list-then-reject-list order.
+		const previewIds = (
+			result.parsed as { applied: Array<{ id: string }> }
+		).applied.map((entry) => entry.id);
+		const sorted = [...previewIds].sort(
+			(a, b) => Number(a.slice(2)) - Number(b.slice(2)),
+		);
+		expect(previewIds).toEqual(sorted);
+	});
+
+	test("a partial apply leaves the unaddressed change and re-lists it", async () => {
+		const docPath = await twoReplaces("apply-partial");
+		// Only resolve rev0; rev1 is left pending and must be re-shown (default,
+		// non-verbose output via spawnCli).
+		const result = await spawnCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("track-changes.apply");
+		expect(result.stdout).toContain(
+			"Remaining (ids renumbered after this apply)",
+		);
+		expect(result.stdout).toContain("five years");
+		// The unaddressed rev1 replace is still pending (its two tcN halves).
+		expect(await listCount(docPath)).toBe(2);
 	});
 });

@@ -39,7 +39,53 @@ export function applyTrackedChanges(
 	verb: ApplyVerb,
 ): ChangeRecord[] {
 	const targets = resolveTargets(document, target);
-	const records = targets.map((found) => recordFor(found, verb));
+	return applyResolvedTargets(
+		document,
+		targets.map((found) => ({ found, verb })),
+	);
+}
+
+/** Apply a MIXED set of accept/reject decisions in ONE pass, every target
+ * resolved against the pre-mutation tree. This is the `track-changes apply`
+ * engine: a finalize is "accept these, reject those" in a single atomic call,
+ * so neither tcN/revN renumbering (which only bites BETWEEN separate accept and
+ * reject invocations) nor a half-finalized intermediate file can occur. An id
+ * appearing in both lists is rejected by the caller before we get here. Throws
+ * `TrackedChangeNotFoundError` for an unknown id. Caller saves. */
+export function applyTrackedDecisions(
+	document: Document,
+	accepts: string[],
+	rejects: string[],
+): ChangeRecord[] {
+	// Resolve both lists against the SAME fresh pre-mutation walk, then tag each
+	// found target with its verb and apply them together in one reverse-preorder
+	// traversal — exactly how a single-verb batch already stays renumber-proof.
+	const acceptTargets = resolveTargets(document, accepts).map((found) => ({
+		found,
+		verb: "accept" as ApplyVerb,
+	}));
+	const rejectTargets = resolveTargets(document, rejects).map((found) => ({
+		found,
+		verb: "reject" as ApplyVerb,
+	}));
+	return applyResolvedTargets(document, [...acceptTargets, ...rejectTargets]);
+}
+
+/** Shared apply core: take already-resolved (found, verb) pairs, apply them in
+ * reverse pre-order (nested wrapper before its parent), then run the table-grid
+ * resync and body-side note-pairing post-passes once over the whole set. */
+function applyResolvedTargets(
+	document: Document,
+	decisions: { found: ChangeFound; verb: ApplyVerb }[],
+): ChangeRecord[] {
+	// Apply in document order: sort by the index of each target in the fresh
+	// inventory so a mixed accept/reject set behaves like the single-verb path.
+	const order = collectTrackedChanges(document);
+	const sorted = [...decisions].sort(
+		(left, right) =>
+			indexOfFound(order, left.found) - indexOfFound(order, right.found),
+	);
+	const records = sorted.map(({ found, verb }) => recordFor(found, verb));
 
 	// Snapshot which (kind, noteId) each target touches BEFORE we mutate the
 	// tree — once a tracked-delete is applied, its `<w:del>` wrapper is gone
@@ -47,11 +93,11 @@ export function applyTrackedChanges(
 	// side pairing then walks footnotesTree/endnotesTree, GCs orphans, and
 	// normalizes any body-side wrappers whose paired reference-side
 	// revision was processed.
-	const affectedNotes = collectAffectedNotes(targets);
+	const affectedNotes = collectAffectedNotes(sorted.map(({ found }) => found));
 
 	// Reverse pre-order so a nested ins/del is processed before its parent —
 	// keeps stored parent refs valid for the outer node when we get to it.
-	for (const found of [...targets].reverse()) {
+	for (const { found, verb } of [...sorted].reverse()) {
 		if (verb === "accept") applyAccept(found);
 		else applyReject(found);
 	}
@@ -69,6 +115,12 @@ export function applyTrackedChanges(
 	applyNotePairing(document, affectedNotes);
 
 	return records;
+}
+
+/** Index of a resolved target within the inventory, by node identity (the same
+ * `<w:ins>`/`<w:del>` node), so the mixed-verb set sorts into document order. */
+function indexOfFound(inventory: ChangeFound[], found: ChangeFound): number {
+	return inventory.findIndex((change) => change.node === found.node);
 }
 
 /** Resolve `target` against a fresh walk. "all" yields every change in

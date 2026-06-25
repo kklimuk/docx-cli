@@ -51,7 +51,7 @@ const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 		"unmerge",
 		"borders",
 	]),
-	"track-changes": new Set(["on", "off", "accept", "reject"]),
+	"track-changes": new Set(["on", "off", "accept", "reject", "apply"]),
 };
 
 function shouldInjectVerbose(args: string[]): boolean {
@@ -88,6 +88,15 @@ function withInjectedFlags(args: string[]): string[] {
 			: args;
 	const first = result[0];
 	if (first && TEXT_FIRST_QUERIES.has(first) && !result.includes("--json")) {
+		result = [...result, "--json"];
+	}
+	// `track-changes list` is text-first too, but keyed on the two-token verb
+	// (its first token `track-changes` also fronts the non-JSON accept/reject).
+	if (
+		first === "track-changes" &&
+		result[1] === "list" &&
+		!result.includes("--json")
+	) {
 		result = [...result, "--json"];
 	}
 	return result;

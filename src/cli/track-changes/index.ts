@@ -7,6 +7,7 @@ Usage:
   docx track-changes list FILE [options]
   docx track-changes accept FILE (--at tcN | --all) [options]
   docx track-changes reject FILE (--at tcN | --all) [options]
+  docx track-changes apply  FILE (--accept H ... | --reject H ...) [options]
 
 Verbs:
   on        Set <w:trackChanges/> in word/settings.xml
@@ -21,9 +22,14 @@ Verbs:
             paragraph-mark ins the entire paragraph is removed); del/moveFrom
             unwrap (with <w:delText> → <w:t> rename); sectPrChange restores
             its snapshot
+  apply     Finalize: accept AND reject in ONE atomic call, every handle
+            resolved against the original tree — the safe way to apply a
+            review, since separate accept/reject calls renumber ids between
+            them
 
 Exact-change addressing is always --at tcN (repeatable); --all targets every
-change. Discover ids with "docx track-changes list FILE".
+change; \`apply\` takes --accept/--reject handle lists. Discover ids with
+"docx track-changes list FILE".
 
 When tracking is on, the SUBSEQUENT insert/edit/delete/replace commands emit
 <w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR on those
@@ -56,6 +62,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 	if (first === "reject") {
 		const module_ = (await import("./reject")) as { run: CommandFn };
+		return module_.run(args.slice(1));
+	}
+	if (first === "apply") {
+		const module_ = (await import("./apply")) as { run: CommandFn };
 		return module_.run(args.slice(1));
 	}
 	const module_ = (await import("./toggle")) as { run: CommandFn };

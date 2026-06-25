@@ -3,6 +3,7 @@ import type { XmlNode } from "../parser";
 import {
 	type ApplyVerb,
 	applyTrackedChanges,
+	applyTrackedDecisions,
 	type ChangeRecord,
 	collectTrackedChanges,
 	previewTrackedChanges,
@@ -110,6 +111,14 @@ export class TrackChanges {
 	 * applied records; caller saves. */
 	reject(target: string[] | "all"): ChangeRecord[] {
 		return applyTrackedChanges(this.document, target, "reject");
+	}
+
+	/** Apply a mixed accept+reject decision in ONE pre-mutation-resolved pass —
+	 * the `track-changes apply` finalize. Neither tcN renumbering nor a
+	 * half-finalized intermediate file can occur. Returns the applied records
+	 * (accepts + rejects); caller saves. */
+	apply(accepts: string[], rejects: string[]): ChangeRecord[] {
+		return applyTrackedDecisions(this.document, accepts, rejects);
 	}
 
 	/** Wrap a freshly-built paragraph's trackable run-level children in
