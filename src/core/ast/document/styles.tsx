@@ -623,9 +623,22 @@ function NormalStyle(): XmlNode {
 	);
 }
 
+/** The theme-major font reference shared by Title / Subtitle / Heading styles.
+ *  They follow the theme major (`set-default-font` rewrites it) instead of
+ *  pinning a literal — see the HeadingStyle comment for the full rationale. */
+function HeadingThemeFonts(): XmlNode {
+	return (
+		<w.rFonts
+			w-asciiTheme="majorHAnsi"
+			w-hAnsiTheme="majorHAnsi"
+			w-cstheme="majorBidi"
+		/>
+	);
+}
+
 function TitleStyle(): XmlNode {
-	// Word's built-in Title: large (28pt) Calibri Light, dark blue. The
-	// document's top-line heading — what an agent reaches for to open a doc.
+	// Word's built-in Title: large (28pt), dark blue, in the theme major font.
+	// The document's top-line heading — what an agent reaches for to open a doc.
 	return (
 		<w.style w-type="paragraph" w-styleId="Title">
 			<w.name w-val="Title" />
@@ -636,7 +649,7 @@ function TitleStyle(): XmlNode {
 				<w.spacing w-after="60" />
 			</w.pPr>
 			<w.rPr>
-				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				<HeadingThemeFonts />
 				<w.color w-val="1F3864" />
 				<w.sz w-val="56" />
 			</w.rPr>
@@ -645,7 +658,7 @@ function TitleStyle(): XmlNode {
 }
 
 function SubtitleStyle(): XmlNode {
-	// Word's built-in Subtitle: 14pt grey Calibri Light, sits under a Title.
+	// Word's built-in Subtitle: 14pt grey, theme major font, sits under a Title.
 	return (
 		<w.style w-type="paragraph" w-styleId="Subtitle">
 			<w.name w-val="Subtitle" />
@@ -656,7 +669,7 @@ function SubtitleStyle(): XmlNode {
 				<w.spacing w-after="160" />
 			</w.pPr>
 			<w.rPr>
-				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				<HeadingThemeFonts />
 				<w.color w-val="5A5A5A" />
 				<w.sz w-val="28" />
 			</w.rPr>
@@ -697,11 +710,16 @@ function HeadingStyle({
 			</w.pPr>
 			<w.rPr>
 				{/* `<w:rFonts>` per ECMA-376 §17.3.2.26 sits before bold/italic in
-				   `<w:rPr>`. Word's modern headings use Calibri Light (one font
-				   for all heading levels); apply via `w:asciiTheme="majorHAnsi"`
-				   if/when we wire up theme inheritance, but a direct ascii/hAnsi
-				   reference is portable across docs without a theme part. */}
-				<w.rFonts w-ascii="Calibri Light" w-hAnsi="Calibri Light" />
+				   `<w:rPr>`. Headings REFERENCE the theme major font
+				   (`w:asciiTheme="majorHAnsi"`) rather than pinning a literal, so
+				   `set-default-font` — which rewrites the theme major — flows
+				   through to every heading (a literal pin masks it; that was the
+				   eliot-journal "headings stay Calibri Light" trap). A deliberate
+				   `styles set HeadingN --font X` / `set-default-font --all` still
+				   wins: `applyRunFont` writes a literal ascii and drops the theme
+				   ref. Every docx-cli package ships a theme part, so the reference
+				   always resolves. */}
+				<HeadingThemeFonts />
 				{bold && <w.b />}
 				{italic && <w.i />}
 				{color && <w.color w-val={color} />}

@@ -152,7 +152,8 @@ describe("docx styles set-default-font", () => {
 	async function docWithHeading(label: string): Promise<string> {
 		const docPath = join(tempWorkspace(label), "out.docx");
 		await runCli("create", docPath, "--text", "Body paragraph.");
-		// A Heading1 pins its own explicit font (Calibri Light) — the override case.
+		// Heading1 REFERENCES the theme major font (it doesn't pin a literal), so
+		// set-default-font flows through to it — the eliot-journal fix.
 		await runCli(
 			"insert",
 			docPath,
@@ -165,11 +166,28 @@ describe("docx styles set-default-font", () => {
 		return docPath;
 	}
 
+	/** A doc with a theme-following Heading1 AND a CodeBlock that DELIBERATELY
+	 *  pins Courier New — the genuine "explicit font" case set-default-font
+	 *  preserves (and reports) unless --all. */
+	async function docWithHeadingAndCode(label: string): Promise<string> {
+		const docPath = await docWithHeading(label);
+		await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--text",
+			"code line",
+			"--style",
+			"CodeBlock",
+		);
+		return docPath;
+	}
+
 	const readPart = async (docPath: string, part: string): Promise<string> =>
 		(await Pkg.open(docPath)).readText(part);
 
-	test("sets docDefaults + theme fonts, preserving explicit-font styles", async () => {
-		const docPath = await docWithHeading("font-default");
+	test("sets docDefaults + theme fonts; headings follow the theme, deliberate pins preserved+reported", async () => {
+		const docPath = await docWithHeadingAndCode("font-default");
 		const result = await runCli(
 			"styles",
 			"set-default-font",
@@ -183,17 +201,26 @@ describe("docx styles set-default-font", () => {
 			font: "Times New Roman",
 			themeUpdated: true,
 		});
-		// Heading1 pins its own font, so it's reported (not silently left different).
-		expect(
-			(result.parsed as { explicitStyles: string[] }).explicitStyles,
-		).toContain("Heading1");
+		// CodeBlock pins its OWN font (Courier New), so it's reported as left
+		// different. Heading1 theme-references, so it FOLLOWS the new default and
+		// is NOT reported — the eliot-journal fix.
+		const explicit = (result.parsed as { explicitStyles: string[] })
+			.explicitStyles;
+		expect(explicit).toContain("CodeBlock");
+		expect(explicit).not.toContain("Heading1");
 
 		const styles = await readPart(docPath, "word/styles.xml");
-		expect(styles).toMatch(/<w:docDefaults>[\s\S]*w:ascii="Times New Roman"/);
-		// Explicit (theme-attrs dropped) so it beats the theme.
-		expect(styles).not.toMatch(/<w:docDefaults>[\s\S]*w:asciiTheme/);
-		// Heading1's own font is untouched in the default scope.
-		expect(styles).toMatch(/Heading1[\s\S]*?w:ascii="Calibri Light"/);
+		// docDefaults pins the literal (theme-attrs dropped) so it beats the theme.
+		// Bound the match to the docDefaults element — Heading1 now legitimately
+		// carries w:asciiTheme, so a greedy [\s\S]* would leak into it.
+		const docDefaults =
+			styles.match(/<w:docDefaults>[\s\S]*?<\/w:docDefaults>/)?.[0] ?? "";
+		expect(docDefaults).toContain('w:ascii="Times New Roman"');
+		expect(docDefaults).not.toContain("w:asciiTheme");
+		// Heading1 keeps its theme reference (follows the new major font); the
+		// CodeBlock's deliberate Courier New pin is untouched in the default scope.
+		expect(styles).toMatch(/Heading1[\s\S]*?w:asciiTheme="majorHAnsi"/);
+		expect(styles).toMatch(/CodeBlock[\s\S]*?w:ascii="Courier New"/);
 
 		const theme = await readPart(docPath, "word/theme/theme1.xml");
 		// Both major (headings) and minor (body) latin typefaces became the font.
@@ -217,8 +244,9 @@ describe("docx styles set-default-font", () => {
 		);
 
 		const styles = await readPart(docPath, "word/styles.xml");
+		// --all forces a literal font even on the theme-following heading.
 		expect(styles).toMatch(/Heading1[\s\S]*?w:ascii="Georgia"/);
-		expect(styles).not.toContain("Calibri Light"); // the only explicit font, now gone
+		expect(styles).not.toMatch(/Heading1[\s\S]*?w:asciiTheme/); // theme ref dropped
 	});
 
 	test("--size sets the default size (points → half-points)", async () => {
@@ -236,7 +264,7 @@ describe("docx styles set-default-font", () => {
 	});
 
 	test("--dry-run writes nothing", async () => {
-		const docPath = await docWithHeading("font-dry");
+		const docPath = await docWithHeadingAndCode("font-dry");
 		const before = (await Bun.file(docPath).arrayBuffer()).byteLength;
 		const result = await runCli(
 			"styles",
@@ -249,10 +277,12 @@ describe("docx styles set-default-font", () => {
 		expect((result.parsed as { dryRun?: boolean }).dryRun).toBe(true);
 		expect((result.parsed as { ok?: boolean }).ok).toBeUndefined();
 		// The preview must surface which styles stay off-font (same as the real run),
-		// so an agent can decide on --all without mutating the file first.
-		expect(
-			(result.parsed as { explicitStyles: string[] }).explicitStyles,
-		).toContain("Heading1");
+		// so an agent can decide on --all without mutating the file first. CodeBlock
+		// pins its own font; the theme-following Heading1 does not.
+		const explicit = (result.parsed as { explicitStyles: string[] })
+			.explicitStyles;
+		expect(explicit).toContain("CodeBlock");
+		expect(explicit).not.toContain("Heading1");
 		expect((await Bun.file(docPath).arrayBuffer()).byteLength).toBe(before);
 	});
 

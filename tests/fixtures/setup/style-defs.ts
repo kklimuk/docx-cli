@@ -16,9 +16,10 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *     (monospace + shaded background);
  *   - `docx edit --style` applies a created style to a body paragraph;
  *   - `docx styles set-default-font` sets the document font (Garamond) — writing
- *     <w:docDefaults> AND repointing word/theme/theme1.xml's font scheme, while
- *     preserving the styles that pin their own font (Heading1 Calibri Light,
- *     KbdKey Consolas).
+ *     <w:docDefaults> AND repointing word/theme/theme1.xml's font scheme. The
+ *     theme-following headings (Heading1/Title/Subtitle reference the theme
+ *     major) adopt Garamond; the KbdKey character style that DELIBERATELY pins
+ *     Consolas is preserved.
  *
  * Built entirely through the surface verbs, so building it is itself an
  * end-to-end smoke test for `styles set` / `create` / `set-default-font` +

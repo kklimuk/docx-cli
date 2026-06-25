@@ -23,6 +23,11 @@ theme-following headings adopt the font. Styles/runs that pin their OWN font
 (e.g. a code block's monospace, a deliberately-Arial run) are preserved; pass
 --all to repoint those too.
 
+Theme-following headings only adopt the font if the document HAS a theme part
+(every doc this CLI creates does; Word docs do too). The ack's "themeUpdated"
+is false for the rare theme-less doc — there the body changes but headings keep
+their fallback font; run with --all to force the headings onto the new font.
+
 Options:
   --size N           Also set the default font size, in points (e.g. 12).
   --all              Repoint EVERY explicit font — styles, body runs, and notes —
