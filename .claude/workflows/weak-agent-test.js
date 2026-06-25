@@ -1,12 +1,12 @@
 export const meta = {
-	name: "adversarial-review",
+	name: "weak-agent-test",
 	description:
 		"Weak-agent (Haiku) adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, rendered with Word, judged, and synthesized into a prioritized ergonomics report.",
 	phases: [
 		{
 			title: "Stage",
 			detail:
-				"copy each active scenario's folder (task.md, brief.md, fixture, assets/) into its own run-dir subfolder",
+				"copy each active scenario's folder (task.md, fixture, assets/) into its own run-dir subfolder, withholding the judge-only criteria.md",
 		},
 		{
 			title: "Exercise",
@@ -38,9 +38,10 @@ export const meta = {
 //   binary        — absolute path to the freshly-built dist/docx
 //   scenariosDir  — absolute path to the PRISTINE bundled scenarios dir. Each
 //                   scenario is a folder named after its key, containing task.md
-//                   (task + resolution criteria), brief.md (detailed instructions),
-//                   the fixture .docx (edit scenarios only), and assets/ (extra
-//                   inputs). Also the source of render baselines.
+//                   (the full request, agent-facing), criteria.md (grading rubric,
+//                   JUDGE-ONLY — withheld from the agent's run workspace by the stage
+//                   step, read by the judge from here), the fixture .docx (edit
+//                   scenarios only), and assets/ (extra inputs). Also the baseline src.
 //   only          — optional scenario filter: run just these key(s). Accepts an
 //                   array (["mnda","loi"]), a single key ("mnda" — the natural way
 //                   to run ONE task), or a comma/space-separated string ("mnda,loi").
@@ -57,14 +58,14 @@ const only = normalizeOnly(parsedArgs.only);
 const exerciseModel = parsedArgs.model || "haiku";
 if (!runDir || !binary || !scenariosDir) {
 	throw new Error(
-		"adversarial-review requires args { runDir, binary, scenariosDir }",
+		"weak-agent-test requires args { runDir, binary, scenariosDir }",
 	);
 }
 
 // Orchestration manifest, keyed by scenario folder name. The CONTENT of each
-// scenario — its task, resolution criteria, brief, fixture, and extra assets —
-// lives in `<scenariosDir>/<key>/` (task.md, brief.md, the .docx, assets/), NOT
-// here. This manifest holds only what the workflow needs to ROUTE each scenario:
+// scenario — its request, grading rubric, fixture, and extra assets —
+// lives in `<scenariosDir>/<key>/` (task.md, criteria.md, the .docx, assets/), NOT
+// here. This manifest holds only what the workflow needs to ROUTE:
 //   key       — folder name; also the result-folder name under runDir.
 //   bucket    — human label for the scenario's category (prompt headers, scoreboard).
 //   kind      — "edit" (work a staged copy of `doc` in place) | "author" (create `doc` fresh).
@@ -154,7 +155,7 @@ const STAGE_SCHEMA = {
 		missing: {
 			type: "array",
 			description:
-				"Anything that didn't land — a scenario whose folder failed to copy, or a required file (task.md, brief.md, the fixture) absent in the destination. One human-readable line each.",
+				"Anything wrong — a scenario whose folder failed to copy, a required file (task.md, the fixture) absent, or the judge-only criteria.md still present in the destination. One human-readable line each.",
 			items: { type: "string" },
 		},
 	},
@@ -280,9 +281,10 @@ const VERDICT_SCHEMA = {
 // ---------------------------------------------------------------------------
 // Phase 0 — Stage (one agent). Copy ONLY the active scenarios' folders from the
 // pristine scenarios dir into the run workspace, one result folder per scenario
-// (<runDir>/<key>/). Each scenario folder is self-describing (task.md, brief.md,
-// the fixture, assets/), so staging is a plain recursive folder copy — no per-file
-// manifest. The skill only makes the empty run dir; the copy lives here because
+// (<runDir>/<key>/). Each scenario folder is self-describing (task.md, criteria.md,
+// the fixture, assets/), so staging is a recursive folder copy that then strips the
+// judge-only criteria.md from the agent's workspace. The skill only makes the empty
+// run dir; the copy lives here because
 // workflow scripts can't touch the filesystem, so it runs in an agent. Runs BEFORE
 // the exercise token snapshot below, so it doesn't pollute the Haiku measurement.
 // ---------------------------------------------------------------------------
@@ -435,17 +437,16 @@ ${workLine}
 Everything you need is in YOUR scenario folder:
   ${dir}
 Read these with the Read tool before you start:
-  ${dir}/task.md     — your task and the resolution criteria it will be judged against
-  ${dir}/brief.md    — the detailed brief: the data to enter and step-by-step instructions
+  ${dir}/task.md     — what you've been asked to do: the full request, in plain terms
   ${dir}/assets/     — any additional input files (data, images). \`ls\` it; if it holds files, Read them. It may be empty.
 
 ## Your task — ${scenario.bucket}  (scenario: ${scenario.key})
-Read ${dir}/task.md and ${dir}/brief.md, then carry the task out on the working document above.
+Read ${dir}/task.md, then carry the task out on the working document above. The request describes the OUTCOME the person wants — it's on you to work out which of the tool's features get you there (that discovery is part of what's being measured).
 
 ## Rules
-- STAY IN YOUR SCENARIO FOLDER. The only document you touch is the working file above; the only other files you read live under ${dir} (task.md, brief.md, assets/). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories), and do NOT copy files in from elsewhere. The run workspace contains OTHER scenarios' folders with look-alike fixtures that are NOT yours — touching them corrupts the test and wastes calls. If something seems missing, re-read your working file; don't go hunting.
+- STAY IN YOUR SCENARIO FOLDER. The only document you touch is the working file above; the only other files you read live under ${dir} (task.md, assets/). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories), and do NOT copy files in from elsewhere. The run workspace contains OTHER scenarios' folders with look-alike fixtures that are NOT yours — touching them corrupts the test and wastes calls. If something seems missing, re-read your working file; don't go hunting.
 - Use ONLY the docx-cli executable above for document operations. Do NOT hand-edit the XML, unzip the .docx, or reach for any other docx library. The whole point is to test THIS tool.
-- You MAY use the Read tool on your task.md / brief.md / assets, and run \`${binary} read <file>\` to inspect your progress.
+- You MAY use the Read tool on your task.md / assets, and run \`${binary} read <file>\` to inspect your progress.
 - Locators (p0, t0:r1c2:p0, sN, etc.) shift after structural edits — re-read when needed. Prefer batch operations where the tool offers them.
 - If a command fails or confuses you, try at most ~3 reasonable alternatives, then RECORD it as friction and move on. Do not loop forever on one step.
 - Make a genuine, complete attempt. Finish the task if you can.
@@ -486,6 +487,10 @@ Return the structured result with ONE entry in \`scenarios\` for key "${target.k
 
 function judgePrompt(scenario, exercise, render) {
 	const dir = `${runDir}/${scenario.key}`;
+	// The rubric is read from the PRISTINE source, not the run dir — the stage step
+	// strips criteria.md from the agent's workspace so the agent can't see the answer
+	// key, so the staged copy has no criteria.md to read.
+	const criteriaPath = `${scenariosDir}/${scenario.key}/criteria.md`;
 	const outputPath =
 		(exercise && exercise.outputPath) || `${dir}/${scenario.doc}`;
 	const reviewPath = `${dir}/review.md`;
@@ -525,9 +530,10 @@ function judgePrompt(scenario, exercise, render) {
 	return `You are a STRICT evaluator judging whether docx-cli let a weak (Haiku) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.
 
 ## Scenario: ${scenario.key} — ${scenario.bucket}
-The task given to the weak agent AND the ground-truth resolution criteria are both in:
-  ${dir}/task.md
-READ that file first — it defines what the agent was asked to do and what "correct" means. (The detailed brief the agent followed is ${dir}/brief.md if you need it.)
+Two files define this evaluation — READ BOTH first:
+  ${dir}/task.md       — the request the agent was given (plain language, what the person wanted)
+  ${criteriaPath}      — the ground-truth GRADING RUBRIC: the precise, tool-specific checks that define "correct" (the agent never saw this — it was withheld from the agent's workspace; read it from this pristine path)
+The criteria.md is the authority on what passes; task.md is the human request it's graded against.
 
 ## The weak agent's self-report
 ${exerciseJson}
@@ -536,7 +542,7 @@ ${exerciseJson}
 ${renderLine}
 
 ## How to judge
-1. READ ${dir}/task.md for the task + resolution criteria.
+1. READ ${dir}/task.md (the request) and ${criteriaPath} (the grading rubric you judge against).
 2. READ the output page PNG(s) with the Read tool and look at them critically — does the document actually accomplish the task and look right (layout, no leftover placeholders/highlights, tables intact, figure present, columns present, etc.)?
 3. Run \`${binary} read ${outputPath}\` to confirm the changes SURVIVE THE WRITE→READ LOOP — this is docx-cli's core invariant; an edit that isn't retrievable on the next read is a failure. Use \`--ast\` if you need structure (e.g. section columns, tracked changes), and \`${binary} track-changes list\` / \`${binary} comments list\` where the scenario calls for them.
 4. ${scenario.baseline ? "Compare the BASELINE renders against the OUTPUT renders: confirm ONLY the intended cells changed and all other formatting/headers/footers/structure is preserved." : "Cross-check the render against the criteria."}
@@ -593,28 +599,30 @@ Cite scenario keys throughout and quote agent friction verbatim where it's illum
 
 // Build the stage agent's prompt: for each active scenario, recursively copy its
 // pristine folder into its own run-dir subfolder, then verify the required inputs
-// landed. The scenario folder is the unit of staging — task.md, brief.md, the
-// fixture, and assets/ all travel together.
+// landed. The scenario folder is the unit of staging — task.md, the fixture, and
+// assets/ travel together; criteria.md is the JUDGE's answer key and is deliberately
+// WITHHELD from the agent's run workspace (deleted after copy) so a weak agent can't
+// read the rubric. The judge reads criteria.md from the pristine source instead.
 function stagePrompt(targets) {
 	const lines = targets
 		.map((target) => {
 			const docLine = target.requireDoc
-				? `\n      then verify these exist in the destination: ${target.dstDir}/task.md, ${target.dstDir}/brief.md, ${target.dstDir}/${target.requireDoc}`
-				: `\n      then verify these exist in the destination: ${target.dstDir}/task.md, ${target.dstDir}/brief.md   (authoring scenario — no fixture .docx)`;
-			return `  - "${target.key}": \`mkdir -p ${target.dstDir}\` then copy the FOLDER CONTENTS: \`cp -R ${target.srcDir}/. ${target.dstDir}/\`${docLine}`;
+				? `\n      then verify the destination has: ${target.dstDir}/task.md and ${target.dstDir}/${target.requireDoc}, and verify ${target.dstDir}/criteria.md is ABSENT (it must NOT be in the agent's workspace)`
+				: `\n      then verify the destination has: ${target.dstDir}/task.md, and verify ${target.dstDir}/criteria.md is ABSENT (authoring scenario — no fixture .docx; criteria.md must NOT be in the agent's workspace)`;
+			return `  - "${target.key}": \`mkdir -p ${target.dstDir}\` then copy the FOLDER CONTENTS and remove the answer key: \`cp -R ${target.srcDir}/. ${target.dstDir}/ && rm -f ${target.dstDir}/criteria.md\`${docLine}`;
 		})
 		.join("\n");
 
-	return `You are the STAGE step of an evaluation harness. Seed an isolated run workspace by copying EXACTLY the listed scenario folders to their destinations and nothing else. Each scenario is a self-contained folder (task.md, brief.md, the fixture .docx, assets/); copy the whole folder so its inputs travel together.
+	return `You are the STAGE step of an evaluation harness. Seed an isolated run workspace by copying EXACTLY the listed scenario folders to their destinations and nothing else. Each pristine scenario folder holds task.md, criteria.md, the fixture .docx, and assets/ — but criteria.md is the GRADER's answer key and must NEVER reach the agent's workspace, so you copy the folder and then DELETE criteria.md from the destination.
 
 Scenario folders to stage:
 ${lines}
 
-For each scenario: \`mkdir -p\` the destination, then \`cp -R <srcDir>/. <dstDir>/\` to copy the folder contents (the trailing \`/.\` copies the CONTENTS, including the assets/ subfolder). Sources are pristine — never edit them. Do not copy any folders beyond this list. Do not retry a failed copy more than once.
+For each scenario: \`mkdir -p\` the destination, then \`cp -R <srcDir>/. <dstDir>/ && rm -f <dstDir>/criteria.md\` (the trailing \`/.\` copies the CONTENTS including assets/; the \`rm\` strips the answer key). Sources are pristine — never edit them. Do not copy any folders beyond this list. Do not retry a failed copy more than once.
 
 Return the structured result:
-- staged: the destination folders that now exist with their required files present (verify each file with a test/ls before listing the folder).
-- missing: one human-readable line for anything that didn't land — a scenario whose copy failed, or a required file (task.md / brief.md / the fixture) absent in the destination, formatted like "key: <what is missing>". Empty array if everything copied.`;
+- staged: the destination folders that now exist with task.md (+ the fixture) present AND criteria.md absent (verify each with a test/ls before listing the folder).
+- missing: one human-readable line for anything wrong — a scenario whose copy failed, a required file (task.md / the fixture) absent, OR criteria.md still present in the destination (a leak of the answer key — report it), formatted like "key: <what is wrong>". Empty array if everything is correct.`;
 }
 
 // Aggregate the Haiku tool economy from the exercise self-reports: docx-cli calls

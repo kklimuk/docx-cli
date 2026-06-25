@@ -13,7 +13,7 @@ import { runCli, tempWorkspace } from "./harness";
 const LIBREOFFICE_AVAILABLE = await detectLibreOffice();
 
 /** LibreOffice cold-start (the first soffice launch) routinely exceeds bun's 5s
- * default per-test timeout under load — e.g. right after the adversarial-review
+ * default per-test timeout under load — e.g. right after the weak-agent-test
  * harness has been rendering — so the docx→PDF→rasterize e2e tests flake at
  * exactly 5001ms. Give them generous headroom; a slow cold-start is latency, not
  * a failure. (They still run in ~2-3s when LibreOffice is warm.) */

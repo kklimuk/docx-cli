@@ -1,5 +1,5 @@
 ---
-name: adversarial-review
+name: weak-agent-test
 description: "Run the weak-agent (Haiku) adversarial test harness against docx-cli. Spawns Haiku agents to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, judges them, measures the Haiku tool economy (docx-cli vs other calls), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
 allowed-tools: Bash, Read, Write, Glob, Workflow
 ---
@@ -7,8 +7,8 @@ allowed-tools: Bash, Read, Write, Glob, Workflow
 # Adversarial review — weak-agent harness for docx-cli
 
 This harness answers one question: **can weak agents (Haiku) actually use docx-cli to
-get real work done, and what should we fix first?** It runs the `adversarial-review`
-workflow (`.claude/workflows/adversarial-review.js`), which fans out one Haiku agent
+get real work done, and what should we fix first?** It runs the `weak-agent-test`
+workflow (`.claude/workflows/weak-agent-test.js`), which fans out one Haiku agent
 per scenario, renders every output with Microsoft Word, grades each against
 ground-truth criteria, and synthesizes a prioritized improvement report.
 
@@ -16,8 +16,13 @@ The test corpus is **bundled with this skill** under `scenarios/`, one folder pe
 scenario, named after its key (`scenarios/mnda/`, `scenarios/loi/`, …). Each scenario
 folder is self-describing and holds everything that scenario needs:
 
-- `task.md` — the task **and** the resolution criteria it's judged against,
-- `brief.md` — the detailed brief (the data to enter, step-by-step instructions),
+- `task.md` — the AGENT-FACING request, written as a human delegating the work:
+  the goal, the data, the intent — and **no tool vocabulary** (no `docx` commands,
+  locators, or OOXML terms), because discovering which features deliver the outcome
+  is part of what's measured,
+- `criteria.md` — the JUDGE-ONLY grading rubric (the precise, tool-specific checks).
+  The stage step **withholds it from the agent's run workspace**, and the judge reads
+  it from the pristine source — the agent never sees the answer key,
 - the fixture `.docx` to work on (edit scenarios only; authoring scenarios create
   their output fresh),
 - `assets/` — any additional inputs (data files, images; empty for most edit
@@ -25,10 +30,10 @@ folder is self-describing and holds everything that scenario needs:
 
 The workflow's `SCENARIOS` manifest holds only the per-scenario **routing** metadata
 (key, bucket label, `edit`/`author` kind, the doc filename, whether to render a
-baseline); the actual task/brief/fixture/assets all live in the folder. The skill is
+baseline); the actual request/criteria/fixture/assets all live in the folder. The skill is
 therefore self-contained and travels with its test corpus. To change what a scenario
 tests, edit the files in its folder. (Heavy, ephemeral run outputs — edited docx,
-renders, reviews, the report — are dumped to `./tmp/docx-adversarial-review/<ts>/`,
+renders, reviews, the report — are dumped to `./tmp/docx-weak-agent-test/<ts>/`,
 never into the repo.)
 
 Each run produces, under the timestamped run dir, **one result folder per scenario**
@@ -41,7 +46,7 @@ Each run produces, under the timestamped run dir, **one result folder per scenar
   haiku-metrics.json
   benchmark.json       ← self-reported tool economy
   <key>/               ← one per scenario; the worked-on copy lives here
-    task.md  brief.md  assets/
+    task.md  assets/   ← (criteria.md is withheld from this copy — judge-only)
     <doc>.docx         ← the edited/authored document
     renders/output/    ← the Word-rendered PNGs the judge looked at
     renders/baseline/  ← pristine before-render (baseline scenarios only, e.g. psa)
@@ -64,7 +69,7 @@ fails.
 ```bash
 REPO="$(git rev-parse --show-toplevel)"
 cd "$REPO"
-SCENARIOS_DIR="$REPO/.claude/skills/adversarial-review/scenarios"   # this skill's bundled corpus (one folder per scenario)
+SCENARIOS_DIR="$REPO/.claude/skills/weak-agent-test/scenarios"   # this skill's bundled corpus (one folder per scenario)
 
 # Word must be installed (this harness renders with Word, not LibreOffice).
 test -d "/Applications/Microsoft Word.app" || echo "WARNING: Microsoft Word not found — render phase will fail."
@@ -97,14 +102,14 @@ working tree — stop and fix it before running. Do not proceed on a stale binar
 ### 2. Make an isolated run workspace (under ./tmp/)
 
 Create an empty timestamped `./tmp/` run dir. **Do NOT copy the scenarios here** — the
-workflow's **Stage** phase copies *only the active scenarios' folders* from the pristine
+workflow's **Stage** phase copies _only the active scenarios' folders_ from the pristine
 `$SCENARIOS_DIR` into `$RUN_DIR`, one subfolder per scenario (`$RUN_DIR/<key>/`), so
 originals stay untouched, the repo stays clean, and a single-scenario run doesn't drag
 the whole corpus along:
 
 ```bash
 TS="$(date +%Y.%m.%d-%H%M%S)"
-RUN_DIR="./tmp/docx-adversarial-review/$TS"
+RUN_DIR="./tmp/docx-weak-agent-test/$TS"
 mkdir -p "$RUN_DIR"   # empty; the workflow's Stage phase seeds one subfolder per active scenario from $SCENARIOS_DIR
 echo "RUN_DIR=$RUN_DIR"
 ```
@@ -116,7 +121,7 @@ the absolute paths as `args`:
 
 ```
 Workflow({
-  scriptPath: "<REPO>/.claude/workflows/adversarial-review.js",
+  scriptPath: "<REPO>/.claude/workflows/weak-agent-test.js",
   args: {
     runDir: "<RUN_DIR from step 2>",
     binary: "<BINARY from step 1>",
@@ -134,7 +139,7 @@ the folder names under `$SCENARIOS_DIR` (run `ls "$SCENARIOS_DIR"` if you need t
 confirm them); unknown keys abort the run with a "No scenarios matched" error listing
 the valid ones.
 
-> Use `scriptPath`, NOT `name: "adversarial-review"`. Launching by name resolves to a
+> Use `scriptPath`, NOT `name: "weak-agent-test"`. Launching by name resolves to a
 > copy cached at session start, so any edit to the workflow made during the session is
 > ignored; `scriptPath` always reads the current file from disk. (The workflow also
 > tolerates `args` arriving as a JSON string — the runtime stringifies it — so passing
@@ -148,7 +153,7 @@ step 4 to measure per-agent tokens and time.
 `mnda`, `invoice`, `resume`, `contract-markup`, `contract-finalize`, `eliot-journal`.
 
 If the user passed scenario keys as arguments to this skill (e.g.
-`/adversarial-review mnda loi` or `mnda,loi`), parse them into the `only` array.
+`/weak-agent-test mnda loi` or `mnda,loi`), parse them into the `only` array.
 Otherwise run everything.
 
 The run is heavy (6 Haiku agents, serial Word rendering, 6 judges + a synthesis pass);
@@ -169,7 +174,7 @@ Two more steps add the _measured_ numbers:
    clocks, so this reconstructs them from the transcripts). `TRANSCRIPT_DIR` is the
    path you noted in step 3:
    ```bash
-   bun "$REPO/.claude/skills/adversarial-review/scripts/haiku-metrics.ts" \
+   bun "$REPO/.claude/skills/weak-agent-test/scripts/haiku-metrics.ts" \
      "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" >> "$RUN_DIR/REPORT.md"
    ```
    This appends the measured "Haiku tool & cost economy" table to REPORT.md, writes
@@ -203,9 +208,11 @@ Two more steps add the _measured_ numbers:
   NOT yet allowlisted — if you get prompted, add them via the `update-config` skill or
   run with edits allowed. See `.claude/settings.local.json`.
 - To add a scenario, create a folder under this skill's `scenarios/<key>/` holding
-  `task.md` (task + resolution criteria), `brief.md` (detailed instructions), the
-  fixture `.docx` (edit scenarios only), and an `assets/` folder, then add a routing
-  entry to `SCENARIOS` in the workflow (`.claude/workflows/adversarial-review.js`):
+  `task.md` (the agent-facing request, in human voice — NO tool vocabulary, so the
+  agent must discover the features), `criteria.md` (the judge-only grading rubric —
+  withheld from the agent's run workspace, read by the judge from the pristine source),
+  the fixture `.docx` (edit scenarios only), and an `assets/` folder, then add a
+  routing entry to `SCENARIOS` in the workflow (`.claude/workflows/weak-agent-test.js`):
   `{ key, bucket, kind, doc, baseline }`. To change what an existing scenario tests,
-  edit the files in its folder — the task/brief/fixture/assets all live there, not in
-  the workflow.
+  edit the files in its folder — the request/criteria/fixture/assets all live there,
+  not in the workflow.

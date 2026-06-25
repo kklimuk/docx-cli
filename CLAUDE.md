@@ -72,6 +72,19 @@ bun run check             # biome + knip + tsc
 
 Fixture authoring (core-emitters-first, CLI-second) and rebuild instructions live in [tests/fixtures/setup/CLAUDE.md](tests/fixtures/setup/CLAUDE.md).
 
+### Every new feature needs a fixture AND a weak-agent scenario
+
+Unit tests are necessary but NOT sufficient — they prove the XML we emit is what we *think* it is, not that Word/LibreOffice accepts it or that a weak agent can *find and use* the feature. So a new verb/flag/surface is not "done" until BOTH of these exercise it (check each when you ship; this is how `set-default-font` slipped through with neither):
+
+1. **A fixture** — a builder under `tests/fixtures/setup/` that **dogfoods the new verb** (`bun ${cliEntry} <new-verb> …`), added to `CORE_FIXTURES` so it round-trips through LibreOffice. First try to **fold it into the existing fixture for the same surface/noun** (e.g. `styles set`/`create`/`set-default-font` all live in [`style-defs.ts`](tests/fixtures/setup/style-defs.ts)); only add a new fixture if no existing one fits. This catches render-invalidity (bad child ordering, theme/part corruption) the unit XML assertions can't.
+2. **A weak-agent-test scenario** — a task in the [`weak-agent-test`](.claude/skills/weak-agent-test) skill's `scenarios/` whose request would naturally lead a Haiku agent to reach for the feature (e.g. the `resume` scenario drives `styles set`). First try to **fold it into an existing scenario**; if none fits, **prompt the user before adding a new scenario** (a scenario is a heavier commitment — new fixture + render + judge). This is the only thing that proves the feature is *discoverable* and *usable* by the weak agents the tool is built for — the gap unit tests structurally can't see.
+
+   **Scenario shape — two files, strict separation:**
+   - `task.md` — AGENT-FACING. Written as **a human delegating real work**: the goal, the materials/data, the intent and quality bar. It contains **NO tool vocabulary** — no `docx` commands or flags, no locators (`pN`/`tcN`), no OOXML/internal terms (`twips`, `pPrChange`, `docx:base`, `--ast`). Use only words a Word *user* would say (tracked changes, heading style, margins, page numbers, points/inches). The agent must DISCOVER which features deliver the outcome — spelling out the commands defeats the entire test. (Was `task.md` + `brief.md`; merged — a human writes one request, not a task plus a brief.)
+   - `criteria.md` — JUDGE-ONLY. The precise, tool-specific grading rubric (exact commands, `pPrChange`, hex values, …). The stage step **withholds it from the agent's run workspace** (`cp` then `rm`), and the judge reads it from the pristine source — so the agent structurally cannot read the answer key. A `# Grading rubric — <key> (JUDGE ONLY)` header + `## Pass conditions` + `## How to verify`.
+
+When a feature's natural brute-force path already works for weak agents (verified: they apply doc-wide paragraph formatting via a range `edit`, never via the style default), a dedicated convenience verb may not be worth adding at all — but the feature that DOES exist still needs both kinds of coverage.
+
 ## Build
 
 - `bun run build` → `dist/index.js` — bundled JS that npm publishes (runs under Bun). **Required**: path aliases (`@core/*`) and JSX runtime resolution don't work when consumed from `node_modules`; the bundle pre-resolves everything. Never ship raw `src/`.
