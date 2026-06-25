@@ -184,17 +184,19 @@ docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN | tN:rRcC:pK (cell paragraph)
 docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
-docx replace FILE PATTERN REPLACEMENT [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
+docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 #   Keeps the run's formatting (bold/font) and any tabs — the no-rebuild way to fill a
 #   formatted/tabbed template line (e.g. "**Org Name**⇥Date"); don't hand-build --runs to refill it.
-#   A span edit (find → edit --at pN:S-E --text NEW) does the same by locator.
+#   --at pN (or a cell paragraph tT:rRcC:pN) CONFINES the replace to one paragraph — use it when the
+#   SAME placeholder repeats across the doc (a résumé's "City, State" in every entry) and you want THE
+#   one in a specific paragraph, instead of find → edit --at pN:S-E span surgery. Batch entries take "at" too.
 
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys
 # on each JSONL line mirror the command's flags; all locators address the doc as
 # read. insert/edit also accept --batch - to read JSONL from stdin.
 docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs|code|task>, style?, … }
 docx insert  FILE --batch additions.jsonl   # { after|before, <content>, style?, color?, … }
-docx replace FILE --batch script.jsonl      # { pattern, replacement, regex?, all?, limit?, … } applied in order
+docx replace FILE --batch script.jsonl      # { pattern, replacement, at?, regex?, all?, limit?, … } applied in order ("at" scopes that entry to one paragraph)
 docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (pN/tN/cell), resolved live-first
 
 # All four of insert/edit/delete/replace accept --track to record that one

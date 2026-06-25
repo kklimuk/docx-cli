@@ -15,6 +15,7 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
+import { matchesInScope, ScopeError, validateScopeShape } from "./scope";
 
 type RawValues = Record<
 	string,
@@ -75,6 +76,22 @@ export async function runReplaceBatch(
 	for (let index = 0; index < specs.length; index++) {
 		const spec = specs[index];
 		if (!spec) continue;
+		// Existence check for a scoped entry: validateSpec only checked the `at`
+		// SHAPE (no document yet). Resolve it against the LIVE tree here (reread()
+		// runs between entries, so ids can shift) and fail loudly on a typo —
+		// otherwise a parseable-but-absent locator (p99) would match nothing and
+		// the batch would falsely report success, the exact silent no-op the
+		// single-shot path errors on (see scope.ts resolveReplaceScope).
+		if (spec.at !== undefined) {
+			try {
+				document.body.resolveBlock(spec.at);
+			} catch {
+				return fail(
+					"BLOCK_NOT_FOUND",
+					`entry ${index}: scope "${spec.at}" not found`,
+				);
+			}
+		}
 		let findResult: ReturnType<typeof findTextSpans>;
 		try {
 			findResult = findTextSpans(document.body, spec.pattern, {
@@ -91,7 +108,12 @@ export async function runReplaceBatch(
 			return fail("USAGE", `entry ${index}: invalid pattern: ${message}`);
 		}
 
-		const all = findResult.matches;
+		// `at` scopes this entry to one paragraph (the résumé repeated-placeholder
+		// fix); applied before first/all/limit so "first" means first in scope.
+		const all =
+			spec.at !== undefined
+				? matchesInScope(findResult.matches, spec.at)
+				: findResult.matches;
 		const selected =
 			spec.limit !== undefined
 				? all.slice(0, spec.limit)
@@ -182,6 +204,7 @@ type ReplaceSpec = {
 	limit?: number;
 	view: FindView;
 	author?: string;
+	at?: string;
 };
 
 function validateSpec(
@@ -216,6 +239,20 @@ function validateSpec(
 		}
 		limit = value;
 	}
+	let at: string | undefined;
+	if (raw.at !== undefined) {
+		if (typeof raw.at !== "string") {
+			throw new EntryError("USAGE", `entry ${index}: "at" must be a string`);
+		}
+		try {
+			at = validateScopeShape(raw.at);
+		} catch (error) {
+			if (error instanceof ScopeError) {
+				throw new EntryError(error.code, `entry ${index}: ${error.message}`);
+			}
+			throw error;
+		}
+	}
 	return {
 		pattern: raw.pattern,
 		replacement: raw.replacement,
@@ -226,6 +263,7 @@ function validateSpec(
 		...(limit !== undefined ? { limit } : {}),
 		view: wantCurrent ? "current" : wantBaseline ? "baseline" : "accepted",
 		...(typeof raw.author === "string" ? { author: raw.author } : {}),
+		...(at !== undefined ? { at } : {}),
 	};
 }
 

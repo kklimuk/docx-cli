@@ -19,6 +19,7 @@ import {
 	writeStdout,
 } from "../respond";
 import { runReplaceBatch } from "./batch";
+import { matchesInScope, resolveReplaceScope, ScopeError } from "./scope";
 
 const HELP = `docx replace — substitute text spans (sed for docx)
 
@@ -28,9 +29,16 @@ Usage:
   docx replace FILE --batch -          [options]   # read JSONL from stdin
 
 Options:
+  --at LOCATOR      confine the replace to ONE paragraph: a body pN or a cell
+                    paragraph tT:rRcC:pN. Use this when the same placeholder
+                    repeats across the document (a résumé's "City, State" /
+                    "Position Title" in every entry) and you want THE one in a
+                    specific paragraph — no find + offset-span edit needed:
+                      docx replace doc.docx --at p20 "City, State" "San Francisco, CA"
   --regex           treat PATTERN as a JavaScript regular expression
   --ignore-case     case-insensitive match
-  --all             replace every match (default: just the first)
+  --all             replace every match (default: just the first; with --at,
+                    scoped to that paragraph)
   --limit N         replace at most N matches (in document order)
   --author NAME     author for tracked changes (default: $DOCX_AUTHOR)
   --track           record substitutions as tracked changes even when the
@@ -101,6 +109,7 @@ export async function run(args: string[]): Promise<number> {
 		args,
 		{
 			batch: { type: "string" },
+			at: { type: "string" },
 			regex: { type: "boolean" },
 			"ignore-case": { type: "boolean" },
 			all: { type: "boolean" },
@@ -132,6 +141,13 @@ export async function run(args: string[]): Promise<number> {
 			return fail(
 				"USAGE",
 				"--batch reads pattern/replacement from the JSONL file; don't also pass them as positionals",
+				HELP,
+			);
+		}
+		if (parsed.values.at !== undefined) {
+			return fail(
+				"USAGE",
+				'--at is per-entry in batch mode: put "at" on each JSONL line, not on the command',
 				HELP,
 			);
 		}
@@ -181,7 +197,22 @@ export async function run(args: string[]): Promise<number> {
 		return fail("USAGE", `Invalid pattern: ${message}`);
 	}
 
-	const allMatches = findResult.matches;
+	// `--at pN` scopes the substitution to one paragraph (see ./scope) — the
+	// résumé fix for repeated placeholders. Applied to the match set BEFORE
+	// first/all/limit selection, so "first match" means first WITHIN the scope.
+	const atScope = parsed.values.at as string | undefined;
+	let allMatches = findResult.matches;
+	if (atScope !== undefined) {
+		try {
+			const blockId = resolveReplaceScope(document, atScope);
+			allMatches = matchesInScope(allMatches, blockId);
+		} catch (scopeError) {
+			if (scopeError instanceof ScopeError) {
+				return fail(scopeError.code, scopeError.message);
+			}
+			throw scopeError;
+		}
+	}
 	const normalizationFields =
 		findResult.normalizedQuery !== undefined
 			? {
@@ -219,6 +250,7 @@ export async function run(args: string[]): Promise<number> {
 			regex: useRegex,
 			ignoreCase,
 			view: findView,
+			...(atScope ? { at: atScope } : {}),
 			totalMatches: allMatches.length,
 			replaced: selected.length,
 			matches: matchesPayload,
@@ -238,6 +270,7 @@ export async function run(args: string[]): Promise<number> {
 			regex: useRegex,
 			ignoreCase,
 			view: findView,
+			...(atScope ? { at: atScope } : {}),
 			totalMatches: 0,
 			replaced: 0,
 			matches: [],
@@ -303,6 +336,7 @@ export async function run(args: string[]): Promise<number> {
 			regex: useRegex,
 			ignoreCase,
 			view: findView,
+			...(atScope ? { at: atScope } : {}),
 			totalMatches: allMatches.length,
 			replaced: selected.length,
 			matches: matchesPayload,

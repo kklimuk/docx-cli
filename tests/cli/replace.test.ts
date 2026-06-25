@@ -458,3 +458,209 @@ describe("docx replace — view selection (--baseline / --current)", () => {
 		expect((result.parsed as { code: string }).code).toBe("USAGE");
 	});
 });
+
+// `--at LOCATOR` confines a replace to one paragraph — the résumé fix for a
+// placeholder that repeats across entries (`City, State` in every one), so a
+// bare first-match replace can't safely target THE one being filled.
+describe("docx replace — --at paragraph scope", () => {
+	/** Three paragraphs that each contain the same "City, State" placeholder. */
+	async function repeatedPlaceholder(label: string): Promise<string> {
+		const path = join(tempWorkspace(label), "doc.docx");
+		await runCli("create", path, "--text", "Resume header");
+		await runCli("insert", path, "--after", "p0", "--text", "City, State one");
+		await runCli("insert", path, "--after", "p1", "--text", "City, State two");
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p2",
+			"--text",
+			"City, State three",
+		);
+		return path;
+	}
+
+	test("replaces only the match in the scoped paragraph", async () => {
+		const path = await repeatedPlaceholder("at-scope");
+		const result = await runCli(
+			"replace",
+			path,
+			"--at",
+			"p2",
+			"City, State",
+			"Boston, MA",
+		);
+		expect(result.exitCode).toBe(0);
+		const payload = result.parsed as {
+			at: string;
+			totalMatches: number;
+			replaced: number;
+			matches: Array<{ blockId: string }>;
+		};
+		// Scope cut the 3 doc-wide matches down to the one in p2.
+		expect(payload.at).toBe("p2");
+		expect(payload.totalMatches).toBe(1);
+		expect(payload.replaced).toBe(1);
+		expect(payload.matches[0]?.blockId).toBe("p2");
+
+		// p1 and p3 still hold the placeholder; only p2 changed.
+		const remaining = await runCli("find", path, "City, State", "--json");
+		expect(
+			(remaining.parsed as { matches: Array<{ blockId: string }> }).matches.map(
+				(match) => match.blockId,
+			),
+		).toEqual(["p1", "p3"]);
+	});
+
+	test("a nonexistent scope paragraph is BLOCK_NOT_FOUND", async () => {
+		const path = await repeatedPlaceholder("at-missing");
+		const result = await runCli(
+			"replace",
+			path,
+			"--at",
+			"p99",
+			"City, State",
+			"X",
+		);
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
+	});
+
+	test("a range or span scope is rejected (single paragraph only)", async () => {
+		const path = await repeatedPlaceholder("at-range");
+		for (const bad of ["p1-p3", "p1:0-5"]) {
+			const result = await runCli(
+				"replace",
+				path,
+				"--at",
+				bad,
+				"City, State",
+				"X",
+			);
+			expect(result.parsed).toMatchObject({ code: "INVALID_LOCATOR" });
+		}
+	});
+
+	test("a nested-cell paragraph locator passes shape validation (not INVALID_LOCATOR)", async () => {
+		// tT:rRcC:tU:rVcW:pN (a paragraph in a nested table cell) is a valid
+		// paragraph the rest of the locator system addresses. The shape predicate
+		// must accept it — a missing one errors BLOCK_NOT_FOUND (existence), NOT
+		// INVALID_LOCATOR (shape). Regression: the predicate once required exactly
+		// one cell-nesting level.
+		const path = await repeatedPlaceholder("at-nested");
+		const result = await runCli(
+			"replace",
+			path,
+			"--at",
+			"t0:r0c0:t1:r0c0:p0",
+			"City, State",
+			"X",
+		);
+		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
+		expect((result.parsed as { code: string }).code).not.toBe(
+			"INVALID_LOCATOR",
+		);
+	});
+
+	test("--at on a table cell paragraph scopes to that cell", async () => {
+		const path = join(tempWorkspace("at-cell"), "cells.docx");
+		await Bun.write(path, Bun.file("tests/fixtures/tables-and-lists.docx"));
+		// Find a cell-paragraph match to scope to.
+		const found = await runCli("find", path, "Breadboard", "--json");
+		const cellMatch = (
+			found.parsed as { matches: Array<{ blockId: string }> }
+		).matches.find((match) => match.blockId.startsWith("t0:r"));
+		expect(cellMatch).toBeDefined();
+		const cellId = cellMatch?.blockId as string;
+		const result = await runCli(
+			"replace",
+			path,
+			"--at",
+			cellId,
+			"Breadboard",
+			"Protoboard",
+		);
+		expect(result.exitCode).toBe(0);
+		const payload = result.parsed as {
+			matches: Array<{ blockId: string }>;
+		};
+		expect(payload.matches.every((match) => match.blockId === cellId)).toBe(
+			true,
+		);
+	});
+
+	test("--at is rejected alongside --batch (scope is per-entry there)", async () => {
+		const path = await repeatedPlaceholder("at-batch-conflict");
+		const batchPath = join(tempWorkspace("at-batch-conflict-jsonl"), "b.jsonl");
+		await Bun.write(batchPath, '{"pattern":"City, State","replacement":"X"}\n');
+		const result = await runCli(
+			"replace",
+			path,
+			"--batch",
+			batchPath,
+			"--at",
+			"p1",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+
+	test("batch entries carry their own at, filling distinct paragraphs in one call", async () => {
+		const path = await repeatedPlaceholder("at-batch");
+		const batchPath = join(tempWorkspace("at-batch-jsonl"), "fill.jsonl");
+		await Bun.write(
+			batchPath,
+			`${[
+				'{"at":"p1","pattern":"City, State","replacement":"Boston, MA"}',
+				'{"at":"p3","pattern":"City, State","replacement":"Austin, TX"}',
+			].join("\n")}\n`,
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+
+		// p1 and p3 filled distinctly; p2 left untouched.
+		const remaining = await runCli("find", path, "City, State", "--json");
+		expect(
+			(remaining.parsed as { matches: Array<{ blockId: string }> }).matches.map(
+				(match) => match.blockId,
+			),
+		).toEqual(["p2"]);
+		const boston = await runCli("find", path, "Boston, MA", "--json");
+		expect(
+			(boston.parsed as { matches: Array<{ blockId: string }> }).matches[0]
+				?.blockId,
+		).toBe("p1");
+	});
+
+	test("a batch entry with a malformed at scope is a per-entry error", async () => {
+		const path = await repeatedPlaceholder("at-batch-bad");
+		const batchPath = join(tempWorkspace("at-batch-bad-jsonl"), "b.jsonl");
+		await Bun.write(
+			batchPath,
+			'{"at":"p1-p3","pattern":"City, State","replacement":"X"}\n',
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.parsed).toMatchObject({ code: "INVALID_LOCATOR" });
+	});
+
+	test("a batch entry with a parseable-but-nonexistent at errors (not a silent no-op)", async () => {
+		// The single-shot path errors BLOCK_NOT_FOUND on a typo'd scope; the batch
+		// path must too, else a fat-fingered `at` matches nothing, mutates nothing,
+		// and falsely reports success — the exact write→read-loop trap.
+		const path = await repeatedPlaceholder("at-batch-missing");
+		const before = await runCli("find", path, "City, State", "--json");
+		const batchPath = join(tempWorkspace("at-batch-missing-jsonl"), "b.jsonl");
+		await Bun.write(
+			batchPath,
+			'{"at":"p99","pattern":"City, State","replacement":"X"}\n',
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
+		// Nothing mutated — the document is untouched.
+		const after = await runCli("find", path, "City, State", "--json");
+		expect((after.parsed as { matches: unknown[] }).matches.length).toBe(
+			(before.parsed as { matches: unknown[] }).matches.length,
+		);
+	});
+});
