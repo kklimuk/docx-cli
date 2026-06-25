@@ -19,7 +19,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
   sections  FILE  Multi-column layout, section breaks & PAGE SETUP — columns on a range (--at pN-pM --columns N); page margins/orientation/size for the WHOLE document ("--margins 0.5" with NO --at sets every section) or one section (--at sN). The ONLY way to do columns; insert does not.
-  styles    FILE  List the styles you can apply (--used for ones in use; --at ID to describe one) — the catalog isn't in the body
+  styles    FILE  List/describe styles (--used, --at ID); "styles set --at Heading1 --color 1F4E79 --bold" restyles every heading; "styles create" mints one; "set-default-font" sets the doc font — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
   comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
   footnotes …     Add (--at | --anchor PHRASE), edit, delete, list footnotes (--text/--runs/--markdown bodies)

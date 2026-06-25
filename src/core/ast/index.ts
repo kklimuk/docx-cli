@@ -11,7 +11,7 @@ export {
 	LocatorResolveError,
 	type TrackedChangeReference,
 } from "./document/body";
-export { baselineCatalog } from "./document/styles";
+export { baselineCatalog, isBaselineStyle } from "./document/styles";
 export {
 	findBlockById,
 	flattenImageRuns,

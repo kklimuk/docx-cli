@@ -44,6 +44,10 @@ export type MarkdownOptions = {
 	 *  Used as the baseline size when no stronger per-run majority emerges, so a
 	 *  doc that stamps the default `<w:sz>` on most runs still reads clean. */
 	defaultSizeHalfPoints?: number;
+	/** Document default run font (explicit `w:ascii` from styles `docDefaults`).
+	 *  Surfaced in the `docx:base` note when it DEVIATES from the template default
+	 *  (i.e. `set-default-font` ran), so the document font is observable on read. */
+	defaultFont?: string;
 	/** Whether the document's global track-changes toggle is on. Surfaced as a
 	 *  head `<!-- docx:track-changes on -->` hint (deviation-only — off is the
 	 *  default, so nothing is emitted then) so an agent sees the state on the
@@ -62,6 +66,19 @@ export type MarkdownOptions = {
  *  covers a majority of the document's text — otherwise every run keeps its
  *  explicit formatting. */
 export type RunFormatBaseline = { font?: string; sizeHalfPoints?: number };
+
+/** The canonical create-template `docDefaults` (Calibri 11pt) — the universal
+ *  default, noise on every doc, so suppressed from the `docx:base` note. A
+ *  docDefaults value that DEVIATES from it is the meaningful signal that
+ *  `set-default-font` ran, and IS surfaced. */
+const TEMPLATE_DEFAULT_FONT = "Calibri";
+const TEMPLATE_DEFAULT_SIZE_HALF_POINTS = 22;
+
+/** Return `value` only when it deviates from the canonical template `def` (else
+ *  undefined): the universal default is noise; a deviation is the signal. */
+function deviation<T>(value: T | undefined, def: T): T | undefined {
+	return value !== undefined && value !== def ? value : undefined;
+}
 
 export class MarkdownLocatorError extends Error {
 	constructor(
@@ -117,14 +134,27 @@ export function renderMarkdown(
 ): string {
 	const blocks = sliceBlocks(doc.blocks, options.from, options.to);
 	const dominant = detectFormatBaseline(blocks);
-	// Suppression falls back to the document default size, so a doc that stamps
-	// the default `<w:sz>` on most runs still reads clean. The NOTE, though,
-	// carries only true per-run dominants — the document default is reconstructed
-	// from the importer's own `docDefaults`, so re-declaring it would make import
-	// stamp explicit sizes on runs that never had one (a round-trip drift).
+	// Suppression falls back to the document default size, so a doc that stamps the
+	// default `<w:sz>` on most runs still reads clean.
 	const baseline: RunFormatBaseline = {
 		font: dominant.font,
 		sizeHalfPoints: dominant.sizeHalfPoints ?? options.defaultSizeHalfPoints,
+	};
+	// The NOTE declares the document's baseline font/size: the per-run majority,
+	// else the document DEFAULT (docDefaults) when it DEVIATES from the canonical
+	// template (Calibri 11pt) — i.e. someone ran `set-default-font`. The universal
+	// template default is suppressed as noise; a deviation is the meaningful signal
+	// that makes the document font/size observable on read. Safe to declare: the
+	// note is a hint the importer drops, so it can't drift a `read → create` rebuild.
+	const noteBaseline: RunFormatBaseline = {
+		font:
+			dominant.font ?? deviation(options.defaultFont, TEMPLATE_DEFAULT_FONT),
+		sizeHalfPoints:
+			dominant.sizeHalfPoints ??
+			deviation(
+				options.defaultSizeHalfPoints,
+				TEMPLATE_DEFAULT_SIZE_HALF_POINTS,
+			),
 	};
 	const commentIndex = options.showComments
 		? buildCommentIndex(blocks, options)
@@ -224,7 +254,7 @@ export function renderMarkdown(
 	// omits from every matching run below. The page note follows it, declaring
 	// document page geometry when it deviates from the canonical default (a
 	// read-time hint the importer drops; geometry survives edits in place).
-	const baseNote = formatBaseNote(dominant);
+	const baseNote = formatBaseNote(noteBaseline);
 	const pageNote = formatPageNote(documentGeometry(blocks));
 	// Track-changes ON is a deviation from the default (off), so surface it; off
 	// emits nothing. This is an own-`docx:` metadata hint, dropped on import like

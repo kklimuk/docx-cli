@@ -10,6 +10,7 @@ export {
 	flattenParagraphs,
 	type HyperlinkReference,
 	type ImageReference,
+	isBaselineStyle,
 	iterateBlocks,
 	paragraphText,
 	paragraphTextAccepted,

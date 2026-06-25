@@ -1124,6 +1124,30 @@ describe("read — document format baseline note", () => {
 		// The rebuilt doc has no dominant font now → no base note on re-read.
 		expect(await read(dst)).not.toContain("docx:base");
 	});
+
+	test("set-default-font surfaces the document default in the base note (deviation-only)", async () => {
+		const docPath = join(tempWorkspace("base-default-font"), "out.docx");
+		await runCli("create", docPath, "--text", "Plain body paragraph.");
+
+		// A fresh Calibri 11pt doc declares NO base note — the universal template
+		// default is noise, suppressed deviation-only.
+		expect(await read(docPath)).not.toContain("docx:base");
+
+		// After set-default-font the docDefaults font/size DEVIATE from the template,
+		// so they surface — making the change observable on the next read (the
+		// write-read loop). Runs carry no explicit font, so they ride the note.
+		await runCli(
+			"styles",
+			"set-default-font",
+			docPath,
+			"Garamond",
+			"--size",
+			"14",
+		);
+		const md = await read(docPath);
+		expect(md).toContain('<!-- docx:base font="Garamond" size="14pt" -->');
+		expect(md).not.toContain("font-family:Garamond"); // not stamped per-run
+	});
 });
 
 describe("read — default formatting dropped as noise", () => {

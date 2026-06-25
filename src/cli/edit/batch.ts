@@ -22,6 +22,7 @@ import {
 } from "@core/run-formatting";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import {
+	normalizeHexColor,
 	parseSpacingIndentFlags,
 	parseTaskFlag,
 	readJsonlObjects,
@@ -35,7 +36,6 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
-import { normalizeHexColor } from "./index";
 import { parseTabsValue, resolveTabsDirective } from "./tabs";
 
 type RawValues = Record<

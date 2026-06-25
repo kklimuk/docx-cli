@@ -244,6 +244,19 @@ export function applyParagraphOptionsInPlace(
 		pPr = new XmlNode("w:pPr");
 		rebuilt.unshift(pPr);
 	}
+	applyParagraphPropsToPPr(pPr, options);
+}
+
+/** Apply the `ParagraphOptions` (style/alignment/tabs/spacing/indent) onto an
+ *  existing `<w:pPr>`, splicing each child at its CT_PPr slot. The placement-
+ *  agnostic core of `applyParagraphOptionsInPlace`: that helper finds-or-creates
+ *  the pPr on a paragraph's child list (unshift), while `StylesView` provides one
+ *  positioned correctly inside a `<w:style>` (pPr ranks after the style metadata).
+ *  Both then share THIS body so the pPr vocabulary stays single-sourced. */
+export function applyParagraphPropsToPPr(
+	pPr: XmlNode,
+	options: ParagraphOptions,
+): void {
 	if (options.tabs) {
 		// A non-empty array replaces the paragraph's tab stops; an empty array
 		// clears them. Drop the existing <w:tabs> either way, then re-add when there
@@ -453,8 +466,11 @@ function pprChildRank(tag: string): number {
  *  paragraph-mark `<w:rPr>`); see `PPR_CHILD_ORDER`. */
 export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
 	const rank = pprChildRank(child.tag);
+	// Rank only against real element siblings — inter-element whitespace `#text`
+	// nodes (kept on a pretty-printed pPr) rank as "unknown" and would otherwise
+	// push the new child to the front, breaking CT_PPr order.
 	const at = pPr.children.findIndex(
-		(existing) => pprChildRank(existing.tag) > rank,
+		(existing) => !existing.isText && pprChildRank(existing.tag) > rank,
 	);
 	if (at < 0) pPr.children.push(child);
 	else pPr.children.splice(at, 0, child);
@@ -522,8 +538,11 @@ function rprChildRank(tag: string): number {
  *  `RPR_CHILD_ORDER`. */
 export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 	const rank = rprChildRank(child.tag);
+	// Rank only against real element siblings — inter-element whitespace `#text`
+	// nodes (kept on a pretty-printed rPr) rank as "unknown" (last) and would
+	// otherwise push the new child to the front, breaking CT_RPr order.
 	const at = rPr.children.findIndex(
-		(existing) => rprChildRank(existing.tag) > rank,
+		(existing) => !existing.isText && rprChildRank(existing.tag) > rank,
 	);
 	if (at < 0) rPr.children.push(child);
 	else rPr.children.splice(at, 0, child);

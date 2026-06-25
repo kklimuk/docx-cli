@@ -1,4 +1,9 @@
-import { insertRprChildInOrder } from "../../blocks";
+import {
+	applyParagraphPropsToPPr,
+	insertRprChildInOrder,
+	type ParagraphOptions,
+} from "../../blocks";
+import { applyRunFormatToRpr, type RunFormat } from "../../edit/set-formatting";
 import { w } from "../../jsx";
 import { XmlNode } from "../../parser";
 import type { ContentTypesView } from "./content-types";
@@ -138,6 +143,29 @@ export class StylesView {
 		return normal ? Number(normal) : undefined;
 	}
 
+	/** Default run font (explicit `w:ascii`) from `<w:docDefaults><w:rPrDefault>`,
+	 * falling back to the Normal style's run properties. The counterpart to
+	 * `defaultSizeHalfPoints`. `read` surfaces it in the `docx:base` note when it
+	 * DEVIATES from the canonical template default (i.e. `set-default-font` ran),
+	 * so the document font is observable on the next read. Theme-only docDefaults
+	 * (no explicit `w:ascii`) return undefined — we don't resolve the theme here;
+	 * `set-default-font` always writes an explicit ascii, so its effect is caught. */
+	defaultFont(): string | undefined {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		if (!root) return undefined;
+		const docDefault = root
+			.findChild("w:docDefaults")
+			?.findChild("w:rPrDefault")
+			?.findChild("w:rPr")
+			?.findChild("w:rFonts")
+			?.getAttribute("w:ascii");
+		if (docDefault) return docDefault;
+		return this.getStyle("Normal")
+			?.findChild("w:rPr")
+			?.findChild("w:rFonts")
+			?.getAttribute("w:ascii");
+	}
+
 	/** Ensure the named baseline style is defined. Seeds `Normal` first so any
 	 * `basedOn` references resolve. Subsequent calls for the same id are no-ops.
 	 *
@@ -257,6 +285,55 @@ export class StylesView {
 		return count;
 	}
 
+	/** Apply run + paragraph formatting onto an EXISTING `<w:style>` definition
+	 *  (the `styles set` verb). The style-definition twin of `setFormatting`
+	 *  (runs) / `applyParagraphOptionsInPlace` (paragraphs): it find-or-creates
+	 *  the style's `<w:rPr>`/`<w:pPr>` at their CT_Style slots, then applies the
+	 *  SAME rPr/pPr vocabulary the body edits use. Optional `name`/`basedOn`/`next`
+	 *  update the metadata children. In-place — any property the spec doesn't set is
+	 *  preserved (and a paragraph using the style with its OWN direct override keeps
+	 *  winning; we never touch the body). Style edits are deliberately UNTRACKED —
+	 *  Word itself mutates styles.xml directly even under Track Changes. No-op if
+	 *  `styleId` doesn't exist (the caller validates existence first for a clean
+	 *  error and owns the `w:type` lookup it needs for the ack). */
+	setStyleFormatting(styleId: string, spec: StyleSpec): void {
+		const style = this.getStyle(styleId);
+		if (!style) return;
+		applyStyleSpec(style, spec);
+	}
+
+	/** Provision a NEW custom `<w:style>` with the given metadata + formatting (the
+	 *  `styles create` verb). No-op if `styleId` already exists (caller errors
+	 *  first). Seeds Normal so a `basedOn` reference resolves. Paragraph styles
+	 *  default `basedOn`/`next` to Normal and get a `<w:pPr>` for any paragraph
+	 *  options; character styles take run formatting only (caller rejects pPr flags
+	 *  on them). `<w:qFormat/>` is emitted so the style shows in Word's gallery. */
+	createStyle(spec: {
+		styleId: string;
+		type: "paragraph" | "character";
+		name?: string;
+		basedOn?: string;
+		next?: string;
+		runFormat?: RunFormat;
+		paragraphOptions?: ParagraphOptions;
+	}): void {
+		this.ensureCustomStyle(spec.styleId, () => {
+			const style = XmlNode.element("w:style");
+			style.setAttribute("w:type", spec.type);
+			style.setAttribute("w:styleId", spec.styleId);
+			insertStyleChildInOrder(style, XmlNode.element("w:qFormat"));
+			applyStyleSpec(style, {
+				name: spec.name ?? spec.styleId,
+				basedOn:
+					spec.basedOn ?? (spec.type === "paragraph" ? "Normal" : undefined),
+				next: spec.next ?? (spec.type === "paragraph" ? "Normal" : undefined),
+				runFormat: spec.runFormat,
+				paragraphOptions: spec.paragraphOptions,
+			});
+			return style;
+		});
+	}
+
 	/** Navigate to (creating if absent) `<w:docDefaults>/<w:rPrDefault>/<w:rPr>`.
 	 *  `<w:docDefaults>` is the first child of `<w:styles>` per CT_Styles. */
 	#ensureDocDefaultsRPr(): XmlNode {
@@ -306,6 +383,120 @@ export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 	delete rFonts.attributes["w:asciiTheme"];
 	delete rFonts.attributes["w:hAnsiTheme"];
 	delete rFonts.attributes["w:cstheme"];
+}
+
+/** The metadata + formatting a `styles set`/`create` applies onto a `<w:style>`.
+ *  Each field is optional; only present fields are written. */
+export type StyleSpec = {
+	runFormat?: RunFormat;
+	paragraphOptions?: ParagraphOptions;
+	name?: string;
+	basedOn?: string;
+	next?: string;
+};
+
+/** Apply a `StyleSpec`'s metadata + formatting onto a `<w:style>` node, in place,
+ *  honoring CT_Style child order. Shared by `setStyleFormatting` (an existing
+ *  node) and `createStyle` (a fresh one). Run formatting reuses `applyRunFormatToRpr`
+ *  and paragraph options reuse `applyParagraphPropsToPPr` — the exact appliers the
+ *  body edits use, so a style's `--bold`/`--space-before`/… behave identically. */
+function applyStyleSpec(style: XmlNode, spec: StyleSpec): void {
+	if (spec.name !== undefined) putStyleMeta(style, "w:name", spec.name);
+	if (spec.basedOn !== undefined)
+		putStyleMeta(style, "w:basedOn", spec.basedOn);
+	if (spec.next !== undefined) putStyleMeta(style, "w:next", spec.next);
+	if (spec.paragraphOptions) {
+		applyParagraphPropsToPPr(ensureStylePPr(style), spec.paragraphOptions);
+	}
+	if (spec.runFormat) {
+		applyRunFormatToRpr(ensureStyleRPr(style), spec.runFormat);
+	}
+}
+
+/** Replace-or-insert a single-`w:val` metadata child (`<w:name>`/`<w:basedOn>`/
+ *  `<w:next>`) at its CT_Style slot. */
+function putStyleMeta(style: XmlNode, tag: string, value: string): void {
+	const existing = style.findChild(tag);
+	if (existing) {
+		existing.setAttribute("w:val", value);
+		return;
+	}
+	const node = XmlNode.element(tag);
+	node.setAttribute("w:val", value);
+	insertStyleChildInOrder(style, node);
+}
+
+/** Find the style's `<w:pPr>`, or splice an empty one in at its CT_Style slot. */
+function ensureStylePPr(style: XmlNode): XmlNode {
+	const existing = style.findChild("w:pPr");
+	if (existing) return existing;
+	const created = XmlNode.element("w:pPr");
+	insertStyleChildInOrder(style, created);
+	return created;
+}
+
+/** Find the style's `<w:rPr>`, or splice an empty one in at its CT_Style slot. */
+function ensureStyleRPr(style: XmlNode): XmlNode {
+	const existing = style.findChild("w:rPr");
+	if (existing) return existing;
+	const created = XmlNode.element("w:rPr");
+	insertStyleChildInOrder(style, created);
+	return created;
+}
+
+/** CT_Style child order (ECMA-376 §17.7.4.17) — the subset we author. pPr precedes
+ *  rPr, and both follow the style metadata. Splicing a fresh `<w:name>`/`<w:pPr>`/
+ *  `<w:rPr>`/… at the right slot keeps Word from rejecting the style. */
+const STYLE_CHILD_ORDER = [
+	"w:name",
+	"w:aliases",
+	"w:basedOn",
+	"w:next",
+	"w:link",
+	"w:autoRedefine",
+	"w:hidden",
+	"w:uiPriority",
+	"w:semiHidden",
+	"w:unhideWhenUsed",
+	"w:qFormat",
+	"w:locked",
+	"w:personal",
+	"w:personalCompose",
+	"w:personalReply",
+	"w:rsid",
+	"w:pPr",
+	"w:rPr",
+	"w:tblPr",
+	"w:trPr",
+	"w:tcPr",
+	"w:tblStylePr",
+] as const;
+
+/** Rank a style child by CT_Style position. Unknown tags rank just before pPr/rPr
+ *  so any metadata we don't model stays ahead of the property blocks (the only
+ *  ordering that affects validity). */
+function styleChildRank(tag: string): number {
+	const index = STYLE_CHILD_ORDER.indexOf(
+		tag as (typeof STYLE_CHILD_ORDER)[number],
+	);
+	if (index >= 0) return index;
+	return STYLE_CHILD_ORDER.indexOf("w:pPr") - 0.5;
+}
+
+/** Splice `child` into `style.children` at its canonical CT_Style position: before
+ *  the first existing child that ranks after it. The CT_Style analog of
+ *  `insertPprChildInOrder`/`insertRprChildInOrder`. */
+function insertStyleChildInOrder(style: XmlNode, child: XmlNode): void {
+	const rank = styleChildRank(child.tag);
+	// Rank only against real element siblings: a pretty-printed styles.xml (as
+	// Word/LibreOffice/third-party tools emit) keeps inter-element whitespace as
+	// `#text` nodes, which rank as "unknown" and would otherwise shove the new
+	// child to the front and break CT_Style order.
+	const at = style.children.findIndex(
+		(existing) => !existing.isText && styleChildRank(existing.tag) > rank,
+	);
+	if (at < 0) style.children.push(child);
+	else style.children.splice(at, 0, child);
 }
 
 /** The baseline style catalog: id → a builder that emits the `<w:style>`

@@ -133,7 +133,15 @@ function setRunProperties(run: XmlNode, format: RunFormat): void {
 		// rPr must be the FIRST child of a `<w:r>` (it precedes `<w:t>`).
 		run.children.unshift(rPr);
 	}
+	applyRunFormatToRpr(rPr, format);
+}
 
+/** Add/replace each `RunFormat` property as a child of an existing `<w:rPr>`,
+ *  splicing each at its canonical CT_RPr slot (the run/style-definition-agnostic
+ *  core of `setRunProperties`). The caller owns finding-or-creating the `<w:rPr>`:
+ *  `setRunProperties` does so on a `<w:r>`; `StylesView.setStyleFormatting`/
+ *  `createStyle` do so on a `<w:style>` — same rPr vocabulary, two homes. */
+export function applyRunFormatToRpr(rPr: XmlNode, format: RunFormat): void {
 	if (format.font !== undefined) {
 		let rFonts = rPr.findChild("w:rFonts");
 		if (!rFonts) {

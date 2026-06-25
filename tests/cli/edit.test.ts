@@ -513,7 +513,7 @@ describe("docx edit --text — regression: mid-word run splits", () => {
 	// both. First-CHARACTER rPr lookup made that one token inherit the bracket's
 	// (plain) format while its underlined neighbors kept underline, so a whole-
 	// paragraph --text replace came out RAGGED (first word un-underlined, rest
-	// underlined — the mnda adversarial-review defect). dominantRpr (bulk format
+	// underlined — the mnda weak-agent-test defect). dominantRpr (bulk format
 	// per token) makes the replacement formatting CONSISTENT.
 	test("wholesale --text replace of a mixed-underline placeholder is consistent (no ragged half-underline)", async () => {
 		const workspace = tempWorkspace("regression-ragged-fill");
@@ -2295,7 +2295,7 @@ describe("edit --tabs (tab-stop cure)", () => {
 		expect(result.parsed).toMatchObject({ code: "BLOCK_NOT_FOUND" });
 	});
 
-	// Regression (adversarial-review #1): a bullet's `<w:pPr><w:tabs>` is the
+	// Regression (weak-agent-test #1): a bullet's `<w:pPr><w:tabs>` is the
 	// STRUCTURAL bullet-to-text tab. The fix-all range can span bullets (read lists
 	// only the fragile non-list lines, but the cure range is min..max), so the cure
 	// MUST skip list paragraphs — replacing a bullet's tab with the right-margin

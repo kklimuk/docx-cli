@@ -14,6 +14,7 @@ const SOFFICE = await detectSoffice();
 const CORE_FIXTURES = [
 	"minimal.docx", // canonical parts baseline (what `create` emits)
 	"styles-injection.docx", // styles.xml provisioned from scratch
+	"style-defs.docx", // styles set/create: restyled Heading1 + minted paragraph & character styles
 	"lists.docx", // numbering.xml
 	"notes.docx", // footnotes / endnotes write-back
 	"multi-tracked.docx", // run-level <w:ins>/<w:del>/move emit

@@ -2,6 +2,7 @@ import {
 	isSectionType,
 	type PageGeometry,
 	type Run,
+	type RunFormat,
 	type SectionType,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
@@ -387,6 +388,92 @@ export async function readJsonlIds(source: string): Promise<string[]> {
 		ids.push(entry.id);
 	}
 	return ids;
+}
+
+/** Normalize a hex color for `<w:rPr>` (`w:color`/`w:shd@w:fill`): strip a single
+ *  leading `#` so `--color "#FF0000"` becomes the schema-valid `FF0000` (ST_HexColor
+ *  has no `#`). Other values pass through unchanged (Word degrades unknown colors
+ *  gracefully). Shared by `edit`, `edit --batch`, and the `styles` verbs. */
+export function normalizeHexColor(value: string): string {
+	return value.startsWith("#") ? value.slice(1) : value;
+}
+
+/** The run-formatting flags (`--bold`/`--color`/`--font`/…), shared by `edit` and
+ *  `styles set`/`create`. */
+const RUN_FORMAT_FLAGS = [
+	"bold",
+	"italic",
+	"underline",
+	"strike",
+	"caps",
+	"smallcaps",
+	"superscript",
+	"subscript",
+	"color",
+	"font",
+	"size",
+	"highlight",
+	"shade",
+] as const;
+
+/** True when the invocation carries any run-formatting flag. Booleans default to
+ *  `false` from parseArgs (not undefined), so we test against both. */
+export function hasRunFormatFlags(values: Record<string, unknown>): boolean {
+	return RUN_FORMAT_FLAGS.some(
+		(flag) => values[flag] !== undefined && values[flag] !== false,
+	);
+}
+
+/** Build a `RunFormat` from the formatting flags, or `null` if none are set.
+ *  Returns a `{ error }` shape on a bad value (size, mutually-exclusive
+ *  super/subscript, or an out-of-range highlight/underline/vertAlign) so the
+ *  caller can `fail()`. Shared by `edit` and the `styles` verbs — one parser, so a
+ *  style's `--bold`/`--color`/`--size` behaves exactly like a body edit's. */
+export function parseRunFormat(
+	values: Record<string, unknown>,
+): RunFormat | null | { error: string; hint?: string } {
+	const format: RunFormat = {};
+	if (values.bold) format.bold = true;
+	if (values.italic) format.italic = true;
+	if (values.strike) format.strike = true;
+	if (values.caps) format.allCaps = true;
+	if (values.smallcaps) format.smallCaps = true;
+	if (values.underline) format.underline = "single";
+	if (values.color !== undefined)
+		format.color = normalizeHexColor(values.color as string);
+	if (values.font !== undefined) format.font = values.font as string;
+	if (values.highlight !== undefined)
+		format.highlight = values.highlight as string;
+	if (values.shade !== undefined)
+		format.shade = normalizeHexColor(values.shade as string);
+
+	if (values.superscript && values.subscript) {
+		return { error: "--superscript and --subscript are mutually exclusive" };
+	}
+	if (values.superscript) format.vertAlign = "superscript";
+	if (values.subscript) format.vertAlign = "subscript";
+
+	if (values.size !== undefined) {
+		const points = Number.parseFloat(values.size as string);
+		if (!Number.isFinite(points) || points <= 0) {
+			return {
+				error: `Invalid --size: ${values.size}`,
+				hint: "Pass a positive point size, e.g. --size 12 or --size 11.5.",
+			};
+		}
+		format.sizeHalfPoints = Math.round(points * 2);
+	}
+
+	const invalid = firstInvalidRunFormat(format);
+	if (invalid) {
+		return {
+			error: `Invalid --${invalid.field}: ${invalid.value}`,
+			hint: `Use ${invalid.valid}.`,
+		};
+	}
+
+	if (Object.keys(format).length === 0) return null;
+	return format;
 }
 
 const TWIPS_PER_POINT = 20;
