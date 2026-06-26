@@ -15,7 +15,12 @@ survives edits in place, `read --ast` is lossless, and the authoring verbs manag
 it), emitted **deviation-only** (only what differs from the document default).
 Today: `docx:section` (rendered at the section's START, with an
 `applies-to="pX..pY (below)"` scope on deviating sections), `docx:page`,
-`docx:table`, per-cell merge/shading hints, a head
+`docx:table` (`widths`/`borders` plus the formatting `tables format` authors —
+`align`/`style`, and the row-level `repeat-header`/`row-heights` that have no GFM
+row slot so they ride the table note keyed by `rR`), per-cell `docx:cell` hints
+(`gridSpan`/`vMerge`/`shading`/`vAlign`/`borders`, plus a `halign` derived from a
+uniform non-default cell-paragraph alignment — cell text alignment is otherwise
+invisible in a GFM cell), a head
 `docx:track-changes on` when the doc's tracking toggle is enabled,
 `docx:header`/`docx:footer` notes (the content in a `text` attr — so the importer's
 `docx:` drop can't re-inject it into the body — with fields as `{page}`/`{date}`/…

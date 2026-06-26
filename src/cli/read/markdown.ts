@@ -1550,8 +1550,35 @@ function formatTableNote(table: Table): string {
 	if (table.borders && table.borders !== "single") {
 		pairs.push(["borders", table.borders]);
 	}
+	if (table.align && table.align !== "left") pairs.push(["align", table.align]);
+	if (table.style) pairs.push(["style", table.style]);
+	// Rows have no GFM comment slot, so their formatting facts ride the table note,
+	// keyed by row index (`r0`) so an agent can re-target with `--at tN:rR`.
+	const repeatHeaderRows = table.rows
+		.map((row, index) => (row.repeatHeader ? `r${index}` : null))
+		.filter((value): value is string => value !== null);
+	if (repeatHeaderRows.length > 0)
+		pairs.push(["repeat-header", repeatHeaderRows.join(",")]);
+	const rowHeights = table.rows
+		.map((row, index) =>
+			row.height ? `r${index}:${formatRowHeight(row.height)}` : null,
+		)
+		.filter((value): value is string => value !== null);
+	if (rowHeights.length > 0) pairs.push(["row-heights", rowHeights.join(",")]);
 	if (pairs.length === 0) return "";
 	return formatNote("table", pairs, [table.id]);
+}
+
+/** A row height as an inches measure for the `docx:table row-heights` hint,
+ * suffixing the rule when it deviates from the `atLeast` default so the agent can
+ * re-apply it verbatim (`0.4in` → `--row-height 0.4in`; `0.4in(exact)` →
+ * `--row-height 0.4in --height-rule exact`). */
+function formatRowHeight(height: {
+	value: number;
+	rule: "atLeast" | "exact" | "auto";
+}): string {
+	const inches = `${twipsToInches(height.value)}in`;
+	return height.rule === "atLeast" ? inches : `${inches}(${height.rule})`;
 }
 
 /** Comma-joined column widths in inches, but ONLY when the columns are
@@ -1635,9 +1662,31 @@ function cellNote(cell: TableCell): string {
 		pairs.push(["gridSpan", cell.gridSpan]);
 	if (cell.vMerge) pairs.push(["vMerge", cell.vMerge]);
 	if (cell.shading) pairs.push(["shading", cell.shading]);
+	// vAlign/borders read deviation-only (top + no-borders suppressed at read).
+	if (cell.vAlign) pairs.push(["vAlign", cell.vAlign]);
+	if (cell.borders) pairs.push(["borders", cell.borders]);
+	// Horizontal alignment is a paragraph property, but a GFM cell can't show it
+	// per-cell, so surface a UNIFORM non-default cell alignment here (the inverse
+	// of `tables format --halign`). Cell paragraphs otherwise carry only a bare
+	// locator, not the `docx:p align` note top-level paragraphs get.
+	const halign = uniformCellAlignment(cell);
+	if (halign) pairs.push(["halign", halign]);
 	if (pairs.length === 0) return "";
 	const address = cellAddress(cell);
 	return formatNote("cell", pairs, address ? [address] : []);
+}
+
+/** The horizontal alignment shared by every paragraph in a cell, when it's a
+ * non-default (non-`left`) value — so `--halign center` round-trips into a
+ * `docx:cell halign="center"` hint. Mixed or default alignments emit nothing. */
+function uniformCellAlignment(cell: TableCell): string | undefined {
+	const aligns = cell.blocks
+		.filter((block): block is Paragraph => block.type === "paragraph")
+		.map((paragraph) => paragraph.alignment ?? "left");
+	if (aligns.length === 0) return undefined;
+	const first = aligns[0];
+	if (!first || first === "left") return undefined;
+	return aligns.every((align) => align === first) ? first : undefined;
 }
 
 /** A cell's locator address (`t0:r0c0`), derived from its first block's locator

@@ -39,7 +39,12 @@ describe("docx read (markdown)", () => {
 
 	test("tables-and-lists: pipe table with cell locators", async () => {
 		const out = await render(fixture("tables-and-lists.docx"));
-		expect(out).toMatch(/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> \|/m);
+		// The header cells are center-aligned, so each carries its paragraph
+		// locator AND a `docx:cell halign` hint (cell text alignment is otherwise
+		// invisible in a GFM table).
+		expect(out).toMatch(
+			/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 halign="center" --> \|/m,
+		);
 		expect(out).toMatch(/^\| --- \| --- \|$/m);
 		expect(out).toContain("Agilent E3631A Triple Output DC Power Supply");
 		expect(out).toContain("9.1 Ω Resistor");

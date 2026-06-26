@@ -7,8 +7,13 @@ import { $ } from "bun";
  * verb set, entirely through CLI calls (a parity check that the verbs are
  * reachable from the public surface).
  *
- * Table t0 (untracked structural edits): a 3×3 table that gets a horizontal
- * merge, a vertical merge, custom percentage widths, and double borders.
+ * Table t0 (untracked structural edits + formatting): a 3×3 table that gets a
+ * horizontal merge, a vertical merge, custom percentage widths, double borders,
+ * and then `tables format` — header-row shading + vertical/horizontal centering
+ * + repeat-header, a per-cell double bottom border, a taller last row, and the
+ * whole table centered on the page. Dogfoods the format verb's <w:shd>/<w:vAlign>/
+ * paragraph <w:jc>/<w:tcBorders>/<w:trHeight>/<w:tblHeader>/table-<w:jc> XML
+ * through the LibreOffice round-trip.
  *
  * Table t1 (tracked edits, left UNACCEPTED): a 2×2 table edited with
  * track-changes ON so the saved file carries every table revision marker —
@@ -70,6 +75,37 @@ await cli(
 	"--size",
 	"8",
 );
+// t0 — cell/row/table FORMATTING (dogfoods `tables format`, so the LibreOffice
+// round-trip validates the shading/vAlign/jc/tcBorders/trHeight/tblHeader XML).
+// Header row: grey fill + centered both ways (broadcasts over the merged cell).
+await cli(
+	"tables",
+	"format",
+	out,
+	"--at",
+	"t0:r0",
+	"--shade",
+	"D9D9D9",
+	"--valign",
+	"center",
+	"--halign",
+	"center",
+	"--repeat-header",
+);
+// A bottom rule under a plain cell, a taller last row, and the table centered.
+await cli(
+	"tables",
+	"format",
+	out,
+	"--at",
+	"t0:r2c2",
+	"--cell-borders",
+	"bottom",
+	"--border-style",
+	"double",
+);
+await cli("tables", "format", out, "--at", "t0:r2", "--row-height", "0.4in");
+await cli("tables", "format", out, "--at", "t0", "--align", "center");
 
 // t1 — tracked edits, left unaccepted so the markers persist in the fixture.
 await cli(

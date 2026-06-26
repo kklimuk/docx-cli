@@ -283,6 +283,9 @@ docx tables set-widths    FILE --at tN --widths "25%,25%,50%" | "1440,..." | aut
 docx tables merge         FILE --at tN:rR1cC1-rR2cC2
 docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
+docx tables format        FILE --at LOCATOR [--shade HEX|NAME] [--valign top|center|bottom]
+                          [--halign left|center|right|justify] [--cell-borders SIDES]
+                          [--align left|center|right] [--style ID] [--row-height M] [--repeat-header]
 
 docx track-changes on|off FILE
 docx track-changes list   FILE [--json]

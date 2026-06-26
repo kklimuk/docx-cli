@@ -274,6 +274,7 @@ const JSON_SCHEMA = {
 				width: { $ref: "#/$defs/TableWidth" },
 				borders: { type: "string" },
 				style: { type: "string" },
+				align: { enum: ["left", "center", "right"] },
 				rows: {
 					type: "array",
 					items: {
@@ -292,6 +293,8 @@ const JSON_SCHEMA = {
 										vMerge: { enum: ["restart", "continue"] },
 										width: { $ref: "#/$defs/TableWidth" },
 										shading: { type: "string" },
+										vAlign: { enum: ["top", "center", "bottom"] },
+										borders: { type: "string" },
 										trackedChange: {
 											$ref: "#/$defs/TableRevision",
 											description: "cellIns / cellDel (tracked column change)",
@@ -303,6 +306,14 @@ const JSON_SCHEMA = {
 								$ref: "#/$defs/TableRevision",
 								description: "rowIns / rowDel (tracked row change)",
 							},
+							height: {
+								type: "object",
+								properties: {
+									value: { type: "number" },
+									rule: { enum: ["atLeast", "exact", "auto"] },
+								},
+							},
+							repeatHeader: { type: "boolean" },
 						},
 					},
 				},

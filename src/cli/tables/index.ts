@@ -11,9 +11,10 @@ const SUBCOMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	merge: () => import("./merge"),
 	unmerge: () => import("./unmerge"),
 	borders: () => import("./borders"),
+	format: () => import("./format"),
 };
 
-const HELP = `docx tables — restructure tables (rows, columns, merges, widths, borders)
+const HELP = `docx tables — restructure & format tables (rows, columns, merges, widths, shading)
 
 Usage:
   docx tables <verb> FILE [options]
@@ -27,6 +28,9 @@ Verbs:
   merge           Merge a cell region (--at tN:rR1cC1-rR2cC2)
   unmerge         Split a merge anchor (--at tN:rRcC)
   borders         Set table borders (--at tN [--style] [--size] [--color])
+  format          Shade/align/border/size cells, rows, or the table
+                  (--at LOCATOR [--shade] [--valign] [--halign] [--cell-borders]
+                   [--align] [--style] [--row-height] [--repeat-header])
 
 These verbs restructure an existing table. The rest of the table lifecycle uses
 the standard verbs:

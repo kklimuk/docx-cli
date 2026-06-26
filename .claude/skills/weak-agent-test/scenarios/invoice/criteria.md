@@ -27,6 +27,12 @@ The agent never sees this file. It is the ground-truth definition of "correct" f
 - The Description column is the widest column in the line-items table (compare `w:tcW` values in `--ast` output or check that `docx tables set-col-widths` was called).
 - Price and Amount column widths are sufficient so that `$10,100.00` fits on one line without wrapping (verify via render or by checking that the column width covers the character count at the document's default font size).
 
+### Line-items table formatting (`tables format`)
+- **Header-row shading**: the header row's cells carry a non-`auto` `<w:shd w:fill>` — a light grey (e.g. `D9D9D9`/`EEEEEE`/`F2F2F2`, or any grey name the agent passed). Verify via `docx read FILE` (`docx:cell … shading="…"` on the header cells) or the `w:shd` fill in `--ast`. The expected path is `docx tables format --at tN:r0 --shade …` (one call broadcasting over the row); per-cell calls are also fine.
+- **Right-aligned money columns**: every cell in the Price and Amount columns has its paragraph right-aligned (`<w:jc w:val="right">`), surfaced as `docx:cell … halign="right"` in `docx read`. Expected path: `docx tables format --at tN:cC --halign right` (column broadcast) for each of the two columns, or an equivalent per-cell/`edit --alignment` pass. Left-aligned dollar columns = fail.
+- **Repeat header on page 2**: the header row carries `<w:trPr><w:tblHeader/>`, surfaced as `docx:table … repeat-header="r0"`. Expected path: `docx tables format --at tN:r0 --repeat-header`. (Under track-changes this rides a `[docx-cli]` audit comment, not a revision — that's correct, not a defect.)
+- These three are *additive* polish: they must not break the fill/insert-row/width work above (the header row is still the column titles, the four data rows are intact).
+
 ### Logo replaced
 - The top-left image is the new mark sourced from `assets/logo.svg`.
 - The document still contains **exactly two** embedded images (new logo + footer payment mark).

@@ -1,6 +1,6 @@
 # Update our invoice template with real data and a new logo
 
-We have an invoice template (`invoice.docx`) that needs to be filled out with the real deal data before we send it to the client. Fill it in with the values below and swap its logo. Keep the table layout and the formatting intact — only the text content and the logo change.
+We have an invoice template (`invoice.docx`) that needs to be filled out with the real deal data before we send it to the client. Fill it in with the values below, swap its logo, and apply the few formatting touches noted under "Make the line-items table easier to read." Keep the existing tables structurally intact — don't break the columns or un-merge any cells; only the text content, the logo, and those specific formatting touches change.
 
 One thing to watch for: the template has more placeholder lines than some sections need (for example, the "from" address spans two lines but the real address fits on one; each line item has a sub-line below it). Fill the lines you use and remove the leftover placeholder lines so no template text is left behind. A half-filled form with empty placeholder lines dangling is not done.
 
@@ -41,6 +41,14 @@ There are **four** line items, but the table only has rows for three. Fill the t
 - Other: **$0.00**
 - **Total: $10,440.00**
 
+## Make the line-items table easier to read
+
+A few quick polish touches on the line-items table so it reads cleanly for the client:
+
+- Give the header row (Description / Quantity / Price / Amount) a light grey background so the column titles stand out from the data.
+- The Price and Amount columns are dollar figures — line them up flush to the right so the decimals read down the column, instead of sitting left-aligned.
+- If this invoice ever runs onto a second page, the column-title row should repeat at the top of that page rather than leaving the continued rows with no headings.
+
 ## Notes
 
 Replace the "Notes" body with: *Payment due within 30 days. Wire details on request.*
@@ -51,4 +59,4 @@ Replace the placeholder logo in the **top-left corner** with the new company mar
 
 ## What done looks like
 
-All `Item 1/2/3`, `$0.00`, `Customer name`, `Your Company Name`, and similar placeholder text is replaced with the values above. Leftover placeholder lines (the extra address line, the per-item sub-lines) are removed, not left dangling. The three tables are still present and unbroken. The line-items table has four filled rows, the Description column is the widest, and no dollar value wraps to a second line. The top-left logo is the new mark from `assets/logo.svg`, and the footer's payment mark is untouched.
+All `Item 1/2/3`, `$0.00`, `Customer name`, `Your Company Name`, and similar placeholder text is replaced with the values above. Leftover placeholder lines (the extra address line, the per-item sub-lines) are removed, not left dangling. The three tables are still present and unbroken. The line-items table has four filled rows, the Description column is the widest, and no dollar value wraps to a second line. Its header row has a light grey fill, the Price and Amount columns are right-aligned, and the header is set to repeat on a second page. The top-left logo is the new mark from `assets/logo.svg`, and the footer's payment mark is untouched.

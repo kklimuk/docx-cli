@@ -1092,6 +1092,7 @@ function readTable(
 	const width = readTableWidth(node);
 	const borders = readTableBorders(node);
 	const style = readTableStyle(node);
+	const align = readTableAlign(node);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
 	// both before the rows), so tcN ids land in document order.
 	readTablePropertyRevision(document, node, id, state);
@@ -1128,6 +1129,9 @@ function readTable(
 		}
 		const row: TableRow = { cells };
 		if (rowChange) row.trackedChange = rowChange;
+		const height = readRowHeight(child);
+		if (height) row.height = height;
+		if (readRepeatHeader(child)) row.repeatHeader = true;
 		rows.push(row);
 		rowIndex++;
 	}
@@ -1135,7 +1139,44 @@ function readTable(
 	if (width) table.width = width;
 	if (borders) table.borders = borders;
 	if (style) table.style = style;
+	if (align) table.align = align;
 	return table;
+}
+
+/** The table's on-page justification from `<w:tblPr><w:jc w:val="…"/>`. Only
+ * `center`/`right` surface — `left` (or absent) is the default, suppressed. */
+function readTableAlign(table: XmlNode): "center" | "right" | undefined {
+	const val = table
+		.findChild("w:tblPr")
+		?.findChild("w:jc")
+		?.getAttribute("w:val");
+	return val === "center" || val === "right" ? val : undefined;
+}
+
+/** Row height from `<w:trPr><w:trHeight w:val="…" w:hRule="…"/>`. `w:hRule`
+ * defaults to `atLeast` when absent (ECMA-376 §17.4.81). */
+function readRowHeight(
+	row: XmlNode,
+): { value: number; rule: "atLeast" | "exact" | "auto" } | undefined {
+	const trHeight = row.findChild("w:trPr")?.findChild("w:trHeight");
+	if (!trHeight) return undefined;
+	const raw = trHeight.getAttribute("w:val");
+	const value = raw ? Number(raw) : NaN;
+	if (!Number.isFinite(value)) return undefined;
+	const rule = trHeight.getAttribute("w:hRule");
+	return {
+		value,
+		rule: rule === "exact" || rule === "auto" ? rule : "atLeast",
+	};
+}
+
+/** Whether the row is a repeating header from `<w:trPr><w:tblHeader/>`. A bare
+ * marker (or `w:val` "true"/"1"/"on") is set; `w:val` "false"/"0"/"off" is not. */
+function readRepeatHeader(row: XmlNode): boolean {
+	const marker = row.findChild("w:trPr")?.findChild("w:tblHeader");
+	if (!marker) return false;
+	const val = marker.getAttribute("w:val");
+	return val !== "false" && val !== "0" && val !== "off";
 }
 
 /** The table's applied style id from `<w:tblPr><w:tblStyle w:val="…"/>`, or
@@ -1386,8 +1427,52 @@ function readTableCell(
 		if (fill && fill.toLowerCase() !== "auto")
 			cell.shading = fill.toUpperCase();
 	}
+	const vAlignNode = tcPr.findChild("w:vAlign");
+	if (vAlignNode) {
+		// ECMA-376 §17.4.84: w:val center/bottom; top (or absent) is the default.
+		const raw = vAlignNode.getAttribute("w:val");
+		if (raw === "center" || raw === "bottom") cell.vAlign = raw;
+	}
+	const cellBorders = readCellBorders(tcPr);
+	if (cellBorders) cell.borders = cellBorders;
 	return cell;
 }
+
+/** Summarize `<w:tcPr><w:tcBorders>` into a compact `side:style` hint mirroring
+ * `Table.borders`. Lists the set edges (top/left/bottom/right/insideH/insideV)
+ * with their style: when every set edge shares one style → `"all:single"` if all
+ * six are present, else `"top,bottom:double"`-style grouping. `nil`/`none` edges
+ * are dropped (an explicitly-removed edge carries no positive signal). Returns
+ * undefined when no edge is meaningfully set. */
+function readCellBorders(tcPr: XmlNode): string | undefined {
+	const tcBorders = tcPr.findChild("w:tcBorders");
+	if (!tcBorders) return undefined;
+	const byStyle = new Map<string, string[]>();
+	for (const edge of CELL_BORDER_EDGES) {
+		const val = tcBorders.findChild(`w:${edge}`)?.getAttribute("w:val");
+		if (!val || val === "nil" || val === "none") continue;
+		const sides = byStyle.get(val) ?? [];
+		sides.push(edge);
+		byStyle.set(val, sides);
+	}
+	if (byStyle.size === 0) return undefined;
+	const parts: string[] = [];
+	for (const [style, sides] of byStyle) {
+		const label =
+			sides.length === CELL_BORDER_EDGES.length ? "all" : sides.join(",");
+		parts.push(`${label}:${style}`);
+	}
+	return parts.join(" ");
+}
+
+const CELL_BORDER_EDGES = [
+	"top",
+	"left",
+	"bottom",
+	"right",
+	"insideH",
+	"insideV",
+] as const;
 
 function readCellPropertyRevision(
 	document: Document,

@@ -1,7 +1,7 @@
 import type { TableWidth } from "../ast/types";
 import { Paragraph } from "../blocks";
 import { w } from "../jsx";
-import type { XmlNode } from "../parser";
+import { XmlNode } from "../parser";
 import type { TrackedMeta } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
 import { TableCell } from ".";
@@ -70,6 +70,119 @@ export function setCellWidth(cell: XmlNode, width: TableWidth | null): void {
 	pruneEmptyTcPr(cell, tcPr);
 }
 
+/** Set or clear a cell's background fill via `<w:tcPr><w:shd w:fill="…"/>`.
+ * `hex` is a 6-digit color without `#`; `null` removes the shading. */
+export function setCellShading(cell: XmlNode, hex: string | null): void {
+	const tcPr = ensureTcPr(cell);
+	setTcPrChild(
+		tcPr,
+		"w:shd",
+		hex ? <w.shd w-val="clear" w-color="auto" w-fill={hex} /> : null,
+	);
+	pruneEmptyTcPr(cell, tcPr);
+}
+
+/** Set or clear a cell's vertical alignment via `<w:tcPr><w:vAlign w:val="…"/>`.
+ * `null` (or `"top"`, the default) removes the element. */
+export function setCellVAlign(
+	cell: XmlNode,
+	value: "top" | "center" | "bottom" | null,
+): void {
+	const tcPr = ensureTcPr(cell);
+	setTcPrChild(
+		tcPr,
+		"w:vAlign",
+		value && value !== "top" ? <w.vAlign w-val={value} /> : null,
+	);
+	pruneEmptyTcPr(cell, tcPr);
+}
+
+/** A single border edge's properties, shared by table and cell border builders. */
+export type BorderEdge = { style: string; sizeEighths: number; color: string };
+
+/** Merge per-side border edges into a cell's `<w:tcBorders>`. Each entry sets
+ * (`edge`) or removes (`null`) one side, preserving sides not named — so
+ * `--cell-borders bottom` adds a bottom rule without disturbing existing edges.
+ * A `clearAll` request drops the whole `<w:tcBorders>`. Side children are kept in
+ * CT_TcBorders order (ECMA-376 §17.4.66). */
+export function setCellBorders(
+	cell: XmlNode,
+	updates: { side: CellBorderSide; edge: BorderEdge | null }[],
+	clearAll = false,
+): void {
+	const tcPr = ensureTcPr(cell);
+	if (clearAll) {
+		setTcPrChild(tcPr, "w:tcBorders", null);
+		pruneEmptyTcPr(cell, tcPr);
+		return;
+	}
+	let tcBorders = tcPr.findChild("w:tcBorders");
+	if (!tcBorders) {
+		if (updates.every((update) => update.edge === null)) {
+			pruneEmptyTcPr(cell, tcPr);
+			return;
+		}
+		tcBorders = <w.tcBorders />;
+		setTcPrChild(tcPr, "w:tcBorders", tcBorders);
+	}
+	for (const { side, edge } of updates) {
+		const tag = `w:${side}`;
+		tcBorders.children = tcBorders.children.filter(
+			(child) => child.tag !== tag,
+		);
+		if (edge) insertEdgeInOrder(tcBorders, tag, borderEdge(tag, edge));
+	}
+	if (tcBorders.children.length === 0) setTcPrChild(tcPr, "w:tcBorders", null);
+	pruneEmptyTcPr(cell, tcPr);
+}
+
+/** Build one `<w:top/>`/`<w:bottom/>`/… border edge element (dynamic tag, so
+ * built via `XmlNode.element` rather than the static-tag JSX namespace). A `none`
+ * style emits just `w:val="none"` (an explicit no-border that overrides
+ * inheritance); any other style carries size/space/color. */
+function borderEdge(tag: string, edge: BorderEdge): XmlNode {
+	const attributes: Record<string, string> =
+		edge.style === "none"
+			? { "w:val": "none" }
+			: {
+					"w:val": edge.style,
+					"w:sz": String(edge.sizeEighths),
+					"w:space": "0",
+					"w:color": edge.color,
+				};
+	return XmlNode.element(tag, attributes);
+}
+
+const CELL_BORDER_ORDER = [
+	"w:top",
+	"w:left",
+	"w:bottom",
+	"w:right",
+	"w:insideH",
+	"w:insideV",
+];
+
+function insertEdgeInOrder(parent: XmlNode, tag: string, node: XmlNode): void {
+	const target = orderIndex(CELL_BORDER_ORDER, tag);
+	let insertAt = parent.children.length;
+	for (let index = 0; index < parent.children.length; index++) {
+		const child = parent.children[index];
+		if (child && orderIndex(CELL_BORDER_ORDER, child.tag) > target) {
+			insertAt = index;
+			break;
+		}
+	}
+	parent.children.splice(insertAt, 0, node);
+}
+
+export type CellBorderSide =
+	| "top"
+	| "left"
+	| "bottom"
+	| "right"
+	| "insideH"
+	| "insideV";
+
 /** Mark a whole row as a tracked insertion/deletion via `<w:trPr><w:ins/>` or
  * `<w:del/>` (ECMA-376 §17.13.5.18 / §17.13.5.13). */
 export function markRowTracked(
@@ -115,6 +228,36 @@ function ensureTrPr(row: XmlNode): XmlNode {
 	const trPr: XmlNode = <w.trPr />;
 	row.children.unshift(trPr);
 	return trPr;
+}
+
+/** Set or clear a row's height via `<w:trPr><w:trHeight w:val w:hRule/>`.
+ * `value` is in twips; `null` removes the element (height reverts to auto). */
+export function setRowHeight(
+	row: XmlNode,
+	height: { value: number; rule: "atLeast" | "exact" | "auto" } | null,
+): void {
+	const trPr = ensureTrPr(row);
+	setTrPrChild(
+		trPr,
+		"w:trHeight",
+		height ? (
+			<w.trHeight w-val={String(height.value)} w-hRule={height.rule} />
+		) : null,
+	);
+	pruneEmptyTrPr(row, trPr);
+}
+
+/** Mark or unmark a row as a repeating header via `<w:trPr><w:tblHeader/>`. */
+export function setRepeatHeader(row: XmlNode, on: boolean): void {
+	const trPr = ensureTrPr(row);
+	setTrPrChild(trPr, "w:tblHeader", on ? <w.tblHeader /> : null);
+	pruneEmptyTrPr(row, trPr);
+}
+
+function pruneEmptyTrPr(row: XmlNode, trPr: XmlNode): void {
+	if (trPr.children.length === 0) {
+		row.children = row.children.filter((child) => child !== trPr);
+	}
 }
 
 /** Append a `<w:tblGridChange>` snapshot of the prior grid columns to a
@@ -209,6 +352,28 @@ export function setTablePropertiesChild(
 	setTblPrChild(ensureTblPr(table), tag, node);
 }
 
+/** Set or clear the table's on-page justification via `<w:tblPr><w:jc w:val/>`.
+ * `null` (or `"left"`, the default) removes the element. */
+export function setTableJustification(
+	table: XmlNode,
+	value: "left" | "center" | "right" | null,
+): void {
+	setTablePropertiesChild(
+		table,
+		"w:jc",
+		value && value !== "left" ? <w.jc w-val={value} /> : null,
+	);
+}
+
+/** Set or clear the table's style reference via `<w:tblPr><w:tblStyle w:val/>`. */
+export function setTableStyle(table: XmlNode, styleId: string | null): void {
+	setTablePropertiesChild(
+		table,
+		"w:tblStyle",
+		styleId ? <w.tblStyle w-val={styleId} /> : null,
+	);
+}
+
 const TBL_PR_ORDER = [
 	"w:tblStyle",
 	"w:tblpPr",
@@ -289,4 +454,41 @@ function setTcPrChild(tcPr: XmlNode, tag: string, node: XmlNode | null): void {
 		}
 	}
 	tcPr.children.splice(insertAt, 0, node);
+}
+
+// CT_TrPr child order (ECMA-376 §17.4.81) — the subset we touch plus the
+// neighbors (ins/del/trPrChange come last) we must order against.
+const TR_PR_ORDER = [
+	"w:cnfStyle",
+	"w:divId",
+	"w:gridBefore",
+	"w:gridAfter",
+	"w:wBefore",
+	"w:wAfter",
+	"w:cantSplit",
+	"w:trHeight",
+	"w:tblHeader",
+	"w:tblCellSpacing",
+	"w:jc",
+	"w:hidden",
+	"w:ins",
+	"w:del",
+	"w:trPrChange",
+];
+
+/** Remove any existing `<tag>` from `trPr`, then (if `node` is given) splice it
+ * back in at the schema-mandated position. */
+function setTrPrChild(trPr: XmlNode, tag: string, node: XmlNode | null): void {
+	trPr.children = trPr.children.filter((child) => child.tag !== tag);
+	if (!node) return;
+	const target = orderIndex(TR_PR_ORDER, tag);
+	let insertAt = trPr.children.length;
+	for (let index = 0; index < trPr.children.length; index++) {
+		const child = trPr.children[index];
+		if (child && orderIndex(TR_PR_ORDER, child.tag) > target) {
+			insertAt = index;
+			break;
+		}
+	}
+	trPr.children.splice(insertAt, 0, node);
 }

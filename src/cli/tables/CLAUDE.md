@@ -1,9 +1,29 @@
-# src/cli/tables — table restructuring verbs
+# src/cli/tables — table restructuring & formatting verbs
 
-`docx tables <verb>` reshapes an existing table: `insert-row` / `delete-row` /
-`insert-column` / `delete-column` / `set-widths` / `merge` / `unmerge` /
-`borders`. There is no `list` verb — `docx read --ast` already returns the full
-table structure (grid widths, `gridSpan`, `vMerge`, and tracked-change markers).
+`docx tables <verb>` reshapes or formats an existing table: `insert-row` /
+`delete-row` / `insert-column` / `delete-column` / `set-widths` / `merge` /
+`unmerge` / `borders` (restructure), plus `format` (cell/row/table-level
+formatting — shading, vertical/horizontal alignment, per-cell borders, row
+height, repeat-header, table alignment, table style). There is no `list` verb —
+`docx read --ast` already returns the full table structure (grid widths,
+`gridSpan`, `vMerge`, `vAlign`, `shading`, cell `borders`, row `height`/
+`repeatHeader`, table `align`/`style`, and tracked-change markers).
+
+## `format` is locator-scoped, not flag-scoped
+
+`tables format --at LOCATOR` picks the targets by the locator's granularity:
+cell properties (`--shade`/`--valign`/`--halign`/`--cell-borders`) broadcast over
+EVERY cell the locator covers — a cell, a `rRcC-rRcC` range, a `cC` column, a
+`rR` row, or the whole `tN` table — so "shade the whole table" is one call that
+writes per-cell `<w:shd>` (table-level `<w:shd>` isn't read back; per-cell is, via
+`docx:cell shading`). `--align`/`--style` need `--at tN` (whole table);
+`--row-height`/`--repeat-header` need a row (`--at tN:rR`) or `--at tN` (all rows).
+The cell set is the merge-aware grid's PHYSICAL cells, deduped by node — a
+`gridSpan` cell covered by a range/column is touched once. `--halign` is a
+PARAGRAPH property (`<w:pPr><w:jc>`), so it fans `Edit.paragraphProperties` over
+the cells' paragraphs (NOT a `<w:tcPr>` child); `--valign` (`<w:tcPr><w:vAlign>`)
+is the true cell property. The two are deliberately distinct from `--align`
+(`<w:tblPr><w:jc>`, the table on the page).
 
 The model and mutation primitives these verbs build on live in
 [`@core/table`](../../core/table/): the merge-aware grid (`buildGrid`,
@@ -71,10 +91,23 @@ round-trips. ECMA-376 defines more table-revision markup than Word honors.
   as a change" and applies a plain `<w:gridSpan>`), and it does **not** revert a
   hand-authored `<w:tblPrChange>` for borders. Authoring a revision Word won't
   round-trip would be dishonest, so we match Word and just note it.
+- **format** → split by the level the property lives at, since that decides
+  whether Word round-trips a revision:
+  - cell `<w:tcPr>` props (`--shade`/`--valign`/`--cell-borders`) → native
+    **`<w:tcPrChange>`**, one per cell, exactly like `set-widths` (snapshot the
+    prior `<w:tcPr>` BEFORE mutating, then `appendTcPrChange`). Surfaces as the
+    `cell-fmt` tcN kind; accept drops the snapshot, reject restores it.
+  - `--halign` → native **`<w:pPrChange>`** per cell paragraph, via
+    `Edit.paragraphProperties` (the same revision `edit --alignment` emits — Word
+    authors and round-trips it).
+  - table `<w:tblPr>` props (`--align`/`--style`) and row `<w:trPr>` props
+    (`--row-height`/`--repeat-header`) → applied **immediately** + ONE `[docx-cli]`
+    audit comment per invocation (Word reverts neither a hand-authored
+    `<w:tblPrChange>` nor `<w:trPrChange>` — same reasoning as `borders`).
 
 We additionally **read** (list / accept / reject) `tblPrChange` and `tcPrChange`
-that *Word* authors (e.g. from an interactive width edit), even though our only
-emitter of `tcPrChange` is set-widths and we never emit `tblPrChange`.
+that *Word* authors (e.g. from an interactive width edit). Our `tcPrChange`
+emitters are `set-widths` and `format`; we never emit `tblPrChange`/`trPrChange`.
 
 When adding a tracked structural kind, follow the "Adding a tracked-change kind"
 checklist in the track-changes CLAUDE.md — register it in `core/ast/read.ts`

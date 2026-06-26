@@ -85,6 +85,10 @@ export type Table = {
 	 * `borders` summary. Surfaced so `styles --used` can report the table styles
 	 * a document actually applies. Present only when the table references one. */
 	style?: string;
+	/** Justification of the whole table on the page, from `<w:tblPr><w:jc w:val="…"/>`
+	 * (`"center"` / `"right"`). Absent ⇒ the default `"left"`. Authorable via
+	 * `docx tables format --at tN --align`. */
+	align?: "left" | "center" | "right";
 	rows: TableRow[];
 };
 
@@ -93,6 +97,15 @@ export type TableRow = {
 	/** Tracked row insertion/deletion from <w:trPr><w:ins/> or <w:del/>
 	 * (kind "rowIns" / "rowDel"). Present only under track-changes. */
 	trackedChange?: TrackedChange;
+	/** Row height from `<w:trPr><w:trHeight w:val="…" w:hRule="…"/>`. `value` is
+	 * in twips; `rule` is `atLeast` (minimum, the default), `exact` (fixed), or
+	 * `auto` (fit content). Present only when the row declares an explicit height.
+	 * Authorable via `docx tables format --at tN:rR --row-height`. */
+	height?: { value: number; rule: "atLeast" | "exact" | "auto" };
+	/** Whether the row repeats as a header at the top of each page that the table
+	 * spans, from `<w:trPr><w:tblHeader/>`. Present (true) only when the marker is
+	 * set. Authorable via `docx tables format --at tN:rR --repeat-header`. */
+	repeatHeader?: boolean;
 };
 
 export type TableCell = {
@@ -117,6 +130,17 @@ export type TableCell = {
 	 * hint — GFM can't show cell shading; the fill survives edits via in-place
 	 * mutation. */
 	shading?: string;
+	/** Vertical alignment of the cell's content from `<w:tcPr><w:vAlign w:val="…"/>`
+	 * (`"center"` / `"bottom"`). Absent ⇒ the default `"top"`. Authorable via
+	 * `docx tables format --at … --valign`. (Horizontal alignment is NOT a cell
+	 * property — it lives on each paragraph's `<w:jc>`, surfaced as `docx:p align`.) */
+	vAlign?: "top" | "center" | "bottom";
+	/** Summary of `<w:tcPr><w:tcBorders>` — the set edges and their dominant style,
+	 * as a compact `side:style` string (e.g. `"bottom:double"`, `"all:single"`).
+	 * A read-time hint mirroring `Table.borders`; full per-edge fidelity stays in
+	 * the XML via in-place mutation. Authorable via `docx tables format --at …
+	 * --cell-borders`. Present only when the cell declares explicit borders. */
+	borders?: string;
 };
 
 export type TableWidth = {

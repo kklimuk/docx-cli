@@ -1,6 +1,6 @@
 # src/core/table — table emit, grid model, mutation primitives
 
-Three files behind the `@core/table` barrel ([index.tsx](index.tsx)): the file itself holds the `<BlankTable>` / `<Table>` / `<TableRow>` / `<TableCell>` emitters; [grid.ts](grid.ts) is the pure merge-aware read-model (`buildGrid`, `cellAt`, `resolveTableNode`); [mutate.tsx](mutate.tsx) is the `<w:tcPr>` / `<w:tblPr>` surgery (`setGridSpan`, `setVMerge`, `setCellWidth`, `setTableLayout`, `setTablePropertiesChild`, `emptyCell`, `gridColElement`, `appendTblGridChange`, `appendTcPrChange`, `markRowTracked`, `markCellTracked`, `clearCellContent`).
+Three files behind the `@core/table` barrel ([index.tsx](index.tsx)): the file itself holds the `<BlankTable>` / `<Table>` / `<TableRow>` / `<TableCell>` emitters; [grid.ts](grid.ts) is the pure merge-aware read-model (`buildGrid`, `cellAt`, `resolveTableNode`); [mutate.tsx](mutate.tsx) is the `<w:tcPr>` / `<w:trPr>` / `<w:tblPr>` surgery (`setGridSpan`, `setVMerge`, `setCellWidth`, `setCellShading`, `setCellVAlign`, `setCellBorders`, `setRowHeight`, `setRepeatHeader`, `setTableLayout`, `setTableJustification`, `setTableStyle`, `setTablePropertiesChild`, `emptyCell`, `gridColElement`, `appendTblGridChange`, `appendTcPrChange`, `markRowTracked`, `markCellTracked`, `clearCellContent`). The three `set*Child` splice helpers keep CT_TcPr / CT_TrPr / CT_TblPr child order.
 
 `@core/table` is what `cli/tables/` and `cli/insert --table` build on. The CLI verbs there are thin glue — arg-parse + merge-correctness gates — over this folder's primitives.
 

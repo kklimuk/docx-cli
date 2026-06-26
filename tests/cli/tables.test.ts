@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
-import { readMarkdown, trackedKinds } from "./helpers";
+import { readDocumentXml, readMarkdown, trackedKinds } from "./helpers";
 
 async function tableLayout(docPath: string): Promise<string | null> {
 	const pkg = await Pkg.open(docPath);
@@ -942,6 +942,284 @@ describe("docx tables borders", () => {
 			"wavy",
 		);
 		expect(result.exitCode).not.toBe(0);
+	});
+});
+
+describe("docx tables format", () => {
+	test("shades a cell and round-trips through read", async () => {
+		const docPath = await newTableDoc("fmt-shade", 2, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--shade",
+			"D9D9D9",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain('w:fill="D9D9D9"');
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:cell t0:r0c0 shading="D9D9D9"',
+		);
+	});
+
+	test("accepts a color name for --shade", async () => {
+		const docPath = await newTableDoc("fmt-shade-name", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--shade",
+			"grey",
+		);
+		expect(await readDocumentXml(docPath)).toContain('w:fill="808080"');
+	});
+
+	test("sets vertical alignment", async () => {
+		const docPath = await newTableDoc("fmt-valign", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--valign",
+			"center",
+		);
+		expect(await readDocumentXml(docPath)).toContain(
+			'<w:vAlign w:val="center"/>',
+		);
+		expect(await readMarkdown(docPath)).toContain('vAlign="center"');
+	});
+
+	test("sets horizontal alignment as a paragraph property", async () => {
+		const docPath = await newTableDoc("fmt-halign", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--halign",
+			"center",
+		);
+		// halign is a paragraph <w:jc>, NOT a <w:tcPr> child.
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('<w:jc w:val="center"/>');
+		expect(await readMarkdown(docPath)).toContain('halign="center"');
+	});
+
+	test("adds a per-cell border in the requested style", async () => {
+		const docPath = await newTableDoc("fmt-border", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--cell-borders",
+			"bottom",
+			"--border-style",
+			"double",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain("<w:tcBorders>");
+		expect(xml).toMatch(/<w:bottom w:val="double"/);
+		expect(await readMarkdown(docPath)).toContain('borders="bottom:double"');
+	});
+
+	test("shades every cell when scoped to the whole table", async () => {
+		const docPath = await newTableDoc("fmt-broadcast", 2, 3);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--shade",
+			"EEEEEE",
+		);
+		const fills = (await readDocumentXml(docPath)).match(/w:fill="EEEEEE"/g);
+		expect(fills).toHaveLength(6); // 2 rows × 3 cols
+	});
+
+	test("centers the table and applies a style", async () => {
+		const docPath = await newTableDoc("fmt-table", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--align",
+			"center",
+			"--style",
+			"LightGrid",
+		);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain('align="center"');
+		expect(md).toContain('style="LightGrid"');
+	});
+
+	test("sets row height and repeat-header, surfaced in the table note", async () => {
+		const docPath = await newTableDoc("fmt-row", 2, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0",
+			"--row-height",
+			"0.4in",
+			"--repeat-header",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(/<w:trHeight w:val="576" w:hRule="atLeast"\/>/);
+		expect(xml).toContain("<w:tblHeader/>");
+		const md = await readMarkdown(docPath);
+		expect(md).toContain('repeat-header="r0"');
+		expect(md).toContain('row-heights="r0:0.4in"');
+	});
+
+	test("rejects table-level flags on a cell scope", async () => {
+		const docPath = await newTableDoc("fmt-scope-cell", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--align",
+			"center",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain("whole table");
+	});
+
+	test("rejects row-level flags on a column scope", async () => {
+		const docPath = await newTableDoc("fmt-scope-col", 2, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:c0",
+			"--row-height",
+			"0.5in",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain("a row");
+	});
+
+	test("rejects an empty plan", async () => {
+		const docPath = await newTableDoc("fmt-empty", 1, 2);
+		const result = await runCli("tables", "format", docPath, "--at", "t0:r0c0");
+		expect(result.exitCode).not.toBe(0);
+	});
+
+	test("rejects an invalid valign value", async () => {
+		const docPath = await newTableDoc("fmt-bad-valign", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--valign",
+			"middle",
+		);
+		expect(result.exitCode).not.toBe(0);
+	});
+
+	test("rejects a unit-less --row-height (no silent inches default)", async () => {
+		const docPath = await newTableDoc("fmt-bad-height", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0",
+			"--row-height",
+			"28",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain("unit");
+	});
+
+	test("rejects --height-rule without --row-height", async () => {
+		const docPath = await newTableDoc("fmt-rule-orphan", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0",
+			"--repeat-header",
+			"--height-rule",
+			"exact",
+		);
+		expect(result.exitCode).not.toBe(0);
+	});
+
+	test("cell props track as a tcPrChange that reject restores", async () => {
+		const docPath = await newTableDoc("fmt-track-cell", 2, 2);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r1c1",
+			"--shade",
+			"FFFF00",
+		);
+		expect(await trackedKinds(docPath)).toContain("tcPrChange");
+		await runCli("track-changes", "reject", docPath, "--at", "tc0");
+		expect(await readDocumentXml(docPath)).not.toContain('w:fill="FFFF00"');
+		expect(await trackedKinds(docPath)).toHaveLength(0);
+	});
+
+	test("halign tracks as a pPrChange", async () => {
+		const docPath = await newTableDoc("fmt-track-halign", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--halign",
+			"right",
+			"--track",
+		);
+		expect(await trackedKinds(docPath)).toContain("pPrChange");
+	});
+
+	test("table-level changes under tracking emit an audit comment, not a revision", async () => {
+		const docPath = await newTableDoc("fmt-track-table", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--align",
+			"center",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		// No tracked revision (Word won't revert a hand-authored tblPrChange)…
+		expect(await trackedKinds(docPath)).toHaveLength(0);
+		// …but an honest [docx-cli] audit comment instead.
+		const comments = (await runCli("comments", "list", docPath))
+			.parsed as Array<{
+			text: string;
+		}>;
+		expect(
+			comments.some((comment) => comment.text.includes("[docx-cli]")),
+		).toBe(true);
 	});
 });
 
