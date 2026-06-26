@@ -17,6 +17,10 @@ export {
 	paragraphTextBaseline,
 	type TrackedChangeReference,
 } from "./ast";
+export {
+	FORMAT_TO_NUMFMT,
+	type ListFormat,
+} from "./ast/document/numbering";
 export { PkgError } from "./ast/document/package";
 export type {
 	Block,
@@ -64,6 +68,7 @@ export {
 	type InsertSpec,
 	type TextFormatting,
 } from "./insert";
+export { ListOperationError, Lists } from "./lists";
 export { literalParagraphs } from "./literal-text";
 export {
 	type BlockRangeReference,

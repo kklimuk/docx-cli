@@ -29,6 +29,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Restructure tables — insert/delete rows & columns, merge/unmerge, set widths, borders
+  lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"
   track-changes …  Toggle (on|off FILE); list / accept / reject revisions; "read" shows them as CriticMarkup
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
 

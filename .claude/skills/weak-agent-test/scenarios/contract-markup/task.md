@@ -43,9 +43,14 @@ can discuss them:
 Section 9 is also a dense, cramped wall of text — while you're in there, make it easier
 to actually read. It's the clause I most want them to re-read carefully.
 
+And a small house-style fix: in the intellectual-property section, the sub-points are
+labelled a, b, c, d. We always use small Roman numerals (i, ii, iii) for sub-clauses in
+our contracts — please switch those over to match.
+
 ## What "done" looks like
 
 It comes back marked up and ready to send: our changes to the unacceptable terms are
 visible as tracked edits (they'll see exactly what we struck or rewrote), my objections
-show up as notes pinned to the clauses I flagged, and section 9 is legible. Nothing is
-changed silently — they can see and respond to every edit and every note.
+show up as notes pinned to the clauses I flagged, section 9 is legible, and the IP
+sub-points read as i, ii, iii. Nothing is changed silently — they can see and respond to
+every edit and every note.

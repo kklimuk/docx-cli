@@ -12,7 +12,19 @@ export type Paragraph = {
 	type: "paragraph";
 	style?: string;
 	alignment?: "left" | "center" | "right" | "justify";
-	list?: { level: number; numId: string; ordered?: boolean };
+	/** List membership from `<w:pPr><w:numPr>`. `start`/`format` are the
+	 * numbering-control properties `docx lists set` authors: `start` is the
+	 * effective level-start (omitted when 1), `format` the friendly
+	 * `--format` glyph vocabulary (decimal/lower-alpha/upper-roman/…, omitted
+	 * when the default `decimal`). Two paragraphs sharing a `numId` are the same
+	 * (or continued) list, so a `--continue` link needs no field of its own. */
+	list?: {
+		level: number;
+		numId: string;
+		ordered?: boolean;
+		start?: number;
+		format?: string;
+	};
 	/** GFM task-list marker. Set when the paragraph's first content is a Word
 	 * checkbox content control (`<w:sdt><w14:checkbox/></w:sdt>`); the SDT itself
 	 * plus the leading whitespace run after it are stripped from `runs` so the

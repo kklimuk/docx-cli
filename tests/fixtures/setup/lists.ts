@@ -45,6 +45,11 @@ const document = await Document.open(out);
 const bulletNumId = document.ensureNumbering().allocate("bullet");
 const orderedNumId = document.ensureNumbering().allocate("ordered");
 const nestedBulletNumId = document.ensureNumbering().allocate("bullet");
+// Three more ordered lists for the `docx lists set` dogfood sections below
+// (custom start + Roman glyph, a continued list, and a restarted split).
+const romanNumId = document.ensureNumbering().allocate("ordered");
+const continuedNumId = document.ensureNumbering().allocate("ordered");
+const restartNumId = document.ensureNumbering().allocate("ordered");
 document.ensureStyles().ensureStyle("ListParagraph");
 
 // 3. Replace the body's single seed paragraph with a richer list demo.
@@ -68,8 +73,8 @@ const heading = (text: string) =>
 	newChildren.push(Paragraph({ text, style: "Heading2" }));
 const bullet = (level: number, text: string, numId = bulletNumId) =>
 	newChildren.push(ListParagraph({ numId, level, text }));
-const ordered = (level: number, text: string) =>
-	newChildren.push(ListParagraph({ numId: orderedNumId, level, text }));
+const ordered = (level: number, text: string, numId = orderedNumId) =>
+	newChildren.push(ListParagraph({ numId, level, text }));
 
 document.ensureStyles().ensureStyle("Heading2");
 
@@ -94,10 +99,42 @@ bullet(0, "Independent item one", nestedBulletNumId);
 bullet(0, "Independent item two", nestedBulletNumId);
 bullet(1, "And a nested item beneath it", nestedBulletNumId);
 
+// Sections for the `docx lists set` dogfood (mutated via the CLI after save).
+heading("Numbered list — custom start & Roman glyph"); // p18
+ordered(0, "Discovery", romanNumId); // p19 — gets --start 5 --format upper-roman
+ordered(0, "Design", romanNumId); // p20
+ordered(0, "Delivery", romanNumId); // p21
+
+heading("Continued numbering"); // p22
+ordered(0, "Maintenance", continuedNumId); // p23 — gets --continue (from the Roman list)
+ordered(0, "Retirement", continuedNumId); // p24
+
+heading("Restarted sub-sequence"); // p25
+ordered(0, "Phase one", restartNumId); // p26
+ordered(0, "Phase two", restartNumId); // p27 — gets --restart (splits into a fresh list)
+
 // Splice the new children in front of the trailing sectPr.
 body.children = [...newChildren, sectPr];
 
 await document.save();
+
+// Dogfood `docx lists set` so the numbering-control XML (lvlOverride start +
+// format, a continued shared numId, and a cloned restart) round-trips through
+// LibreOffice. The earlier sections (Apples / Preheat / Independent) are left at
+// their defaults so the baseline read assertions hold.
+await cli(
+	"lists",
+	"set",
+	out,
+	"--at",
+	"p19",
+	"--start",
+	"5",
+	"--format",
+	"upper-roman",
+);
+await cli("lists", "set", out, "--at", "p23", "--continue");
+await cli("lists", "set", out, "--at", "p27", "--restart");
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);

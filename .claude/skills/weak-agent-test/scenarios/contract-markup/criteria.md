@@ -31,6 +31,19 @@
    Verified by: `docx comments list` returns ≥ 4 entries, each with a non-empty
    `anchor` field pointing to text in the relevant clause.
 
+5. **IP sub-points reformatted to lowercase Roman numerals** — the lettered
+   sub-points under the Intellectual Property clause (the level-1 list items: "all
+   work product…", "all intellectual property…", "all of the Contractor's
+   pre-existing…", "all feedback…") are switched from lower-alpha (a/b/c/d) to
+   lower-roman (i/ii/iii/iv). The top-level clause numbering is left untouched.
+
+   Verified by: `docx read contract.docx --ast` shows those level-1 list
+   paragraphs with `list.format` = `"lower-roman"` (the natural path is
+   `docx lists set --at <sub-point pN> --format lower-roman`). Note the markdown
+   body renders ordered items as decimal regardless, so the `--ast` `list.format`
+   (or a `<!-- docx:list … format="lower-roman" -->` hint) is the signal, not the
+   rendered glyph.
+
 ## How to verify
 
 ```
@@ -42,6 +55,9 @@ docx comments list contract.docx
 
 # 3. Spot-check a specific clause paragraph for the pPrChange
 docx read contract.docx --ast | grep -A5 pPrChange
+
+# 4. Confirm the IP sub-points are lower-roman (level-1 list items)
+docx read contract.docx --ast | grep -o '"format":"lower-roman"'
 ```
 
-All four conditions must pass for the scenario to be scored green.
+All five conditions must pass for the scenario to be scored green.

@@ -24,7 +24,16 @@ invisible in a GFM cell), a head
 `docx:track-changes on` when the doc's tracking toggle is enabled,
 `docx:header`/`docx:footer` notes (the content in a `text` attr — so the importer's
 `docx:` drop can't re-inject it into the body — with fields as `{page}`/`{date}`/…
-tokens; `type` attr only for `first`/`even`). Section annotations render at the
+tokens; `type` attr only for `first`/`even`), and `docx:list` on a numbered
+list's FIRST run item (the numbering `docx lists set` authors): `start` when ≠ 1
+and `format` when the glyph isn't `decimal` (`upper-roman`/`lower-alpha`/… — GFM
+can't render a non-decimal ordered list, so the body stays `5.` and the hint
+carries the real glyph), or a bare `continues` token when the run shares an
+earlier list's numId (a `--continue` link, lost on a `read → create` rebuild). A
+default decimal-from-1 list emits nothing; `--start` round-trips through the
+markdown ordinal itself (`orderedOrdinal` seeds from `list.start`), so the note is
+for what the ordinal can't show. Like `docx:p`, the note carries `pN` as its
+leading token and replaces that item's bare locator. Section annotations render at the
 section's START (where its content begins), not the sectPr's physical end, so each
 reads right before the content it governs (`computeSectionStarts`/`renderSectionStart`
 in `read/markdown.ts`). **`docx:section` is the one annotation that's deviation-only

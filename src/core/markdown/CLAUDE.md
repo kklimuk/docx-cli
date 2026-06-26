@@ -68,8 +68,11 @@ comments shaped `<!-- docx:TYPE [bareId] key="value" … -->` (emitted via
 `formatNote` in [cli/read/annotations.ts](../../cli/read/annotations.ts), escaped
 with `htmlAttr`): `docx:section` (section breaks), `docx:page` (page geometry),
 `docx:table` (uneven column widths + border summary), `docx:cell` (per-cell
-merge/shading, carrying the cell address), and `docx:image` (size always +
-float/wrap/align/overflow deviation-only, carrying the `imgN` id).
+merge/shading, carrying the cell address), `docx:image` (size always +
+float/wrap/align/overflow deviation-only, carrying the `imgN` id), and `docx:list`
+(a numbered list's first-run `start`/`format`/`continues`, carrying the `pN` — the
+glyph + continue link the GFM ordinal can't show; `--start` itself round-trips
+through the ordinal).
 
 **These are read-time VISIBILITY hints, not round-trip carriers — ONE contract.**
 The importer DROPS every one: `walkBlock`'s `case "html"` returns `[]`, and the
@@ -83,8 +86,8 @@ SAW it in the read output. Re-emitted fresh each read, so they never accrete.
 **Naming rule — bare = locator, `docx:` = metadata.** A bare comment is a
 LOCATOR (an address: `<!-- p0 -->`, `<!-- t0:r0c0:p0 -->`). Anything docx-cli adds
 BEYOND addressing is a `docx:TYPE` annotation (`docx:section`, `docx:page`,
-`docx:table`, `docx:cell`, `docx:base`), which may carry the relevant locator as a
-bare leading token (`<!-- docx:cell t0:r0c0 gridSpan="2" shading="FFE699" -->`).
+`docx:table`, `docx:cell`, `docx:list`, `docx:base`), which may carry the relevant
+locator as a bare leading token (`<!-- docx:cell t0:r0c0 gridSpan="2" shading="FFE699" -->`).
 Metadata never rides a bare locator comment — that keeps locators short and makes
 `docx:` a clean grep for "everything docx-cli added."
 

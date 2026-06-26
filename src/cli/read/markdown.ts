@@ -108,6 +108,14 @@ type RenderContext = {
 	 *  the raw markdown reads correctly, not as a wall of `1.` (a renderer would
 	 *  auto-increment, but the raw text an agent/human reads would not). */
 	orderedCounters: Map<string, number>;
+	/** The previous block's list `numId` (null after any non-list block), so a
+	 *  list item can tell it begins a new RUN — the anchor for the `docx:list`
+	 *  hint. */
+	prevListNumId: string | null;
+	/** Every list `numId` whose first run we've already passed, so a later run of
+	 *  the same numId reads as a `--continue` continuation rather than a fresh
+	 *  list. */
+	seenListNumIds: Set<string>;
 	/** Usable page width in EMU (page width − L/R margins) from the document's
 	 *  geometry, for flagging images wider than the text column (`overflow`). */
 	contentWidthEmu: number;
@@ -176,6 +184,8 @@ export function renderMarkdown(
 		referencedEndnoteIds: new Set(),
 		referencedTrackedChanges: new Map(),
 		orderedCounters: new Map(),
+		prevListNumId: null,
+		seenListNumIds: new Set(),
 		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)?.geometry),
 		governingColumns: computeGoverningColumns(blocks),
 		wrappingTabLines: [],
@@ -416,6 +426,9 @@ function slotKey(paragraphId: string, runIndex: number): string {
 
 function renderBlock(block: Block, ctx: RenderContext): string | null {
 	if (block.type === "paragraph") return renderParagraph(block, ctx);
+	// A table or section break ends any list run, so the next list item reads as
+	// a fresh run for the `docx:list` hint.
+	ctx.prevListNumId = null;
 	if (block.type === "table") return renderTable(block, ctx);
 	// Section breaks render at their section's start (see `renderSectionStart`),
 	// not here.
@@ -941,17 +954,26 @@ function renderParagraph(
 		hasEquationRun(paragraph.runs),
 	);
 	const rendered = renderRuns(paragraph.id, paragraph.runs, ctx, mask, 0);
-	if (rendered.length === 0) return null;
+	if (rendered.length === 0) {
+		// An empty list item is still part of its run — keep the numId so the next
+		// item isn't mis-detected as a fresh run-start (which would emit a spurious
+		// `docx:list … continues` hint). A non-list empty paragraph breaks the run.
+		ctx.prevListNumId = paragraph.list?.numId ?? null;
+		return null;
+	}
 	const prefix = paragraphPrefix(paragraph, orderedOrdinal(paragraph, ctx));
 	// Trim trailing spaces/tabs (not newlines) so the single space separating
 	// the body from its ` <!-- pN -->` locator doesn't accumulate one extra
 	// space on every read → create → read cycle.
 	const body = rendered.replace(/[ \t]+$/, "");
-	// Locator + metadata. The `docx:p` note already carries the locator as its
-	// leading token (like `docx:cell`), so when it's present the bare `<!-- pN -->`
-	// would just duplicate `pN` — emit only the note. Plain paragraphs (no note)
-	// get the bare locator. Either way every paragraph shows its addressable pN.
-	const note = formatParagraphNote(paragraph);
+	// Locator + metadata. The `docx:p`/`docx:list` notes already carry the locator
+	// as their leading token (like `docx:cell`), so when one is present the bare
+	// `<!-- pN -->` would just duplicate `pN` — emit only the note. A deviating
+	// list run-start takes the `docx:list` note (start/format/continues an agent
+	// feeds back to `docx lists set`); other paragraphs fall back to `docx:p` or
+	// the bare locator. Either way every paragraph shows its addressable pN.
+	const listNote = listAnnotation(paragraph, ctx);
+	const note = listNote !== "" ? listNote : formatParagraphNote(paragraph);
 	const locatorOrNote = note !== "" ? note : ` <!-- ${paragraph.id} -->`;
 	const trailing = `${locatorOrNote}${layoutHazardNote(paragraph, ctx)}`;
 	// Display equations need their trailing comments on a new line for KaTeX-based
@@ -1055,7 +1077,13 @@ function orderedOrdinal(paragraph: Paragraph, ctx: RenderContext): number {
 	if (!paragraph.list?.ordered) return 1;
 	const { numId, level } = paragraph.list;
 	const key = `${numId}:${level}`;
-	const next = (ctx.orderedCounters.get(key) ?? 0) + 1;
+	// A list's FIRST item seeds the counter at its start value (default 1), so a
+	// `docx lists set --start 5` list renders `5. 6. 7.` and round-trips through
+	// markdown; later items just increment. Items sharing a numId across a gap
+	// (a `--continue` continuation) keep counting — no reseed. Stored ordinals are
+	// always ≥ 1, so a missing key is unambiguously a new run.
+	const base = ctx.orderedCounters.get(key) ?? (paragraph.list.start ?? 1) - 1;
+	const next = base + 1;
 	ctx.orderedCounters.set(key, next);
 	for (const existing of ctx.orderedCounters.keys()) {
 		const [keyNumId, keyLevel] = existing.split(":");
@@ -1064,6 +1092,41 @@ function orderedOrdinal(paragraph: Paragraph, ctx: RenderContext): number {
 		}
 	}
 	return next;
+}
+
+/** The `<!-- docx:list pN start="5" format="upper-roman" -->` (or
+ * `<!-- docx:list pN continues -->`) hint, emitted at the FIRST item of each
+ * list RUN and replacing that item's bare locator — the GFM body can't show a
+ * non-decimal glyph, and a continued run's link is lost on a `read → create`
+ * rebuild, so the note is the agent-visible channel (and carries the values
+ * back to `docx lists set`). Returns "" for a non-deviating run, a non-run-start
+ * item, or a bullet list. Always updates the run-tracking context so a
+ * later run of the same numId reads as a continuation. */
+function listAnnotation(paragraph: Paragraph, ctx: RenderContext): string {
+	const list = paragraph.list;
+	if (!list) {
+		ctx.prevListNumId = null;
+		return "";
+	}
+	const isRunStart = ctx.prevListNumId !== list.numId;
+	ctx.prevListNumId = list.numId;
+	if (!isRunStart) return "";
+	const isContinuation = ctx.seenListNumIds.has(list.numId);
+	ctx.seenListNumIds.add(list.numId);
+	// Bullet lists carry no numbering control in v1 (custom glyph is deferred).
+	if (!list.ordered) return "";
+	// A continuation just flags `continues` — its start/format were already shown
+	// at the list's first run (same numId), and repeating them next to a non-1
+	// rendered ordinal (e.g. an item showing `8.`) would only mislead.
+	if (isContinuation) {
+		return ` ${formatNote("list", [], [paragraph.id, "continues"])}`;
+	}
+	const pairs: NotePair[] = [];
+	if (list.start !== undefined && list.start !== 1)
+		pairs.push(["start", list.start]);
+	if (list.format) pairs.push(["format", list.format]);
+	if (pairs.length === 0) return "";
+	return ` ${formatNote("list", pairs, [paragraph.id])}`;
 }
 
 function paragraphPrefix(paragraph: Paragraph, ordinal: number): string {

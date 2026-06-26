@@ -75,6 +75,9 @@ const JSON_SCHEMA = {
 					properties: {
 						level: { type: "number" },
 						numId: { type: "string" },
+						ordered: { type: "boolean" },
+						start: { type: "number" },
+						format: { type: "string" },
 					},
 				},
 				taskState: { enum: ["checked", "unchecked"] },

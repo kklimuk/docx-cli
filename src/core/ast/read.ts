@@ -14,6 +14,7 @@ import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
 import type { Document } from "./document";
 import { Body } from "./document/body";
+import { numFmtToFormat } from "./document/numbering";
 import { decodeSym } from "./sym";
 import type {
 	Block,
@@ -680,15 +681,24 @@ function applyParagraphProperties(
 			? Number(indentLevel.getAttribute("w:val") ?? "0")
 			: 0;
 		const id = numberingId ? (numberingId.getAttribute("w:val") ?? "") : "";
-		const list: { level: number; numId: string; ordered?: boolean } = {
+		const list: Paragraph["list"] = {
 			level,
 			numId: id,
 		};
-		// Resolve the level's numFmt via numbering.xml so the renderer knows
-		// whether to emit `1. ` (ordered) or `- ` (bullet) in markdown.
-		const format = id ? document.numbering?.getFormat(id, level) : undefined;
-		if (format !== undefined && format !== "bullet" && format !== "none") {
+		// Resolve the level's numbering facts in one numbering.xml walk: the
+		// effective numFmt (ordered vs. bullet), plus what `docx lists set`
+		// round-trips — the AUTHORED format override (not the abstractNum's
+		// inherent per-level glyph) and the effective start.
+		const info = id ? document.numbering?.getLevelInfo(id, level) : undefined;
+		if (
+			info?.format !== undefined &&
+			info.format !== "bullet" &&
+			info.format !== "none"
+		) {
 			list.ordered = true;
+			if (info.override !== undefined)
+				list.format = numFmtToFormat(info.override);
+			if (info.start !== 1) list.start = info.start;
 		}
 		paragraph.list = list;
 	}
