@@ -1,6 +1,6 @@
 {
 	"name": "docx-cli",
-	"version": "0.19.0",
+	"version": "0.19.1",
 	"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
 	"skills": "./skills/"
 }
