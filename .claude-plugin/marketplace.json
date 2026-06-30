@@ -1,0 +1,17 @@
+{
+	"name": "docx-cli",
+	"owner": {
+		"name": "Kirill Klimuk",
+		"email": "kklimuk@gmail.com"
+	},
+	"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
+	"plugins": [
+		{
+			"name": "docx-cli",
+			"source": "./",
+			"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
+			"homepage": "https://github.com/kklimuk/docx-cli",
+			"license": "MIT"
+		}
+	]
+}

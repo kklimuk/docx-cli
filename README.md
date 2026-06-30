@@ -68,11 +68,49 @@ docx comments add mnda-filled.docx --at p7:0-30 \
 
 Open `mnda-filled.docx` in Word: tracked changes and comments appear in the review pane, ready to accept, reject, or reply. Or run `docx track-changes accept mnda-filled.docx --all` to bake them in from the CLI.
 
+## Use as an agent skill
+
+docx-cli ships as an [Agent Skill](https://agentskills.io) — one `SKILL.md` that works across Claude Code, Codex, Pi, and the other harnesses that read the open skill format. The skill teaches the locator model and the redline / comment / fill workflows, then defers to `docx <command> --help` at runtime, so it can't go stale.
+
+**Why a skill?** docx-cli is built for the _weakest, cheapest_ agents. In our weak-agent benchmark — 6 real document tasks (fill a contract, redline, comment, restyle, author from scratch), graded against Word renders, 3 runs each — Haiku driving docx-cli completed **4.3/6** tasks versus **0.7/6** for the default Claude skill, at roughly **2.5× fewer tokens**; with Sonnet it's **6/6 vs 4/6**, with roughly 2x fewer tokens. And every docx-cli output opened cleanly in Word on the first try — it never emits a file the renderer rejects. (Methodology and harness: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).)
+
+### Install
+
+**Claude Code** — one-line plugin install:
+
+```
+/plugin marketplace add kklimuk/docx-cli
+/plugin install docx-cli@docx-cli
+```
+
+**Codex** — add the marketplace (the plugin's skills auto-discover):
+
+```
+codex plugin marketplace add kklimuk/docx-cli
+```
+
+**Pi** — one-command install (the `pi` manifest in `package.json` pulls in the skill), then invoke `/skill:docx-cli`:
+
+```
+pi install git:github.com/kklimuk/docx-cli      # global; add -l for a project (team-shared) install
+# manual alternative: pi --skill /path/to/docx-cli/skills/docx-cli
+```
+
+**Any harness / manual** — drop [`skills/docx-cli/`](skills/docx-cli) into your agent's skills directory (e.g. `~/.claude/skills/` or the cross-tool `~/.agents/skills/`). On first activation the skill's [`scripts/bootstrap.sh`](skills/docx-cli/scripts/bootstrap.sh) installs the `docx` binary (and self-updates a stale one).
+
+### Keeping the skill current
+
+The binary is the source of truth: `docx info skill` prints the canonical `SKILL.md` for the installed version, and a CI test fails if the committed copy drifts. Regenerate after any change with:
+
+```
+docx info skill > skills/docx-cli/SKILL.md
+```
+
 ## `docx <command> --help` is the authoritative contract
 
 > **Agents: run `docx <command> --help` before composing a call.** Every command's `--help` is the source of truth for its flags, locator forms, and exact output shape — this README is a map, not the territory. Two more must-reads:
 >
-> - **`docx info locators`** — the canonical locator grammar (`--json` for a machine-readable form). The top-level `docx --help` says it outright: *"It is highly recommended to agents to run `docx info locators` to understand their capabilities."*
+> - **`docx info locators`** — the canonical locator grammar (`--json` for a machine-readable form). The top-level `docx --help` says it outright: _"It is highly recommended to agents to run `docx info locators` to understand their capabilities."_
 > - **`docx info schema`** — the AST type definitions (`--ts` for TypeScript source) that `read --ast` emits.
 
 ## Command reference
@@ -129,7 +167,7 @@ clean):
   for a section silently turned layout into border paragraphs). A hand-authored
   `---` now unambiguously means a thematic break.
 - **Page geometry** rides a leading `<!-- docx:page sN orientation="landscape"
-  size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
+size="…in" margins="…in" text-width="…in" -->` note when the page deviates from
   US-Letter-portrait-1″ — `text-width` is the usable column width, and the leading
   `sN` is the section to re-apply against. A `varies="by-section"` attribute is added
   when a later section's page setup differs from the leading one — and in that case
@@ -167,7 +205,7 @@ clean):
   the content it governs. The text lives in the comment attribute
   so the importer drops it (it can't re-inject into the body); full entries are in
   `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
-  headers`/`docx footers`.
+headers`/`docx footers`.
 - **Track-changes state** rides a head `<!-- docx:track-changes on -->` line when the
   document's tracking toggle is enabled (deviation-only — off emits nothing), so an
   agent sees that subsequent edits will be redlined without inspecting `settings.xml`.
@@ -309,33 +347,33 @@ docx track-changes apply  FILE [--accept H ...] [--reject H ...]
 ```
 
 > **One rule to memorize: addressing an existing thing is always `--at`.**
-> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to *confine* the substitution to one paragraph). `images extract --to DIR` is an *output directory*, not a locator.
+> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to _confine_ the substitution to one paragraph). `images extract --to DIR` is an _output directory_, not a locator.
 
 ## Output contract
 
 The CLI is built for non-interactive agents. **Exit code is the success signal**, output is data:
 
-| Exit | Meaning | Error codes |
-| ---- | ------- | ----------- |
-| `0`  | success | — |
-| `2`  | usage / bad locator | `USAGE`, `INVALID_LOCATOR` |
+| Exit | Meaning                   | Error codes                                                                                                                                                         |
+| ---- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                   | —                                                                                                                                                                   |
+| `2`  | usage / bad locator       | `USAGE`, `INVALID_LOCATOR`                                                                                                                                          |
 | `3`  | addressed thing not found | `FILE_NOT_FOUND`, `PART_NOT_FOUND`, `BLOCK_NOT_FOUND`, `COMMENT_NOT_FOUND`, `IMAGE_NOT_FOUND`, `HYPERLINK_NOT_FOUND`, `TRACKED_CHANGE_NOT_FOUND`, `MATCH_NOT_FOUND` |
-| `1`  | general failure | `NOT_A_ZIP`, `TRACKED_CHANGE_CONFLICT`, `TABLE_STRUCTURE`, `IMAGE_SOURCE`, `RENDER_ENGINE`, `RENDER_FAILED`, `UNHANDLED` |
+| `1`  | general failure           | `NOT_A_ZIP`, `TRACKED_CHANGE_CONFLICT`, `TABLE_STRUCTURE`, `IMAGE_SOURCE`, `RENDER_ENGINE`, `RENDER_FAILED`, `UNHANDLED`                                            |
 
 **Errors** print `{code, error, hint?}` JSON to stdout with a nonzero exit — note there is **no `ok` field**; the exit code plus `code` are the unambiguous signal.
 
 **The `ok` field appears in exactly one place: the `--verbose` success ack** (`{ok:true, operation, path, …}`). Without `-v`, success output is shaped for the next command:
 
-| Command class | Default stdout on success | `--verbose` |
-| ------------- | ------------------------- | ----------- |
-| **Mutator that mints a new handle** — `comments add`→`cN`, `comments reply`→`cN`, `footnotes/endnotes add`→`fnN`/`enN`, `hyperlinks add`→`linkN`, `insert`→the new `pN` | the bare locator(s), **one per line** (a multi-block `--markdown` insert prints several) | full `{ok:true,…}` ack |
-| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `headers/footers set/clear`, `tables *`, `track-changes accept/reject` & toggle | **one-line confirmation** — `<operation> <target>` (e.g. `edit t1:r0c1:p0`, `edit 7 changes`, `replace 0 occurrences replaced`) (exit `0`) | full `{ok:true,…}` ack |
-| `find` | matched span locators, one per line (no matches → nothing, exit `0`) | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
-| `wc` | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`) | `--json` → `{ words, scope, view, sections? }` |
-| `outline` | indented `LOCATOR⇥TEXT` tree (two spaces per level) | `--json` → nested `[{ id, locator, level, style, text, children }]` |
-| `read` | GFM Markdown; each paragraph carries its `pN` locator once — a trailing bare `<!-- pN -->` on plain paragraphs, or the leading token of its `<!-- docx:p pN … -->` note when one is emitted | `--ast` → the JSON AST body (`docx info schema`) |
-| `render` | image paths, one per line | `--verbose` → `{ok, operation, path, engine, output, pages}` |
-| `* list` (all eight `list` verbs) | a **bare JSON array**; each item's `id` is its `--at` handle | — |
+| Command class                                                                                                                                                                                                                                                              | Default stdout on success                                                                                                                                                                   | `--verbose`                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Mutator that mints a new handle** — `comments add`→`cN`, `comments reply`→`cN`, `footnotes/endnotes add`→`fnN`/`enN`, `hyperlinks add`→`linkN`, `insert`→the new `pN`                                                                                                    | the bare locator(s), **one per line** (a multi-block `--markdown` insert prints several)                                                                                                    | full `{ok:true,…}` ack                                                    |
+| **Mutator with no new handle** — `edit`, `delete`, `replace`, `create`, `comments resolve/delete`, `images replace/delete`, `hyperlinks replace/delete`, `footnotes/endnotes edit/delete`, `headers/footers set/clear`, `tables *`, `track-changes accept/reject` & toggle | **one-line confirmation** — `<operation> <target>` (e.g. `edit t1:r0c1:p0`, `edit 7 changes`, `replace 0 occurrences replaced`) (exit `0`)                                                  | full `{ok:true,…}` ack                                                    |
+| `find`                                                                                                                                                                                                                                                                     | matched span locators, one per line (no matches → nothing, exit `0`)                                                                                                                        | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
+| `wc`                                                                                                                                                                                                                                                                       | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`)                                                                                                                | `--json` → `{ words, scope, view, sections? }`                            |
+| `outline`                                                                                                                                                                                                                                                                  | indented `LOCATOR⇥TEXT` tree (two spaces per level)                                                                                                                                         | `--json` → nested `[{ id, locator, level, style, text, children }]`       |
+| `read`                                                                                                                                                                                                                                                                     | GFM Markdown; each paragraph carries its `pN` locator once — a trailing bare `<!-- pN -->` on plain paragraphs, or the leading token of its `<!-- docx:p pN … -->` note when one is emitted | `--ast` → the JSON AST body (`docx info schema`)                          |
+| `render`                                                                                                                                                                                                                                                                   | image paths, one per line                                                                                                                                                                   | `--verbose` → `{ok, operation, path, engine, output, pages}`              |
+| `* list` (all eight `list` verbs)                                                                                                                                                                                                                                          | a **bare JSON array**; each item's `id` is its `--at` handle                                                                                                                                | —                                                                         |
 
 `--dry-run` always prints a preview object (no `ok`) and writes nothing; it wins over `-o/--output`.
 
@@ -343,16 +381,16 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 
 Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are derived from document order and **shift after structural edits** — re-read between non-trivial mutations. **Entity ids** (`cN`, `imgN`, `linkN`, `fnN`, `enN`, `tcN`, `eqN`) are surfaced by a `list` verb (or `read --ast`) and are what you pass to `--at`:
 
-| Id | Discover with | Used by |
-| -- | ------------- | ------- |
-| `pN` / `tN` / `sN` (block ids) | `docx read FILE` (the `<!-- pN -->` trailers), `docx read FILE --ast`, `docx outline FILE` (heading `pN`s), or `docx render` page images | `read`, `edit`, `insert`, `delete`, `wc`, `find` results |
-| `cN` (comment) | `docx comments list FILE` | `comments reply/resolve/delete --at` |
-| `fnN` / `enN` (foot/endnote) | `docx footnotes list FILE` / `docx endnotes list FILE` | `footnotes/endnotes edit/delete --at` |
-| `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast`) | addressed by section+type, not the id: `headers/footers set --at sN --type T` |
-| `imgN` (image) | `docx images list FILE` | `images extract/replace/delete --at` |
-| `linkN` (hyperlink) | `docx hyperlinks list FILE` | `hyperlinks replace/delete --at` |
-| `tcN` (tracked change) | `docx track-changes list FILE` | `track-changes accept/reject --at` |
-| `eqN` (equation) | `docx read FILE --ast` (run `latex` field) | `edit --at eqN --equation` |
+| Id                              | Discover with                                                                                                                            | Used by                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `pN` / `tN` / `sN` (block ids)  | `docx read FILE` (the `<!-- pN -->` trailers), `docx read FILE --ast`, `docx outline FILE` (heading `pN`s), or `docx render` page images | `read`, `edit`, `insert`, `delete`, `wc`, `find` results                      |
+| `cN` (comment)                  | `docx comments list FILE`                                                                                                                | `comments reply/resolve/delete --at`                                          |
+| `fnN` / `enN` (foot/endnote)    | `docx footnotes list FILE` / `docx endnotes list FILE`                                                                                   | `footnotes/endnotes edit/delete --at`                                         |
+| `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast`)                                                                    | addressed by section+type, not the id: `headers/footers set --at sN --type T` |
+| `imgN` (image)                  | `docx images list FILE`                                                                                                                  | `images extract/replace/delete --at`                                          |
+| `linkN` (hyperlink)             | `docx hyperlinks list FILE`                                                                                                              | `hyperlinks replace/delete --at`                                              |
+| `tcN` (tracked change)          | `docx track-changes list FILE`                                                                                                           | `track-changes accept/reject --at`                                            |
+| `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `edit --at eqN --equation`                                                    |
 
 Each `list` verb prints a bare JSON array where every item's `id` is exactly the handle you feed back to `--at` — pipe through `jq` to filter (`docx comments list doc.docx | jq '.[] | select(.author=="Jane")'`).
 
@@ -370,21 +408,21 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
                                              footnote / endnote / tracked-change / equation)
 ```
 
-**Offset semantics: character offsets are 0-based, start-inclusive, end-exclusive** — `p3:5-20` is the 15 characters at indices 5..19 of paragraph 3. Offsets count the *visible* text of the paragraph in the selected view (accepted by default).
+**Offset semantics: character offsets are 0-based, start-inclusive, end-exclusive** — `p3:5-20` is the 15 characters at indices 5..19 of paragraph 3. Offsets count the _visible_ text of the paragraph in the selected view (accepted by default).
 
 **Nested tables chain the same syntax** arbitrarily deep — `t0:r2c1:t0:r0c0:p0` is the first paragraph of the (0,0) cell of the first table nested inside the (2,1) cell of the document's first table.
 
 **Not every command accepts every form** — each command's `--at`/`--from`/positional help lists exactly what it takes. The shapes:
 
-| Form | Accepted by |
-| ---- | ----------- |
-| `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks) | `read --from/--to`, `insert --after/--before`, `wc`, `comments add` |
-| `pN`, `pN:S-E`, `pN-pM`, `sN`, `eqN`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range) |
-| `pN`, `pN-pM`, `tN`, `sN`, `tN:rRcC:pK` | `delete --at` |
-| `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans) | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results |
-| `pN[:offset]` (point) | `footnotes/endnotes add --at` |
-| `cN` / `fnN` / `enN` / `imgN` / `linkN` / `tcN` (entities) | the matching noun's `--at` (the `c`/`fn`/`en`/`img`/`link`/`tc` prefix is optional) |
-| `tN`, `tN:rR`, `tN:cC`, `tN:rRcC`, `tN:rR1cC1-rR2cC2` | the `tables` verbs |
+| Form                                                                 | Accepted by                                                                         |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks)                              | `read --from/--to`, `insert --after/--before`, `wc`, `comments add`                 |
+| `pN`, `pN:S-E`, `pN-pM`, `sN`, `eqN`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range)                      |
+| `pN`, `pN-pM`, `tN`, `sN`, `tN:rRcC:pK`                              | `delete --at`                                                                       |
+| `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans)                      | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results  |
+| `pN[:offset]` (point)                                                | `footnotes/endnotes add --at`                                                       |
+| `cN` / `fnN` / `enN` / `imgN` / `linkN` / `tcN` (entities)           | the matching noun's `--at` (the `c`/`fn`/`en`/`img`/`link`/`tc` prefix is optional) |
+| `tN`, `tN:rR`, `tN:cC`, `tN:rRcC`, `tN:rR1cC1-rR2cC2`                | the `tables` verbs                                                                  |
 
 ## Common workflows
 
@@ -427,17 +465,17 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 
 **Span-aware comments & hyperlinks.** `comments add --at p3:5-20` (and `hyperlinks add`) find the runs containing offsets 5 and 20, split them at the boundaries (preserving `<w:rPr>` on both halves), and insert markers between the slices. Comments authored by older tools that lack `w14:paraId` (required by `commentsExtended.xml`) get a fresh paraId injected automatically on resolve/reply.
 
-**Tracked changes.** With `<w:trackChanges/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `Reviewer`); pass `--track` to one of those commands (or the `tables` verbs / `images delete`) to track just that invocation even when the doc toggle is off. `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image *deletion* is honest removal — it wraps a real `<w:del>`).
+**Tracked changes.** With `<w:trackChanges/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `Reviewer`); pass `--track` to one of those commands (or the `tables` verbs / `images delete`) to track just that invocation even when the doc toggle is off. `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image _deletion_ is honest removal — it wraps a real `<w:del>`).
 
 **Rich content.** Images insert from a path, `data:` URI, or `http(s)` URL (bounded fetch; HEIC→JPEG transcode; SVG sanitized; non-public/metadata addresses refused at every redirect hop). Equations round-trip OOXML `<m:oMath>` ↔ LaTeX (reconstructed, not legacy plaintext) — authored via temml (LaTeX→MathML) plus an in-house MathML→OMML adapter, no LGPL deps. Code blocks emit one `CodeBlock`-styled paragraph per line with optional lowlight syntax highlighting (37 bundled languages); they collapse back to a GFM fenced block on read. GFM task lists round-trip Word's checkbox content control (and the Word-for-Web Wingdings-glyph variant), surfacing as `taskState` in the AST. Tables operate on a merge-aware logical grid so `gridSpan`/`vMerge` cells map onto physical `<w:tc>`, and structural edits refuse to bisect an existing merge.
 
 **Markdown dialect.** `create --from`, `insert/edit --markdown`, and the note bodies all parse the same GFM + math + CriticMarkup + inline-HTML-formatting dialect (remark + remark-gfm + remark-math + an in-house inline-surgery transform), composing the existing OOXML emitters. `read` emits a compatible dialect, so the read → edit → write loop round-trips (lossless for paragraphs, lists, and nested blockquotes; code/tables/math/headings inside a blockquote intentionally escape to top level on import). `read --ast` is the fully lossless JSON form.
 
-**Literal text — the parser-free channel.** When you want prose inserted *exactly* — reviewer notes, quoted excerpts, anything where Markdown would misfire — use `create --text-file PATH` / `insert --text-file PATH` (or `-` for stdin). Every character lands verbatim and each newline starts a new paragraph; nothing is interpreted, so `3. note` stays `3.` (no ordered-list renumber), and `*x*`, `[t](u)`, bare URLs, and `{++x++}` are kept as written. This exists because GFM corruption isn't always escapable: bare URLs autolink with no escape sequence at all, and CriticMarkup eats `{++…++}` regardless of backslashes — so a literal path is the only safe way to author untouched prose.
+**Literal text — the parser-free channel.** When you want prose inserted _exactly_ — reviewer notes, quoted excerpts, anything where Markdown would misfire — use `create --text-file PATH` / `insert --text-file PATH` (or `-` for stdin). Every character lands verbatim and each newline starts a new paragraph; nothing is interpreted, so `3. note` stays `3.` (no ordered-list renumber), and `*x*`, `[t](u)`, bare URLs, and `{++x++}` are kept as written. This exists because GFM corruption isn't always escapable: bare URLs autolink with no escape sequence at all, and CriticMarkup eats `{++…++}` regardless of backslashes — so a literal path is the only safe way to author untouched prose.
 
-**Document-wide font.** `docx styles set-default-font FILE "Times New Roman"` sets the font in the two places a font actually lives — `word/styles.xml` `<w:docDefaults>` (the formal default) *and* the theme font scheme (`word/theme/theme1.xml`, major + minor `<a:latin>`), since real Word docs resolve their fonts *through* the theme and touching only one silently loses to the other. Body text and theme-following headings both adopt it; styles or runs that pin their own font (a code block's monospace, a deliberately-Arial run) are preserved and named in the ack, with `--all` to repoint even those. `--size N` sets the default size on the same write.
+**Document-wide font.** `docx styles set-default-font FILE "Times New Roman"` sets the font in the two places a font actually lives — `word/styles.xml` `<w:docDefaults>` (the formal default) _and_ the theme font scheme (`word/theme/theme1.xml`, major + minor `<a:latin>`), since real Word docs resolve their fonts _through_ the theme and touching only one silently loses to the other. Body text and theme-following headings both adopt it; styles or runs that pin their own font (a code block's monospace, a deliberately-Arial run) are preserved and named in the ack, with `--all` to repoint even those. `--size N` sets the default size on the same write.
 
-**Edit & create styles.** `docx styles set FILE --at Heading1 --color 1F4E79 --size 16 --bold` rewrites the *style definition* in `word/styles.xml`, so every paragraph or run that uses the style picks up the change at once ("make all Heading 1s green") — the same run-/paragraph-formatting flags as `edit` (color/font/size/highlight/underline/caps + alignment/spacing/indentation for paragraph styles). `docx styles create FILE Callout --color C00000 --bold` mints a new paragraph or character style that `insert/edit --style Callout` can then apply. Editing an un-materialized built-in (`--at Heading3` on a doc that never used it) provisions it first; a paragraph with its own *direct* formatting keeps it (the override wins — the definition edit never touches the body). Style edits are **not** tracked changes even under track-changes — matching Word, which applies style-definition edits to `styles.xml` directly with no redline.
+**Edit & create styles.** `docx styles set FILE --at Heading1 --color 1F4E79 --size 16 --bold` rewrites the _style definition_ in `word/styles.xml`, so every paragraph or run that uses the style picks up the change at once ("make all Heading 1s green") — the same run-/paragraph-formatting flags as `edit` (color/font/size/highlight/underline/caps + alignment/spacing/indentation for paragraph styles). `docx styles create FILE Callout --color C00000 --bold` mints a new paragraph or character style that `insert/edit --style Callout` can then apply. Editing an un-materialized built-in (`--at Heading3` on a doc that never used it) provisions it first; a paragraph with its own _direct_ formatting keeps it (the override wins — the definition edit never touches the body). Style edits are **not** tracked changes even under track-changes — matching Word, which applies style-definition edits to `styles.xml` directly with no redline.
 
 **List numbering.** `docx lists set FILE --at p12 --start 5` makes a numbered list begin at 5; `--format upper-roman` (or `lower-alpha`/`upper-alpha`/`lower-roman`) switches the glyph; `--restart` splits a fresh list off at that item; `--continue` makes a list pick up the previous list's numbering instead of restarting. `--at` names any item — the change applies to the whole list. The start round-trips through the markdown ordinal (the body reads `5. 6. 7.`); the glyph and any continue link, which GFM can't express, surface as a deviation-only `<!-- docx:list p12 format="upper-roman" -->` / `<!-- docx:list p20 continues -->` hint (dropped on import, like every `docx:` note — `read --ast` carries `list.start`/`list.format` losslessly). Untracked, matching Word, which records no revision for a list-numbering change.
 

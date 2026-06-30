@@ -1,7 +1,7 @@
 {
 	"name": "bun-docx",
 	"version": "0.18.0",
-	"description": "CLI for AI agents (Claude, Codex) to read, edit, and comment on .docx files with full format fidelity.",
+	"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
 	"keywords": [
 		"docx",
 		"openxml",
@@ -11,8 +11,15 @@
 		"ai",
 		"claude",
 		"codex",
-		"agentic"
+		"agentic",
+		"agent-skill",
+		"pi-package"
 	],
+	"pi": {
+		"skills": [
+			"./skills"
+		]
+	},
 	"license": "MIT",
 	"author": "Kirill Klimuk",
 	"repository": {
@@ -29,6 +36,7 @@
 	"files": [
 		"dist/index.js",
 		"dist/pdfium-*.wasm",
+		"skills/",
 		"README.md",
 		"LICENSE",
 		"LGPL-3.0.txt",
