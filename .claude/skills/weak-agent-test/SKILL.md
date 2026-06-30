@@ -175,8 +175,13 @@ Two more steps add the _measured_ numbers:
    path you noted in step 3:
    ```bash
    bun "$REPO/.claude/skills/weak-agent-test/scripts/haiku-metrics.ts" \
-     "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" >> "$RUN_DIR/REPORT.md"
+     "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" "haiku" >> "$RUN_DIR/REPORT.md"
    ```
+   The 4th argument is the exercise model the run used (the workflow's `args.model`,
+   default `haiku`). **If you ran the workflow with a non-default `args.model` (e.g.
+   `sonnet`), pass that same value as the 4th arg** — otherwise the metrics default to
+   `haiku`, match no exercise agents, and emit an empty table (the script warns on stderr
+   when 0 transcripts match the filter).
    This appends the measured "Haiku tool & cost economy" table to REPORT.md, writes
    `$RUN_DIR/haiku-metrics.json` (run-level), and drops each scenario's measured row
    into `$RUN_DIR/<key>/metrics.json` so every per-task folder is self-contained.

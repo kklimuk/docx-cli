@@ -62,6 +62,42 @@ if (!runDir || !binary || !scenariosDir) {
 	);
 }
 
+// A/B arm: "docx-cli" (DEFAULT — the existing single-tool harness, unchanged) or
+// "anthropic-docx-skill" (the competitor: Anthropic's bundled python/raw-OOXML docx
+// skill). Only the EXERCISE agents' tool instructions differ between arms; staging,
+// rendering, judging, and metrics are tool-agnostic, so the two arms are graded the
+// same way and the outputs compare apples-to-apples. The competitor arm needs
+// competitorDir — the staged Anthropic docx skill folder (SKILL.md + scripts/),
+// provisioned with its deps by scripts/stage-competitor.sh.
+const arm = parsedArgs.arm || "docx-cli";
+const competitorDir = parsedArgs.competitorDir || null;
+// Everything that differs between arms lives HERE — toolName plus the two prompt
+// fragments the judge/synth builders splice in. A new arm is one object literal; the
+// builders just read ARMS[arm].* (no scattered `arm === …` ternaries at the use sites).
+const ARMS = {
+	"docx-cli": { toolName: "docx-cli", judgeNote: "", synthClause: "" },
+	"anthropic-docx-skill": {
+		toolName: "the Anthropic docx skill",
+		// The competitor agent used the Anthropic docx skill, not docx-cli — so the judge
+		// grades the OUTPUT only, treating docx-cli's `read` as a neutral inspector of the
+		// produced .docx (it is NOT the tool under test here).
+		judgeNote: `\n\n**Arm note — competitor run:** the agent did this task with **the Anthropic docx skill**, NOT docx-cli. Judge it from the **Word RENDERS + the criteria.md** — those are the primary, authoritative evidence here. \`taskSuccess\`, \`rendersCorrectly\`, and \`formattingPreserved\` MUST be decided from the rendered pages read against the rubric. The \`${binary} read\` step below is OPTIONAL for this arm and only a convenience inspector — if docx-cli cannot read a file that Word renders correctly, that is NOT a competitor failure (it reflects docx-cli's reader, which is not the tool under test), so do NOT lower any verdict (including \`survivedReadLoop\`) on that basis. Set \`survivedReadLoop\` from whether the intended content is actually present in the render.`,
+		synthClause:
+			" (the competitor arm — this report characterizes how the Anthropic docx skill fared on the same tasks docx-cli is graded on)",
+	},
+};
+if (!ARMS[arm]) {
+	throw new Error(
+		`Unknown arm "${arm}". Known arms: ${Object.keys(ARMS).join(", ")}.`,
+	);
+}
+if (arm === "anthropic-docx-skill" && !competitorDir) {
+	throw new Error(
+		"arm 'anthropic-docx-skill' requires args.competitorDir — the staged Anthropic docx skill folder (run scripts/stage-competitor.sh first).",
+	);
+}
+const toolName = ARMS[arm].toolName;
+
 // Orchestration manifest, keyed by scenario folder name. The CONTENT of each
 // scenario — its request, grading rubric, fixture, and extra assets —
 // lives in `<scenariosDir>/<key>/` (task.md, criteria.md, the .docx, assets/), NOT
@@ -136,6 +172,10 @@ log(
 	`Adversarial review: ${active.length} scenario(s) — ${active.map((scenario) => scenario.key).join(", ")}`,
 );
 log(`Binary under test: ${binary}`);
+log(`Arm: ${arm} (tool under test: ${toolName})`);
+if (arm === "anthropic-docx-skill") {
+	log(`Competitor skill dir: ${competitorDir}`);
+}
 log(`Run workspace: ${runDir}`);
 
 // Schemas are defined here (not at the bottom) because `const` is not hoisted —
@@ -409,13 +449,24 @@ const report = await agent(synthPrompt(active, exercises, verdicts, benchmark), 
 	agentType: "general-purpose",
 });
 
-return { report, runDir, binary, exercises, verdicts, benchmark };
+return { arm, report, runDir, binary, exercises, verdicts, benchmark };
 
 // ===========================================================================
 // Prompt builders (hoisted function declarations)
 // ===========================================================================
 
+// Dispatch the exercise prompt by arm. The docx-cli arm (default) is the original
+// prompt, unchanged; the anthropic-docx-skill arm is the fair competitor analog —
+// same task, same scenario folder, same structured report, but its toolset is the
+// Anthropic docx skill (read its SKILL.md, run its scripts, hand-edit OOXML) instead
+// of the docx-cli binary.
 function exercisePrompt(scenario) {
+	return arm === "anthropic-docx-skill"
+		? exercisePromptAnthropic(scenario)
+		: exercisePromptDocxCli(scenario);
+}
+
+function exercisePromptDocxCli(scenario) {
 	const dir = `${runDir}/${scenario.key}`;
 	const workLine =
 		scenario.kind === "edit"
@@ -459,6 +510,60 @@ Return the structured result. Be brutally honest — surfacing rough edges is th
 - otherToolCalls: the exact integer count of every NON-docx tool call you made (reading the task/brief/asset files, ls, cat, any non-docx shell). Do NOT count docx-cli runs here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into docx-cli versus working around it, so count carefully.
 - deadEnds: wrong turns, retries, things you expected to work but didn't.
 - frictions: concrete "what could have been easier?" points, each with severity (blocker | major | minor) and a suggested fix. Include discoverability gaps (couldn't find the right command/flag), confusing output, and anything that made a weak agent likely to fail.
+- outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
+}
+
+// The competitor arm's exercise prompt. Deliberately MIRRORS exercisePromptDocxCli —
+// same role framing, same scenario folder, same isolation rules, same structured
+// report — so the only variable is the toolset. Here the toolset is the Anthropic
+// docx skill at ${competitorDir}: the agent reads its SKILL.md and follows it, and is
+// explicitly permitted to do everything that skill prescribes (unpack the .docx,
+// hand-edit OOXML, run the Python helper scripts, use python-docx / the Node \`docx\`
+// library / pandoc). Giving the competitor its full, intended toolset is the fairness
+// requirement — an under-equipped competitor would void the comparison.
+function exercisePromptAnthropic(scenario) {
+	const dir = `${runDir}/${scenario.key}`;
+	const workLine =
+		scenario.kind === "edit"
+			? `Your working document (already a private copy — edit it IN PLACE, inside your scenario folder):\n  ${dir}/${scenario.doc}`
+			: `You are authoring from scratch. Create your output at EXACTLY this path:\n  ${dir}/${scenario.doc}`;
+
+	return `You are stress-testing **the Anthropic "docx" Agent Skill**, the official skill for creating, reading, editing, and commenting on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent (think Haiku): you have NOT used this skill before. Discover everything you need from the skill's own instructions — do not assume a workflow.
+
+The docx skill is installed at this absolute path:
+  ${competitorDir}
+
+Start by orienting yourself — READ the skill's instructions and follow them:
+  ${competitorDir}/SKILL.md     (the skill itself — read it FULLY before you start; it defines the workflow, the helper scripts, and the conventions)
+The skill's helper scripts live under:
+  ${competitorDir}/scripts/      (e.g. scripts/office/unpack.py, scripts/office/pack.py, scripts/comment.py, scripts/accept_changes.py — resolve the SKILL.md's relative paths against ${competitorDir})
+
+${workLine}
+
+Everything you need for the TASK is in YOUR scenario folder:
+  ${dir}
+Read these with the Read tool before you start:
+  ${dir}/task.md     — what you've been asked to do: the full request, in plain terms
+  ${dir}/assets/     — any additional input files (data, images). \`ls\` it; if it holds files, Read them. It may be empty.
+
+## Your task — ${scenario.bucket}  (scenario: ${scenario.key})
+Read ${dir}/task.md, then carry the task out on the working document above. The request describes the OUTCOME the person wants — it's on you to work out, FROM THE SKILL, which techniques get you there (that discovery is part of what's being measured).
+
+## Rules
+- STAY IN YOUR SCENARIO FOLDER for task work. The only document you touch is the working file above; the only task inputs you read live under ${dir} (task.md, assets/). Do all unpacking/scratch work INSIDE ${dir} (e.g. unpack into ${dir}/unpacked). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories) and do NOT copy files in from elsewhere — the run workspace holds OTHER scenarios' look-alike fixtures that are NOT yours, and touching them corrupts the test. The ONE exception: you MAY read and run the skill's own files under ${competitorDir}.
+- Use the Anthropic docx skill — its documented workflow and helper scripts — to do the work. You ARE permitted (and expected, where the SKILL.md directs) to unpack the .docx, hand-edit the unpacked OOXML XML, run the skill's Python scripts, and use python-docx, the Node \`docx\` library, and pandoc. These are all already installed. This is exactly what's being tested: the skill, with the full toolset a real user of it would have.
+- You MAY use the Read tool on your task.md / assets and on the skill's own files, and inspect your progress however the skill suggests (e.g. \`pandoc\`, or re-unpacking the .docx).
+- If a step fails or confuses you, try at most ~3 reasonable alternatives, then RECORD it as friction and move on. Do not loop forever on one step.
+- Make a genuine, complete attempt. Finish the task if you can.
+
+## What to report (this is the actual product of your run)
+Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose:
+- completed: yes | partial | no
+- summary: one short paragraph of what you actually accomplished.
+- docxCommands: EVERY document-work command you ran, in order — each helper-script invocation (unpack/pack/comment/accept_changes), each pandoc call, each Node \`docx\` script run, and each raw-XML edit step — with outcome (ok | error | confusing) and a brief note (especially WHY something errored or confused you). This is your tool economy and it is measured — be complete and accurate.
+- otherToolCalls: the exact integer count of every OTHER tool call (reading task/asset files, ls, cat, generic shell that wasn't a document operation). Do NOT count the document-work commands above here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into the skill versus working around it, so count carefully.
+- deadEnds: wrong turns, retries, things you expected to work but didn't.
+- frictions: concrete "what could have been easier?" points, each with severity (blocker | major | minor) and a suggested fix. Include discoverability gaps, confusing output, and anything that made a weak agent likely to fail.
 - outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
 }
 
@@ -527,7 +632,10 @@ function judgePrompt(scenario, exercise, render) {
 		? `Rendered: ${render.rendered}. Output page PNGs:\n${pages.map((p) => `  ${p}`).join("\n") || "  (none)"}${baselinePages.length ? `\nBaseline page PNGs:\n${baselinePages.map((p) => `  ${p}`).join("\n")}` : ""}${render.error ? `\nRender error: ${render.error}` : ""}`
 		: "(no render result for this scenario)";
 
-	return `You are a STRICT evaluator judging whether docx-cli let a weak (Haiku) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.
+	// Competitor-arm judge preamble (empty for docx-cli) — see ARMS.
+	const armNote = ARMS[arm].judgeNote;
+
+	return `You are a STRICT evaluator judging whether ${toolName} let a weak (Haiku) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.${armNote}
 
 ## Scenario: ${scenario.key} — ${scenario.bucket}
 Two files define this evaluation — READ BOTH first:
@@ -577,7 +685,9 @@ function synthPrompt(scenarios, exercises, verdicts, benchmark) {
 		2,
 	);
 
-	return `You are writing the final report of an adversarial usability review of **docx-cli**. Weak (Haiku) agents attempted ${scenarios.length} real document tasks; a stricter judge then graded each result against ground truth using Word renders and the write→read loop. Your audience is the engineer who maintains docx-cli. The central question: **can weak agents actually use this tool to get real work done, and what should we fix first?**
+	// Competitor-arm synth qualifier (empty for docx-cli) — see ARMS.
+	const armClause = ARMS[arm].synthClause;
+	return `You are writing the final report of an adversarial usability review of **${toolName}**. Weak (Haiku) agents attempted ${scenarios.length} real document tasks; a stricter judge then graded each result against ground truth using Word renders and the write→read loop. Your audience is the engineer who maintains docx-cli${armClause}. The central question: **can weak agents actually use this tool to get real work done, and what should we fix first?**
 
 Here is all the data (every weak agent's self-report + every judge verdict):
 \`\`\`json
@@ -646,7 +756,7 @@ function buildBenchmark(exerciseResults) {
 	const otherCalls = perScenario.reduce((acc, row) => acc + row.otherCalls, 0);
 	const totalCalls = docxCalls + otherCalls;
 	return {
-		note: "Haiku exercise agents only. Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).",
+		note: `Exercise agents only (model: ${exerciseModel}). Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).`,
 		perScenario,
 		totals: {
 			scenarios: perScenario.length,

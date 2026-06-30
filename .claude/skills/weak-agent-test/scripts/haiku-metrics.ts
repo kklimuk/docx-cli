@@ -8,7 +8,7 @@
  * post-run pass reconstructs them — accurately, and only for the Haiku exercise agents.
  *
  * Usage:
- *   haiku-metrics.ts <transcript_dir> <run_dir> <binary_path>
+ *   haiku-metrics.ts <transcript_dir> <run_dir> <binary_path> [exercise_model]
  *
  * <transcript_dir> is the "Transcript dir" printed when the workflow was launched
  * (…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
@@ -18,8 +18,10 @@
  */
 
 const USAGE = `Usage:
-  haiku-metrics.ts <transcript_dir> <run_dir> <binary_path>
+  haiku-metrics.ts <transcript_dir> <run_dir> <binary_path> [exercise_model]
 
+[exercise_model] is the model the exercise agents ran (default "haiku"); pass the
+workflow's args.model here (e.g. "sonnet") so the matching agents are measured.
 <transcript_dir> is the "Transcript dir" printed when the workflow was launched
 (…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
 <run_dir>/haiku-metrics.json, drops each scenario's row into <run_dir>/<key>/metrics.json,
@@ -540,6 +542,11 @@ async function main(): Promise<void> {
 		process.exit(2);
 	}
 	const [transcriptDir, runDir, binary] = argv;
+	// Optional 4th arg: the exercise-agent model substring to measure (default "haiku").
+	// The workflow's `model` override (args.model) can probe a stronger model (e.g.
+	// "sonnet"); pass that same substring here so the matching exercise agents are the
+	// ones measured, not silently filtered out.
+	const modelFilter = (argv[3] || "haiku").toLowerCase();
 
 	const paths: string[] = [];
 	for await (const path of new Bun.Glob("agent-*.jsonl").scan({
@@ -553,11 +560,19 @@ async function main(): Promise<void> {
 	const rows: AgentRow[] = [];
 	for (const path of paths) {
 		const row = await measureAgent(path, binary ?? "");
-		// Haiku exercise agents only — the opus render/judge/synth agents don't count.
-		if (!row.model || !row.model.includes("haiku")) {
+		// Exercise agents only (matched by model substring) — the opus render/judge/synth
+		// agents don't count.
+		if (!row.model || !row.model.toLowerCase().includes(modelFilter)) {
 			continue;
 		}
 		rows.push(row);
+	}
+
+	if (rows.length === 0 && paths.length > 0) {
+		process.stderr.write(
+			`haiku-metrics: 0 of ${paths.length} agent transcripts matched the model filter ` +
+				`"${modelFilter}" — for a non-haiku run, pass the exercise model as the 4th arg.\n`,
+		);
 	}
 
 	rows.sort((a, b) => {
