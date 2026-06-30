@@ -4,6 +4,8 @@ description: "Review code for security vulnerabilities. Use when the user says '
 context: fork
 agent: general-purpose
 allowed-tools: Read Grep Glob Bash(git diff:*) Bash(git log:*) Bash(git status:*) Bash(git show:*) WebFetch
+metadata:
+  internal: true
 ---
 
 # Security Review

@@ -2,6 +2,8 @@
 name: weak-agent-test
 description: "Run the weak-agent (Haiku) adversarial test harness against docx-cli. Spawns Haiku agents to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, judges them, measures the Haiku tool economy (docx-cli vs other calls), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
 allowed-tools: Bash, Read, Write, Glob, Workflow
+metadata:
+  internal: true
 ---
 
 # Adversarial review — weak-agent harness for docx-cli

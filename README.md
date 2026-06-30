@@ -76,6 +76,12 @@ docx-cli ships as an [Agent Skill](https://agentskills.io) — one `SKILL.md` th
 
 ### Install
 
+**Any agent ([skills.sh](https://skills.sh))** — one cross-harness command, installs into whichever agent you're using:
+
+```sh
+npx skills add kklimuk/docx-cli
+```
+
 **Claude Code** — one-line plugin install:
 
 ```

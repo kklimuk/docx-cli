@@ -73,3 +73,6 @@ docs/.jekyll-metadata
 .worktrees/
 
 __pycache__
+
+# `npx skills add` writes this consumer lockfile when run inside the repo
+skills-lock.json

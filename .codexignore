@@ -1,0 +1,17 @@
+# Files Codex should not load when this plugin/skill is active.
+# The Codex plugin ships only the skill (skills/, via .codex-plugin/plugin.json);
+# everything below is project source/build/test material the agent never needs in context.
+node_modules/
+dist/
+build/
+coverage/
+tmp/
+.worktrees/
+.github/
+src/
+tests/
+docs/
+.claude/
+*.docx
+*.png
+*.wasm

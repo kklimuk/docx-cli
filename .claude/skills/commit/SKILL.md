@@ -1,6 +1,8 @@
 ---
 name: commit
 description: "Create well-structured git commits from the current working tree. Use when the user says 'commit', 'save my work', 'let's commit this', 'make a commit', or any variation of wanting to commit code to git."
+metadata:
+  internal: true
 ---
 
 # Commit
