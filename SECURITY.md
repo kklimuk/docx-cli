@@ -19,6 +19,10 @@ curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh | 
 bun add -g bun-docx
 ```
 
+## Install integrity
+
+Every release publishes a `SHA256SUMS` manifest alongside the prebuilt binaries. `install.sh` and the skill's `scripts/bootstrap.sh` download the binary, **verify its SHA-256** against that manifest, and pin to a release tag (not a moving branch) before installing — they never pipe a remote script into a shell.
+
 ## Scope and data handling
 
 docx-cli runs entirely **locally** against `.docx` files on disk and transmits no document content anywhere. The only network activity is:

@@ -60,11 +60,13 @@ else
   exit 1
 fi
 
-# ─── Compose URL ───
+# ─── Compose URLs (binary + the release's checksum manifest) ───
 if [ "$VERSION" = "latest" ]; then
   url="https://github.com/${REPO}/releases/latest/download/${target}"
+  sums_url="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
 else
   url="https://github.com/${REPO}/releases/download/${VERSION}/${target}"
+  sums_url="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
 fi
 
 # ─── Download and install ───
@@ -79,6 +81,39 @@ trap 'rm -f "$tmp_path"' EXIT INT TERM
 
 echo "→ Downloading $target from $url"
 download "$url" "$tmp_path"
+
+# ─── Verify the download against the release's published SHA256SUMS ───
+if command -v sha256sum >/dev/null 2>&1; then
+  sha_cmd="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  sha_cmd="shasum -a 256"
+else
+  sha_cmd=""
+fi
+if [ -n "$sha_cmd" ]; then
+  sums_path="$(mktemp 2>/dev/null || mktemp -t docx-cli-sums)"
+  if ! download "$sums_url" "$sums_path" || [ ! -s "$sums_path" ]; then
+    rm -f "$sums_path"
+    echo "Error: could not download SHA256SUMS from $sums_url — refusing to install an unverified binary." >&2
+    exit 1
+  fi
+  expected="$(awk -v f="$target" '$2 == f || $2 == "*"f { print $1; exit }' "$sums_path")"
+  rm -f "$sums_path"
+  if [ -z "$expected" ]; then
+    echo "Error: no checksum for $target in SHA256SUMS — refusing to install." >&2
+    exit 1
+  fi
+  actual="$($sha_cmd "$tmp_path" | awk '{print $1}')"
+  if [ "$actual" != "$expected" ]; then
+    echo "Error: SHA-256 mismatch for $target — refusing to install." >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    exit 1
+  fi
+  echo "✓ Verified SHA-256 ($target)"
+else
+  echo "Warning: no sha256sum/shasum found — installing WITHOUT integrity verification." >&2
+fi
 
 chmod +x "$tmp_path"
 mv "$tmp_path" "$target_path"

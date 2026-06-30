@@ -2,12 +2,15 @@
 
 ## `docx: command not found`
 
-The binary isn't on PATH. Install it (or run `scripts/bootstrap.sh`, which also
-self-updates a stale install):
+The binary isn't on PATH. Install it — prefer npm (no shell piping):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh | sh
+bun add -g bun-docx      # or: npm install -g bun-docx   (needs Bun >= 1.3)
 ```
+
+No Bun? Run `scripts/bootstrap.sh` — it pins to the latest release, downloads the
+prebuilt binary, and verifies its SHA-256 before installing (and self-updates a
+stale install).
 
 It installs to `~/.local/bin/docx` by default. Make sure that directory is on
 your `PATH` (`export PATH="$HOME/.local/bin:$PATH"`). Set `PREFIX=/usr/local/bin`

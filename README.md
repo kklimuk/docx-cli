@@ -10,28 +10,21 @@
 
 ## Install
 
-**Standalone binary** (no Bun required):
+**npm** — the simplest path (requires Bun >= 1.3):
+
+```sh
+bun add -g bun-docx
+# or run without installing:
+bunx bun-docx read doc.docx
+```
+
+**Standalone binary** (no Bun required). Every release publishes prebuilt binaries plus a `SHA256SUMS` manifest, and the installer **verifies the binary's SHA-256** before installing:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh | sh
 ```
 
-Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`):
-
-```sh
-PREFIX=/usr/local sh -c "$(curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh)"
-VERSION=v0.2.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh)"
-```
-
-Pre-built binaries are published for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64.
-
-**npm** (requires Bun >= 1.3):
-
-```sh
-bun add -g bun-docx
-# or
-bunx bun-docx read doc.docx
-```
+Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64. Prefer to inspect first? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
 
 ## Quick example: filling out an NDA
 

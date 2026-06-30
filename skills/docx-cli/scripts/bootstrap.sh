@@ -5,22 +5,28 @@
 # activated this skill can rely on it. Run it once at the start of a session:
 #   bash scripts/bootstrap.sh
 #
-# Behavior:
-#   - not installed  -> install the latest release via the canonical installer
-#   - installed       -> compare against the latest GitHub release tag; if behind,
-#                        self-update (re-running the installer, which fetches latest)
-#   - no network / can't determine latest -> leave the working binary in place and
-#                        exit 0 (every verb except `render` works offline anyway)
+# Supply-chain posture (why this is NOT a `curl | sh`):
+#   - It resolves the latest RELEASE TAG (not the moving `main` branch).
+#   - It downloads that tag's install.sh to a FILE (never pipes a remote script into a
+#     shell), then runs it pinned to that exact version.
+#   - install.sh downloads the prebuilt binary and VERIFIES its SHA-256 against the
+#     release's published SHA256SUMS before installing.
 #
-# POSIX sh, no bashisms. The binary is the source of truth — this script only keeps
-# it present and fresh; it never edits the skill.
+# Behavior:
+#   - not installed -> resolve latest tag, install it (pinned + checksum-verified)
+#   - installed     -> compare against the latest release; update only if BEHIND
+#   - offline / can't resolve latest -> keep the working binary and exit 0 (every verb
+#     except `render` works offline anyway)
+#
+# POSIX sh, no bashisms. The binary is the source of truth — this script only keeps it
+# present and fresh; it never edits the skill.
 
 set -eu
 
 REPO="kklimuk/docx-cli"
-INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
+API_LATEST="https://api.github.com/repos/${REPO}/releases/latest"
 
-# ─── Pick a downloader (shared by the version check and the installer fetch) ───
+# ─── Pick a downloader (fetch a URL to stdout) ───
 if command -v curl >/dev/null 2>&1; then
   fetch() { curl -fsSL "$1"; }
 elif command -v wget >/dev/null 2>&1; then
@@ -30,26 +36,34 @@ else
   exit 1
 fi
 
-# Download install.sh to a temp file FIRST, then run it — so a failed/empty download
-# is caught here instead of being silently swallowed (`fetch | sh` would let `sh` read
-# empty stdin and exit 0, masking the failure). Returns the installer's exit status.
+# Resolve the latest release tag (e.g. "v0.19.1"), best-effort; empty on failure.
+resolve_latest_tag() {
+  fetch "$API_LATEST" 2>/dev/null \
+    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+# Install the given release tag: download THAT TAG's install.sh to a file (no
+# pipe-to-shell), then run it pinned to the tag so it fetches and SHA-256-verifies the
+# matching binary. Returns the installer's exit status.
 run_installer() {
-  echo "→ Installing docx-cli (latest) ..."
+  tag="$1"
+  installer_url="https://raw.githubusercontent.com/${REPO}/${tag}/install.sh"
+  echo "→ Installing docx-cli ${tag} (pinned, checksum-verified) ..."
   installer="$(mktemp 2>/dev/null || mktemp -t docx-cli-install)"
-  if ! fetch "$INSTALL_URL" > "$installer" || [ ! -s "$installer" ]; then
+  if ! fetch "$installer_url" > "$installer" || [ ! -s "$installer" ]; then
     rm -f "$installer"
-    echo "docx-cli bootstrap: could not download the installer from $INSTALL_URL (offline or rate-limited)." >&2
+    echo "docx-cli bootstrap: could not download the installer from $installer_url (offline or rate-limited)." >&2
     return 1
   fi
-  if sh "$installer"; then rc=0; else rc=$?; fi
+  if VERSION="$tag" sh "$installer"; then rc=0; else rc=$?; fi
   rm -f "$installer"
   return "$rc"
 }
 
 # install.sh drops the binary in ${PREFIX:-$HOME/.local/bin} and only PRINTS a PATH hint
-# — it can't edit the caller's PATH. So after installing, confirm `docx` is actually
-# resolvable and fail LOUDLY if not, rather than reporting a false success the agent
-# trips over on its first `docx` call (and re-downloading from scratch every session).
+# — it can't edit the caller's PATH. So after installing, confirm `docx` is resolvable
+# and fail LOUDLY if not, rather than reporting a false success the agent trips over on
+# its first `docx` call (and re-downloading every session).
 ensure_reachable() {
   command -v docx >/dev/null 2>&1 && return 0
   bindir="${PREFIX:-$HOME/.local/bin}"
@@ -59,10 +73,15 @@ ensure_reachable() {
   return 1
 }
 
-# ─── Not installed: install, confirm reachable, finish ───
+# ─── Not installed: resolve tag, install pinned + verified, finish ───
 if ! command -v docx >/dev/null 2>&1; then
   echo "docx not found on PATH."
-  run_installer || exit 1
+  tag="$(resolve_latest_tag)"
+  if [ -z "$tag" ]; then
+    echo "docx-cli bootstrap: could not resolve the latest release (offline or rate-limited) — cannot install safely." >&2
+    exit 1
+  fi
+  run_installer "$tag" || exit 1
   ensure_reachable || exit 1
   exit 0
 fi
@@ -70,17 +89,14 @@ fi
 installed="$(docx --version 2>/dev/null | awk '{print $NF}')"
 echo "docx-cli present: ${installed:-unknown}"
 
-# Couldn't read a version (broken or changed --version output)? Do NOT enter a reinstall
-# loop — the binary is present and resolvable; leave it and exit clean.
+# Couldn't read a version? Don't enter a reinstall loop — leave the present binary.
 if [ -z "$installed" ]; then
   echo "Could not read the installed version — leaving the present binary in place."
   exit 0
 fi
 
-# ─── Determine the latest released version (best-effort) ───
-latest_json="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
-latest="$(printf '%s' "$latest_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)"
-
+tag="$(resolve_latest_tag)"
+latest="$(printf '%s' "$tag" | sed 's/^v//')"
 if [ -z "$latest" ]; then
   echo "Could not determine the latest release (offline or rate-limited) — keeping the installed binary."
   exit 0
@@ -92,8 +108,8 @@ if [ "$installed" = "$latest" ]; then
 fi
 
 # Versions differ. Only UPDATE when installed is OLDER than latest — never downgrade a
-# locally-built/pre-release binary that's ahead of the published release. Use version
-# sort when the platform's `sort` supports -V; otherwise fall back to updating.
+# locally-built/pre-release binary ahead of the published release. Use version sort when
+# the platform's `sort` supports -V; otherwise fall back to updating.
 if printf '%s\n' "0.0" "0.1" | sort -V >/dev/null 2>&1; then
   oldest="$(printf '%s\n%s\n' "$installed" "$latest" | sort -V | head -n 1)"
   if [ "$oldest" != "$installed" ]; then
@@ -103,5 +119,5 @@ if printf '%s\n' "0.0" "0.1" | sort -V >/dev/null 2>&1; then
 fi
 
 echo "A newer release is available: ${installed} -> ${latest}."
-run_installer || { echo "docx-cli bootstrap: update failed — keeping ${installed}." >&2; exit 1; }
+run_installer "$tag" || { echo "docx-cli bootstrap: update failed — keeping ${installed}." >&2; exit 1; }
 ensure_reachable || exit 1
