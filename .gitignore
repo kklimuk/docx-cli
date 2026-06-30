@@ -61,7 +61,13 @@ temp/
 
 # Local sample / scratch docs
 scripts/data/
-docs/
+# docs/ is the published GitHub Pages site (committed). Internal review notes go in
+# docs/_notes/ — kept out of git, and out of the Jekyll build too (a leading-underscore
+# dir is ignored by Jekyll natively). Local Jekyll build output is ignored as well.
+docs/_notes/
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
 
 # worktrees
 .worktrees/

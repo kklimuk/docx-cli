@@ -1,0 +1,6 @@
+title: docx-cli
+description: >-
+  A .docx CLI built for AI agents — redline, comment, fill, and build Word
+  documents reliably, even on the cheapest models.
+theme: jekyll-theme-cayman
+show_downloads: false
