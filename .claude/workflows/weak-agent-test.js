@@ -56,11 +56,34 @@ const only = normalizeOnly(parsedArgs.only);
 // stronger model (e.g. "sonnet"): does it ACT on the read-time hints/cures a weaker
 // agent ignores? Only the exercise agent changes; render/judge/synth are unaffected.
 const exerciseModel = parsedArgs.model || "haiku";
+// Exercise backend: "claude" (default — spawn a Haiku/Sonnet subagent per scenario,
+// the original behavior) or "gemma" (the LOCAL agent-harness ran the exercises OUT OF
+// BAND via run-gemma-corpus.sh; their parsed EXERCISE_SCHEMA results arrive in
+// parsedArgs.exercises and this workflow only renders/judges/synthesizes them). The
+// gemma path SKIPS Stage + Exercise — the external run already staged each folder and
+// left the worked doc + its result. Render/Judge/Synthesize are model-agnostic and
+// consume the same shape, so nothing downstream changes.
+const exerciseBackend = parsedArgs.exerciseBackend || "claude";
+const usingGemma = exerciseBackend === "gemma";
+const preExercises = Array.isArray(parsedArgs.exercises) ? parsedArgs.exercises : [];
+const preByKey = new Map(preExercises.map((entry) => [entry.key, entry]));
+// Human label for the subject-under-test model, spliced into judge/synth prompts.
+const modelLabel = usingGemma
+	? parsedArgs.modelLabel || "Gemma E4B (local)"
+	: exerciseModel;
+// For gemma the tool counts are LEDGER-MEASURED (accurate), not self-reported like the
+// Claude arm's — so the synth's accuracy caveat flips.
+const benchmarkAccuracyNote = usingGemma
+	? "IMPORTANT: these docx/other tool counts are LEDGER-MEASURED from the local harness session logs (every tool call + its exit code), NOT self-reported — treat them as accurate totals. (There is no separate transcript-measured section appended for this run.)"
+	: 'CRITICAL framing: the `benchmark` counts are SELF-REPORTED by the weak agents and routinely UNDERCOUNT (agents miss ~half their own calls), so do NOT present them as authoritative totals — label any number you cite as "self-reported (approximate)" and point the reader to the transcript-**measured** "Haiku tool & cost economy" section the harness appends below your report (which also carries a run-over-run comparison) as the source of truth.';
 if (!runDir || !binary || !scenariosDir) {
 	throw new Error(
 		"weak-agent-test requires args { runDir, binary, scenariosDir }",
 	);
 }
+// Gemma backend gets its exercise results either INLINE (args.exercises) or, more
+// commonly, loaded from disk by an agent in the Stage slot (see below) — the local
+// run leaves <runDir>/<key>/exercise.json. So no inline requirement here.
 
 // A/B arm: "docx-cli" (DEFAULT — the existing single-tool harness, unchanged) or
 // "anthropic-docx-skill" (the competitor: Anthropic's bundled python/raw-OOXML docx
@@ -201,6 +224,46 @@ const STAGE_SCHEMA = {
 	},
 };
 
+// Gemma backend only: the Stage-slot LOAD agent reads each scenario's pre-produced
+// exercise.json off disk and returns them here (verbatim). additionalProperties:true
+// so the ledger's extra `_gemma` block rides along harmlessly.
+const LOAD_SCHEMA = {
+	type: "object",
+	additionalProperties: false,
+	required: ["exercises"],
+	properties: {
+		exercises: {
+			type: "array",
+			items: {
+				type: "object",
+				additionalProperties: true,
+				required: ["key", "completed", "docxCommands", "otherToolCalls", "outputPath"],
+				properties: {
+					key: { type: "string" },
+					completed: { type: "string" },
+					summary: { type: "string" },
+					docxCommands: {
+						type: "array",
+						items: {
+							type: "object",
+							additionalProperties: true,
+							required: ["cmd", "outcome"],
+							properties: {
+								cmd: { type: "string" },
+								outcome: { type: "string" },
+							},
+						},
+					},
+					otherToolCalls: { type: "integer" },
+					deadEnds: { type: "array", items: { type: "string" } },
+					frictions: { type: "array", items: { type: "object", additionalProperties: true } },
+					outputPath: { type: "string" },
+				},
+			},
+		},
+	},
+};
+
 const EXERCISE_SCHEMA = {
 	type: "object",
 	additionalProperties: false,
@@ -329,27 +392,58 @@ const VERDICT_SCHEMA = {
 // the exercise token snapshot below, so it doesn't pollute the Haiku measurement.
 // ---------------------------------------------------------------------------
 phase("Stage");
-const stageTargets = active.map((scenario) => ({
-	key: scenario.key,
-	srcDir: `${scenariosDir}/${scenario.key}`,
-	dstDir: `${runDir}/${scenario.key}`,
-	requireDoc: scenario.kind === "edit" ? scenario.doc : null,
-}));
-const stageResult = await agent(stagePrompt(stageTargets), {
-	label: "stage:inputs",
-	phase: "Stage",
-	agentType: "general-purpose",
-	schema: STAGE_SCHEMA,
-});
-const stageMissing = (stageResult && stageResult.missing) || [];
-if (stageMissing.length) {
-	throw new Error(
-		`Staging failed — these inputs never landed in the run dir:\n  ${stageMissing.join("\n  ")}\nCheck that the scenario folders exist under ${scenariosDir}.`,
+if (usingGemma) {
+	// The local harness already staged each folder AND ran the exercise out of band,
+	// leaving <runDir>/<key>/exercise.json. Re-staging would clobber the worked docs,
+	// so instead of a Stage copy we LOAD those results here (inline args.exercises
+	// wins if provided; otherwise an agent reads them off disk — the workflow's JS has
+	// no filesystem access of its own).
+	if (preByKey.size === 0) {
+		const loadTargets = active.map((scenario) => ({
+			key: scenario.key,
+			path: `${runDir}/${scenario.key}/exercise.json`,
+		}));
+		const loaded = await agent(loadPrompt(loadTargets), {
+			label: "load:gemma-exercises",
+			phase: "Stage",
+			agentType: "general-purpose",
+			schema: LOAD_SCHEMA,
+		});
+		for (const entry of (loaded && loaded.exercises) || []) {
+			if (entry && entry.key) preByKey.set(entry.key, entry);
+		}
+	}
+	if (preByKey.size === 0) {
+		throw new Error(
+			`Gemma backend: no exercise results — pass args.exercises or ensure ${runDir}/<key>/exercise.json exists (run run-gemma-corpus.sh first).`,
+		);
+	}
+	log(
+		`Gemma backend: loaded ${preByKey.size} pre-produced result(s): ${[...preByKey.keys()].join(", ")}`,
+	);
+} else {
+	const stageTargets = active.map((scenario) => ({
+		key: scenario.key,
+		srcDir: `${scenariosDir}/${scenario.key}`,
+		dstDir: `${runDir}/${scenario.key}`,
+		requireDoc: scenario.kind === "edit" ? scenario.doc : null,
+	}));
+	const stageResult = await agent(stagePrompt(stageTargets), {
+		label: "stage:inputs",
+		phase: "Stage",
+		agentType: "general-purpose",
+		schema: STAGE_SCHEMA,
+	});
+	const stageMissing = (stageResult && stageResult.missing) || [];
+	if (stageMissing.length) {
+		throw new Error(
+			`Staging failed — these inputs never landed in the run dir:\n  ${stageMissing.join("\n  ")}\nCheck that the scenario folders exist under ${scenariosDir}.`,
+		);
+	}
+	log(
+		`Staged ${active.length} scenario folder(s): ${active.map((scenario) => scenario.key).join(", ")}`,
 	);
 }
-log(
-	`Staged ${active.length} scenario folder(s): ${active.map((scenario) => scenario.key).join(", ")}`,
-);
 
 // ---------------------------------------------------------------------------
 // Phases 1–3 — Exercise → Render → Judge, PIPELINED per scenario. Each scenario
@@ -374,15 +468,21 @@ phase("Exercise");
 let renderGate = Promise.resolve();
 
 const pipelines = active.map((scenario) => {
-	const exerciseP = agent(exercisePrompt(scenario), {
-		label: `exercise:${scenario.key}`,
-		phase: "Exercise",
-		model: exerciseModel,
-		agentType: "general-purpose",
-		schema: EXERCISE_SCHEMA,
-	})
-		.then((result) => (result ? { ...result, key: scenario.key } : null))
-		.catch(() => null);
+	const exerciseP = usingGemma
+		? Promise.resolve(
+				preByKey.has(scenario.key)
+					? { ...preByKey.get(scenario.key), key: scenario.key }
+					: null,
+			)
+		: agent(exercisePrompt(scenario), {
+				label: `exercise:${scenario.key}`,
+				phase: "Exercise",
+				model: exerciseModel,
+				agentType: "general-purpose",
+				schema: EXERCISE_SCHEMA,
+			})
+				.then((result) => (result ? { ...result, key: scenario.key } : null))
+				.catch(() => null);
 
 	// Render fires as soon as THIS exercise resolves, queued behind any in-flight
 	// render. Skip if the exercise produced nothing.
@@ -635,7 +735,7 @@ function judgePrompt(scenario, exercise, render) {
 	// Competitor-arm judge preamble (empty for docx-cli) — see ARMS.
 	const armNote = ARMS[arm].judgeNote;
 
-	return `You are a STRICT evaluator judging whether ${toolName} let a weak (Haiku) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.${armNote}
+	return `You are a STRICT evaluator judging whether ${toolName} let a weak (${modelLabel}) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.${armNote}
 
 ## Scenario: ${scenario.key} — ${scenario.bucket}
 Two files define this evaluation — READ BOTH first:
@@ -687,7 +787,7 @@ function synthPrompt(scenarios, exercises, verdicts, benchmark) {
 
 	// Competitor-arm synth qualifier (empty for docx-cli) — see ARMS.
 	const armClause = ARMS[arm].synthClause;
-	return `You are writing the final report of an adversarial usability review of **${toolName}**. Weak (Haiku) agents attempted ${scenarios.length} real document tasks; a stricter judge then graded each result against ground truth using Word renders and the write→read loop. Your audience is the engineer who maintains docx-cli${armClause}. The central question: **can weak agents actually use this tool to get real work done, and what should we fix first?**
+	return `You are writing the final report of an adversarial usability review of **${toolName}**. Weak (${modelLabel}) agents attempted ${scenarios.length} real document tasks; a stricter judge then graded each result against ground truth using Word renders and the write→read loop. Your audience is the engineer who maintains docx-cli${armClause}. The central question: **can weak agents actually use this tool to get real work done, and what should we fix first?**
 
 Here is all the data (every weak agent's self-report + every judge verdict):
 \`\`\`json
@@ -699,7 +799,7 @@ Write a thorough, prioritized Markdown report with these sections:
 1. **Executive summary** — can weak agents use docx-cli today? Overall pass rate, the headline strengths, and the 2–3 biggest problems.
 2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly | formatting preserved | docx calls | other tool calls | top merit | top demerit. The docx/other call counts come from \`benchmark.perScenario\`.
 2b. **Per-task merits & demerits** — for EVERY scenario, a short block listing its merits (what worked) and its demerits (defects/failures) from the judge verdicts. The user explicitly wants both sides for each task.
-2c. **Tool economy** — a short subsection on the Haiku tool split from \`benchmark\`. Keep this QUALITATIVE: per-scenario outliers (which tasks needed the most docx calls or the most non-docx workaround calls), the friction patterns they reveal, and what that says about ergonomics. A high non-docx share, or many docx calls for a simple task, is a friction signal. CRITICAL framing: the \`benchmark\` counts are SELF-REPORTED by the weak agents and routinely UNDERCOUNT (agents miss ~half their own calls), so do NOT present them as authoritative totals — label any number you cite as "self-reported (approximate)" and point the reader to the transcript-**measured** "Haiku tool & cost economy" section the harness appends below your report (which also carries a run-over-run comparison) as the source of truth. Prefer relative/ordinal claims ("resume needed the most calls") over absolute totals here.
+2c. **Tool economy** — a short subsection on the ${modelLabel} tool split from \`benchmark\`. Keep this QUALITATIVE: per-scenario outliers (which tasks needed the most docx calls or the most non-docx workaround calls), the friction patterns they reveal, and what that says about ergonomics. A high non-docx share, or many docx calls for a simple task, is a friction signal. ${benchmarkAccuracyNote} Prefer relative/ordinal claims ("resume needed the most calls") over absolute totals here.
 3. **Cross-cutting themes** — group findings into: Discoverability, CLI ergonomics / surface, Correctness & bugs, Formatting fidelity / preservation, Missing capabilities. Rank themes by impact. For each, give the EVIDENCE (which scenarios, specific commands, judge defects, verbatim friction quotes) and a concrete, actionable recommendation.
 4. **Prioritized fixes** — a numbered top 5–8 list, highest leverage first, each tied to the evidence above and phrased as something the maintainer can act on (ideally pointing at the command/flag/output to change).
 5. **What worked well** — what weak agents found easy; don't only criticize.
@@ -713,6 +813,21 @@ Cite scenario keys throughout and quote agent friction verbatim where it's illum
 // assets/ travel together; criteria.md is the JUDGE's answer key and is deliberately
 // WITHHELD from the agent's run workspace (deleted after copy) so a weak agent can't
 // read the rubric. The judge reads criteria.md from the pristine source instead.
+// Gemma backend only: read each scenario's pre-produced exercise.json off disk and
+// return them verbatim. The local run already produced these; the workflow's JS can't
+// read files, so an agent does it and hands the parsed objects back.
+function loadPrompt(targets) {
+	const lines = targets
+		.map((target) => `  ${target.key}: ${target.path}`)
+		.join("\n");
+	return `You are the LOAD step of an evaluation harness. The exercise phase already ran — a local Gemma model edited each document out of band and left a parsed RESULT json per scenario. READ each file below with the Read tool and return their contents.
+
+Files (one per scenario):
+${lines}
+
+Return { exercises: [ … ] } where each array item is the EXACT parsed JSON object from one file — copy every field VERBATIM: key, completed, summary, docxCommands (EVERY entry, with its cmd + outcome), otherToolCalls, deadEnds, frictions, outputPath. Do NOT summarize, truncate, reorder, or invent anything, and do not drop docxCommands entries. If a file is missing or unreadable, OMIT that scenario rather than fabricating a result.`;
+}
+
 function stagePrompt(targets) {
 	const lines = targets
 		.map((target) => {
@@ -756,7 +871,9 @@ function buildBenchmark(exerciseResults) {
 	const otherCalls = perScenario.reduce((acc, row) => acc + row.otherCalls, 0);
 	const totalCalls = docxCalls + otherCalls;
 	return {
-		note: `Exercise agents only (model: ${exerciseModel}). Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).`,
+		note: usingGemma
+			? `Exercise via local harness (${modelLabel}). Tool counts are LEDGER-MEASURED (every call + exit code) — accurate, not self-reported.`
+			: `Exercise agents only (model: ${exerciseModel}). Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).`,
 		perScenario,
 		totals: {
 			scenarios: perScenario.length,
