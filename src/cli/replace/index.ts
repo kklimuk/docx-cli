@@ -88,6 +88,10 @@ Output:
   addressable handle (matched-span locators shift as text changes; re-read or
   use --dry-run to see them). --verbose / --dry-run print
   {ok:true, operation, totalMatches, replaced, matches:[{locator,…}], …}.
+  A PATTERN that matches NOTHING is an error, not a silent success — 0 occurrences
+  exits nonzero (MATCH_NOT_FOUND), so a no-op replace can't read as "done." Unsure it
+  matches? Probe with \`docx find PATTERN FILE\` or --dry-run and READ the reported count
+  — both exit 0 whether or not it matches; only the real replace exits nonzero on 0.
   Errors print {code, error, hint?} with a nonzero exit.
 
 Examples:
@@ -260,23 +264,18 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
+	// A zero-match replace is a SILENT NO-OP — the document is unchanged. Exit
+	// nonzero (MATCH_NOT_FOUND) instead of a cheerful "0 occurrences replaced":
+	// weak agents key their done/retry decision off the exit code (they demonstrably
+	// react to nonzero and ignore a 0-count success line), so a 0 exit here bakes in
+	// a confidently-wrong document. Nonzero forces them to notice and fix.
 	if (selected.length === 0) {
-		await respondAck({
-			ok: true,
-			operation: "replace",
-			path,
-			pattern,
-			replacement,
-			regex: useRegex,
-			ignoreCase,
-			view: findView,
-			...(atScope ? { at: atScope } : {}),
-			totalMatches: 0,
-			replaced: 0,
-			matches: [],
-			...normalizationFields,
-		});
-		return EXIT.OK;
+		const scopeNote = atScope ? ` within ${atScope}` : "";
+		return await fail(
+			"MATCH_NOT_FOUND",
+			`Pattern not found${scopeNote}: ${JSON.stringify(pattern)} — 0 occurrences, nothing changed.`,
+			`Match LITERAL document text, not read-view markup (\`<mark>\`/\`<u>\`/\`**\`…) or a locator. Run \`docx find ${JSON.stringify(pattern)} ${path}\` to see if/where it occurs; add --ignore-case, --regex, --at <locator> to scope, or --current/--baseline to search tracked-change text.`,
+		);
 	}
 
 	// Apply in reverse document order so earlier offsets stay valid as later

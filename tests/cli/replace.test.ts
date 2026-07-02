@@ -127,14 +127,10 @@ describe("docx replace", () => {
 		expect(after.byteLength).toBe(before.byteLength);
 	});
 
-	test("zero matches returns ok with replaced: 0", async () => {
+	test("zero matches exits nonzero (MATCH_NOT_FOUND) — no silent no-op", async () => {
 		const result = await runCli("replace", docPath, "absent", "x");
-		expect(result.exitCode).toBe(0);
-		expect(result.parsed).toMatchObject({
-			ok: true,
-			totalMatches: 0,
-			replaced: 0,
-		});
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
 	});
 
 	test("preserves rPr on surrounding text", async () => {
@@ -304,15 +300,11 @@ describe("docx replace — pattern normalization", () => {
 			"goodbye",
 			"--exact",
 		);
-		expect(result.exitCode).toBe(0);
-		const payload = result.parsed as {
-			totalMatches: number;
-			replaced: number;
-			normalizedPattern?: string;
-		};
-		expect(payload.totalMatches).toBe(0);
-		expect(payload.replaced).toBe(0);
-		expect(payload.normalizedPattern).toBeUndefined();
+		// --exact keeps "**hello**" literal, so it matches neither smart- nor
+		// straight-quoted "hello" → 0 matches, which now exits nonzero (no silent
+		// no-op) rather than a cheerful replaced:0.
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
 		// Both paragraphs unchanged.
 		expect(await paragraphText(docPath, "p0")).toContain("“hello”");
 		expect(await paragraphText(docPath, "p1")).toContain('"hello"');
@@ -422,9 +414,11 @@ describe("docx replace — view selection (--baseline / --current)", () => {
 	test("--baseline matches text that lives only inside <w:del>", async () => {
 		const path = await trackedDeletionDoc("replace-baseline");
 
-		// The accepted (default) view no longer sees the deleted word.
+		// The accepted (default) view no longer sees the deleted word → 0 matches,
+		// which now exits nonzero (MATCH_NOT_FOUND) instead of a silent no-op.
 		const accepted = await runCli("replace", path, "quick", "QUICK");
-		expect((accepted.parsed as { totalMatches: number }).totalMatches).toBe(0);
+		expect(accepted.exitCode).toBe(3);
+		expect(accepted.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
 
 		// The baseline view matches the deleted text and substitutes it.
 		const baseline = await runCli(
@@ -662,5 +656,25 @@ describe("docx replace — --at paragraph scope", () => {
 		expect((after.parsed as { matches: unknown[] }).matches.length).toBe(
 			(before.parsed as { matches: unknown[] }).matches.length,
 		);
+	});
+
+	test("a batch entry that matches nothing exits nonzero (no silent no-op)", async () => {
+		// A pattern that isn't literal document text matches 0. The batch must exit
+		// nonzero (MATCH_NOT_FOUND) even though other entries applied — else the agent
+		// reads the clean batch ack as total success and ships a partial result.
+		const path = await repeatedPlaceholder("batch-noop");
+		const batchPath = join(tempWorkspace("batch-noop-jsonl"), "b.jsonl");
+		await Bun.write(
+			batchPath,
+			'{"pattern":"City, State","replacement":"Denver, CO","all":true}\n{"pattern":"<mark>absent</mark>","replacement":"x"}\n',
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
+		// The matching entry still applied + saved (sed-like); only the miss is flagged.
+		const after = await runCli("find", path, "Denver, CO", "--json");
+		expect(
+			(after.parsed as { matches: unknown[] }).matches.length,
+		).toBeGreaterThan(0);
 	});
 });

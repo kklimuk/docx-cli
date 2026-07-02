@@ -185,6 +185,28 @@ export async function runReplaceBatch(
 
 	await document.save(outputPath);
 
+	// Same no-op principle as single-shot replace: an entry that matched nothing is
+	// a silent no-op. Applied entries are already saved (sed-like, sequential), but
+	// if ANY entry replaced 0 we exit nonzero so the agent SEES the misses instead
+	// of a clean batch ack it reads as total success.
+	const noops = results.filter((entry) => entry.replaced === 0);
+	if (noops.length > 0) {
+		const list = noops.map((entry) => JSON.stringify(entry.pattern)).join(", ");
+		const applied = results.length - noops.length;
+		// A nonzero batch means "some entries missed" — NOT "nothing changed" (unlike
+		// single-shot, which fails before any save). The entries that DID match are
+		// already written to disk; spell that out so an agent doesn't revert good edits.
+		const savedNote =
+			applied === 0
+				? "No entry matched, so the document is unchanged."
+				: `The other ${applied} ${applied === 1 ? "entry was" : "entries were"} applied and SAVED — this nonzero exit means "some entries missed," not "nothing changed."`;
+		return await fail(
+			"MATCH_NOT_FOUND",
+			`${noops.length} of ${results.length} replace ${results.length === 1 ? "entry" : "entries"} matched nothing (0 occurrences): ${list}. ${savedNote}`,
+			`Those patterns weren't found as LITERAL document text — check for read-view markup (\`<mark>\`/\`<u>\`) or a locator in the pattern. \`docx find\` locates the real text; --ignore-case/--regex/--at scope the search.`,
+		);
+	}
+
 	await respondAck({
 		ok: true,
 		operation: "replace",
