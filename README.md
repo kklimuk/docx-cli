@@ -8,6 +8,27 @@
 - Agents address text by **stable locators** with character offsets (`p3:5-20`); humans see normal Word formatting on disk.
 - Custom styles, theme colors, embedded objects — all of it survives. The CLI mutates XML in place rather than re-emitting from a lossy model.
 
+## Why docx-cli?
+
+The default way agents edit Word docs is to unzip the `.docx` and hand-write the OOXML inside. That takes a strong model to get right, burns tokens, and routinely produces a file Word won't open. `docx-cli` hands the agent plain commands plus an annotated-Markdown read view, so it never has to reason about the XML.
+
+We measured it — a controlled A/B bake-off: **six real document tasks** (fill an NDA, fill an invoice, restyle a résumé, redline a contract, finalize a contract, author a journal), the same starting files, and one independent judge grading every result from the **Word-rendered pages**. Three runs per arm at each of two model tiers:
+
+|                           | Haiku (weak, cheap) |                       | Sonnet (strong) |                       |
+| :------------------------ | ------------------: | --------------------: | --------------: | --------------------: |
+|                           |        **docx-cli** |         default skill |    **docx-cli** |         default skill |
+| Tasks solved (of 6)       |       **4.3** (4–5) |             0.7 (0–1) |   **6.0** (6–6) |             4.0 (4–4) |
+| Rendered correctly (of 6) |                 5.7 |                   3.7 |             6.0 |                   4.7 |
+| Outright-broken documents |               **0** |      ~1/run (up to 2) |           **0** |                     0 |
+| Input tokens              |            **2.4M** |           6.1M (2.6×) |        **1.6M** |           3.6M (2.2×) |
+| Wall-clock                |           **924 s** | 1,882 s (2.0× slower) |     **1,175 s** | 2,029 s (1.7× slower) |
+
+- **The correctness gap is widest on the cheap Haiku tier (~6×)**, and a frontier model never closes it — the default skill caps at 4/6, losing the contract redline and the résumé every Sonnet run.
+- **The cost and speed penalties are model-independent** — ~2.2–2.6× more tokens and ~1.7–2× slower at *both* tiers, with token/time ranges that never overlap.
+- **Word couldn't reliably open the default skill's work** — it failed to open 5 of 36 of its outputs; all 36 of docx-cli's opened on the first try.
+
+Full methodology, per-task rubric, and side-by-side renders: **[the bake-off writeup](https://kklimuk.github.io/docx-cli/)**.
+
 ## Install
 
 **npm** — the simplest path (requires Bun >= 1.3):
