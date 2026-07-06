@@ -1,4 +1,5 @@
 import { generateParaId } from "../ast/document/comments";
+import { textToRunElements } from "../blocks";
 import type { FindView } from "../find";
 import { w } from "../jsx";
 import {
@@ -492,9 +493,7 @@ export function CommentBody({
 			w-initials={options.initials}
 		>
 			<w.p {...{ "w14:paraId": options.paraId, "w14:textId": "00000000" }}>
-				<w.r>
-					<w.t {...{ "xml:space": "preserve" }}>{options.text}</w.t>
-				</w.r>
+				{textToRunElements(options.text)}
 			</w.p>
 		</w.comment>
 	);

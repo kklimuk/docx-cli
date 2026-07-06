@@ -312,7 +312,10 @@ export class CommentsView {
 			const author = child.getAttribute("w:author") ?? "";
 			const date = child.getAttribute("w:date") ?? "";
 			const initials = child.getAttribute("w:initials");
-			const text = child.collectText();
+			// Break/tab-aware so a comment authored with `\n`/`\t` reads back
+			// faithfully instead of joining words (the markdown renderer collapses
+			// `\s+` for its single-line `[^cN]:` definition).
+			const text = child.collectTextWithBreaks();
 			const anchor = anchors.get(commentId) ?? {
 				startBlockId: "",
 				startOffset: 0,

@@ -32,6 +32,7 @@ function nodeText(node: XmlNode): string {
 		for (const child of node.children) {
 			if (child.tag === "w:t") out += child.collectText();
 			else if (child.tag === "w:tab") out += "\t";
+			else if (child.tag === "w:br" || child.tag === "w:cr") out += "\n";
 		}
 		return out;
 	}

@@ -1,3 +1,4 @@
+import { textToRunElements } from "../blocks";
 import { cp, dc, dcterms, w } from "../jsx";
 import { XmlNode } from "../parser";
 import { CANONICAL_PARTS } from "./canonical-parts";
@@ -44,15 +45,7 @@ function DocumentBody({ text }: { text: string | undefined }): XmlNode {
 	return (
 		<w.document {...DOC_NAMESPACES}>
 			<w.body>
-				{text !== undefined ? (
-					<w.p>
-						<w.r>
-							<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
-						</w.r>
-					</w.p>
-				) : (
-					<w.p />
-				)}
+				{text !== undefined ? <w.p>{textToRunElements(text)}</w.p> : <w.p />}
 				<DefaultSectionProperties />
 			</w.body>
 		</w.document>

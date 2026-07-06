@@ -221,6 +221,18 @@ export function RunElement({ run }: { run: Run }): NullableXmlNode {
 	return null;
 }
 
+/** Break-aware run ELEMENTS for a plain text string: `textToRuns` + `RunElement`,
+ *  with the (never-hit for text/break/tab) nulls filtered so the result is a clean
+ *  `XmlNode[]`. The single-run authoring path shared by the note / comment /
+ *  marginal emitters — a decoded `\n`/`\t` becomes `<w:br/>`/`<w:tab/>` there just
+ *  like it does in a body paragraph, and plain single-line text stays one `<w:t>`
+ *  run (byte-identical to the raw `<w:r>` those emitters used before). */
+export function textToRunElements(text: string): XmlNode[] {
+	return textToRuns(text, {})
+		.map((run) => <RunElement run={run} />)
+		.filter((node): node is XmlNode => node !== null);
+}
+
 /** Mutate a paragraph's children list in place to apply `--style` /
  *  `--alignment` to its `<w:pPr>`. Creates a pPr if absent. Used by the
  *  tracked-edit helpers in `core/track-changes/` and any caller that wants to

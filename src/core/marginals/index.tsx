@@ -1,4 +1,5 @@
 import type { Document } from "../ast/document";
+import { textToRunElements } from "../blocks";
 import { w } from "../jsx";
 import type { XmlNode } from "../parser";
 import { insertSectPrChildInOrder, wrapSectPrChange } from "../sections";
@@ -294,7 +295,7 @@ function buildContentParagraph(
 						<w.tab w-val="right" w-pos={String(contentWidth)} />
 					</w.tabs>
 				</w.pPr>
-				{textRun(spec.text as string)}
+				{textToRunElements(spec.text as string)}
 				<w.r>
 					<w.tab />
 				</w.r>
@@ -315,7 +316,7 @@ function buildContentParagraph(
 	return (
 		<w.p>
 			{alignment ? <w.pPr>{alignment}</w.pPr> : null}
-			{hasText ? textRun(spec.text as string) : null}
+			{hasText ? textToRunElements(spec.text as string) : null}
 		</w.p>
 	);
 }
@@ -325,22 +326,14 @@ function alignChild(align: "left" | "center" | "right"): XmlNode | null {
 	return <w.jc w-val={align} />;
 }
 
-function textRun(text: string): XmlNode {
-	return (
-		<w.r>
-			<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
-		</w.r>
-	);
-}
-
 function fieldRuns(field: MarginalField): XmlNode[] {
 	switch (field.type) {
 		case "page":
 			if (field.ofPages) {
 				return [
-					textRun("Page "),
+					...textToRunElements("Page "),
 					fieldSimple(" PAGE ", "1"),
-					textRun(" of "),
+					...textToRunElements(" of "),
 					fieldSimple(" NUMPAGES ", "1"),
 				];
 			}

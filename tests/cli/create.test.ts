@@ -323,3 +323,43 @@ describe("docx create — page setup", () => {
 		expect((await runCli("read", docPath)).stdout).not.toContain("docx:page");
 	});
 });
+
+describe("docx create — inline escape decoding (--text)", () => {
+	test("--text decodes \\n / \\t into breaks in the seed paragraph", async () => {
+		const workspace = tempWorkspace("create-esc");
+		const docPath = join(workspace, "out.docx");
+		// `"a\\nb\\tc"` here IS the literal backslash sequences the shell delivers.
+		const result = await runCli("create", docPath, "--text", "a\\nb\\tc");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath, "--ast");
+		const doc = read.parsed as {
+			blocks: Array<{
+				type: string;
+				runs?: Array<{ type: string; text?: string }>;
+			}>;
+		};
+		const paragraph = doc.blocks.find((block) => block.type === "paragraph");
+		expect((paragraph?.runs ?? []).map((run) => run.type)).toEqual([
+			"text",
+			"break",
+			"text",
+			"tab",
+			"text",
+		]);
+	});
+
+	test("a plain single-line --text seeds exactly one text run (no regression)", async () => {
+		const workspace = tempWorkspace("create-esc-plain");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Hello world");
+		const read = await runCli("read", docPath, "--ast");
+		const doc = read.parsed as {
+			blocks: Array<{
+				type: string;
+				runs?: Array<{ type: string; text?: string }>;
+			}>;
+		};
+		const paragraph = doc.blocks.find((block) => block.type === "paragraph");
+		expect(paragraph?.runs).toEqual([{ type: "text", text: "Hello world" }]);
+	});
+});

@@ -1,3 +1,4 @@
+import { textToRunElements } from "../blocks";
 import { w } from "../jsx";
 import type { XmlNode } from "../parser";
 import { convertTextToDelText, type TrackedMeta } from "../track-changes";
@@ -93,11 +94,10 @@ function noteFirstParagraphRuns({
 }): XmlNode[] {
 	if (runs) return runs;
 	if (text === undefined) return [];
-	return [
-		<w.r>
-			<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
-		</w.r>,
-	];
+	// A leading space separates the back-ref numeral from the body; a decoded
+	// `\n`/`\t` becomes `<w:br/>`/`<w:tab/>`, and a plain single-line body still
+	// collapses to one `<w:t>` run (byte-identical to the old shape).
+	return textToRunElements(` ${text}`);
 }
 
 /** Body of a footnote that's being added under tracking: the entire run
@@ -119,23 +119,25 @@ export function TrackedNoteBody({
 }): XmlNode {
 	const Note = config.kind === "footnote" ? w.footnote : w.endnote;
 	const BodyRef = config.kind === "footnote" ? w.footnoteRef : w.endnoteRef;
+	// One array is the sole `<Ins>` child (the back-ref run + break-aware body
+	// runs), so a decoded `\n`/`\t` in the body becomes `<w:br/>`/`<w:tab/>` under
+	// tracking too — passing them as an array beside the ref run wouldn't typecheck.
+	const insRuns: XmlNode[] = [
+		<w.r>
+			<w.rPr>
+				<w.rStyle w-val={config.referenceStyle} />
+			</w.rPr>
+			<BodyRef />
+		</w.r>,
+		...textToRunElements(` ${text}`),
+	];
 	return (
 		<Note w-id={id}>
 			<w.p>
 				<w.pPr>
 					<w.pStyle w-val={config.textStyle} />
 				</w.pPr>
-				<Ins meta={meta}>
-					<w.r>
-						<w.rPr>
-							<w.rStyle w-val={config.referenceStyle} />
-						</w.rPr>
-						<BodyRef />
-					</w.r>
-					<w.r>
-						<w.t {...{ "xml:space": "preserve" }}>{` ${text}`}</w.t>
-					</w.r>
-				</Ins>
+				<Ins meta={meta}>{insRuns}</Ins>
 			</w.p>
 		</Note>
 	);
@@ -197,12 +199,10 @@ export function wrapNoteBodyAsEdited(
 			continue;
 		}
 		if (!inserted) {
-			const newRun = (
-				<w.r>
-					<w.t {...{ "xml:space": "preserve" }}>{newText}</w.t>
-				</w.r>
-			);
-			result.push(<Ins meta={insMeta}>{newRun}</Ins>);
+			// `textToRunElements` maps a decoded `\n`/`\t` in the replacement to
+			// `<w:br/>`/`<w:tab/>` — matching the untracked-edit and tracked-add
+			// paths (a raw `<w:t>` here would swallow the break).
+			result.push(<Ins meta={insMeta}>{textToRunElements(newText)}</Ins>);
 			inserted = true;
 		}
 		result.push(<Del meta={delMeta}>{convertTextToDelText(child)}</Del>);
@@ -210,12 +210,7 @@ export function wrapNoteBodyAsEdited(
 	// No prior user-text run (e.g. body has only the back-ref + whitespace):
 	// just append a tracked insertion of the new text.
 	if (!inserted) {
-		const newRun = (
-			<w.r>
-				<w.t {...{ "xml:space": "preserve" }}>{newText}</w.t>
-			</w.r>
-		);
-		result.push(<Ins meta={insMeta}>{newRun}</Ins>);
+		result.push(<Ins meta={insMeta}>{textToRunElements(newText)}</Ins>);
 	}
 	paragraph.children = result;
 }

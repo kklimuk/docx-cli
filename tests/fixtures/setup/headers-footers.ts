@@ -81,14 +81,16 @@ await appendText(
 
 // Default running header — two-zone: company name (left) + auto date (right).
 await cli("headers", "set", out, "--text", "Acme Corporation", "--date");
-// Different first page (sets <w:titlePg/> on the section).
+// Different first page (sets <w:titlePg/> on the section). The `\n` decodes to a
+// <w:br/> in the header part, so this fixture also round-trips break-bearing
+// marginal content through LibreOffice (guards the inline-escape emit path).
 await cli(
 	"headers",
 	"set",
 	out,
 	"--first-page",
 	"--text",
-	"Annual Report 2026",
+	"Annual Report\\n2026",
 );
 // Centered "Page X of Y" footer (PAGE + NUMPAGES fields).
 await cli("footers", "set", out, "--page-number", "--of-pages");

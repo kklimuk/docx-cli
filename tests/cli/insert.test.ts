@@ -1318,3 +1318,73 @@ describe("docx insert — paragraph spacing & indentation", () => {
 		);
 	});
 });
+
+describe("docx insert — inline escape decoding (--text / --markdown)", () => {
+	// `"a\\nb"` in this TS source IS the literal a,\,n,b the shell delivers when an
+	// agent writes `--text "a\nb"`. The inline argv ingress decodes it so the break
+	// lands as `<w:br/>`, matching the `--text-file` / batch channels.
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("insert-esc");
+		docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Original body");
+	});
+
+	test("--text decodes \\n to a line break and \\t to a tab", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--text",
+			"a\\nb\\tc",
+		);
+		expect(result.exitCode).toBe(0);
+		const paragraphs = await readParagraphs(docPath);
+		const last = paragraphs[paragraphs.length - 1];
+		expect((last?.runs ?? []).map((run) => run.type)).toEqual([
+			"text",
+			"break",
+			"text",
+			"tab",
+			"text",
+		]);
+		expect(paragraphText(last)).toBe("abc");
+	});
+
+	test("--markdown decodes \\n\\n into separate blocks", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--markdown",
+			"## Heading\\n\\nA paragraph.",
+		);
+		expect(result.exitCode).toBe(0);
+		const paragraphs = await readParagraphs(docPath);
+		const heading = paragraphs.find((p) => p.style === "Heading2");
+		expect(paragraphText(heading)).toBe("Heading");
+		expect(paragraphs.some((p) => paragraphText(p) === "A paragraph.")).toBe(
+			true,
+		);
+	});
+
+	test("--caption decodes \\n into a line break (it's a body paragraph)", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			"tests/fixtures/assets/sample.png",
+			"--caption",
+			"Fig 1\\nSource: X",
+		);
+		expect(result.exitCode).toBe(0);
+		const paragraphs = await readParagraphs(docPath);
+		const caption = paragraphs.find((p) => p.style === "Caption");
+		expect((caption?.runs ?? []).some((run) => run.type === "break")).toBe(
+			true,
+		);
+	});
+});

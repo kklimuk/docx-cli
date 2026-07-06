@@ -3438,3 +3438,127 @@ describe("docx edit — paragraph spacing & indentation", () => {
 		});
 	});
 });
+
+describe("docx edit — inline escape decoding (--text / --markdown)", () => {
+	// A weak agent writes `--text "a\nb"`, but the shell delivers the literal
+	// backslash-n (`"a\\nb"` in this TS source IS the 4-char a,\,n,b). The CLI
+	// decodes `\n`/`\t` at the inline argv ingress so they flow through the same
+	// real-newline handling as `--text-file` / batch. See decodeInlineEscapes.
+
+	test("--text decodes \\n to a line break within the paragraph", async () => {
+		const docPath = await freshCopy("esc-text-nl");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"a\\nb",
+		);
+		expect(result.exitCode).toBe(0);
+		const runs = await readParagraph(docPath, "p0");
+		expect(runs.map((run) => run.type)).toEqual(["text", "break", "text"]);
+		expect(
+			runs.filter((run) => run.type === "text").map((run) => run.text),
+		).toEqual(["a", "b"]);
+	});
+
+	test("--text decodes \\t to a tab run", async () => {
+		const docPath = await freshCopy("esc-text-tab");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"a\\tb",
+		);
+		expect(result.exitCode).toBe(0);
+		const runs = await readParagraph(docPath, "p0");
+		expect(runs.map((run) => run.type)).toEqual(["text", "tab", "text"]);
+	});
+
+	test("--text decodes \\r\\n to a single line break", async () => {
+		const docPath = await freshCopy("esc-text-crlf");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"a\\r\\nb",
+		);
+		expect(result.exitCode).toBe(0);
+		const runs = await readParagraph(docPath, "p0");
+		expect(runs.map((run) => run.type)).toEqual(["text", "break", "text"]);
+	});
+
+	test("--text leaves markdown's own backslash escapes untouched", async () => {
+		const docPath = await freshCopy("esc-text-md");
+		// `\.` is markdown escaping — not a whitespace escape, so it passes through
+		// verbatim (the run keeps the literal backslash-dot).
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"1\\.5",
+		);
+		expect(result.exitCode).toBe(0);
+		const runs = await readParagraph(docPath, "p0");
+		expect(runs.map((run) => run.text ?? "").join("")).toBe("1\\.5");
+	});
+
+	test("--markdown decodes \\n\\n into a paragraph break", async () => {
+		const docPath = await freshCopy("esc-md-para");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"# Title\\n\\nBody para",
+		);
+		expect(result.exitCode).toBe(0);
+		const heading = await readParagraph(docPath, "p0");
+		const body = await readParagraph(docPath, "p1");
+		expect(heading.map((run) => run.text ?? "").join("")).toBe("Title");
+		expect(body.map((run) => run.text ?? "").join("")).toBe("Body para");
+	});
+
+	test("a decoded newline still trips the markdown-in-text guard", async () => {
+		const docPath = await freshCopy("esc-text-guard");
+		// `--text "intro\n# Heading"` decodes to a real newline, so the leading-ATX
+		// heading now sits at a line start — the guard should catch it and redirect.
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"intro\\n# Heading",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain("markdown");
+	});
+
+	test("--code is NOT decoded — literal backslash-n stays literal (channel boundary)", async () => {
+		// The decode is scoped to --text/--markdown ONLY. Code legitimately contains
+		// a literal `\n` (a string escape), so it must survive verbatim — this guards
+		// the two-channel boundary against a future blanket decode in the arg parser.
+		const docPath = await freshCopy("esc-code-literal");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--code",
+			'print("a\\nb")',
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:br/>"); // not turned into a line break
+		expect(xml).toContain("a\\nb"); // literal backslash-n preserved verbatim
+	});
+});

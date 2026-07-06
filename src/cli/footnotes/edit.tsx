@@ -10,7 +10,7 @@ import {
 	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
-import { parseRunsArg } from "../parse-helpers";
+import { decodeInlineEscapes, parseRunsArg } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -109,9 +109,11 @@ export async function runEditNote(
 	const config = noteConfig(kind);
 	if (!idInput) return fail("USAGE", `Missing --at ${config.idPrefix}N`, help);
 
-	const text = parsed.values.text as string | undefined;
+	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	const runsJson = parsed.values.runs as string | undefined;
-	const markdown = parsed.values.markdown as string | undefined;
+	const markdown = decodeInlineEscapes(
+		parsed.values.markdown as string | undefined,
+	);
 	const markdownFile = parsed.values["markdown-file"] as string | undefined;
 
 	const bodyCount =

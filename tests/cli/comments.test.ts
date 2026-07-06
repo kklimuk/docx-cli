@@ -1113,3 +1113,69 @@ describe("docx comments reply — output contract", () => {
 		expect(await Bun.file(src).bytes()).toEqual(before);
 	});
 });
+
+describe("docx comments — inline escape decoding (--text)", () => {
+	// `"a\\nb"` in this TS source IS the literal backslash-n the shell delivers.
+	let docPath: string;
+
+	beforeEach(async () => {
+		docPath = join(tempWorkspace("comments-esc"), "out.docx");
+		await runCli("create", docPath, "--text", "A paragraph to annotate.");
+	});
+
+	test("add --text decodes \\n / \\t into <w:br/> / <w:tab/>", async () => {
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"first\\nsecond\\tthird",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readPart(docPath, "word/comments.xml");
+		expect(xml).toContain("<w:br/>");
+		expect(xml).toContain("<w:tab/>");
+	});
+
+	test("reply --text decodes \\n too", async () => {
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "Parent.");
+		const result = await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--at",
+			"c0",
+			"--text",
+			"one\\ntwo",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readPart(docPath, "word/comments.xml");
+		expect(xml).toContain("<w:br/>");
+	});
+
+	test("--batch bodies are NOT re-decoded (JSON already decoded them)", async () => {
+		// A JSONL entry with a literal backslash-n stays literal — only inline
+		// argv is decoded. A real newline in JSON (\n) is handled by JSON.parse.
+		const batch = join(tempWorkspace("comments-esc-batch"), "b.jsonl");
+		// The \\n here is a JSON escape for a real newline; the \\\\t is a literal
+		// backslash-t that must survive verbatim (batch is the trusted channel).
+		writeFileSync(
+			batch,
+			`{"at":"p0","text":"real\\nbreak keep\\\\tliteral"}\n`,
+		);
+		const result = await runCli("comments", "add", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		const xml = await readPart(docPath, "word/comments.xml");
+		expect(xml).toContain("<w:br/>"); // the real JSON newline became a break
+		expect(xml).toContain("keep\\tliteral"); // the literal backslash-t survived
+	});
+
+	test("comment body round-trips: \\n reads back faithfully in the AST (no word-joining)", async () => {
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "c1\\nc2");
+		const list = await runCli("comments", "list", docPath);
+		const comment = (list.parsed as Array<{ text: string }>)[0];
+		expect(comment?.text).toBe("c1\nc2");
+	});
+});

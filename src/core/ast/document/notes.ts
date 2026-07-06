@@ -92,7 +92,8 @@ export class NotesView {
 	/** Parse this part's tree into the AST `Footnote[]` the reader exposes on
 	 * `Body.footnotes` / `Body.endnotes`. Skips Word's reserved separator /
 	 * continuationSeparator entries (`w:type` set, never referenced from the
-	 * body) and collapses note-body whitespace to single spaces. */
+	 * body) and renders line breaks / tabs as `\n` / `\t` (via
+	 * `collectTextWithBreaks`) so a `\n`-authored body round-trips. */
 	toNotes(): Note[] {
 		const root = this.findRoot();
 		if (!root) return [];
@@ -103,7 +104,10 @@ export class NotesView {
 			if (child.getAttribute("w:type")) continue;
 			const numericId = child.getAttribute("w:id");
 			if (numericId == null) continue;
-			const text = child.collectText().replace(/\s+/g, " ").trim();
+			// Break/tab-aware so a body authored with `\n`/`\t` reads back faithfully
+			// (the markdown footnote renderer collapses `\s+` for its single-line
+			// definition, so the AST stays the lossless view without breaking GFM).
+			const text = child.collectTextWithBreaks().trim();
 			out.push({ id: `${config.idPrefix}${numericId}`, text });
 		}
 		return out;

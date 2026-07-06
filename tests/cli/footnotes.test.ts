@@ -898,3 +898,108 @@ describe("docx footnotes — -o parallel write", () => {
 		expect(await listFootnotes(src)).toEqual([]);
 	});
 });
+
+describe("docx footnotes/endnotes — inline escape decoding (--text)", () => {
+	// `"a\\nb"` in this TS source IS the literal backslash-n the shell delivers.
+	async function partXml(docPath: string, part: string): Promise<string> {
+		const pkg = await Pkg.open(docPath);
+		return pkg.readText(part);
+	}
+
+	test("footnote --text decodes \\n / \\t into <w:br/> / <w:tab/>", async () => {
+		const docPath = await freshDoc("fn-esc", ["Body."]);
+		const result = await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"line1\\nline2\\tindented",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await partXml(docPath, "word/footnotes.xml");
+		expect(xml).toContain("<w:br/>");
+		expect(xml).toContain("<w:tab/>");
+	});
+
+	test("footnote --text under tracking keeps breaks inside the <w:ins>", async () => {
+		const docPath = await freshDoc("fn-esc-tracked", ["Body."]);
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"first\\nsecond",
+			"--author",
+			"Rev",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await partXml(docPath, "word/footnotes.xml");
+		expect(xml).toContain("<w:br/>");
+		expect(xml).toMatch(/<w:ins[\s\S]*<w:br\/>[\s\S]*<\/w:ins>/);
+	});
+
+	test("endnote --text (shared handler) decodes \\n too", async () => {
+		const docPath = await freshDoc("en-esc", ["Body."]);
+		const result = await runCli(
+			"endnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"alpha\\nbeta",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await partXml(docPath, "word/endnotes.xml");
+		expect(xml).toContain("<w:br/>");
+	});
+
+	test("a plain single-line footnote --text stays one <w:t> run (no regression)", async () => {
+		const docPath = await freshDoc("fn-esc-plain", ["Body."]);
+		await runCli("footnotes", "add", docPath, "--at", "p0", "--text", "Plain.");
+		const xml = await partXml(docPath, "word/footnotes.xml");
+		expect(xml).not.toContain("<w:br/>");
+		expect(xml).toContain("Plain.");
+	});
+
+	test("footnote body round-trips: \\n/\\t read back faithfully in the AST (no word-joining)", async () => {
+		const docPath = await freshDoc("fn-esc-rt", ["Body."]);
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"line1\\nline2\\tindent",
+		);
+		const read = await runCli("read", docPath, "--ast");
+		const notes = (read.parsed as { footnotes: Array<{ text: string }> })
+			.footnotes;
+		expect(notes[0]?.text).toBe("line1\nline2\tindent");
+	});
+
+	test("tracked footnote EDIT renders \\n as <w:br/> (parity with add/untracked)", async () => {
+		const docPath = await freshDoc("fn-esc-edit-tracked", ["Body."]);
+		await runCli("footnotes", "add", docPath, "--at", "p0", "--text", "orig");
+		await runCli("track-changes", docPath, "on");
+		const result = await runCli(
+			"footnotes",
+			"edit",
+			docPath,
+			"--at",
+			"fn1",
+			"--text",
+			"new1\\nnew2",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await partXml(docPath, "word/footnotes.xml");
+		// The break lands inside the tracked insertion, not as a swallowed raw \n.
+		expect(xml).toMatch(/<w:ins[\s\S]*<w:br\/>[\s\S]*<\/w:ins>/);
+	});
+});

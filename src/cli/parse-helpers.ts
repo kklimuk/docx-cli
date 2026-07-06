@@ -79,6 +79,35 @@ export async function rejectShellMangledValue(
 	);
 }
 
+/** Decode the whitespace escape sequences weak agents type LITERALLY into an
+ *  inline `--text` / `--markdown` argv value. A model reaching for a line break
+ *  writes `--text "a\nb"`, but bash double-quotes don't interpret `\n` — the CLI
+ *  receives the four characters `a`, `\`, `n`, `b`, and the backslash-n lands
+ *  verbatim in the run (Word then swallows or literalizes it). We map `\n` / `\r` /
+ *  `\r\n` → newline and `\t` → tab so the intended break flows through the same
+ *  real-character handling everything else uses (`textToRuns` → `<w:br/>`/`<w:tab/>`,
+ *  the markdown parser's block splitting). ONLY these: a `\` before anything else —
+ *  markdown's own escaping (`\*`, `\[`, `\.`) and a literal `\\` — passes through
+ *  UNTOUCHED, because `\` before a letter was never a valid markdown escape (so
+ *  decoding `\n`/`\t`/`\r` can't corrupt markdown) while `\`-before-punctuation is
+ *  (so we must not touch it). Applied at the INLINE argv ingress ONLY: `--text-file`
+ *  / `--markdown-file` / `--from` read real characters from a file, and `--batch`
+ *  JSONL is already decoded by `JSON.parse` — none are re-decoded. The
+ *  literal-fidelity channel where a bare `\n` really means backslash-n stays
+ *  `--text-file`. */
+export function decodeInlineEscapes(value: string): string;
+export function decodeInlineEscapes(
+	value: string | undefined,
+): string | undefined;
+export function decodeInlineEscapes(
+	value: string | undefined,
+): string | undefined {
+	if (value === undefined) return undefined;
+	return value.replace(/\\r\\n|\\[nrt]/g, (match) =>
+		match === "\\t" ? "\t" : "\n",
+	);
+}
+
 /** Parse `--task` value into a boolean (checked) or null if unrecognized.
  *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
  *  reach for naturally. Shared by `insert --task` and `edit --at pN --task`. */

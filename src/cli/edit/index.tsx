@@ -28,6 +28,7 @@ import {
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
+	decodeInlineEscapes,
 	hasRunFormatFlags,
 	parseRunFormat,
 	parseRunsArg,
@@ -1152,7 +1153,7 @@ async function validateParagraphEdit(
 		// Combined with content — fall through to parse the content spec; the
 		// assembler re-reads --clear into opts.clearTags and applies it after.
 	}
-	const text = values.text as string | undefined;
+	const text = decodeInlineEscapes(values.text as string | undefined);
 	const runsJson = values.runs as string | undefined;
 	const codeInline = values.code as string | undefined;
 	const codeFile = values["code-file"] as string | undefined;
@@ -1243,7 +1244,9 @@ async function validateParagraphEdit(
 		return { kind: "task", checked };
 	}
 
-	const markdownInline = values.markdown as string | undefined;
+	const markdownInline = decodeInlineEscapes(
+		values.markdown as string | undefined,
+	);
 	const markdownFile = values["markdown-file"] as string | undefined;
 	const contentFlags = [
 		text !== undefined,

@@ -1,4 +1,5 @@
 import { Comments, CommentsError, resolveAuthor } from "@core";
+import { decodeInlineEscapes } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -63,7 +64,7 @@ export async function run(args: string[]): Promise<number> {
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	const parentInput = parsed.values.at as string | undefined;
-	const text = parsed.values.text as string | undefined;
+	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	if (!parentInput) return fail("USAGE", "Missing --at cN", HELP);
 	if (!text) return fail("USAGE", "Missing --text TEXT", HELP);
 

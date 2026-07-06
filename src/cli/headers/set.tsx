@@ -4,6 +4,7 @@ import {
 	type MarginalSpec,
 	Marginals,
 } from "@core";
+import { decodeInlineEscapes } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -125,7 +126,7 @@ export async function runSetMarginal(
 		);
 	}
 
-	const text = parsed.values.text as string | undefined;
+	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	if (text === undefined && field === undefined) {
 		return fail(
 			"USAGE",

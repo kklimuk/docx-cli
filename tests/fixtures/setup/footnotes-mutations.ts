@@ -52,7 +52,7 @@ await cli(
 	"footnotes",
 	"edit",
 	out,
-	"--id",
+	"--at",
 	"fn1",
 	"--text",
 	"Edited body fn1.",

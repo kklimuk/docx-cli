@@ -58,7 +58,14 @@ export function htmlAttr(key: string, value: string): string {
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
+		.replace(/"/g, "&quot;")
+		// Whitespace escapes keep the value on ONE line: a raw newline/tab in the
+		// value (a multi-line header/footer, or a marginal/note authored with `\n`)
+		// would otherwise break the single-line `<!-- docx:… -->` comment. remark
+		// decodes these back for the run-formatting spans that also use htmlAttr.
+		.replace(/\n/g, "&#10;")
+		.replace(/\r/g, "&#13;")
+		.replace(/\t/g, "&#9;");
 	return `${key}="${escaped}"`;
 }
 

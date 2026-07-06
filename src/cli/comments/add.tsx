@@ -10,7 +10,11 @@ import {
 	resolveAuthor,
 } from "@core";
 import { type FindView, findTextSpans } from "@core/find";
-import { readJsonlObjects, resolveView } from "../parse-helpers";
+import {
+	decodeInlineEscapes,
+	readJsonlObjects,
+	resolveView,
+} from "../parse-helpers";
 import {
 	type ErrorCode,
 	EXIT,
@@ -149,7 +153,9 @@ export async function run(args: string[]): Promise<number> {
 	const atInput = parsed.values.at as string | undefined;
 	const anchorInput = parsed.values.anchor as string | undefined;
 	const batchInput = parsed.values.batch as string | undefined;
-	const text = parsed.values.text as string | undefined;
+	// Inline `--text` only; the `--batch` path (below) reads bodies from JSONL,
+	// which `JSON.parse` has already decoded — decoding undefined leaves it so.
+	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	const occurrenceRaw = parsed.values.occurrence as string | undefined;
 	const defaultAuthor = resolveAuthor(
 		parsed.values.author as string | undefined,

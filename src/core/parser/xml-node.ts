@@ -143,6 +143,22 @@ export class XmlNode {
 		return out;
 	}
 
+	/** Like `collectText`, but renders a `<w:br/>`/`<w:cr/>` as `\n` and a
+	 *  `<w:tab/>` as `\t` instead of dropping them. Flat-text read paths that
+	 *  surface a body as a single string (footnote/endnote, comment, header/footer)
+	 *  use this so a body authored with an inline `\n`/`\t` (→ `<w:br/>`/`<w:tab/>`)
+	 *  reads back faithfully in the AST instead of having its words joined. */
+	collectTextWithBreaks(): string {
+		if (this.isText) return this.text ?? "";
+		if (this.tag === "w:br" || this.tag === "w:cr") return "\n";
+		if (this.tag === "w:tab") return "\t";
+		let out = "";
+		for (const child of this.children) {
+			out += child.collectTextWithBreaks();
+		}
+		return out;
+	}
+
 	clone(): XmlNode {
 		const cloned = new XmlNode(this.tag, { ...this.attributes });
 		if (this.text !== undefined) cloned.text = this.text;

@@ -529,3 +529,54 @@ describe("headers/footers — review regressions", () => {
 		);
 	});
 });
+
+describe("headers/footers — inline escape decoding (--text)", () => {
+	// `"a\\nb"` in this TS source IS the literal backslash-n the shell delivers.
+	test("header set --text decodes \\n / \\t into <w:br/> / <w:tab/>", async () => {
+		const path = await newDoc("hdr-esc", "Body.");
+		const result = await runCli(
+			"headers",
+			"set",
+			path,
+			"--text",
+			"top\\nmiddle\\tindented",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await partText(path, "word/header1.xml");
+		expect(xml).toContain("<w:br/>");
+		expect(xml).toContain("<w:tab/>");
+	});
+
+	test("footer set --text (shared handler) decodes \\n too", async () => {
+		const path = await newDoc("ftr-esc", "Body.");
+		const result = await runCli("footers", "set", path, "--text", "a\\nb");
+		expect(result.exitCode).toBe(0);
+		expect(await partText(path, "word/footer1.xml")).toContain("<w:br/>");
+	});
+
+	test("a plain single-line header --text stays one <w:t> run (no regression)", async () => {
+		const path = await newDoc("hdr-esc-plain", "Body.");
+		await runCli("headers", "set", path, "--text", "Plain title");
+		const xml = await partText(path, "word/header1.xml");
+		expect(xml).not.toContain("<w:br/>");
+		expect(xml).toContain("Plain title");
+	});
+
+	test("header body round-trips: \\n/\\t read back faithfully in the AST", async () => {
+		const path = await newDoc("hdr-esc-rt", "Body.");
+		await runCli("headers", "set", path, "--text", "top\\nmid\\tcol");
+		const read = await runCli("read", path, "--ast");
+		const headers = (read.parsed as { headers: Array<{ text: string }> })
+			.headers;
+		expect(headers[0]?.text).toBe("top\nmid\tcol");
+	});
+
+	test("a header break stays a single-line HTML annotation (escaped, not a raw newline)", async () => {
+		const path = await newDoc("hdr-esc-annot", "Body.");
+		await runCli("headers", "set", path, "--text", "top\\nbottom");
+		const md = await readMarkdown(path);
+		const line = md.split("\n").find((l) => l.includes("docx:header"));
+		expect(line).toContain('text="top&#10;bottom"'); // escaped, one line
+		expect(line).toContain("-->"); // the comment closes on the same line
+	});
+});

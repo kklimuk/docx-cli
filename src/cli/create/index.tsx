@@ -9,7 +9,7 @@ import {
 	type XmlNode,
 } from "@core";
 import { buildBlankPackage } from "@core/create";
-import { parseSectionFlags } from "../parse-helpers";
+import { decodeInlineEscapes, parseSectionFlags } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -114,7 +114,7 @@ export async function run(args: string[]): Promise<number> {
 		return fail("USAGE", "Missing FILE argument", HELP);
 	}
 
-	const text = parsed.values.text as string | undefined;
+	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	const fromPath = parsed.values.from as string | undefined;
 	const textFilePath = parsed.values["text-file"] as string | undefined;
 	const contentSources = [text, fromPath, textFilePath].filter(

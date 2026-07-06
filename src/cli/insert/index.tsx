@@ -11,6 +11,7 @@ import type { XmlNode } from "@core/parser";
 import type { TableBorders, TableLayout } from "@core/table";
 import type { parseArgs } from "util";
 import {
+	decodeInlineEscapes,
 	parseRunsArg,
 	parseSpacingIndentFlags,
 	parseTaskFlag,
@@ -348,13 +349,9 @@ async function buildSingleShotOptions(
 	// becomes literal `**` an agent then tries to scrub. (Single-shot only — the
 	// batch path is the verbatim-data channel and stays unguarded.)
 	if (spec.kind === "text") {
-		const rejected = await rejectMarkdownInText(values.text as string, HELP);
+		const rejected = await rejectMarkdownInText(spec.text, HELP);
 		if (typeof rejected === "number") return rejected;
-		const mangled = await rejectShellMangledValue(
-			values.text as string,
-			HELP,
-			"--text",
-		);
+		const mangled = await rejectShellMangledValue(spec.text, HELP, "--text");
 		if (typeof mangled === "number") return mangled;
 	}
 
@@ -698,7 +695,7 @@ async function resolveMarkdownSpec(
 	flag: "markdown" | "markdown-file",
 ): Promise<Extract<InsertSpec, { kind: "markdown" }> | number> {
 	if (flag === "markdown") {
-		const source = values.markdown as string;
+		const source = decodeInlineEscapes(values.markdown as string);
 		return { kind: "markdown", source };
 	}
 	const path = values["markdown-file"] as string;
@@ -792,7 +789,10 @@ async function parseImageFlags(values: RawValues): Promise<
 	const alt = values.alt as string | undefined;
 	if (alt !== undefined) out.alt = alt;
 
-	const caption = values.caption as string | undefined;
+	// A caption is a body paragraph (emitted via <Paragraph>, which renders breaks),
+	// so decode inline escapes like the sibling --text flag. (--alt is single-line
+	// accessibility metadata where a newline is meaningless, so it stays literal.)
+	const caption = decodeInlineEscapes(values.caption as string | undefined);
 	if (caption !== undefined) out.caption = caption;
 
 	const widthRaw = values.width as string | undefined;
@@ -828,7 +828,7 @@ function buildTextSpec(
 	const url = values.url as string | undefined;
 	return {
 		kind: "text",
-		text: values.text as string,
+		text: decodeInlineEscapes(values.text as string),
 		format: {
 			color: values.color as string | undefined,
 			bold: values.bold as boolean | undefined,
