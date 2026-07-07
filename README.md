@@ -18,7 +18,7 @@ We measured it — a controlled A/B bake-off: **six real document tasks** (fill 
 | :------------------------ | ------------------: | --------------------: | --------------: | --------------------: |
 |                           |        **docx-cli** |         default skill |    **docx-cli** |         default skill |
 | Tasks solved (of 6)       |       **4.3** (4–5) |             0.7 (0–1) |   **6.0** (6–6) |             4.0 (4–4) |
-| Rendered correctly (of 6) |                 5.7 |                   3.7 |             6.0 |                   4.7 |
+| Rendered correctly (of 6) |                 6 |                   3.7 |             6.0 |                   4.7 |
 | Outright-broken documents |               **0** |      ~1/run (up to 2) |           **0** |                     0 |
 | Input tokens              |            **2.4M** |           6.1M (2.6×) |        **1.6M** |           3.6M (2.2×) |
 | Wall-clock                |           **924 s** | 1,882 s (2.0× slower) |     **1,175 s** | 2,029 s (1.7× slower) |
