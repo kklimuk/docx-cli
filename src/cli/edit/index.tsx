@@ -245,9 +245,12 @@ General options:
   -h, --help        Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — the edited locator is unchanged, so there's
-  nothing to mint. --verbose prints {ok:true, operation, path, locator}.
-  Errors print {code, error, hint?} with a nonzero exit. Discover ids with
+  Prints a one-line confirmation on success (exit 0) — an in-place edit shifts nothing, so the
+  edited locator is unchanged and there's nothing to mint. --verbose prints {ok:true, operation,
+  path, locator}. Errors print {code, error, hint?} with a nonzero exit.
+  Heads up: a locator you hold from BEFORE a structural edit (an insert/delete elsewhere renumbers
+  ids) is stale — it lands on the wrong block or errors BLOCK_NOT_FOUND. Re-read after any
+  insert/delete, or apply the whole set from one read with --batch (above). Discover ids with
   \`docx read FILE --ast\` (equation ids appear on EquationRun nodes).
 
 Examples:

@@ -248,6 +248,15 @@ export function resolveTracked(
 	return Boolean(trackFlag) || document.isTrackChangesEnabled();
 }
 
+/** Weak agents hold a locator from an earlier read, run a single-shot structural
+ *  mutation (insert/delete), then fire a second single-shot command at the now-stale
+ *  id. The nonzero exit is the ONE moment they reliably read output, so the recovery
+ *  belongs on the error, not only in `--help` (which they act before reading). Worded
+ *  to match the codebase's standing line — ids shift after STRUCTURAL edits, NOT the
+ *  in-place content/format edit that leaves the edited locator unchanged. */
+const STALE_LOCATOR_HINT =
+	"Locator ids are positional and shift after structural edits (insert/delete/section changes) — an id from an earlier read may now point elsewhere or be gone. Re-read the file to get current ids, then retry. Applying several changes? Do them from ONE read with --batch (edit/insert/delete/replace/comments) so ids never go stale mid-run.";
+
 export async function resolveBlockOrFail(
 	document: Document,
 	locator: string,
@@ -256,7 +265,7 @@ export async function resolveBlockOrFail(
 		return document.body.resolveBlock(locator);
 	} catch (err) {
 		if (err instanceof LocatorResolveError) {
-			return await fail("BLOCK_NOT_FOUND", err.message);
+			return await fail("BLOCK_NOT_FOUND", err.message, STALE_LOCATOR_HINT);
 		}
 		throw err;
 	}
@@ -355,7 +364,7 @@ export async function resolveBlockRangeOrFail(
 			return await fail("INVALID_LOCATOR", err.message);
 		}
 		if (err instanceof LocatorResolveError) {
-			return await fail("BLOCK_NOT_FOUND", err.message);
+			return await fail("BLOCK_NOT_FOUND", err.message, STALE_LOCATOR_HINT);
 		}
 		throw err;
 	}

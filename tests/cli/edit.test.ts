@@ -3562,3 +3562,29 @@ describe("docx edit — inline escape decoding (--text / --markdown)", () => {
 		expect(xml).toContain("a\\nb"); // literal backslash-n preserved verbatim
 	});
 });
+
+// A stale locator (held from an earlier read, invalidated by a later structural
+// edit) is the #1 weak-agent failure. The nonzero exit is the one moment they read
+// output, so the recovery — re-read, or batch from one read — rides the error HINT,
+// not just --help. Both the single-block and range resolve paths must carry it.
+describe("edit stale-locator hint (BLOCK_NOT_FOUND)", () => {
+	test("single-shot miss carries the re-read/--batch hint", async () => {
+		const docPath = await freshCopy("stale-single-hint");
+		const result = await runCli("edit", docPath, "--at", "p99", "--text", "x");
+		expect(result.exitCode).toBe(3);
+		const parsed = result.parsed as { code: string; hint?: string };
+		expect(parsed.code).toBe("BLOCK_NOT_FOUND");
+		expect(parsed.hint).toContain("--batch");
+		expect(parsed.hint?.toLowerCase()).toContain("re-read");
+		expect(parsed.hint).toContain("structural edits");
+	});
+
+	test("range miss carries the same hint", async () => {
+		const docPath = await freshCopy("stale-range-hint");
+		const result = await runCli("edit", docPath, "--at", "p90-p99", "--bold");
+		expect(result.exitCode).toBe(3);
+		const parsed = result.parsed as { code: string; hint?: string };
+		expect(parsed.code).toBe("BLOCK_NOT_FOUND");
+		expect(parsed.hint).toContain("--batch");
+	});
+});

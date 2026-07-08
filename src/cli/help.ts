@@ -36,11 +36,13 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
 It is highly recommended to run "docx info locators" and "docx info schema" (neither needs a FILE) to understand the addressing model and AST.
 Run "docx <command> --help" for command-specific help.
 
-BATCH MANY CHANGES IN ONE READ: filling a form or applying many edits? Don't go
-one-at-a-time — edit / insert / replace / delete and comments (add/resolve/delete)
-all take --batch FILE.jsonl (one JSON change per line; "-" reads stdin). Every locator
-addresses the document AS READ, so ids stay valid across the whole batch — one
-read, one write, no re-reading between changes. See "<command> --help".
+BATCH MANY CHANGES IN ONE READ: locator ids are positional and shift after structural
+edits (insert/delete/section changes), so going one-at-a-time forces a re-read to refresh
+ids after each. Miss the change and the next command lands on the wrong block or errors
+BLOCK_NOT_FOUND. Skip all that: edit / insert / replace / delete and comments
+(add/resolve/delete) all take --batch FILE.jsonl (one JSON change per line; "-" reads
+stdin). Every locator addresses the document AS READ, so ids stay valid across the whole
+batch — one read, one write, no re-reading between changes. See "<command> --help".
 
 FILL FORMATTED / TABBED LINES WITHOUT REBUILDING RUNS: to fill a template line that
 carries formatting (bold/font) or tab stops — e.g. "**Org Name**⇥Date" — replace just
