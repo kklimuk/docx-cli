@@ -28,17 +28,19 @@ export function detectMarkdownInPlainText(text: string): string | null {
 }
 
 /** Reject a `--text` value that looks like markdown, pointing at the right verb.
- *  Returns a fail() exit code to short-circuit, or null to proceed. */
+ *  Returns a fail() exit code to short-circuit, or null to proceed. The hint is
+ *  self-sufficient (it names the exact verbs to switch to), so it does NOT append
+ *  the full `--help` — a weak agent keys its retry off the actionable line, and
+ *  burying it under 200 lines of command reference (14 KB) hurts more than helps. */
 export async function rejectMarkdownInText(
 	text: string,
-	help: string,
 ): Promise<number | null> {
 	const found = detectMarkdownInPlainText(text);
 	if (!found) return null;
 	return await fail(
 		"USAGE",
 		`--text writes literal characters, but this value looks like markdown: ${found}. It would be baked in verbatim (e.g. literal ** around the word), not rendered.`,
-		`Use --markdown to parse it (handles ${found}, headings, lists, links), --bold/--italic for a uniformly-emphasized run, or --runs for literal text that really contains these characters. Help:\n${help}`,
+		`Use --markdown to parse it (handles ${found}, headings, lists, links), --bold/--italic for a uniformly-emphasized run, or --runs for literal text that really contains these characters.`,
 	);
 }
 
@@ -67,7 +69,6 @@ export function detectShellMangledCurrency(text: string): string | null {
  *  (which also makes `--batch` the clean escape hatch for a genuine bare `.00`). */
 export async function rejectShellMangledValue(
 	text: string,
-	help: string,
 	label = "this value",
 ): Promise<number | null> {
 	const fragment = detectShellMangledCurrency(text);
@@ -75,7 +76,7 @@ export async function rejectShellMangledValue(
 	return await fail(
 		"USAGE",
 		`${label} contains "${fragment}" — a number with no integer part, the signature of a "$" amount gutted by the shell (bash turns double-quoted "$300.00" into ".00" and "$10,000" into ",000"). docx would write the corrupted value verbatim.`,
-		`Wrap any "$"-bearing value in SINGLE quotes ('$300.00') so bash leaves it alone, or supply it via --batch FILE (JSONL never touches the shell). If you really mean "${fragment}", write its integer part (0${fragment}) or use --batch. Help:\n${help}`,
+		`Wrap any "$"-bearing value in SINGLE quotes ('$300.00') so bash leaves it alone, or supply it via --batch FILE (JSONL never touches the shell). If you really mean "${fragment}", write its integer part (0${fragment}) or use --batch.`,
 	);
 }
 

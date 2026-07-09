@@ -1344,9 +1344,9 @@ async function validateParagraphEdit(
 			}
 			return { kind: "removeLine" };
 		}
-		const rejected = await rejectMarkdownInText(text, HELP);
+		const rejected = await rejectMarkdownInText(text);
 		if (typeof rejected === "number") return rejected;
-		const mangled = await rejectShellMangledValue(text, HELP, "--text");
+		const mangled = await rejectShellMangledValue(text, "--text");
 		if (typeof mangled === "number") return mangled;
 		return {
 			kind: "text",

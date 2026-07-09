@@ -131,7 +131,7 @@ export async function run(args: string[]): Promise<number> {
 		? (parsed.values.cells as string).split(",")
 		: [];
 	for (const cell of cellTexts) {
-		const mangled = await rejectShellMangledValue(cell, HELP, "--cells");
+		const mangled = await rejectShellMangledValue(cell, "--cells");
 		if (typeof mangled === "number") return mangled;
 	}
 	// Validate against the row's LOGICAL columns (a merged/gridSpan cell counts

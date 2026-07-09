@@ -349,9 +349,9 @@ async function buildSingleShotOptions(
 	// becomes literal `**` an agent then tries to scrub. (Single-shot only — the
 	// batch path is the verbatim-data channel and stays unguarded.)
 	if (spec.kind === "text") {
-		const rejected = await rejectMarkdownInText(spec.text, HELP);
+		const rejected = await rejectMarkdownInText(spec.text);
 		if (typeof rejected === "number") return rejected;
-		const mangled = await rejectShellMangledValue(spec.text, HELP, "--text");
+		const mangled = await rejectShellMangledValue(spec.text, "--text");
 		if (typeof mangled === "number") return mangled;
 	}
 
