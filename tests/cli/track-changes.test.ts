@@ -38,18 +38,21 @@ describe("docx track-changes", () => {
 		expect(xml).not.toContain("<w:trackChanges/>");
 	});
 
-	test("read surfaces the tracking state as a head hint (on only)", async () => {
+	test("read surfaces the tracking state as a head hint (always on or off)", async () => {
 		const workspace = tempWorkspace("track-read-hint");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "hi");
 
-		// Off (the default) is silent — deviation-only, no noise.
+		// Off is stated outright, not inferred from absence — weak agents can't
+		// reliably read "no hint" as "off," so this note breaks the deviation-only
+		// rule and always emits its state.
 		const before = await runCli("read", docPath);
-		expect(before.stdout).not.toContain("docx:track-changes");
+		expect(before.stdout).toContain("<!-- docx:track-changes off -->");
 
 		await runCli("track-changes", "on", docPath);
 		const after = await runCli("read", docPath);
 		expect(after.stdout).toContain("<!-- docx:track-changes on -->");
+		expect(after.stdout).not.toContain("docx:track-changes off");
 	});
 
 	test("accepts verb-first order (track-changes on FILE), matching list/accept/reject", async () => {

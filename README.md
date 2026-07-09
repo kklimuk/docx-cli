@@ -226,9 +226,10 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   so the importer drops it (it can't re-inject into the body); full entries are in
   `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
 headers`/`docx footers`.
-- **Track-changes state** rides a head `<!-- docx:track-changes on -->` line when the
-  document's tracking toggle is enabled (deviation-only — off emits nothing), so an
-  agent sees that subsequent edits will be redlined without inspecting `settings.xml`.
+- **Track-changes state** always rides a head `<!-- docx:track-changes on|off -->`
+  line — it's the one read hint that states its default too (an agent shouldn't have
+  to infer "off" from a missing line), so you can see whether subsequent edits will be
+  redlined without inspecting `settings.xml`.
   Toggle it with `docx track-changes FILE on|off`; the three tracked-change read views
   (`--accepted`/`--current`/`--baseline`) are covered under the review loop below.
 

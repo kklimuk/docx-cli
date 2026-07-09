@@ -48,10 +48,11 @@ export type MarkdownOptions = {
 	 *  Surfaced in the `docx:base` note when it DEVIATES from the template default
 	 *  (i.e. `set-default-font` ran), so the document font is observable on read. */
 	defaultFont?: string;
-	/** Whether the document's global track-changes toggle is on. Surfaced as a
-	 *  head `<!-- docx:track-changes on -->` hint (deviation-only — off is the
-	 *  default, so nothing is emitted then) so an agent sees the state on the
-	 *  first read instead of spending a `track-changes list` call to learn it. */
+	/** Whether the document's global track-changes toggle is on. ALWAYS surfaced as
+	 *  a head `<!-- docx:track-changes on|off -->` hint — the one `docx:` note that
+	 *  states its default too (weak agents can't read "no hint" as "off," and a
+	 *  wrong tracking guess is high-cost), so an agent sees the state on the first
+	 *  read instead of spending a `track-changes list` call to learn it. */
 	trackChangesOn?: boolean;
 };
 
@@ -266,13 +267,18 @@ export function renderMarkdown(
 	// read-time hint the importer drops; geometry survives edits in place).
 	const baseNote = formatBaseNote(noteBaseline);
 	const pageNote = formatPageNote(documentGeometry(blocks));
-	// Track-changes ON is a deviation from the default (off), so surface it; off
-	// emits nothing. This is an own-`docx:` metadata hint, dropped on import like
-	// the others — it just orients the agent so edits/`--track` decisions don't
-	// need a separate `track-changes list`.
-	const trackNote = options.trackChangesOn
-		? formatNote("track-changes", [], ["on"])
-		: "";
+	// Track-changes state ALWAYS rides the head — `on` OR `off`. This deliberately
+	// breaks the deviation-only rule (like `docx:section`, which always marks every
+	// section): weak agents can't reliably read "no hint" as "off," and getting the
+	// tracking state wrong is high-cost (a silent redline, or edits that skip the
+	// journal). So we state it outright rather than make them infer it from absence.
+	// Still an own-`docx:` metadata hint, dropped on import — it just orients the
+	// agent so edits/`--track` decisions don't need a separate `track-changes list`.
+	const trackNote = formatNote(
+		"track-changes",
+		[],
+		[options.trackChangesOn ? "on" : "off"],
+	);
 	// One consolidated, actionable summary for every line that WILL wrap in render —
 	// the per-line hints alone got ignored by both Haiku and Sonnet across repeated
 	// reads, so lead with a single command that cures them all.

@@ -6,8 +6,9 @@
  * sections so the columns/type are unambiguously tied to the content they
  * govern), page geometry (`docx:page`), table widths/borders (`docx:table`),
  * per-cell merge/shading (`docx:cell`), image size/placement (`docx:image`),
- * the document-level track-changes state (`docx:track-changes on`, at the head,
- * deviation-only), and a layout hazard (`docx:layout`) on a tab-aligned paragraph
+ * the document-level track-changes state (`docx:track-changes on|off`, at the head
+ * — the one note that ALWAYS emits, default included, so a weak agent never has to
+ * infer "off" from a missing hint), and a layout hazard (`docx:layout`) on a tab-aligned paragraph
  * inside a multi-column section, where tab stops wrap mid-line in the narrow
  * column — a render-only break Markdown can't show.
  *
