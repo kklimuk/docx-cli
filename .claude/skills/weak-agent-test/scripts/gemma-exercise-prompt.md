@@ -8,16 +8,18 @@ First, orient yourself by running these with bash:
   {{BINARY}} info locators
   {{BINARY}} <command> --help     (for any command you decide to use)
 
-Then read your task — a plain-language request in this file (you are already in its folder):
-  cat task.md
 Also list your assets folder (it may be empty); if it holds files, read them:
   ls assets
 
 {{WORKLINE}}
   {{DOC}}
 
+## Your task
+
+{{TASK}}
+
 ## Your job
-Carry out the request in task.md on the working document above. The request describes the OUTCOME the person wants — YOU work out which docx-cli commands get there.
+Carry out the task above on the working document. The request describes the OUTCOME the person wants — YOU work out which docx-cli commands get there.
 
 ## Rules
 - Use ONLY the docx-cli executable above for document operations. Do NOT unzip the .docx, hand-edit XML, or use any other tool for the document.

@@ -43,9 +43,8 @@ const MUTATION_VERBS = new Set([
 	"footers",
 	"sections",
 	"styles",
+	"lists",
 	"track-changes",
-	"toggle",
-	"set-default-font",
 ]);
 
 const [scenarioDir, binary, docArg] = Bun.argv.slice(2);
@@ -85,6 +84,7 @@ async function parseLedger(
 			cachedTokensTotal: 0,
 			freshTokensTotal: 0,
 			genTokensTotal: 0,
+			roundTimeouts: 0,
 		},
 	};
 	if (!sessionDir) {
@@ -140,6 +140,9 @@ async function parseLedger(
 		result._gemma.cachedTokensTotal += cachedTokens;
 		result._gemma.freshTokensTotal += Math.max(0, promptTokens - cachedTokens);
 		result._gemma.genTokensTotal += Number(entry?.genTokens) || 0;
+		if (entry?.roundTimeout != null && typeof entry.roundTimeout === "object") {
+			result._gemma.roundTimeouts += 1;
+		}
 	}
 	return result;
 }
@@ -230,5 +233,8 @@ type ExerciseResult = {
 		cachedTokensTotal: number;
 		freshTokensTotal: number;
 		genTokensTotal: number;
+		// Per-round wall-clock breaker (harness): how many rounds were aborted for running past the
+		// per-round timeout — a ballooning-generation signal. See the harness session loop.
+		roundTimeouts: number;
 	};
 };

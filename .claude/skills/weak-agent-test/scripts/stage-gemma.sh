@@ -43,15 +43,28 @@ cat > "$dst/.inkling/settings.json" <<JSON
 {
   "permissions": {
     "allow": ["Bash($binary:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(pwd)", "Bash(mkdir:*)"],
-    "deny": ["Bash(rm:*)", "Bash(sudo:*)", "WebSearch", "WebFetch", "Agent", "AgentPool"],
+    "deny": ["Bash(sudo:*)", "WebSearch", "WebFetch", "Agent", "AgentPool"],
     "ask": []
   }
 }
 JSON
 
-# Render the static prompt template with this scenario's binary path + working doc.
-# {{WORKLINE}} first (kind-dependent, no {{DOC}} inside it), then binary + doc.
-sed -e "s#{{WORKLINE}}#$workline#g" -e "s#{{BINARY}}#$binary#g" -e "s#{{DOC}}#$doc#g" \
-  "$here/gemma-exercise-prompt.md" > "$dst/exercise-prompt.md"
+# Render the prompt template with this scenario's binary path, working doc, and the
+# task brief INLINED ({{TASK}} = task.md's content — the agent no longer discovers the
+# request via `cat task.md`, it reads it in the prompt like a human typing the ask).
+# bun renders instead of sed because the multi-line task body would break sed one-liners
+# (and keep this block free of dollar-N tokens — see the settings.json note above).
+TEMPLATE="$here/gemma-exercise-prompt.md" OUT="$dst/exercise-prompt.md" \
+TASK_FILE="$dst/task.md" WORKLINE="$workline" BINARY="$binary" DOC="$doc" \
+bun -e '
+const template = await Bun.file(Bun.env.TEMPLATE).text();
+const task = (await Bun.file(Bun.env.TASK_FILE).text()).trim();
+const rendered = template
+  .replaceAll("{{WORKLINE}}", Bun.env.WORKLINE)
+  .replaceAll("{{BINARY}}", Bun.env.BINARY)
+  .replaceAll("{{DOC}}", Bun.env.DOC)
+  .replaceAll("{{TASK}}", task);
+await Bun.write(Bun.env.OUT, rendered);
+'
 
 echo "staged $key -> $dst (doc=$doc, kind=$kind)"

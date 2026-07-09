@@ -9,13 +9,16 @@
 #
 # Usage:
 #   run-gemma-corpus.sh <scenariosDir> <runDir> <binary> <harness> [ctx] [capSec] [key...]
-#     ctx     chat context size (default 32768)
+#     ctx     chat context size (default 131072 = ask for the max; the harness budgeter clamps it
+#             to whatever VRAM fits, ~98k on the dev box — this reproduces the campaign regime now
+#             that --context-size actually reaches the engine. Pass 32768 on purpose to test the
+#             16GB-realistic small-window config.)
 #     capSec  per-scenario watchdog kill (default 1500s = 25m)
 #     key...  optional subset of scenario keys (default: all six)
 set -uo pipefail
 
 scenariosDir="${1:?scenariosDir}"; runDir="${2:?runDir}"; binary="${3:?binary}"; harness="${4:?harness}"
-ctx="${5:-32768}"; capSec="${6:-1500}"
+ctx="${5:-131072}"; capSec="${6:-1500}"
 shift $(( $# < 6 ? $# : 6 ))
 want=("$@")   # remaining args = scenario key subset (empty = all)
 
@@ -67,6 +70,14 @@ for entry in "${manifest[@]}"; do
 
 	bun "$here/gemma-parse-ledger.ts" "$dir" "$binary" "$doc" >/dev/null 2>&1 \
 		|| echo "[$key] PARSE FAILED" >&2
+
+	# Render the worked-on document to <key>/renders/output/ (Word, CPU-only) so every
+	# run dir matches the skill's documented layout without a manual backfill pass. A
+	# render failure never blocks the corpus — the images are for judges/humans only.
+	if [ -f "$dir/$doc" ]; then
+		"$binary" render "$dir/$doc" --out "$dir/renders/output" >/dev/null 2>&1 \
+			|| echo "[$key] RENDER FAILED (continuing)" >&2
+	fi
 	completed=$(bun -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).completed)}catch{console.log("?")}' "$dir/exercise.json" 2>/dev/null)
 	echo "[$key] rc=$rc elapsed=${elapsed}s completed=$completed"
 done
