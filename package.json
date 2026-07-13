@@ -1,6 +1,6 @@
 {
 	"name": "bun-docx",
-	"version": "0.20.3",
+	"version": "0.20.4",
 	"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
 	"keywords": [
 		"docx",
