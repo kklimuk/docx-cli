@@ -303,6 +303,212 @@ describe("docx find — query normalization", () => {
 	});
 });
 
+describe("docx find — tabs, breaks, and separator normalization", () => {
+	async function docWith(text: string): Promise<string> {
+		const workspace = tempWorkspace("find-sep");
+		const docPath = join(workspace, "out.docx");
+		// A real tab in `text` becomes a <w:tab/>; a real NBSP/bullet lands verbatim.
+		await runCli("create", docPath, "--text", text);
+		return docPath;
+	}
+
+	test("a space-typed pattern matches a TAB-separated line", async () => {
+		const docPath = await docWith("City\tState\tZip");
+		const result = await runCli("find", docPath, "City State Zip");
+		const payload = result.parsed as { matches: Array<{ text: string }> };
+		expect(payload.matches).toHaveLength(1);
+		// The match preserves the original document text (with real tabs).
+		expect(payload.matches[0]?.text).toBe("City\tState\tZip");
+	});
+
+	test("a literal-tab pattern matches, and reports the whitespace normalization", async () => {
+		// Document has plain spaces; the query passes literal tabs.
+		const docPath = await docWith("City State Zip");
+		const result = await runCli("find", docPath, "City\tState\tZip");
+		const payload = result.parsed as {
+			matches: Array<{ text: string }>;
+			normalizedQuery?: string;
+			normalizationApplied?: string[];
+		};
+		expect(payload.matches).toHaveLength(1);
+		expect(payload.normalizedQuery).toBe("City State Zip");
+		expect(payload.normalizationApplied).toContain("whitespace");
+	});
+
+	test("--exact requires the literal tab (a space pattern misses)", async () => {
+		const docPath = await docWith("City\tState\tZip");
+		const result = await runCli("find", docPath, "City State Zip", "--exact");
+		const payload = result.parsed as { totalMatches: number };
+		expect(payload.totalMatches).toBe(0);
+	});
+
+	test("a non-breaking space in the document matches a plain space", async () => {
+		const docPath = await docWith("Total: 100");
+		const result = await runCli("find", docPath, "Total: 100");
+		const payload = result.parsed as { matches: Array<{ text: string }> };
+		expect(payload.matches).toHaveLength(1);
+		// Original NBSP is preserved in the returned match text.
+		expect(payload.matches[0]?.text).toBe("Total: 100");
+	});
+
+	test("bullet variants are interchangeable (middle dot matches a bullet)", async () => {
+		const docPath = await docWith("A·B");
+		const result = await runCli("find", docPath, "A•B");
+		const payload = result.parsed as { matches: Array<{ text: string }> };
+		expect(payload.matches).toHaveLength(1);
+		expect(payload.matches[0]?.text).toBe("A·B");
+	});
+
+	test("--exact keeps bullet variants distinct", async () => {
+		const docPath = await docWith("A·B");
+		const result = await runCli("find", docPath, "A•B", "--exact");
+		const payload = result.parsed as { totalMatches: number };
+		expect(payload.totalMatches).toBe(0);
+	});
+});
+
+// A "\n" in the query spans lines: it matches an in-paragraph <w:br/> or the
+// boundary between consecutive body paragraphs. Spanning locators are the
+// two-block pA:S-pB:E form (output-only).
+describe("docx find — multi-line queries", () => {
+	test("a \\n query matches across a paragraph boundary with a spanning locator", async () => {
+		const workspace = tempWorkspace("find-span");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "The quick brown fox");
+		await runCli("insert", docPath, "--at-end", "--text", "jumps over");
+
+		const result = await runCli("find", docPath, "fox\njumps", "--json");
+		const payload = result.parsed as {
+			totalMatches: number;
+			matches: Array<{
+				locator: string;
+				startBlockId: string;
+				endBlockId: string;
+				text: string;
+			}>;
+		};
+		expect(payload.totalMatches).toBe(1);
+		expect(payload.matches[0]?.locator).toBe("p0:16-p1:5");
+		expect(payload.matches[0]?.text).toBe("fox\njumps");
+	});
+
+	test("a \\n query matches an in-paragraph line break (same-block locator)", async () => {
+		const workspace = tempWorkspace("find-span-br");
+		const docPath = join(workspace, "out.docx");
+		// A real \n in --text becomes a <w:br/> — one paragraph, two lines.
+		await runCli("create", docPath, "--text", "line one\nline two");
+
+		const result = await runCli("find", docPath, "one\nline", "--json");
+		const payload = result.parsed as {
+			matches: Array<{
+				locator: string;
+				startBlockId: string;
+				endBlockId: string;
+			}>;
+		};
+		expect(payload.matches).toHaveLength(1);
+		expect(payload.matches[0]?.startBlockId).toBe("p0");
+		expect(payload.matches[0]?.endBlockId).toBe("p0");
+		expect(payload.matches[0]?.locator).toBe("p0:5-13");
+	});
+
+	test("a \\n query matches INSIDE a table cell (cells form their own groups)", async () => {
+		const workspace = tempWorkspace("find-span-cell");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--table",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		// A real \n in --text becomes a <w:br/> inside the cell paragraph.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--text",
+			"top\nbottom",
+		);
+
+		const result = await runCli("find", docPath, "top\nbottom", "--json");
+		const payload = result.parsed as {
+			totalMatches: number;
+			matches: Array<{ locator: string; text: string }>;
+		};
+		expect(payload.totalMatches).toBe(1);
+		expect(payload.matches[0]?.locator).toBe("t0:r0c0:p0:0-10");
+	});
+
+	test("a within-cell spanning locator composes with comments add", async () => {
+		const workspace = tempWorkspace("find-span-cell-comment");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--table",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		await runCli("edit", docPath, "--at", "t0:r0c0:p0", "--text", "alpha");
+		await runCli("insert", docPath, "--after", "t0:r0c0:p0", "--text", "beta");
+
+		const find = await runCli("find", docPath, "alpha\nbeta", "--json");
+		const locator = (find.parsed as { matches: Array<{ locator: string }> })
+			.matches[0]?.locator;
+		expect(locator).toBe("t0:r0c0:p0:0-t0:r0c0:p1:4");
+
+		const add = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			locator ?? "p0",
+			"--text",
+			"spans the cell",
+			"--author",
+			"QA",
+		);
+		expect(add.exitCode).toBe(0);
+
+		const list = await runCli("comments", "list", docPath);
+		const comments = list.parsed as Array<{
+			anchor: { startBlockId: string; endBlockId: string };
+		}>;
+		expect(comments[0]?.anchor.startBlockId).toBe("t0:r0c0:p0");
+		expect(comments[0]?.anchor.endBlockId).toBe("t0:r0c0:p1");
+	});
+
+	test("a match never spans a table (structure ends the group)", async () => {
+		const workspace = tempWorkspace("find-span-table");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "before");
+		await runCli(
+			"insert",
+			docPath,
+			"--at-end",
+			"--table",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		await runCli("insert", docPath, "--at-end", "--text", "after");
+
+		const result = await runCli("find", docPath, "before\nafter", "--json");
+		expect((result.parsed as { totalMatches: number }).totalMatches).toBe(0);
+	});
+});
+
 // tracked-changes.docx layout (paragraph p0):
 //   "This is a text with " (0..20, plain)
 //   "two exciting "        (inside <w:ins>)

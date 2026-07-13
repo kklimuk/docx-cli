@@ -1,11 +1,15 @@
 import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
+	type AcrossReplaceResult,
+	applyAcrossReplace,
 	type FindView,
 	findTextSpans,
+	replacementExpander,
 	replaceSpanInParagraph,
+	selectMatches,
 	type TrackedReplaceOptions,
 } from "@core/find";
-import { readJsonlObjects } from "../parse-helpers";
+import { readJsonlObjects, spanLocator } from "../parse-helpers";
 import {
 	type ErrorCode,
 	EXIT,
@@ -15,6 +19,7 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
+import { ACROSS_TRACKED_HINT, ACROSS_TRACKED_MESSAGE } from "./across";
 import { matchesInScope, ScopeError, validateScopeShape } from "./scope";
 
 type RawValues = Record<
@@ -76,6 +81,50 @@ export async function runReplaceBatch(
 	for (let index = 0; index < specs.length; index++) {
 		const spec = specs[index];
 		if (!spec) continue;
+		// A "\n" in an entry's pattern/replacement routes it to the cross-paragraph
+		// path (JSONL's \n escapes are already real newlines here). Same limits as
+		// the single-shot form: no per-paragraph `at` scope, and untracked only —
+		// a tracked batch fails the entry rather than record a merge/split wrong.
+		if (spec.pattern.includes("\n") || spec.replacement.includes("\n")) {
+			if (spec.at !== undefined) {
+				return fail(
+					"USAGE",
+					`entry ${index}: "at" can't scope a multi-line pattern — it spans paragraph boundaries`,
+				);
+			}
+			if (allocator) {
+				return fail(
+					"USAGE",
+					`entry ${index}: ${ACROSS_TRACKED_MESSAGE}`,
+					ACROSS_TRACKED_HINT,
+				);
+			}
+			// Applied even under --dry-run: the batch dry-run runs the whole script
+			// in memory (later entries must see this one's edits) and only the SAVE
+			// is gated.
+			let acrossResult: AcrossReplaceResult;
+			try {
+				acrossResult = applyAcrossReplace(document.body, spec);
+			} catch (matcherError) {
+				const message =
+					matcherError instanceof Error
+						? matcherError.message
+						: String(matcherError);
+				return fail("USAGE", `entry ${index}: invalid pattern: ${message}`);
+			}
+			results.push({
+				pattern: spec.pattern,
+				replacement: spec.replacement,
+				totalMatches: acrossResult.totalMatches,
+				replaced: acrossResult.replaced.length,
+				matches: acrossResult.replaced.map((match) => ({
+					locator: spanLocator(match),
+					text: match.text,
+				})),
+			});
+			if (acrossResult.replaced.length > 0) document.reread();
+			continue;
+		}
 		// Existence check for a scoped entry: validateSpec only checked the `at`
 		// SHAPE (no document yet). Resolve it against the LIVE tree here (reread()
 		// runs between entries, so ids can shift) and fail loudly on a typo —
@@ -114,12 +163,7 @@ export async function runReplaceBatch(
 			spec.at !== undefined
 				? matchesInScope(findResult.matches, spec.at)
 				: findResult.matches;
-		const selected =
-			spec.limit !== undefined
-				? all.slice(0, spec.limit)
-				: spec.all
-					? all
-					: all.slice(0, 1);
+		const selected = selectMatches(all, spec);
 
 		const tracked: TrackedReplaceOptions | undefined = allocator
 			? {
@@ -139,19 +183,13 @@ export async function runReplaceBatch(
 			}
 			return right.start - left.start;
 		});
-		const regexFlags = spec.ignoreCase ? "i" : "";
+		const expand = replacementExpander(spec);
 		for (const match of reversed) {
-			const concreteReplacement = spec.regex
-				? match.text.replace(
-						new RegExp(spec.pattern, regexFlags),
-						spec.replacement,
-					)
-				: spec.replacement;
 			const blockRef = document.body.resolveBlock(match.blockId);
 			replaceSpanInParagraph(
 				blockRef.node,
 				{ start: match.start, end: match.end },
-				concreteReplacement,
+				expand(match.text),
 				tracked,
 				spec.view,
 			);
@@ -163,13 +201,15 @@ export async function runReplaceBatch(
 			totalMatches: all.length,
 			replaced: selected.length,
 			matches: selected.map((match) => ({
-				locator: `${match.blockId}:${match.start}-${match.end}`,
+				locator: spanLocator(match),
 				text: match.text,
 			})),
 		});
 
-		// Re-read the live tree so the next entry's find reflects this one's edits.
-		document.reread();
+		// Re-read the live tree so the next entry's find reflects this one's
+		// edits (skipped when nothing changed — a zero-match entry leaves the
+		// tree untouched, and the full re-walk is the batch loop's biggest cost).
+		if (selected.length > 0) document.reread();
 	}
 
 	if (dryRun) {

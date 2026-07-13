@@ -48,7 +48,8 @@ export const LOCATOR_FORMS: Record<LocatorFormKey, LocatorForm> = {
 	crossSpan: {
 		syntax: "pN:S-pM:E",
 		example: "p3:5-p5:10",
-		summary: "from char S of paragraph N to char E of paragraph M",
+		summary:
+			"from char S of paragraph N to char E of paragraph M (cell paragraphs too — tN:rRcC:pA:S-tN:rRcC:pB:E, same cell)",
 	},
 	cell: {
 		syntax: "tN:rRcC",

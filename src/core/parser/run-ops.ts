@@ -20,8 +20,8 @@ export function runTextLength(run: XmlNode): number {
 		// agree.
 		if (child.tag === "w:t" || child.tag === "w:delText") {
 			total += child.collectText().length;
-		} else if (SINGLE_CHAR_TAGS.has(child.tag)) {
-			total += 1;
+		} else {
+			total += inlineMarkerWidth(child);
 		}
 	}
 	return total;
@@ -32,11 +32,12 @@ export function runTextLength(run: XmlNode): number {
  *
  * - `<w:rPr>`: metadata, cloned into every slice.
  * - `<w:t>` / `<w:delText>`: text content, sliced by character offset.
- * - `<w:noBreakHyphen>` / `<w:softHyphen>` / `<w:sym>`: single-character
- *   text equivalents — own one offset slot, included if their slot lies in
- *   `[start, end)`.
- * - other inline children (`<w:tab>`, `<w:br>`, `<w:cr>`, `<w:ptab>`,
- *   `<w:drawing>`, `<w:pict>`, `<w:object>`, footnote refs): zero-width
+ * - single-character equivalents (`<w:noBreakHyphen>` / `<w:softHyphen>` /
+ *   `<w:sym>`) and the whitespace markers `read` renders as one character
+ *   (`<w:tab>` / `<w:ptab>` → "\t", `<w:cr>` and a LINE `<w:br>` → "\n"):
+ *   own one offset slot, included if their slot lies in `[start, end)`.
+ * - other inline children (`<w:drawing>`, `<w:pict>`, `<w:object>`, footnote
+ *   refs, and a PAGE/COLUMN `<w:br>` — which `read` omits): zero-width
  *   positional markers — owned by the slice satisfying
  *   `start <= offset < end`. This partitions cleanly across pre/cut/post.
  */
@@ -62,13 +63,15 @@ export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
 			offset += text.length;
 			continue;
 		}
-		if (SINGLE_CHAR_TAGS.has(child.tag)) {
+		if (inlineMarkerWidth(child) === 1) {
 			if (offset >= start && offset < end) {
 				sliced.children.push(child.clone());
 			}
 			offset += 1;
 			continue;
 		}
+		// Zero-width positional markers (drawings, legacy embeds, note refs, a
+		// page/column break): owned by the slice whose range covers this offset.
 		if (offset >= start && offset < end) {
 			sliced.children.push(child.clone());
 		}
@@ -76,10 +79,32 @@ export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
 	return sliced;
 }
 
-/** Tags that contribute exactly one character to the AST text and to
- *  paragraph-level offset accounting. Kept in sync with `readRun`'s handling
- *  of these elements in `core/ast/read.ts`. */
-const SINGLE_CHAR_TAGS = new Set(["w:noBreakHyphen", "w:softHyphen", "w:sym"]);
+/** The offset width of a non-`<w:t>` run child: exactly one character for the
+ *  text equivalents (`<w:noBreakHyphen>`/`<w:softHyphen>`/`<w:sym>`) and for the
+ *  whitespace markers `read` renders as a character — `<w:tab>`/`<w:ptab>` ("\t"),
+ *  `<w:cr>` and a LINE `<w:br>` ("\n"). A PAGE/COLUMN `<w:br>` renders as nothing
+ *  in `read`, so it stays zero-width; everything else (drawings, note refs, …) is
+ *  a zero-width positional marker. Kept in lockstep with `readRun` in
+ *  `core/ast/read.ts` and `paragraphTextForView` in `core/find/index.ts` — the
+ *  three must agree or `find` and `replace`/`comments add`/`hyperlinks add`
+ *  misalign. */
+function inlineMarkerWidth(child: XmlNode): number {
+	switch (child.tag) {
+		case "w:noBreakHyphen":
+		case "w:softHyphen":
+		case "w:sym":
+		case "w:tab":
+		case "w:ptab":
+		case "w:cr":
+			return 1;
+		case "w:br": {
+			const type = child.getAttribute("w:type");
+			return type === "page" || type === "column" ? 0 : 1;
+		}
+		default:
+			return 0;
+	}
+}
 
 /** Paragraph-level wrappers whose inner runs contribute to the paragraph's
  *  text content. Anything that `walkRunContainer` in `core/ast/read.ts`

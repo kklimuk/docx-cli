@@ -65,6 +65,23 @@ describe("parseLocator", () => {
 		});
 	});
 
+	test("parses a within-cell cross-paragraph range (what a spanning find prints)", () => {
+		expect(parseLocator("t0:r0c0:p0:2-t0:r0c0:p1:3")).toEqual({
+			kind: "range",
+			start: { blockId: "t0:r0c0:p0", offset: 2 },
+			end: { blockId: "t0:r0c0:p1", offset: 3 },
+		});
+	});
+
+	test("rejects a range that crosses a cell wall or leaves a cell", () => {
+		expect(() => parseLocator("t0:r0c0:p0:2-t0:r0c1:p0:3")).toThrow(
+			/share a container/,
+		);
+		expect(() => parseLocator("t0:r0c0:p0:2-p1:3")).toThrow(
+			/share a container/,
+		);
+	});
+
 	test("parses table cell with optional inner locator", () => {
 		expect(parseLocator("t0:r1c2")).toEqual({
 			kind: "cell",

@@ -246,9 +246,16 @@ docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wi
 docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
 #   Keeps the run's formatting (bold/font) and any tabs — the no-rebuild way to fill a
 #   formatted/tabbed template line (e.g. "**Org Name**⇥Date"); don't hand-build --runs to refill it.
+#   A TAB matches as one character (pattern "City State Zip" fills a tab-separated line), and
+#   TAB/NBSP/bullet-glyph variants match their plain equivalents unless --exact.
 #   --at pN (or a cell paragraph tT:rRcC:pN) CONFINES the replace to one paragraph — use it when the
 #   SAME placeholder repeats across the doc (a résumé's "City, State" in every entry) and you want THE
 #   one in a specific paragraph, instead of find → edit --at pN:S-E span surgery. Batch entries take "at" too.
+#   MULTI-LINE (editor-style): "\n" in PATTERN matches a line break OR a paragraph boundary
+#   (consecutive paragraphs in the body or one table cell; never across a table/section break/cell wall); the REPLACEMENT's own
+#   "\n"s then define the result — single-line replacement MERGES the paragraphs (first one's
+#   formatting governs), "\n" in the replacement inserts a paragraph mark (splits). Untracked
+#   only: refuses under tracking rather than skip the journal. Block ids shift; re-read after.
 
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys
 # on each JSONL line mirror the command's flags; all locators address the doc as

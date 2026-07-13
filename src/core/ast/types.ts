@@ -269,10 +269,19 @@ export type ImageRun = {
 export type BreakRun = {
 	type: "break";
 	kind: "page" | "line" | "column";
+	/** Set when the break sits inside a tracked-change wrapper (`<w:ins>`/
+	 *  `<w:del>`/…). A LINE break is one offset character (it renders as "\n"),
+	 *  so `find`/`replace` must know when to hide it in the accepted/baseline
+	 *  view, exactly as they do for a deleted `TextRun`. */
+	trackedChange?: TrackedChange;
 };
 
 export type TabRun = {
 	type: "tab";
+	/** Set when the tab sits inside a tracked-change wrapper. A tab is one offset
+	 *  character (it renders as "\t"), so its view-visibility must track with the
+	 *  surrounding revision — see `BreakRun.trackedChange`. */
+	trackedChange?: TrackedChange;
 };
 
 /** A math equation. `latex` is reconstructed by walking the underlying

@@ -669,3 +669,28 @@ function invalidLineSpacing(raw: string): SpacingIndentError {
 		hint: "Use a multiple (1, 1.5, 2), a name (single, double), or an exact point value (e.g. 15pt, or '15pt atLeast').",
 	};
 }
+
+/** A match's span locator: the classic `p0:3-9` for an in-paragraph match
+ *  (`TextMatch` shape), `p0:5-p2:3` when a spanning match crossed boundaries —
+ *  the documented cross-paragraph range form (`pN:S-pM:E`), which `comments
+ *  add --at` accepts, so a spanning find pipes straight into a spanning
+ *  comment. The ONE emitter of span-locator syntax, shared by `find` and
+ *  `replace` so every surface prints the same shape. */
+export function spanLocator(
+	match:
+		| { blockId: string; start: number; end: number }
+		| {
+				startBlockId: string;
+				startOffset: number;
+				endBlockId: string;
+				endOffset: number;
+		  },
+): string {
+	if ("blockId" in match) {
+		return `${match.blockId}:${match.start}-${match.end}`;
+	}
+	if (match.startBlockId === match.endBlockId) {
+		return `${match.startBlockId}:${match.startOffset}-${match.endOffset}`;
+	}
+	return `${match.startBlockId}:${match.startOffset}-${match.endBlockId}:${match.endOffset}`;
+}

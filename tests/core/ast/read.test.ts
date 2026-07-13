@@ -53,13 +53,21 @@ describe("readRun (Bug A)", () => {
 		expect(runs[2]).toMatchObject({ type: "text", text: "bar", bold: true });
 	});
 
-	test("A4: <w:r> wrapped in <w:ins> propagates trackedChange to every TextRun", () => {
+	test("A4: <w:r> wrapped in <w:ins> propagates trackedChange to every run (tab included)", () => {
 		const doc = buildSyntheticView(
 			`<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:tab/><w:t xml:space="preserve">Expires </w:t></w:r></w:ins></w:p>`,
 		);
 		const runs = firstParagraph(doc).runs;
 		expect(runs).toHaveLength(2);
-		expect(runs[0]).toEqual({ type: "tab" });
+		// The tab is one offset character inside the insertion, so it must carry the
+		// same tracked-change decoration as the text — otherwise find/replace would
+		// count it as visible in the baseline view where the insertion is hidden.
+		const tabRun = runs[0];
+		if (!tabRun || tabRun.type !== "tab") {
+			throw new Error("expected tab run at index 0");
+		}
+		expect(tabRun.trackedChange?.kind).toBe("ins");
+		expect(tabRun.trackedChange?.author).toBe("A");
 		const textRun = runs[1];
 		if (!textRun || textRun.type !== "text") {
 			throw new Error("expected text run at index 1");

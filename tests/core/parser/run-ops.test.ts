@@ -23,26 +23,29 @@ function summarize(run: XmlNode): { tag: string; text?: string }[] {
 }
 
 describe("sliceRun (Bug B)", () => {
-	test("B1: tab + foobar, slice [0,3) → tab + foo", () => {
+	test("B1: tab + foobar, slice [0,3) → tab + fo (tab occupies offset 0)", () => {
 		const run = parseRun(`<w:r><w:tab/><w:t>foobar</w:t></w:r>`);
+		// Tab is one character wide: tab=0, f=1, o=2, o=3, … so [0,3) is tab + "fo".
 		expect(summarize(sliceRun(run, 0, 3))).toEqual([
 			{ tag: "w:tab" },
-			{ tag: "w:t", text: "foo" },
+			{ tag: "w:t", text: "fo" },
 		]);
 	});
 
-	test("B2: tab + foobar, slice [3,6) → bar only (tab not duplicated)", () => {
+	test("B2: tab + foobar, slice [3,6) → oba (tab is before the slice)", () => {
 		const run = parseRun(`<w:r><w:tab/><w:t>foobar</w:t></w:r>`);
+		// tab=0, foobar=1..6, so [3,6) is "oba".
 		expect(summarize(sliceRun(run, 3, 6))).toEqual([
-			{ tag: "w:t", text: "bar" },
+			{ tag: "w:t", text: "oba" },
 		]);
 	});
 
-	test("B3: foo + tab + bar, slice [3,6) → tab + bar (tab at offset 3 belongs to this slice)", () => {
+	test("B3: foo + tab + bar, slice [3,6) → tab + ba (tab at offset 3 belongs to this slice)", () => {
 		const run = parseRun(`<w:r><w:t>foo</w:t><w:tab/><w:t>bar</w:t></w:r>`);
+		// foo=0..2, tab=3, bar=4..6, so [3,6) is tab + "ba".
 		expect(summarize(sliceRun(run, 3, 6))).toEqual([
 			{ tag: "w:tab" },
-			{ tag: "w:t", text: "bar" },
+			{ tag: "w:t", text: "ba" },
 		]);
 	});
 
@@ -65,16 +68,17 @@ describe("sliceRun (Bug B)", () => {
 
 	test("partition is exhaustive: pre + cut + post recovers every non-rPr child exactly once", () => {
 		const run = parseRun(`<w:r><w:t>foo</w:t><w:tab/><w:t>bar</w:t></w:r>`);
+		// Total width is 7 (foo=3, tab=1, bar=3): foo=0..2, tab=3, bar=4..6.
 		const pre = summarize(sliceRun(run, 0, 2));
 		const cut = summarize(sliceRun(run, 2, 5));
-		const post = summarize(sliceRun(run, 5, 6));
+		const post = summarize(sliceRun(run, 5, 7));
 		const combined = [...pre, ...cut, ...post];
 		expect(combined).toEqual([
 			{ tag: "w:t", text: "fo" },
 			{ tag: "w:t", text: "o" },
 			{ tag: "w:tab" },
-			{ tag: "w:t", text: "ba" },
-			{ tag: "w:t", text: "r" },
+			{ tag: "w:t", text: "b" },
+			{ tag: "w:t", text: "ar" },
 		]);
 	});
 
@@ -128,16 +132,33 @@ describe("single-character markers (noBreakHyphen / softHyphen / sym)", () => {
 		const run = parseRun(
 			`<w:r><w:t>a</w:t><w:noBreakHyphen/><w:tab/><w:t>b</w:t></w:r>`,
 		);
-		// Offsets: 'a'=0, nbhyphen=1, tab at 2 (zero-width), 'b'=2
+		// Offsets: 'a'=0, nbhyphen=1, tab=2, 'b'=3 (tab is one character wide).
 		// Slice [0, 2): "a" + nbhyphen (offset 1 in [0, 2))
 		expect(summarize(sliceRun(run, 0, 2))).toEqual([
 			{ tag: "w:t", text: "a" },
 			{ tag: "w:noBreakHyphen" },
 		]);
-		// Slice [2, 3): tab (zero-width at offset 2 in [2, 3)) + 'b'
-		expect(summarize(sliceRun(run, 2, 3))).toEqual([
-			{ tag: "w:tab" },
-			{ tag: "w:t", text: "b" },
-		]);
+		// Slice [2, 3): the tab alone (offset 2)
+		expect(summarize(sliceRun(run, 2, 3))).toEqual([{ tag: "w:tab" }]);
+		// Slice [3, 4): 'b'
+		expect(summarize(sliceRun(run, 3, 4))).toEqual([{ tag: "w:t", text: "b" }]);
+	});
+
+	test("runTextLength counts tab, line break, and cr as one char; page break as zero", () => {
+		expect(
+			runTextLength(parseRun(`<w:r><w:t>a</w:t><w:tab/><w:t>b</w:t></w:r>`)),
+		).toBe(3);
+		expect(
+			runTextLength(parseRun(`<w:r><w:t>a</w:t><w:br/><w:t>b</w:t></w:r>`)),
+		).toBe(3);
+		expect(
+			runTextLength(parseRun(`<w:r><w:t>a</w:t><w:cr/><w:t>b</w:t></w:r>`)),
+		).toBe(3);
+		// A page/column break renders as nothing in read, so it stays zero-width.
+		expect(
+			runTextLength(
+				parseRun(`<w:r><w:t>a</w:t><w:br w:type="page"/><w:t>b</w:t></w:r>`),
+			),
+		).toBe(2);
 	});
 });

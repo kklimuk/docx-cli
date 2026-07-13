@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
+import { readDocumentXml } from "./helpers";
 
 type Body = {
 	blocks: Array<{
@@ -676,5 +677,261 @@ describe("docx replace — --at paragraph scope", () => {
 		expect(
 			(after.parsed as { matches: unknown[] }).matches.length,
 		).toBeGreaterThan(0);
+	});
+});
+
+// Tabs are one offset character (they render as "\t" in read), so a
+// tab-separated line — the classic résumé placeholder — is fillable by a
+// space-typed pattern, and a cut that spans a tab tracks it honestly.
+describe("docx replace — tab-separated lines", () => {
+	test("fills a TAB-separated line from a space-typed pattern", async () => {
+		const path = join(tempWorkspace("replace-tab"), "out.docx");
+		await runCli("create", path, "--text", "City\tState\tZip");
+		const result = await runCli(
+			"replace",
+			path,
+			"City State Zip",
+			"Austin, TX",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphText(path, "p0")).toContain("Austin, TX");
+	});
+
+	test("a tab inside a tracked deletion is wrapped in <w:del>, not left behind", async () => {
+		const path = join(tempWorkspace("replace-tab-track"), "out.docx");
+		await runCli("create", path, "--text", "aa\tbb ZZ");
+		await runCli("track-changes", path, "on");
+		// The space-typed pattern spans "aa", the tab, and "bb" — all three land in
+		// the deletion (the tab is not a zero-width straggler outside the <w:del>).
+		const result = await runCli("replace", path, "aa bb", "");
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(path);
+		expect(xml).toContain("<w:del");
+		expect(xml).toMatch(
+			/<w:del[^>]*>\s*<w:r>\s*<w:tab\s*\/>\s*<\/w:r>\s*<\/w:del>/,
+		);
+	});
+
+	test("a later replace stays aligned across a hidden deleted tab", async () => {
+		const path = join(tempWorkspace("replace-tab-align"), "out.docx");
+		await runCli("create", path, "--text", "aa\tbb ZZ");
+		await runCli("track-changes", path, "on");
+		await runCli("replace", path, "aa bb", ""); // tracked-delete text containing a tab
+		// In the accepted view the deleted tab is 0-width, so ZZ is where find/replace
+		// expect it — the substitution must land, proving offsets didn't drift.
+		const result = await runCli("replace", path, "ZZ", "ZZZ");
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphText(path, "p0")).toContain("ZZZ");
+	});
+});
+
+// Editor-style multi-line replace: a "\n" in the pattern matches a line break
+// or a paragraph boundary; the replacement's newlines then define the resulting
+// paragraph structure — exactly as if the span were selected in Word and the
+// replacement typed. Untracked only (refuses under tracking).
+describe("docx replace — across paragraphs (editor-style)", () => {
+	async function threeParagraphs(label: string): Promise<string> {
+		const path = join(tempWorkspace(label), "out.docx");
+		await runCli("create", path, "--text", "AAA header");
+		await runCli("insert", path, "--at-end", "--text", "BBB middle");
+		await runCli("insert", path, "--at-end", "--text", "CCC footer");
+		return path;
+	}
+
+	async function blockTexts(path: string): Promise<string[]> {
+		const read = await runCli("read", path, "--ast");
+		const blocks = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					runs?: Array<{ type: string; text: string }>;
+				}>;
+			}
+		).blocks;
+		return blocks
+			.filter((block) => block.type === "paragraph")
+			.map((block) =>
+				(block.runs ?? [])
+					.filter((run) => run.type === "text")
+					.map((run) => run.text)
+					.join(""),
+			);
+	}
+
+	test("single-line replacement across a boundary MERGES the paragraphs", async () => {
+		const path = await threeParagraphs("across-merge");
+		const result = await runCli("replace", path, "header\nBBB", "joined");
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual(["AAA joined middle", "CCC footer"]);
+	});
+
+	test("a \\n in the replacement SPLITS a paragraph", async () => {
+		const path = join(tempWorkspace("across-split"), "out.docx");
+		await runCli("create", path, "--text", "alpha beta gamma");
+		const result = await runCli("replace", path, "beta", "one\ntwo");
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual(["alpha one", "two gamma"]);
+	});
+
+	test("middle paragraphs die; the last keeps its own tail", async () => {
+		const path = await threeParagraphs("across-middle");
+		const result = await runCli(
+			"replace",
+			path,
+			"header\nBBB middle\nCCC",
+			"intro\nCCC",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual(["AAA intro", "CCC footer"]);
+	});
+
+	test("the first paragraph's style governs a merge; tail formatting survives", async () => {
+		const path = join(tempWorkspace("across-style"), "out.docx");
+		await runCli("create", path, "--text", "Heading Line");
+		await runCli("edit", path, "--at", "p0", "--style", "Heading1");
+		await runCli(
+			"insert",
+			path,
+			"--after",
+			"p0",
+			"--markdown",
+			"Body **bold**",
+		);
+
+		const result = await runCli("replace", path, "Line\nBody", "Joined");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", path, "--ast");
+		const blocks = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					style?: string;
+					runs?: Array<{ type: string; text: string; bold?: boolean }>;
+				}>;
+			}
+		).blocks;
+		const merged = blocks[0];
+		expect(merged?.style).toBe("Heading1");
+		const boldRun = merged?.runs?.find((run) => run.bold);
+		expect(boldRun?.text).toBe("bold");
+	});
+
+	test("refuses under tracking instead of skipping the journal", async () => {
+		const path = await threeParagraphs("across-tracked");
+		await runCli("track-changes", path, "on");
+		const result = await runCli("replace", path, "header\nBBB", "joined");
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		// Nothing changed.
+		expect(await blockTexts(path)).toEqual([
+			"AAA header",
+			"BBB middle",
+			"CCC footer",
+		]);
+	});
+
+	test("rejects --at (a multi-line pattern spans paragraphs)", async () => {
+		const path = await threeParagraphs("across-at");
+		const result = await runCli(
+			"replace",
+			path,
+			"--at",
+			"p0",
+			"header\nBBB",
+			"joined",
+		);
+		expect(result.exitCode).toBe(2);
+	});
+
+	test("0 cross-paragraph matches exits MATCH_NOT_FOUND", async () => {
+		const path = await threeParagraphs("across-miss");
+		const result = await runCli("replace", path, "header\nZZZ", "joined");
+		expect(result.exitCode).toBe(3);
+		expect(result.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
+	});
+
+	test("a batch entry with \\n merges too (JSONL newlines are real)", async () => {
+		const path = await threeParagraphs("across-batch");
+		const batchPath = join(tempWorkspace("across-batch-jsonl"), "b.jsonl");
+		await Bun.write(
+			batchPath,
+			'{"pattern":"header\\nBBB","replacement":"joined"}\n',
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual(["AAA joined middle", "CCC footer"]);
+	});
+
+	test("a CRLF batch replacement splits cleanly (no stray \\r in the runs)", async () => {
+		const path = await threeParagraphs("across-crlf");
+		const batchPath = join(tempWorkspace("across-crlf-jsonl"), "b.jsonl");
+		// JSONL authored on Windows: JSON.parse hands the across path a real
+		// "\r\n" (inline argv would have been normalized by decodeInlineEscapes).
+		await Bun.write(
+			batchPath,
+			'{"pattern":"BBB middle","replacement":"one\\r\\ntwo"}\n',
+		);
+		const result = await runCli("replace", path, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual([
+			"AAA header",
+			"one",
+			"two",
+			"CCC footer",
+		]);
+	});
+
+	test("a \\n pattern merges consecutive paragraphs INSIDE a table cell", async () => {
+		const path = join(tempWorkspace("across-cell"), "out.docx");
+		await runCli("create", path, "--text", "intro");
+		await runCli(
+			"insert",
+			path,
+			"--at-end",
+			"--table",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		await runCli("edit", path, "--at", "t0:r0c0:p0", "--text", "alpha");
+		await runCli("insert", path, "--after", "t0:r0c0:p0", "--text", "beta");
+
+		const result = await runCli("replace", path, "alpha\nbeta", "joined");
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", path, "--ast");
+		const table = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					rows?: Array<{
+						cells: Array<{
+							blocks: Array<{
+								type: string;
+								runs?: Array<{ type: string; text: string }>;
+							}>;
+						}>;
+					}>;
+				}>;
+			}
+		).blocks.find((block) => block.type === "table");
+		const cellTexts = (table?.rows?.[0]?.cells[0]?.blocks ?? [])
+			.filter((block) => block.type === "paragraph")
+			.map((block) =>
+				(block.runs ?? [])
+					.filter((run) => run.type === "text")
+					.map((run) => run.text)
+					.join(""),
+			);
+		expect(cellTexts).toEqual(["joined"]);
+	});
+
+	test('replace "\\n" with a space --all merges every paragraph', async () => {
+		const path = await threeParagraphs("across-merge-all");
+		const result = await runCli("replace", path, "\n", " ", "--all");
+		expect(result.exitCode).toBe(0);
+		expect(await blockTexts(path)).toEqual([
+			"AAA header BBB middle CCC footer",
+		]);
 	});
 });

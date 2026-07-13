@@ -32,6 +32,7 @@ const CORE_FIXTURES = [
 	"word-formatted.docx", // run-level rPr (color/themeColor, shd, u@color, vertAlign, smallCaps, caps; p4) + bold/italic edit-preservation layout (p0-p3); absorbed run-formatting.docx
 	"letter.docx", // paragraph pPr: <w:spacing> (before/after/line) + <w:ind> (left/right/firstLine/hanging), authored via insert/edit
 	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields
+	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
 ] as const;
 
 const EXTRA_FIXTURES = [
@@ -45,7 +46,6 @@ const EXTRA_FIXTURES = [
 	"chained-tracked-edits.docx",
 	"transparent-wrappers.docx",
 	"sections.docx",
-	"normalize-query.docx",
 ] as const;
 
 const FIXTURES = Bun.env.DOCX_LO_ALL

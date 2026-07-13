@@ -18,6 +18,7 @@ import { numFmtToFormat } from "./document/numbering";
 import { decodeSym } from "./sym";
 import type {
 	Block,
+	BreakRun,
 	ChartRun,
 	CommentAnchor,
 	EquationRun,
@@ -31,6 +32,7 @@ import type {
 	TableCell,
 	TableRow,
 	TableWidth,
+	TabRun,
 	TextRun,
 	TrackedChange,
 } from "./types";
@@ -864,12 +866,18 @@ function readRun(
 							| "page"
 							| "line"
 							| "column");
-			out.push({ type: "break", kind });
+			const breakRun: BreakRun = { type: "break", kind };
+			// A LINE break is one offset character; carry the surrounding revision
+			// so find/replace can hide it in the accepted/baseline view.
+			if (trackedChange) breakRun.trackedChange = trackedChange;
+			out.push(breakRun);
 			continue;
 		}
 		if (child.tag === "w:tab" || child.tag === "w:ptab") {
 			flushText();
-			out.push({ type: "tab" });
+			const tabRun: TabRun = { type: "tab" };
+			if (trackedChange) tabRun.trackedChange = trackedChange;
+			out.push(tabRun);
 			continue;
 		}
 		if (child.tag === "w:footnoteReference") {

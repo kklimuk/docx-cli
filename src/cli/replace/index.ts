@@ -1,11 +1,16 @@
 import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
 	findTextSpans,
+	replacementExpander,
 	replaceSpanInParagraph,
-	type TextMatch,
+	selectMatches,
 	type TrackedReplaceOptions,
 } from "@core/find";
-import { resolveView } from "../parse-helpers";
+import {
+	decodeInlineEscapes,
+	resolveView,
+	spanLocator,
+} from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -18,6 +23,7 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { partialReplaceHint, runReplaceAcross } from "./across";
 import { runReplaceBatch } from "./batch";
 import { matchesInScope, resolveReplaceScope, ScopeError } from "./scope";
 
@@ -55,16 +61,31 @@ Options:
   -v, --verbose     print the success ack JSON (default: a one-line confirmation)
   -h, --help        show this help
 
-Within-paragraph matches only. Run formatting (rPr) on the surrounding text
-is preserved; the replacement run inherits the rPr of the first run that
-overlaps the matched span. Tabs and other runs in the paragraph are left in
-place — only the matched text changes. So this is the no-rebuild way to FILL a
-formatted/tabbed template line: \`replace "Organization Name" "Northwind Robotics"\`
+Run formatting (rPr) on the surrounding text is preserved; the replacement
+run inherits the rPr of the first run that overlaps the matched span. Tabs
+and other runs in the paragraph are left in place — only the matched text
+changes (a TAB matches as one character, so a pattern typed with spaces fills
+a tab-separated line). So this is the no-rebuild way to FILL a formatted/
+tabbed template line: \`replace "Organization Name" "Northwind Robotics"\`
 on a "**Organization Name**⇥Date" line keeps the bold and the tab; don't
 hand-build \`edit --runs\` JSON to refill a line. \`--batch\` fills many at once.
 When a single invocation produces multiple replacements in the same paragraph,
 they're applied in reverse offset order so earlier offsets don't shift before
 being applied.
+
+Multi-line (editor-style): \\n and \\t in PATTERN/REPLACEMENT are decoded to
+real characters. A "\\n" in the PATTERN matches an in-paragraph line break OR
+the boundary between consecutive paragraphs — in the body or within one table
+cell (never across a table, section break, or cell wall); the REPLACEMENT's
+newlines then define the resulting
+structure, exactly as if the span were selected in Word and the replacement
+typed — a single-line replacement MERGES the spanned paragraphs into one
+(first paragraph's formatting governs), "\\n"s in the replacement keep/create
+paragraph marks (so a "\\n" in the replacement splits a paragraph even when
+the pattern didn't cross one). \`replace FILE "\\n" "" --all\` merges every
+paragraph pair. Cross-paragraph replaces can't be tracked yet: with tracking
+on (or --track) they refuse loudly rather than skip the journal — turn
+tracking off first. Block ids shift afterward; re-read before more edits.
 
 By default the PATTERN is normalized: balanced markdown emphasis around
 non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
@@ -158,8 +179,11 @@ export async function run(args: string[]): Promise<number> {
 		return runReplaceBatch(path, batchInput, parsed.values);
 	}
 
-	const pattern = parsed.positionals[1];
-	const replacement = parsed.positionals[2];
+	// Inline argv decode, same as every authoring surface: `\n`/`\t` typed in a
+	// double-quoted shell argument become real characters. A real "\n" is also
+	// the cross-paragraph gate below.
+	const pattern = decodeInlineEscapes(parsed.positionals[1]);
+	const replacement = decodeInlineEscapes(parsed.positionals[2]);
 	if (pattern == null) return fail("USAGE", "Missing PATTERN argument", HELP);
 	if (replacement == null) {
 		return fail("USAGE", "Missing REPLACEMENT argument", HELP);
@@ -180,6 +204,32 @@ export async function run(args: string[]): Promise<number> {
 			"USAGE",
 			`--limit must be a positive integer, got "${limitRaw}"`,
 		);
+	}
+
+	// A "\n" in the pattern spans lines (line break or paragraph boundary); a
+	// "\n" in the replacement inserts a paragraph mark. Either routes to the
+	// cross-paragraph path — editor-style, untracked only (it refuses under
+	// tracking rather than record a merge/split wrong).
+	if (pattern.includes("\n") || replacement.includes("\n")) {
+		if (parsed.values.at !== undefined) {
+			return fail(
+				"USAGE",
+				"--at scopes a replace to ONE paragraph, but a \\n-bearing pattern/replacement spans paragraph boundaries — drop --at, or remove the \\n",
+			);
+		}
+		return runReplaceAcross(path, pattern, replacement, {
+			regex: useRegex,
+			ignoreCase,
+			exact,
+			all: wantAll,
+			...(limit !== undefined ? { limit } : {}),
+			view: findView,
+			track: Boolean(parsed.values.track),
+			...(parsed.values.output !== undefined
+				? { output: parsed.values.output as string }
+				: {}),
+			dryRun: Boolean(parsed.values["dry-run"]),
+		});
 	}
 
 	const document = await openOrFail(path);
@@ -225,17 +275,10 @@ export async function run(args: string[]): Promise<number> {
 				}
 			: {};
 
-	let selected: TextMatch[];
-	if (limit !== undefined) {
-		selected = allMatches.slice(0, limit);
-	} else if (wantAll) {
-		selected = allMatches;
-	} else {
-		selected = allMatches.slice(0, 1);
-	}
+	const selected = selectMatches(allMatches, { all: wantAll, limit });
 
 	const matchesPayload = selected.map((match) => ({
-		locator: `${match.blockId}:${match.start}-${match.end}`,
+		locator: spanLocator(match),
 		blockId: match.blockId,
 		start: match.start,
 		end: match.end,
@@ -298,16 +341,18 @@ export async function run(args: string[]): Promise<number> {
 			}
 		: undefined;
 
-	const regexFlags = ignoreCase ? "i" : "";
+	const expand = replacementExpander({
+		pattern,
+		replacement,
+		regex: useRegex,
+		ignoreCase,
+	});
 	for (const match of reversed) {
-		const concreteReplacement = useRegex
-			? match.text.replace(new RegExp(pattern, regexFlags), replacement)
-			: replacement;
 		const blockRef = document.body.resolveBlock(match.blockId);
 		replaceSpanInParagraph(
 			blockRef.node,
 			{ start: match.start, end: match.end },
-			concreteReplacement,
+			expand(match.text),
 			tracked,
 			findView,
 		);
@@ -315,15 +360,7 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	// A default (first-match) or --limit replace can leave matches behind. Say so
-	// in the text confirmation — a weak agent that ran a bare `replace` and saw
-	// "1 occurrence replaced" otherwise assumes it got them all (the résumé agent
-	// errored twice before discovering --all). Silent on a full sweep.
-	const remaining = allMatches.length - selected.length;
-	const partialHint =
-		remaining > 0
-			? `↳ ${remaining} more match${remaining === 1 ? "" : "es"} left unreplaced (${selected.length} of ${allMatches.length} done) — pass --all to replace every match, or --limit N for a specific count.`
-			: undefined;
+	const partialHint = partialReplaceHint(selected.length, allMatches.length);
 
 	await respondAck(
 		{

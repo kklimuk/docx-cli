@@ -1,10 +1,14 @@
 import {
+	findAcrossParagraphs,
 	findFormattedSpans,
 	findTextSpans,
 	type RunFormatFilter,
-	type TextMatch,
 } from "@core/find";
-import { resolveView } from "../parse-helpers";
+import {
+	decodeInlineEscapes,
+	resolveView,
+	spanLocator,
+} from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -52,15 +56,21 @@ Options:
   --json            emit the full match objects as JSON (default: bare locators)
   -h, --help        show this help
 
-Within-paragraph matches only — cross-paragraph ranges aren't supported
-yet. Searches the concatenated text of each paragraph in document order,
-including paragraphs nested in table cells (locators look like
-tT:rRcC:pK:S-E for those).
+Searches the concatenated text of each paragraph in document order, including
+paragraphs nested in table cells (locators look like tT:rRcC:pK:S-E for those).
+A TAB in the document matches as one character, and an in-paragraph line break
+matches "\\n". A QUERY containing "\\n" may span lines: each "\\n" matches a
+line break OR a paragraph boundary (consecutive paragraphs in the body or
+within ONE table cell — never across a table, section break, or cell wall). A spanning
+match prints as pA:S-pB:E — the cross-paragraph range form \`comments add
+--at\` accepts, so a spanning find pipes straight into a spanning comment.
 
 By default the query is normalized: balanced markdown emphasis around
 non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
-straight quotes; em-dash and en-dash match the hyphen. Pass --exact to
-match the raw query verbatim. --regex is always verbatim.
+straight quotes; em-dash and en-dash match the hyphen; a TAB or non-breaking/
+typographic space matches a plain space; bullet glyph variants (·•‣∙▪◦) match
+each other. Pass --exact to match the raw query verbatim. --regex is always
+verbatim. \\n and \\t in the QUERY are decoded to real characters first.
 
 Output:
   Default: EVERY matched span locator (e.g. p3:5-8), one per line — feed them
@@ -133,7 +143,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const path = parsed.positionals[0];
-	const query = parsed.positionals[1];
+	// Inline argv decode, same as every authoring surface: an agent types
+	// "line one\nline two" to search across a line break, and bash hands us the
+	// literal backslash-n. A decoded "\n" is also the multi-paragraph gate below.
+	const query = decodeInlineEscapes(parsed.positionals[1]);
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
 	// Formatting filters (highlight/color/bold/italic/underline) are an
@@ -183,66 +196,80 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	let result: ReturnType<typeof findTextSpans> = { matches: [] };
-	if (hasFormatFilter) {
-		result = {
-			matches: findFormattedSpans(document.body, formatFilter, findView),
-		};
-	} else if (query != null) {
-		try {
-			result = findTextSpans(document.body, query, {
+	// Three ways to gather matches, one output contract: every branch maps its
+	// match shape to `{locator, ...match}` so a single --nth / --json / print
+	// tail below serves them all.
+	let matches: { locator: string }[] = [];
+	let normalizationFields: object = {};
+	try {
+		if (query?.includes("\n")) {
+			// A query containing a newline spans lines: "\n" matches an
+			// in-paragraph line break OR a paragraph boundary (consecutive
+			// paragraphs in the body or within one table cell — never across a
+			// table, section break, or cell wall). Spanning locators print as
+			// pA:S-pB:E — the existing cross-paragraph range form `comments add
+			// --at` accepts, so they compose.
+			const result = findAcrossParagraphs(document.body, query, {
 				regex: useRegex,
 				ignoreCase,
 				view: findView,
 				exact,
 			});
-		} catch (matcherError) {
-			const message =
-				matcherError instanceof Error
-					? matcherError.message
-					: String(matcherError);
-			return fail("USAGE", `Invalid query: ${message}`);
+			matches = result.matches.map((match) => ({
+				locator: spanLocator(match),
+				...match,
+			}));
+			normalizationFields = normalizationPayload(result);
+		} else if (hasFormatFilter) {
+			matches = findFormattedSpans(document.body, formatFilter, findView).map(
+				(match) => ({ locator: spanLocator(match), ...match }),
+			);
+		} else if (query != null) {
+			const result = findTextSpans(document.body, query, {
+				regex: useRegex,
+				ignoreCase,
+				view: findView,
+				exact,
+			});
+			matches = result.matches.map((match) => ({
+				locator: spanLocator(match),
+				...match,
+			}));
+			normalizationFields = normalizationPayload(result);
 		}
+	} catch (matcherError) {
+		const message =
+			matcherError instanceof Error
+				? matcherError.message
+				: String(matcherError);
+		return fail("USAGE", `Invalid query: ${message}`);
 	}
 
-	const allMatches = result.matches;
-	let selected: TextMatch[];
+	let selected = matches;
 	if (nth !== undefined) {
-		const single = allMatches[nth];
+		const single = matches[nth];
 		if (!single) {
 			return fail(
 				"MATCH_NOT_FOUND",
-				`Only ${allMatches.length} match(es); --nth ${nth} is out of range`,
+				`Only ${matches.length} match(es); --nth ${nth} is out of range`,
 			);
 		}
 		selected = [single];
-	} else {
-		// Default: every match. Returning only the first silently hid the rest —
-		// a weak agent that didn't know to pass --all fell back to one find per
-		// item. `--all` is now the default; `--nth N` selects a single match and
-		// `| head -1` still grabs the first. (`--all` is kept as an accepted no-op.)
-		selected = allMatches;
 	}
-
-	const matches = selected.map((match) => ({
-		locator: `${match.blockId}:${match.start}-${match.end}`,
-		...match,
-	}));
+	// Otherwise every match — returning only the first silently hid the rest; a
+	// weak agent that didn't know to pass --all fell back to one find per item.
+	// `--nth N` selects a single match and `| head -1` still grabs the first.
+	// (`--all` is kept as an accepted no-op.)
 
 	if (parsed.values.json) {
 		await respond({
-			totalMatches: allMatches.length,
+			totalMatches: matches.length,
 			query,
 			regex: useRegex,
 			ignoreCase,
 			view: findView,
-			matches,
-			...(result.normalizedQuery !== undefined
-				? {
-						normalizedQuery: result.normalizedQuery,
-						normalizationApplied: result.normalizationApplied,
-					}
-				: {}),
+			matches: selected,
+			...normalizationFields,
 		});
 		return EXIT.OK;
 	}
@@ -251,10 +278,22 @@ export async function run(args: string[]): Promise<number> {
 	// On zero matches stdout stays empty (so `find … | while read` is clean), but
 	// we print an explicit "no matches" to STDERR — otherwise empty output reads
 	// as "did it even run?" and (weak) agents re-run the query to be sure.
-	if (matches.length > 0) {
-		await writeStdout(`${matches.map((match) => match.locator).join("\n")}\n`);
+	if (selected.length > 0) {
+		await writeStdout(`${selected.map((match) => match.locator).join("\n")}\n`);
 	} else {
 		await writeStderr("no matches\n");
 	}
 	return EXIT.OK;
+}
+
+function normalizationPayload(result: {
+	normalizedQuery?: string;
+	normalizationApplied?: string[];
+}): object {
+	return result.normalizedQuery !== undefined
+		? {
+				normalizedQuery: result.normalizedQuery,
+				normalizationApplied: result.normalizationApplied,
+			}
+		: {};
 }

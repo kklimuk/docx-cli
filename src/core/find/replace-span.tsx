@@ -1,3 +1,4 @@
+import { textToRunElements } from "../blocks";
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
@@ -21,15 +22,20 @@ export type TrackedReplaceOptions = {
  *  the chosen view. Invisible wrappers pass through replace's offset
  *  arithmetic untouched (their inner text adds nothing to the offset and
  *  spans don't slice into them). Mirrors `isRunVisibleInView` in
- *  src/core/find/index.ts so find/replace stay in sync. */
-function isWrapperVisibleInView(tag: string, view: FindView): boolean {
+ *  src/core/find/index.ts so find/replace stay in sync. (Exported for
+ *  replace-across.tsx, which walks the same offset space over whole
+ *  paragraphs.) */
+export function isWrapperVisibleInView(tag: string, view: FindView): boolean {
 	if (!isRunBearingWrapper(tag)) return false;
 	if (view === "current") return true;
 	if (view === "accepted") return tag !== "w:del" && tag !== "w:moveFrom";
 	return tag !== "w:ins" && tag !== "w:moveTo";
 }
 
-function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
+export function sumVisibleTextLength(
+	children: XmlNode[],
+	view: FindView,
+): number {
 	let total = 0;
 	for (const child of children) {
 		if (child.tag === "w:r") {
@@ -81,9 +87,7 @@ export function replaceSpanInParagraph(
 
 	const firstSlot = overlapping[0];
 	if (!firstSlot) {
-		paragraph.children.push(
-			<ReplacementRun runProperties={null} text={replacement} />,
-		);
+		paragraph.children.push(...replacementRuns(null, replacement));
 		return;
 	}
 
@@ -168,12 +172,12 @@ function rebuildContainer(
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const run = (
-			<ReplacementRun runProperties={runProperties} text={replacement} />
-		);
-		newChildren.push(
-			tracked && isParagraph ? <Ins meta={mintMeta(tracked)}>{run}</Ins> : run,
-		);
+		const runs = replacementRuns(runProperties, replacement);
+		if (tracked && isParagraph) {
+			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
+			return;
+		}
+		newChildren.push(...runs);
 	};
 
 	for (const child of container.children) {
@@ -236,10 +240,12 @@ function rebuildAcrossBoundaries(
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const run = (
-			<ReplacementRun runProperties={runProperties} text={replacement} />
-		);
-		newChildren.push(tracked ? <Ins meta={mintMeta(tracked)}>{run}</Ins> : run);
+		const runs = replacementRuns(runProperties, replacement);
+		if (tracked) {
+			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
+			return;
+		}
+		newChildren.push(...runs);
 	};
 
 	for (const child of paragraph.children) {
@@ -567,16 +573,12 @@ function splitHyperlinkAcrossSpan(
 
 	if (startsInside) {
 		// Replacement inherits the link: append it inside the pre-half.
-		const innerReplacement = (
-			<ReplacementRun runProperties={runProperties} text={replacement} />
-		);
-		preInner.push(
-			tracked ? (
-				<Ins meta={mintMeta(tracked)}>{innerReplacement}</Ins>
-			) : (
-				innerReplacement
-			),
-		);
+		const innerRuns = replacementRuns(runProperties, replacement);
+		if (tracked) {
+			preInner.push(<Ins meta={mintMeta(tracked)}>{innerRuns}</Ins>);
+		} else {
+			preInner.push(...innerRuns);
+		}
 		markReplacementPlaced();
 	}
 
@@ -605,17 +607,32 @@ function convertRunTextToDelText(run: XmlNode): void {
 	}
 }
 
-function ReplacementRun({
-	runProperties,
-	text,
-}: {
-	runProperties: XmlNode | null;
-	text: string;
-}): XmlNode {
-	return (
-		<w.r>
-			{runProperties}
-			<w.t {...{ "xml:space": "preserve" }}>{text}</w.t>
-		</w.r>
-	);
+/** The replacement's run(s). Routed through `textToRunElements` so a real tab
+ *  becomes `<w:tab/>` instead of a raw control character inside `<w:t>` — the
+ *  same real-character handling every inline authoring surface uses. Plain
+ *  single-line text still collapses to one `<w:t>` run, byte-identical to the
+ *  old single-run shape; each produced run inherits the span's rPr. Returned
+ *  as a plain array (never a fragment sentinel) so the nodes land directly in
+ *  the live tree — `document.reread()` between batch entries must see them.
+ *  (Real newlines never reach here — the CLI routes any `\n`-bearing
+ *  replacement to the cross-paragraph path, where it means a paragraph mark.)
+ *  Exported for replace-across.tsx, which builds each segment's runs the same
+ *  way. */
+export function replacementRuns(
+	runProperties: XmlNode | null,
+	text: string,
+): XmlNode[] {
+	if (text.length === 0) {
+		return [
+			<w.r>
+				{runProperties}
+				<w.t {...{ "xml:space": "preserve" }} />
+			</w.r>,
+		];
+	}
+	const runs = textToRunElements(text);
+	for (const run of runs) {
+		if (runProperties) run.children.unshift(runProperties.clone());
+	}
+	return runs;
 }

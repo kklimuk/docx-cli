@@ -42,7 +42,11 @@ export class LocatorParseError extends Error {
 
 const BLOCK_RE = /^(p|t|s)(\d+)$/;
 const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
-const RANGE_RE = /^p(\d+):(\d+)-p(\d+):(\d+)$/;
+// Each side is a body paragraph (`p3`) or a cell paragraph (`t0:r1c2:p0`) —
+// the form `find` prints for a spanning match, so it pipes into `comments add
+// --at`. Both sides must share a container (validated after the match).
+const RANGE_RE =
+	/^((?:t\d+:r\d+c\d+:)?p\d+):(\d+)-((?:t\d+:r\d+c\d+:)?p\d+):(\d+)$/;
 const BLOCK_RANGE_RE = /^p(\d+)-p(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
@@ -96,6 +100,32 @@ export function parseLocator(input: string): Locator {
 		return { kind: "endnote", endnoteId: `en${endnoteMatch[1]}` };
 	}
 
+	// Checked before the cell forms: a cell-prefixed cross-paragraph range
+	// (`t0:r0c0:p0:2-t0:r0c0:p1:3`) would otherwise be swallowed by CELL_RE,
+	// whose recursive inner parse can't read the dashed right-hand side.
+	const rangeMatch = trimmed.match(RANGE_RE);
+	if (rangeMatch) {
+		const [, startBlock, startCapture, endBlock, endCapture] = rangeMatch;
+		if (
+			startBlock &&
+			endBlock &&
+			cellPrefixOf(startBlock) !== cellPrefixOf(endBlock)
+		) {
+			throw new LocatorParseError(
+				input,
+				"range endpoints must share a container — both body paragraphs, or paragraphs of the SAME table cell",
+			);
+		}
+		const startOffset = Number(startCapture);
+		const endOffset = Number(endCapture);
+		validateOffsets(input, startOffset, endOffset, startBlock !== endBlock);
+		return {
+			kind: "range",
+			start: { blockId: startBlock ?? "", offset: startOffset },
+			end: { blockId: endBlock ?? "", offset: endOffset },
+		};
+	}
+
 	const cellRangeMatch = trimmed.match(CELL_RANGE_RE);
 	if (cellRangeMatch) {
 		const [, tableIndex, startRow, startCol, endRow, endCol] = cellRangeMatch;
@@ -140,19 +170,6 @@ export function parseLocator(input: string): Locator {
 		};
 	}
 
-	const rangeMatch = trimmed.match(RANGE_RE);
-	if (rangeMatch) {
-		const [, startBlock, startCapture, endBlock, endCapture] = rangeMatch;
-		const startOffset = Number(startCapture);
-		const endOffset = Number(endCapture);
-		validateOffsets(input, startOffset, endOffset, startBlock !== endBlock);
-		return {
-			kind: "range",
-			start: { blockId: `p${startBlock}`, offset: startOffset },
-			end: { blockId: `p${endBlock}`, offset: endOffset },
-		};
-	}
-
 	const blockRangeMatch = trimmed.match(BLOCK_RANGE_RE);
 	if (blockRangeMatch) {
 		const [, startIndex, endIndex] = blockRangeMatch;
@@ -184,6 +201,13 @@ export function parseLocator(input: string): Locator {
 	}
 
 	throw new LocatorParseError(input, "unrecognized syntax");
+}
+
+/** The `tN:rRcC` prefix of a cell-paragraph id, `""` for a body paragraph —
+ *  the container a cross-paragraph range must not leave. */
+function cellPrefixOf(blockId: string): string {
+	const lastColon = blockId.lastIndexOf(":");
+	return lastColon === -1 ? "" : blockId.slice(0, lastColon);
 }
 
 function validateOffsets(
