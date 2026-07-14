@@ -53,7 +53,8 @@ Each run produces, under the timestamped run dir, **one result folder per scenar
 
 ```
 <RUN_DIR>/
-  REPORT.md            ← synthesized report (+ appended measured metrics)
+  REPORT.md            ← synthesized report; the Metrics phase appends the measured
+                          run-metrics section (local: in-run; Claude: your post-run pass)
   exercise-metrics.md  ← measured per-exercise-agent tokens/time/tool split
   exercise-metrics.json
   <key>/               ← one per scenario; the worked-on copy lives here
@@ -63,8 +64,10 @@ Each run produces, under the timestamped run dir, **one result folder per scenar
     renders/baseline/  ← the pristine "before": page PNGs + read.md (every EDIT scenario;
                           absent only for the authored eliot-journal — no source to diff)
     review.md          ← the judge's saved review for this task (written in-run)
-    verdict.json       ← the judge's structured verdict incl. taskSuccess (written post-run)
-    metrics.json       ← this task's measured tokens/time/tool split + correctness (post-run)
+    verdict.json       ← the judge's structured verdict incl. taskSuccess (written in-run
+                          by the judge — the correctness source the Metrics phase reads)
+    metrics.json       ← this task's measured tokens/time/tool split + correctness
+                          (local: in-run Metrics phase; Claude: your post-run pass)
 ```
 
 The **render step fires the moment each task finishes** (for both arms) and produces,
@@ -198,43 +201,45 @@ fable synthesis pass); it can take many minutes. Watch live progress with `/work
 When a workflow completes, its return value is
 `{ arm, report, runDir, binary, exercises, verdicts }`. The `report` contains the
 scoreboard, per-task merits/demerits, and prioritized fixes — deliberately **without**
-tool-call or token numbers (nothing self-reports them). The measured numbers come
-from the transcript pass:
+tool-call or token numbers (nothing self-reports them).
 
-1. Write `report` (Markdown) to `"$RUN_DIR/REPORT.md"` with the Write tool.
-2. Persist the judge verdicts so the metrics pass can add a **correctness** column.
-   The workflow returns `verdicts` (one per scenario, each with `taskSuccess`); write
-   each to `"$RUN_DIR/<key>/verdict.json"` with the Write tool (e.g. from `v.key`).
-   Without this, the metrics `task` column reads `—`.
-3. Run the metrics pass to append the **measured per-exercise tokens (input AND
-   output) + wall-clock + docx/non-docx tool split + correctness** (the workflow
-   can't measure tokens/time itself — the runtime gives the script no token API and
-   bans clocks). Same script, **both backends** — only the source differs:
-   - **Claude** (`exerciseBackend: "claude"`) — reconstruct from the transcripts.
-     `TRANSCRIPT_DIR` is the path you noted in step 3; the 4th arg is the exercise
-     model (the workflow's `args.model`, default `haiku` — **pass `sonnet` if you ran
-     sonnet**, or it matches no agents and emits an empty table):
+**Most of this is now written in-run — don't re-do it.** The workflow's synth agent
+writes `REPORT.md` to disk itself, the judge writes each `<key>/verdict.json`, and —
+**for the local backend** — the workflow's final **Metrics** phase already ran
+`exercise-metrics.ts --append-report`, so `REPORT.md` already ends with the measured
+**Run metrics** section and `exercise-metrics.{md,json}` + per-`<key>/metrics.json`
+already exist. So:
+
+1. **Do NOT overwrite `$RUN_DIR/REPORT.md`.** It's authoritative on disk (synth wrote
+   it; the Metrics phase appended to it). Only write it from the returned `report` as
+   a *fallback* if the file is somehow missing — never over an existing one, or you'll
+   clobber the appended metrics.
+2. **Metrics** — the **measured per-exercise tokens (input AND output) + wall-clock +
+   docx/non-docx tool split + correctness**. The workflow can't measure tokens/time
+   itself (the runtime gives its JS no token API and bans clocks), so this is a script
+   pass — but only the **Claude** backend still needs you to run it:
+   - **Local** (`exerciseBackend: "local"`) — **already done by the workflow's Metrics
+     phase** (reads each `<key>/exercise.json` `_local` block + `verdict.json`). Nothing
+     to run; just confirm `REPORT.md` ends with a "Run metrics" section.
+   - **Claude** (`exerciseBackend: "claude"`) — run it now (the token pass reconstructs
+     from the transcripts, and `TRANSCRIPT_DIR` — the path you noted in step 3 — is only
+     known after launch, so the workflow can't do this itself). The 4th arg is the
+     exercise model (`args.model`, default `haiku` — **pass `sonnet` if you ran sonnet**,
+     or it matches no agents and emits an empty table). `--append-report` adds the
+     section to `REPORT.md` with no shell redirect:
      ```bash
      bun "$REPO/.claude/skills/weak-agent-test/scripts/exercise-metrics.ts" \
-       "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" "haiku" >> "$RUN_DIR/REPORT.md"
+       "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" "haiku" --append-report
      ```
-   - **Local** (`exerciseBackend: "local"`) — read straight from each
-     `<key>/exercise.json` `_local` block (ledger-measured; no transcripts exist).
-     The 2nd arg is a label for the harness/model:
-     ```bash
-     bun "$REPO/.claude/skills/weak-agent-test/scripts/exercise-metrics.ts" \
-       --local "$RUN_DIR" "<harness/model label>" >> "$RUN_DIR/REPORT.md"
-     ```
-   Either form appends the measured **Run metrics** section to REPORT.md, writes
-   `$RUN_DIR/exercise-metrics.{md,json}` (run-level, tagged with `backend`), and drops
-   each scenario's measured row into `$RUN_DIR/<key>/metrics.json` so every per-task
-   folder is self-contained. Token cost is reported as **effective input**
-   (cache-weighted: fresh/non-cache input + cache write ×1.25 + cache read ×0.1) plus
-   **output**, kept separate — NOT a single "total tokens", because cache reads are
-   ~10× cheaper than fresh input and lumping them in overstates cost. The raw cache
-   split is in the Totals table and `exercise-metrics.json`. Repeat per concurrent run
-   (Claude: match each RUN_DIR with its own TRANSCRIPT_DIR).
-4. Present in chat: the **Executive summary**, the **per-task merits/demerits**, and
+     Repeat per concurrent run (match each RUN_DIR with its own TRANSCRIPT_DIR).
+   Either way you end up with the **Run metrics** section on `REPORT.md`, run-level
+   `$RUN_DIR/exercise-metrics.{md,json}` (tagged with `backend`), and each scenario's
+   measured row in `$RUN_DIR/<key>/metrics.json`. Token cost is reported as **effective
+   input** (cache-weighted: fresh/non-cache input + cache write ×1.25 + cache read
+   ×0.1) plus **output**, kept separate — NOT a single "total tokens", because cache
+   reads are ~10× cheaper than fresh input and lumping them in overstates cost. The raw
+   cache split is in the Totals table and `exercise-metrics.json`.
+3. Present in chat: the **Executive summary**, the **per-task merits/demerits**, and
    the **measured metrics** — correctness (N/6 success), total docx vs other calls +
    docx share, fresh/cache input + output tokens, total wall-clock, and the
    per-scenario outliers. For a multi-run batch, also give the across-runs averages
@@ -281,10 +286,11 @@ arm — that's what makes the numbers comparable.
      prefer the deterministic collect so nothing re-reads it through a model.)
   The point of this arm is marketing the local harness by its **competitiveness with
   Haiku**: same tasks, same judge, same rubrics — only the exercise brain differs.
-  Its cost/effort is ledger-measured into each `exercise.json` under `_local`, and
-  `exercise-metrics.ts --local "$RUN_DIR" <label>` rolls it up into the SAME
-  Run-metrics table the Claude arms get (tokens, wall-clock, tool split, correctness)
-  — so the local-vs-Haiku numbers are directly comparable.
+  Its cost/effort is ledger-measured into each `exercise.json` under `_local`, and the
+  workflow's final **Metrics** phase rolls it up (via `exercise-metrics.ts --local`)
+  into the SAME Run-metrics table the Claude arms get — tokens, wall-clock, tool split,
+  correctness — appended to `REPORT.md` **automatically, in-run** (no post-run step for
+  this backend), so the local-vs-Haiku numbers are directly comparable.
 - **Competitor arm** (`args.arm: "anthropic-docx-skill"`): the A/B bake-off against
   Anthropic's bundled docx skill. First provision it with
   `bun "$REPO/.claude/skills/weak-agent-test/scripts/stage-competitor.ts" <SKILL_DEST> [RUN_DIR]` (fetches the real skill and

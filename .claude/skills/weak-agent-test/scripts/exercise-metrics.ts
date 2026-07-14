@@ -25,6 +25,8 @@
  * prints the Markdown section to stdout (the skill appends it to REPORT.md).
  */
 
+import { appendFileSync } from "node:fs";
+
 const USAGE = `Usage:
   exercise-metrics.ts <transcript_dir> <run_dir> <binary> [model]   # Claude (from transcripts)
   exercise-metrics.ts --local <run_dir> [label]                     # local harness (from exercise.json)
@@ -34,7 +36,11 @@ pass the workflow's args.model (e.g. "sonnet") so the matching agents are measur
 <transcript_dir> is the "Transcript dir" printed when the workflow was launched.
 Local: [label] names the harness/model in the output (default "local").
 Both write <run_dir>/exercise-metrics.{md,json}, drop each scenario's row into
-<run_dir>/<key>/metrics.json, and print the Markdown section to stdout.`;
+<run_dir>/<key>/metrics.json, and print the Markdown section to stdout.
+
+--append-report (either mode): ALSO append the section to <run_dir>/REPORT.md, so
+the workflow's Metrics phase needs no shell redirect. The manual post-run form can
+use it too (equivalent to \`… >> REPORT.md\`).`;
 
 const FILE_TO_KEY: Record<string, string> = {
 	"mnda.docx": "mnda",
@@ -657,7 +663,11 @@ async function collectLocalRows(runDir: string, label: string): Promise<AgentRow
 }
 
 async function main(): Promise<void> {
-	const argv = Bun.argv.slice(2);
+	// --append-report is a positional-independent boolean; strip it before the
+	// mode-specific positional parsing so it works in either invocation form.
+	const rawArgv = Bun.argv.slice(2);
+	const appendReport = rawArgv.includes("--append-report");
+	const argv = rawArgv.filter((arg) => arg !== "--append-report");
 	const isLocal = argv[0] === "--local";
 
 	let rows: AgentRow[];
@@ -758,12 +768,20 @@ async function main(): Promise<void> {
 		);
 	}
 
-	// stdout is appended to REPORT.md by the skill — emit the SECTION (## …), not the
-	// titled standalone doc. Lead with a blank line + thematic break so it can't glue
-	// onto the synthesized report's last paragraph (which has no trailing newline) and
-	// turn it into a setext heading.
-	console.log(`\n\n---\n\n${section}`);
-	console.error(`[wrote ${outMd} and ${outJson}]`);
+	// Emit the SECTION (## …), not the titled standalone doc. Lead with a blank line +
+	// thematic break so it can't glue onto the synthesized report's last paragraph
+	// (which has no trailing newline) and turn it into a setext heading.
+	const appendable = `\n\n---\n\n${section}`;
+	console.log(appendable);
+	// --append-report writes the section straight into REPORT.md (what the workflow's
+	// Metrics phase uses, so it needs no shell redirect). Without the flag, the caller
+	// redirects stdout (`… >> REPORT.md`) instead.
+	if (appendReport) {
+		appendFileSync(`${runDir}/REPORT.md`, appendable);
+	}
+	console.error(
+		`[wrote ${outMd} and ${outJson}${appendReport ? ` and appended to ${runDir}/REPORT.md` : ""}]`,
+	);
 }
 
 await main();

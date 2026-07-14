@@ -30,6 +30,11 @@ export const meta = {
 			detail: "opus writes the prioritized improvement report",
 			model: "opus",
 		},
+		{
+			title: "Metrics",
+			detail:
+				"local backend: an agent runs scripts/exercise-metrics.ts to append the MEASURED run-metrics section (tokens, wall-clock, tool split, correctness) to REPORT.md — the workflow's own JS can't measure tokens/time",
+		},
 	],
 };
 
@@ -543,7 +548,9 @@ log(
 );
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Synthesize (fable). Prioritized improvement report.
+// Phase 4 — Synthesize (opus). Prioritized improvement report. The synth agent
+// writes REPORT.md to disk itself (see synthPrompt) — that in-run file is
+// authoritative; the returned `report` is for the caller to present in chat.
 // ---------------------------------------------------------------------------
 phase("Synthesize");
 const report = await agent(synthPrompt(active, exercises, verdicts), {
@@ -552,6 +559,34 @@ const report = await agent(synthPrompt(active, exercises, verdicts), {
 	model: SYNTH_MODEL,
 	agentType: "general-purpose",
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Metrics (LOCAL backend only). The workflow's own JS can't measure
+// tokens or wall-clock (sandbox: no token API, no clocks, no fs), so an agent runs
+// scripts/exercise-metrics.ts, which reads each scenario's exercise.json `_local`
+// ledger + the judge's verdict.json and APPENDS the measured run-metrics section to
+// REPORT.md (via --append-report, so no shell redirect). This makes metrics part of
+// the default run instead of a forgettable manual step.
+//
+// The CLAUDE backend can't be measured here — the token pass reconstructs from the
+// workflow's transcript dir, which is only known AFTER launch — so it stays the
+// operator's documented post-run command (verdict.json is already on disk for it,
+// written in-run by the judge).
+// ---------------------------------------------------------------------------
+phase("Metrics");
+if (usingLocal) {
+	const metricsCmd = `bun ${scriptsDir}/exercise-metrics.ts --local ${runDir} ${JSON.stringify(modelLabel)} --append-report`;
+	const metricsResult = await agent(metricsPrompt(metricsCmd), {
+		label: "metrics:local",
+		phase: "Metrics",
+		agentType: "general-purpose",
+	}).catch((error) => `metrics step errored: ${String((error && error.message) || error)}`);
+	log(`Metrics: ${String(metricsResult).split("\n")[0] || "appended run-metrics to REPORT.md"}`);
+} else {
+	log(
+		`Metrics: Claude backend — run \`exercise-metrics.ts <TRANSCRIPT_DIR> ${runDir} ${binary} ${exerciseModel} --append-report\` post-run (the token pass needs the transcript dir, known only after launch). verdict.json is already on disk.`,
+	);
+}
 
 return { arm, report, runDir, binary, exercises, verdicts };
 
@@ -705,6 +740,11 @@ function judgePrompt(scenario, exercise, render) {
 	const outputPath =
 		(exercise && exercise.outputPath) || `${dir}/${scenario.doc}`;
 	const reviewPath = `${dir}/review.md`;
+	// The judge persists its structured verdict here, in-run — the correctness source
+	// the Metrics phase reads (exercise-metrics.ts pulls taskSuccess from it). Writing
+	// it in-run means correctness survives even if the caller never persists the
+	// workflow's returned `verdicts`.
+	const verdictPath = `${dir}/verdict.json`;
 	// Every backend hands the judge the SAME fields — the qualitative account. Tool
 	// counts are deliberately absent (they're measured post-run from transcripts or
 	// the local ledger, not judged). The completion signal differs by arm: a Claude
@@ -788,11 +828,15 @@ ${renderLine}
 
 The CLI executable for your verification commands: ${binary}
 
-## Write your review to disk
-After you've judged, WRITE a human-readable Markdown review to EXACTLY this path (use the Write tool):
-  ${reviewPath}
-The review must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Frictions** section (the agent's reported frictions/dead-ends and your one-line read on whether the path to the result was smooth or a slog). This file is the saved judge's review for this task — make it complete and self-contained. ${judgeMetricsNote}
-
+## Write your review AND your verdict to disk
+After you've judged, use the Write tool TWICE:
+  1. A human-readable Markdown review to EXACTLY this path:
+     ${reviewPath}
+     It must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Frictions** section (the agent's reported frictions/dead-ends and your one-line read on whether the path to the result was smooth or a slog). Make it complete and self-contained. ${judgeMetricsNote}
+  2. The structured verdict as JSON to EXACTLY this path:
+     ${verdictPath}
+     Write the SAME object you return below (at minimum \`taskSuccess\`, \`rendersCorrectly\`, \`formattingPreserved\`, \`survivedReadLoop\`). This is the correctness source the run-metrics step reads — it must land on disk.
+		 
 Then return the structured verdict. Record BOTH sides for this task:
 - merits: what went right (what the tool made easy, what the agent got correct, parts of the output that are well-formed). Always list at least one if anything worked.
 - defects: the demerits — concrete, evidence-backed failures (cite what you saw in the render or read output), each with a severity.`;
@@ -866,6 +910,18 @@ Files (one per scenario):
 ${lines}
 
 Return { exercises: [ … ] } where each array item is the EXACT parsed JSON object from one file — copy every field VERBATIM: key, status (older files may say completed instead — keep whichever is present), summary, deadEnds, frictions, outputPath (plus any extra fields the file carries, e.g. docxCommands and _local — keep them as-is). Do NOT summarize, truncate, reorder, or invent anything. If a file is missing or unreadable, OMIT that scenario rather than fabricating a result.`;
+}
+
+// Local backend only: run the metrics rollup command verbatim. exercise-metrics.ts
+// reads the on-disk exercise.json ledgers + verdict.json and appends the run-metrics
+// section to REPORT.md itself (--append-report), so the agent runs ONE command and
+// relays — no shell redirect, no measurement logic in the (sandboxed) workflow.
+function metricsPrompt(command) {
+	return `You are the METRICS step of an evaluation harness. Run EXACTLY this one command — it reads the run's on-disk ledgers and verdicts and appends a MEASURED run-metrics section (tokens, wall-clock, tool split, correctness) to REPORT.md:
+
+  ${command}
+
+Run it once. It writes exercise-metrics.{md,json} + each scenario's metrics.json AND appends the section to REPORT.md via the --append-report flag — you do NOT need any shell redirect (\`>>\`). If it exits nonzero, report its stderr; do not retry more than once. Then confirm it ran in one line (the totals line from its output is enough).`;
 }
 
 // Build the stage agent's prompt: run scripts/stage-scenario.ts once per active
