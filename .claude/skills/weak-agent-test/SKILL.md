@@ -1,6 +1,6 @@
 ---
 name: weak-agent-test
-description: "Run the weak-agent (Haiku) adversarial test harness against docx-cli. Spawns Haiku agents to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, judges them, measures the Haiku tool economy (docx-cli vs other calls), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
+description: "Run the weak-agent adversarial test harness against docx-cli. Spawns weak exercise agents (Haiku by default, Sonnet to probe, or a local agent harness's pre-produced runs) to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, has fable judge them against ground-truth rubrics, measures each exercise's tool economy, token cost, wall-clock, and correctness (from transcripts for Claude, the exercise.json ledger for the local harness), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
 allowed-tools: Bash, Read, Write, Glob, Workflow
 metadata:
   internal: true
@@ -8,15 +8,21 @@ metadata:
 
 # Adversarial review — weak-agent harness for docx-cli
 
-This harness answers one question: **can weak agents (Haiku) actually use docx-cli to
-get real work done, and what should we fix first?** It runs the `weak-agent-test`
-workflow (`.claude/workflows/weak-agent-test.js`), which fans out one Haiku agent
-per scenario, renders every output with Microsoft Word, grades each against
-ground-truth criteria, and synthesizes a prioritized improvement report.
+This harness answers one question: **can weak agents actually use docx-cli to get
+real work done, and what should we fix first?** It runs the `weak-agent-test`
+workflow (`.claude/workflows/weak-agent-test.js`), which fans out one weak exercise
+agent per scenario (Haiku by default — swappable to Sonnet via `args.model`), renders
+every output with Microsoft Word, grades each against ground-truth criteria with a
+**fable** judge, and has **fable** synthesize a prioritized improvement report.
+Exercise agents do NOT self-report tool counts — every tool-economy and token number
+is **measured** after the run (agents under-count their own calls ~2×, so self-reports
+were dropped): from the agent transcripts for the Claude arms, from each scenario's
+`exercise.json` ledger for the local arm. Both roll up into the same Run-metrics table
+(tokens, wall-clock, tool split, correctness) via `exercise-metrics.ts`.
 
 The test corpus is **bundled with this skill** under `scenarios/`, one folder per
-scenario, named after its key (`scenarios/mnda/`, `scenarios/loi/`, …). Each scenario
-folder is self-describing and holds everything that scenario needs:
+scenario, named after its key (`scenarios/mnda/`, `scenarios/invoice/`, …). Each
+scenario folder is self-describing and holds everything that scenario needs:
 
 - `task.md` — the AGENT-FACING request, written as a human delegating the work:
   the goal, the data, the intent — and **no tool vocabulary** (no `docx` commands,
@@ -38,23 +44,37 @@ tests, edit the files in its folder. (Heavy, ephemeral run outputs — edited do
 renders, reviews, the report — are dumped to `./tmp/docx-weak-agent-test/<ts>/`,
 never into the repo.)
 
+Staging is ONE code path for every backend: `scripts/stage-scenario.ts` copies a
+scenario folder, strips the judge-only `criteria.md`, and verifies the inputs landed.
+The workflow's Stage agent runs it per scenario; the local corpus runner imports it.
+
 Each run produces, under the timestamped run dir, **one result folder per scenario**
 (named after its key) plus the run-level report and metrics:
 
 ```
 <RUN_DIR>/
   REPORT.md            ← synthesized report (+ appended measured metrics)
-  haiku-metrics.md     ← measured per-Haiku-agent tokens/time/tool split
-  haiku-metrics.json
-  benchmark.json       ← self-reported tool economy
+  exercise-metrics.md  ← measured per-exercise-agent tokens/time/tool split
+  exercise-metrics.json
   <key>/               ← one per scenario; the worked-on copy lives here
     task.md  assets/   ← (criteria.md is withheld from this copy — judge-only)
     <doc>.docx         ← the edited/authored document
-    renders/output/    ← the Word-rendered PNGs the judge looked at
-    renders/baseline/  ← pristine before-render (baseline scenarios only, e.g. psa)
+    renders/output/    ← the OUTPUT: Word-rendered page PNGs + read.md (markdown read view)
+    renders/baseline/  ← the pristine "before": page PNGs + read.md (every EDIT scenario;
+                          absent only for the authored eliot-journal — no source to diff)
     review.md          ← the judge's saved review for this task (written in-run)
-    metrics.json       ← this task's measured tokens/time/tool split (written post-run by haiku-metrics)
+    verdict.json       ← the judge's structured verdict incl. taskSuccess (written post-run)
+    metrics.json       ← this task's measured tokens/time/tool split + correctness (post-run)
 ```
+
+The **render step fires the moment each task finishes** (for both arms) and produces,
+for the OUTPUT and — whenever a pristine source exists (every edit scenario) — its
+BASELINE "before", BOTH deliverables in each render dir: the page PNGs AND a `read.md`
+(the markdown read view of that doc). The judge reads all four (output PNGs + read.md,
+baseline PNGs + read.md) to compare before/after both visually and textually. For the
+local backend the corpus runner ALSO writes these per scenario as it goes (during-run
+eyeballing); the workflow re-renders with Word at judge time so the graded PNGs stay
+engine-consistent across arms.
 
 ## Steps
 
@@ -103,9 +123,9 @@ working tree — stop and fix it before running. Do not proceed on a stale binar
 
 ### 2. Make an isolated run workspace (under ./tmp/)
 
-Create an empty timestamped `./tmp/` run dir. **Do NOT copy the scenarios here** — the
-workflow's **Stage** phase copies _only the active scenarios' folders_ from the pristine
-`$SCENARIOS_DIR` into `$RUN_DIR`, one subfolder per scenario (`$RUN_DIR/<key>/`), so
+Create an empty timestamped `./tmp/` run dir **per workflow run**. **Do NOT copy the
+scenarios here** — the workflow's **Stage** phase runs `scripts/stage-scenario.ts` for
+_only the active scenarios_, seeding one subfolder per scenario (`$RUN_DIR/<key>/`), so
 originals stay untouched, the repo stays clean, and a single-scenario run doesn't drag
 the whole corpus along:
 
@@ -116,7 +136,7 @@ mkdir -p "$RUN_DIR"   # empty; the workflow's Stage phase seeds one subfolder pe
 echo "RUN_DIR=$RUN_DIR"
 ```
 
-### 3. Launch the workflow
+### 3. Launch the workflow (up to 3 concurrently)
 
 Invoke the `Workflow` tool with `scriptPath` pointing at the workflow file and pass
 the absolute paths as `args`:
@@ -128,18 +148,29 @@ Workflow({
     runDir: "<RUN_DIR from step 2>",
     binary: "<BINARY from step 1>",
     scenariosDir: "<SCENARIOS_DIR from step 1>",
+    model: "haiku",              // the exercise model: "haiku" (default) or "sonnet"
     only: <optional scenario filter — see below>
   }
 })
 ```
 
+**Running 3 at a time (the fast path to averaged numbers).** The benchmark
+methodology is 3 runs per arm/model, and runs can go **concurrently**: launch up to
+three Workflow invocations in one message, each with its OWN `RUN_DIR` from step 2
+(suffix the timestamp, e.g. `$TS-r1`, `$TS-r2`, `$TS-r3`). This is safe because the
+only shared mutable resource is Microsoft Word, and the CLI itself serializes Word
+access across processes with an advisory lock (`src/core/render/engines/word-mac.ts`)
+— concurrent runs' renders queue instead of corrupting each other. Don't go beyond ~3:
+renders start spending more time queueing than rendering. A haiku-vs-sonnet
+comparison is just two batches: three runs with `model: "haiku"`, three with
+`model: "sonnet"` (never mix models within one run dir).
+
 `only` restricts the run to a subset of scenarios (omit it to run all 6). To run a
 **single task**, pass its key as a plain string — `only: "mnda"`. It also accepts an
-array (`only: ["mnda", "loi"]`) or a comma/space-separated string (`only: "mnda,loi"`);
-all three are normalized to the same list, so use whichever is convenient. The keys are
-the folder names under `$SCENARIOS_DIR` (run `ls "$SCENARIOS_DIR"` if you need to
-confirm them); unknown keys abort the run with a "No scenarios matched" error listing
-the valid ones.
+array (`only: ["mnda", "invoice"]`) or a comma/space-separated string; all forms are
+normalized to the same list. The keys are the folder names under `$SCENARIOS_DIR`
+(run `ls "$SCENARIOS_DIR"` if you need to confirm them); unknown keys abort the run
+with a "No scenarios matched" error listing the valid ones.
 
 > Use `scriptPath`, NOT `name: "weak-agent-test"`. Launching by name resolves to a
 > copy cached at session start, so any edit to the workflow made during the session is
@@ -147,79 +178,165 @@ the valid ones.
 > tolerates `args` arriving as a JSON string — the runtime stringifies it — so passing
 > a plain object is fine.)
 
-When the tool returns, **note the `Transcript dir:` path it prints** — call it
+When the tool returns, **note each run's `Transcript dir:` path it prints** — call it
 `TRANSCRIPT_DIR` (it looks like `…/subagents/workflows/wf_<id>`). You need it in
-step 4 to measure per-agent tokens and time.
+step 4 to measure per-agent tokens and time. With concurrent runs, keep each
+run's `(RUN_DIR, TRANSCRIPT_DIR)` pair matched.
 
 **Scenario keys** (omit `only` to run all 6):
 `mnda`, `invoice`, `resume`, `contract-markup`, `contract-finalize`, `eliot-journal`.
 
 If the user passed scenario keys as arguments to this skill (e.g.
-`/weak-agent-test mnda loi` or `mnda,loi`), parse them into the `only` array.
-Otherwise run everything.
+`/weak-agent-test mnda invoice`), parse them into the `only` array. Otherwise run
+everything.
 
-The run is heavy (6 Haiku agents, serial Word rendering, 6 judges + a synthesis pass);
-it can take many minutes. Watch live progress with `/workflows`.
+Each run is heavy (6 exercise agents, serialized Word rendering, 6 fable judges + a
+fable synthesis pass); it can take many minutes. Watch live progress with `/workflows`.
 
-### 4. Save the report + measure the Haiku metrics
+### 4. Save the report + measure the exercise metrics
 
-When the workflow completes, its return value is
-`{ report, runDir, binary, exercises, verdicts, benchmark }`. The `report` already
-contains the scoreboard, per-task merits/demerits, and the self-reported tool economy.
-Two more steps add the _measured_ numbers:
+When a workflow completes, its return value is
+`{ arm, report, runDir, binary, exercises, verdicts }`. The `report` contains the
+scoreboard, per-task merits/demerits, and prioritized fixes — deliberately **without**
+tool-call or token numbers (nothing self-reports them). The measured numbers come
+from the transcript pass:
 
-1. Write `report` (Markdown) to `"$RUN_DIR/REPORT.md"` and `benchmark` (JSON) to
-   `"$RUN_DIR/benchmark.json"` with the Write tool.
-2. Run the metrics pass over the run's transcripts to append the **accurate
-   per-Haiku-agent tokens + wall-clock time + docx/non-docx tool split** (the workflow
-   can't measure these itself — the runtime gives the script no token API and bans
-   clocks, so this reconstructs them from the transcripts). `TRANSCRIPT_DIR` is the
-   path you noted in step 3:
-   ```bash
-   bun "$REPO/.claude/skills/weak-agent-test/scripts/haiku-metrics.ts" \
-     "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" "haiku" >> "$RUN_DIR/REPORT.md"
-   ```
-   The 4th argument is the exercise model the run used (the workflow's `args.model`,
-   default `haiku`). **If you ran the workflow with a non-default `args.model` (e.g.
-   `sonnet`), pass that same value as the 4th arg** — otherwise the metrics default to
-   `haiku`, match no exercise agents, and emit an empty table (the script warns on stderr
-   when 0 transcripts match the filter).
-   This appends the measured "Haiku tool & cost economy" table to REPORT.md, writes
-   `$RUN_DIR/haiku-metrics.json` (run-level), and drops each scenario's measured row
-   into `$RUN_DIR/<key>/metrics.json` so every per-task folder is self-contained.
-   Token cost is reported as **effective input**
-   (cache-weighted: fresh input + cache write ×1.25 + cache read ×0.1) plus **output**,
-   kept separate — NOT a single "total tokens", because cache reads are ~10× cheaper
-   than fresh input and lumping them in overstates cost. The raw cache split is in the
-   Totals table and `haiku-metrics.json`.
-3. Present in chat: the **Executive summary**, the **per-task merits/demerits**, and
-   the **Haiku metrics** (total docx vs other calls + docx share, effective input +
-   output tokens, total time, and the per-scenario outliers). Tell the user where the
+1. Write `report` (Markdown) to `"$RUN_DIR/REPORT.md"` with the Write tool.
+2. Persist the judge verdicts so the metrics pass can add a **correctness** column.
+   The workflow returns `verdicts` (one per scenario, each with `taskSuccess`); write
+   each to `"$RUN_DIR/<key>/verdict.json"` with the Write tool (e.g. from `v.key`).
+   Without this, the metrics `task` column reads `—`.
+3. Run the metrics pass to append the **measured per-exercise tokens (input AND
+   output) + wall-clock + docx/non-docx tool split + correctness** (the workflow
+   can't measure tokens/time itself — the runtime gives the script no token API and
+   bans clocks). Same script, **both backends** — only the source differs:
+   - **Claude** (`exerciseBackend: "claude"`) — reconstruct from the transcripts.
+     `TRANSCRIPT_DIR` is the path you noted in step 3; the 4th arg is the exercise
+     model (the workflow's `args.model`, default `haiku` — **pass `sonnet` if you ran
+     sonnet**, or it matches no agents and emits an empty table):
+     ```bash
+     bun "$REPO/.claude/skills/weak-agent-test/scripts/exercise-metrics.ts" \
+       "<TRANSCRIPT_DIR>" "$RUN_DIR" "$BINARY" "haiku" >> "$RUN_DIR/REPORT.md"
+     ```
+   - **Local** (`exerciseBackend: "local"`) — read straight from each
+     `<key>/exercise.json` `_local` block (ledger-measured; no transcripts exist).
+     The 2nd arg is a label for the harness/model:
+     ```bash
+     bun "$REPO/.claude/skills/weak-agent-test/scripts/exercise-metrics.ts" \
+       --local "$RUN_DIR" "<harness/model label>" >> "$RUN_DIR/REPORT.md"
+     ```
+   Either form appends the measured **Run metrics** section to REPORT.md, writes
+   `$RUN_DIR/exercise-metrics.{md,json}` (run-level, tagged with `backend`), and drops
+   each scenario's measured row into `$RUN_DIR/<key>/metrics.json` so every per-task
+   folder is self-contained. Token cost is reported as **effective input**
+   (cache-weighted: fresh/non-cache input + cache write ×1.25 + cache read ×0.1) plus
+   **output**, kept separate — NOT a single "total tokens", because cache reads are
+   ~10× cheaper than fresh input and lumping them in overstates cost. The raw cache
+   split is in the Totals table and `exercise-metrics.json`. Repeat per concurrent run
+   (Claude: match each RUN_DIR with its own TRANSCRIPT_DIR).
+4. Present in chat: the **Executive summary**, the **per-task merits/demerits**, and
+   the **measured metrics** — correctness (N/6 success), total docx vs other calls +
+   docx share, fresh/cache input + output tokens, total wall-clock, and the
+   per-scenario outliers. For a multi-run batch, also give the across-runs averages
+   (tasks solved of 6, effective input, output, wall-clock). Tell the user where the
    artifacts live:
    - `<RUN_DIR>/REPORT.md` — findings + scoreboard + per-task merits/demerits + measured metrics table
-   - `<RUN_DIR>/haiku-metrics.json` and `benchmark.json` — the raw numbers
+   - `<RUN_DIR>/exercise-metrics.json` — the raw numbers
    - `<RUN_DIR>/<key>/` — one folder per scenario, each holding that task's worked-on
-     `.docx`, its `renders/` (the Word PNGs the judge looked at), `review.md` (the
-     judge's saved review), and `metrics.json` (that task's measured tokens/time/tool split)
+     `.docx`, its `read.md` (markdown read view) and `renders/` (the Word PNGs the
+     judge looked at), `review.md` + `verdict.json` (the judge's saved review + verdict),
+     and `metrics.json` (that task's measured tokens/time/tool split + correctness)
+
+## Backends & arms
+
+The exercise slot is **swappable**; everything downstream (render → fable judge →
+fable synthesis, all against the same rubrics) is identical for every backend and
+arm — that's what makes the numbers comparable.
+
+- **Exercise model** (`args.model`): `"haiku"` (default) or `"sonnet"` — same
+  workflow, same prompts, only the exercise agents' model changes.
+- **Local harness** (`args.exerciseBackend: "local"`): the exercises run OUT OF BAND
+  on the local-first agent harness (model built in), then the workflow
+  renders/judges/synthesizes the results identically. Two steps:
+  1. `bun "$REPO/.claude/skills/weak-agent-test/scripts/run-local-corpus.ts" "$SCENARIOS_DIR" "$RUN_DIR" "$BINARY" <HARNESS_DIR> [--context N] [--timeout SEC] [key...]`
+     — serial (single GPU); stages via the same `stage-scenario.ts`, runs the
+     harness per scenario, and parses each session ledger into
+     `$RUN_DIR/<key>/exercise.json`. Every number is ledger-MEASURED (the local model
+     is never asked to self-report), including a code-computed `status`
+     (`completed` = the harness process ran to its own stop, `failed` = the watchdog
+     killed it or it crashed on a signal — lifecycle only; the judge owns quality).
+     `LOCAL_MODEL_PATH`/`LOCAL_MMPROJ_PATH` env vars override the harness's built-in
+     model for control runs.
+  2. Collect the results DETERMINISTICALLY and pass them to the workflow inline, so it
+     skips its LLM LOAD agent and the code-computed `status`/account reach the judge
+     straight from disk:
+     ```bash
+     EXERCISES="$(bun "$REPO/.claude/skills/weak-agent-test/scripts/collect-exercises.ts" "$RUN_DIR")"
+     ```
+     then launch with `{ runDir, binary, scenariosDir, exerciseBackend: "local",
+     modelLabel: "<harness/model name>", exercises: <the collected array> }`. The
+     workflow runs the normal Render/Judge/Synthesize pipeline on them. (If you omit
+     `exercises`, the workflow falls back to an LLM LOAD agent that reads the
+     exercise.json files itself — the `status` is still code-computed on disk, but
+     prefer the deterministic collect so nothing re-reads it through a model.)
+  The point of this arm is marketing the local harness by its **competitiveness with
+  Haiku**: same tasks, same judge, same rubrics — only the exercise brain differs.
+  Its cost/effort is ledger-measured into each `exercise.json` under `_local`, and
+  `exercise-metrics.ts --local "$RUN_DIR" <label>` rolls it up into the SAME
+  Run-metrics table the Claude arms get (tokens, wall-clock, tool split, correctness)
+  — so the local-vs-Haiku numbers are directly comparable.
+- **Competitor arm** (`args.arm: "anthropic-docx-skill"`): the A/B bake-off against
+  Anthropic's bundled docx skill. First provision it with
+  `bun "$REPO/.claude/skills/weak-agent-test/scripts/stage-competitor.ts" <SKILL_DEST> [RUN_DIR]` (fetches the real skill and
+  installs/verifies its full toolset — fairness gate), then pass
+  `arm: "anthropic-docx-skill", competitorDir: "<SKILL_DEST>"`. Only the exercise
+  agents' tool instructions differ; grading is identical.
 
 ## Notes
 
 - This harness is **re-runnable**: each invocation rebuilds the binary (mandatory),
   stages a fresh `./tmp/` run dir, and never mutates the bundled `scenarios/`.
-- The headline **benchmark metric** is the Haiku tool economy — docx-cli calls vs
-  other tool calls (self-reported per agent, aggregated by the workflow). A high
-  non-docx share, or a lot of docx calls for a simple task, is a friction signal.
+- The headline **benchmark metrics** are correctness (tasks solved of 6), the tool
+  economy (docx-cli calls vs other calls), and token cost as **effective input +
+  output** — all measured by `exercise-metrics.ts` (transcripts for Claude, the
+  `_local` ledger for local), never self-reported.
 - The weak agents invoke the binary at an allowlisted absolute path
   (`dist/docx`), so they should not hit permission prompts for the CLI itself. The
-  benign shell commands they and the render step use (`mkdir`, `cp`, `ls`, `cat`) are
-  NOT yet allowlisted — if you get prompted, add them via the `update-config` skill or
-  run with edits allowed. See `.claude/settings.local.json`.
+  benign shell commands they and the render step use (`mkdir`, `cp`, `ls`, `cat`,
+  `bun`) are NOT yet allowlisted — if you get prompted, add them via the
+  `update-config` skill or run with edits allowed. See `.claude/settings.local.json`.
 - To add a scenario, create a folder under this skill's `scenarios/<key>/` holding
   `task.md` (the agent-facing request, in human voice — NO tool vocabulary, so the
   agent must discover the features), `criteria.md` (the judge-only grading rubric —
   withheld from the agent's run workspace, read by the judge from the pristine source),
   the fixture `.docx` (edit scenarios only), and an `assets/` folder, then add a
-  routing entry to `SCENARIOS` in the workflow (`.claude/workflows/weak-agent-test.js`):
-  `{ key, bucket, kind, doc, baseline }`. To change what an existing scenario tests,
-  edit the files in its folder — the request/criteria/fixture/assets all live there,
-  not in the workflow.
+  routing entry to `SCENARIOS` in the workflow (`.claude/workflows/weak-agent-test.js`)
+  AND to the `MANIFEST` in `scripts/run-local-corpus.ts`: `{ key, bucket, kind, doc,
+  baseline }`. To change what an existing scenario tests, edit the files in its
+  folder — the request/criteria/fixture/assets all live there, not in the workflow.
+
+## Scripts
+
+All Bun/TypeScript (this is a Bun-first repo — no shell scripts):
+
+- `scripts/stage-scenario.ts` — stage ONE scenario (copy + strip criteria.md +
+  verify). The single staging path: the workflow's Stage agent runs it; the local
+  corpus runner imports it.
+- `scripts/exercise-metrics.ts` — post-run run-metrics rollup (both backends):
+  measured tokens (fresh/cache input + output), wall-clock, docx/other tool split, and
+  correctness (from the judge verdicts), per scenario + totals + run-over-run
+  comparison. Claude reads the transcripts; `--local <runDir> <label>` reads each
+  `exercise.json` `_local` block.
+- `scripts/run-local-corpus.ts` — run the exercise phase on the local agent harness
+  (serial, watchdogged), producing `exercise.json` per scenario (with a code-computed
+  `status`) for `exerciseBackend: "local"`.
+- `scripts/collect-exercises.ts` — deterministically read the run's `exercise.json`
+  files into the `args.exercises` array, so the workflow's local backend skips its
+  LLM LOAD agent (the `status` reaches the judge from disk, not via a model).
+- `scripts/parse-local-ledger.ts` — parse one local-harness session ledger into the
+  exercise shape (ledger-measured tool calls, tokens, timings, and the process
+  `status`).
+- `scripts/local-exercise-prompt.md` — the prompt template the local runner renders
+  per scenario (task inlined for the small model).
+- `scripts/stage-competitor.ts` — provision the Anthropic docx skill + its full
+  toolset for the competitor arm (fairness gate).

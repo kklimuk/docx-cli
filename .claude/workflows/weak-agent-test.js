@@ -1,38 +1,43 @@
 export const meta = {
 	name: "weak-agent-test",
 	description:
-		"Weak-agent (Haiku) adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, rendered with Word, judged, and synthesized into a prioritized ergonomics report.",
+		"Weak-agent adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, exercised by a swappable weak model (haiku default, sonnet to probe, or a local harness's pre-produced results), rendered with Word, judged and synthesized by fable.",
 	phases: [
 		{
 			title: "Stage",
 			detail:
-				"copy each active scenario's folder (task.md, fixture, assets/) into its own run-dir subfolder, withholding the judge-only criteria.md",
+				"stage each active scenario via scripts/stage-scenario.ts (or load the local harness's pre-produced exercise.json results)",
 		},
 		{
 			title: "Exercise",
-			detail: "one Haiku agent per scenario performs its task with docx-cli",
+			detail:
+				"one weak agent per scenario performs its task with docx-cli (model: args.model — haiku by default)",
 			model: "haiku",
 		},
 		{
 			title: "Render",
 			detail:
-				"render each output to PNG via Word as its exercise finishes — serialized through a 1-slot gate (single Word instance)",
+				"the moment each task finishes, render its output to page PNGs via Word AND save its markdown read view (read.md) — serialized within the run; the CLI's cross-process Word lock makes concurrent runs safe",
 		},
 		{
 			title: "Judge",
 			detail:
-				"a strong agent grades each render + the Haiku transcript, writes a review.md into the scenario's result folder, firing as soon as that render is done",
+				"opus grades each render + the exercise account against the rubric and the write→read loop, writing review.md into the scenario's result folder",
+			model: "opus",
 		},
 		{
 			title: "Synthesize",
-			detail: "one strong agent writes the prioritized improvement report",
+			detail: "opus writes the prioritized improvement report",
+			model: "opus",
 		},
 	],
 };
 
 // ---------------------------------------------------------------------------
-// args, injected by the skill: { runDir, binary, scenariosDir, only? }
-//   runDir        — absolute /tmp dir; the workflow stages one subfolder PER
+// args, injected by the skill: { runDir, binary, scenariosDir, only?, model?,
+//                                exerciseBackend?, modelLabel?, exercises?,
+//                                arm?, competitorDir? }
+//   runDir        — absolute run dir; the workflow stages one subfolder PER
 //                   active scenario into it (<runDir>/<key>/…) and that subfolder
 //                   doubles as the scenario's result folder.
 //   binary        — absolute path to the freshly-built dist/docx
@@ -41,7 +46,8 @@ export const meta = {
 //                   (the full request, agent-facing), criteria.md (grading rubric,
 //                   JUDGE-ONLY — withheld from the agent's run workspace by the stage
 //                   step, read by the judge from here), the fixture .docx (edit
-//                   scenarios only), and assets/ (extra inputs). Also the baseline src.
+//                   scenarios only), and assets/ (extra inputs). The skill's scripts/
+//                   dir (stage-scenario.ts) is resolved as its sibling.
 //   only          — optional scenario filter: run just these key(s). Accepts an
 //                   array (["mnda","loi"]), a single key ("mnda" — the natural way
 //                   to run ONE task), or a comma/space-separated string ("mnda,loi").
@@ -51,39 +57,49 @@ export const meta = {
 const parsedArgs = typeof args === "string" ? JSON.parse(args) : args || {};
 const { runDir, binary, scenariosDir } = parsedArgs;
 const only = normalizeOnly(parsedArgs.only);
-// The exercise (subject-under-test) agent model. Defaults to "haiku" — the whole
-// harness is framed around weak agents — but overridable via args.model to probe a
-// stronger model (e.g. "sonnet"): does it ACT on the read-time hints/cures a weaker
-// agent ignores? Only the exercise agent changes; render/judge/synth are unaffected.
+// The exercise (subject-under-test) agent model — SWAPPABLE. Defaults to "haiku" —
+// the whole harness is framed around weak agents — but pass args.model: "sonnet" to
+// probe a stronger model: does it ACT on the read-time hints/cures a weaker agent
+// ignores? Only the exercise agents change; stage/render/judge/synth are unaffected.
 const exerciseModel = parsedArgs.model || "haiku";
-// Exercise backend: "claude" (default — spawn a Haiku/Sonnet subagent per scenario,
-// the original behavior) or "gemma" (the LOCAL agent-harness ran the exercises OUT OF
-// BAND via run-gemma-corpus.sh; their parsed EXERCISE_SCHEMA results arrive in
-// parsedArgs.exercises and this workflow only renders/judges/synthesizes them). The
-// gemma path SKIPS Stage + Exercise — the external run already staged each folder and
-// left the worked doc + its result. Render/Judge/Synthesize are model-agnostic and
-// consume the same shape, so nothing downstream changes.
+// The judge and the synthesizer are pinned to the STRONGEST model — grading and
+// prioritization are where quality matters most, and they must not drift with the
+// session model or the exercise model.
+const JUDGE_MODEL = "opus";
+const SYNTH_MODEL = "opus";
+// Exercise backend: "claude" (default — spawn a Haiku/Sonnet subagent per scenario)
+// or "local" (the LOCAL agent harness ran the exercises OUT OF BAND via
+// scripts/run-local-corpus.ts, leaving <runDir>/<key>/exercise.json; this workflow
+// loads those and only renders/judges/synthesizes them). The local path SKIPS
+// Stage + Exercise — the corpus runner already staged each folder (via the SAME
+// scripts/stage-scenario.ts the Stage phase uses) and left the worked doc + its
+// ledger-measured result. Render/Judge/Synthesize are backend-agnostic and consume
+// the same shape, so both backends are graded identically — that is what makes the
+// local numbers comparable to Haiku's.
 const exerciseBackend = parsedArgs.exerciseBackend || "claude";
-const usingGemma = exerciseBackend === "gemma";
+const usingLocal = exerciseBackend === "local";
 const preExercises = Array.isArray(parsedArgs.exercises) ? parsedArgs.exercises : [];
 const preByKey = new Map(preExercises.map((entry) => [entry.key, entry]));
 // Human label for the subject-under-test model, spliced into judge/synth prompts.
-const modelLabel = usingGemma
-	? parsedArgs.modelLabel || "Gemma E4B (local)"
+const modelLabel = usingLocal
+	? parsedArgs.modelLabel || "the local harness"
 	: exerciseModel;
-// For gemma the tool counts are LEDGER-MEASURED (accurate), not self-reported like the
-// Claude arm's — so the synth's accuracy caveat flips.
-const benchmarkAccuracyNote = usingGemma
-	? "IMPORTANT: these docx/other tool counts are LEDGER-MEASURED from the local harness session logs (every tool call + its exit code), NOT self-reported — treat them as accurate totals. (There is no separate transcript-measured section appended for this run.)"
-	: 'CRITICAL framing: the `benchmark` counts are SELF-REPORTED by the weak agents and routinely UNDERCOUNT (agents miss ~half their own calls), so do NOT present them as authoritative totals — label any number you cite as "self-reported (approximate)" and point the reader to the transcript-**measured** "Haiku tool & cost economy" section the harness appends below your report (which also carries a run-over-run comparison) as the source of truth.';
+// Both backends get a MEASURED run-metrics rollup after the run
+// (scripts/exercise-metrics.ts): the Claude arms from the agent transcripts, the
+// local arm from each scenario's exercise.json `_local` block. Same tables (tokens,
+// wall-clock, tool split, correctness), so the judge/synth promise the same thing —
+// don't estimate any of it. (`measuredSource` just names where it comes from.)
+const measuredSource = usingLocal ? "the harness ledger" : "the run transcripts";
+const judgeMetricsNote = `(A measured per-task metrics file — tool calls, tokens, time — is written from ${measuredSource} after the run; do not guess at those numbers.)`;
+const synthMetricsNote = `Do NOT invent tool-call counts, token numbers, or timings — the harness appends a MEASURED "Run metrics" section (from ${measuredSource}) below your report after the run; where cost/effort matters to a point you're making, refer the reader to that section instead of estimating.`;
 if (!runDir || !binary || !scenariosDir) {
 	throw new Error(
 		"weak-agent-test requires args { runDir, binary, scenariosDir }",
 	);
 }
-// Gemma backend gets its exercise results either INLINE (args.exercises) or, more
-// commonly, loaded from disk by an agent in the Stage slot (see below) — the local
-// run leaves <runDir>/<key>/exercise.json. So no inline requirement here.
+// The skill's scripts live next to its scenarios — stage-scenario.ts is the one
+// staging path (the Stage agent runs it; run-local-corpus.ts imports it).
+const scriptsDir = `${String(scenariosDir).replace(/\/scenarios\/?$/, "")}/scripts`;
 
 // A/B arm: "docx-cli" (DEFAULT — the existing single-tool harness, unchanged) or
 // "anthropic-docx-skill" (the competitor: Anthropic's bundled python/raw-OOXML docx
@@ -91,7 +107,7 @@ if (!runDir || !binary || !scenariosDir) {
 // rendering, judging, and metrics are tool-agnostic, so the two arms are graded the
 // same way and the outputs compare apples-to-apples. The competitor arm needs
 // competitorDir — the staged Anthropic docx skill folder (SKILL.md + scripts/),
-// provisioned with its deps by scripts/stage-competitor.sh.
+// provisioned with its deps by scripts/stage-competitor.ts.
 const arm = parsedArgs.arm || "docx-cli";
 const competitorDir = parsedArgs.competitorDir || null;
 // Everything that differs between arms lives HERE — toolName plus the two prompt
@@ -116,7 +132,7 @@ if (!ARMS[arm]) {
 }
 if (arm === "anthropic-docx-skill" && !competitorDir) {
 	throw new Error(
-		"arm 'anthropic-docx-skill' requires args.competitorDir — the staged Anthropic docx skill folder (run scripts/stage-competitor.sh first).",
+		"arm 'anthropic-docx-skill' requires args.competitorDir — the staged Anthropic docx skill folder (run scripts/stage-competitor.ts first).",
 	);
 }
 const toolName = ARMS[arm].toolName;
@@ -129,56 +145,59 @@ const toolName = ARMS[arm].toolName;
 //   bucket    — human label for the scenario's category (prompt headers, scoreboard).
 //   kind      — "edit" (work a staged copy of `doc` in place) | "author" (create `doc` fresh).
 //   doc       — the .docx filename inside the scenario folder. For edit scenarios
-//               it is the pristine fixture (staged + edited in place AND, when
-//               baseline, rendered as the before). For author scenarios it does
-//               NOT exist in the scenario folder — the agent creates it in the run dir.
-//   baseline  — render the pristine `doc` as a before/after comparison (edit only).
+//               it is the pristine fixture (staged + edited in place AND rendered as
+//               the "before" baseline). For author scenarios it does NOT exist in
+//               the scenario folder — the agent creates it in the run dir.
+// Whether a scenario gets a BASELINE (before/after) render is DERIVED, not a field:
+// an edit scenario always has a pristine source (the fixture at
+// <scenariosDir>/<key>/<doc>), so it always gets a baseline; an author scenario
+// (eliot-journal) has no source, so it never does. See hasBaseline().
+// Mirror any change here into the MANIFEST in scripts/run-local-corpus.ts.
 const SCENARIOS = [
 	{
 		key: "mnda",
 		bucket: "Form filling + highlight removal + font fidelity",
 		kind: "edit",
 		doc: "mnda.docx",
-		// Baseline: this is the in-place-preservation fidelity test, so render the
-		// pristine doc as a "before" and diff it against the filled "after".
-		baseline: true,
 	},
 	{
 		key: "invoice",
 		bucket: "Table editing + restructure + image replace",
 		kind: "edit",
 		doc: "invoice.docx",
-		baseline: false,
 	},
 	{
 		key: "resume",
 		bucket: "Styling fidelity + drawing preservation",
 		kind: "edit",
 		doc: "resume.docx",
-		baseline: false,
 	},
 	{
 		key: "contract-markup",
 		bucket: "Legal review: redlining + commenting",
 		kind: "edit",
 		doc: "contract.docx",
-		baseline: false,
 	},
 	{
 		key: "contract-finalize",
 		bucket: "Legal review: accept/reject + resolve comments",
 		kind: "edit",
 		doc: "contract-redlined.docx",
-		baseline: false,
 	},
 	{
 		key: "eliot-journal",
 		bucket: "Authoring: columns, verse, footnotes, links, figure",
 		kind: "author",
 		doc: "journal.docx",
-		baseline: false,
 	},
 ];
+
+// A scenario gets a baseline (before/after) render iff it has a pristine source doc
+// to render — i.e. every EDIT scenario (its fixture is the "before"); author
+// scenarios have nothing to compare against.
+function hasBaseline(scenario) {
+	return scenario.kind === "edit";
+}
 
 const active =
 	only && only.length
@@ -195,7 +214,7 @@ log(
 	`Adversarial review: ${active.length} scenario(s) — ${active.map((scenario) => scenario.key).join(", ")}`,
 );
 log(`Binary under test: ${binary}`);
-log(`Arm: ${arm} (tool under test: ${toolName})`);
+log(`Arm: ${arm} (tool under test: ${toolName}); exercise: ${modelLabel}`);
 if (arm === "anthropic-docx-skill") {
 	log(`Competitor skill dir: ${competitorDir}`);
 }
@@ -212,21 +231,23 @@ const STAGE_SCHEMA = {
 	properties: {
 		staged: {
 			type: "array",
-			description: "Scenario result folders that now exist after copying.",
+			description:
+				"Scenario keys whose stage-scenario.ts run reported staged:true.",
 			items: { type: "string" },
 		},
 		missing: {
 			type: "array",
 			description:
-				"Anything wrong — a scenario whose folder failed to copy, a required file (task.md, the fixture) absent, or the judge-only criteria.md still present in the destination. One human-readable line each.",
+				"Every `missing` line reported by a stage-scenario.ts run, plus any scenario whose staging command itself failed. One human-readable line each.",
 			items: { type: "string" },
 		},
 	},
 };
 
-// Gemma backend only: the Stage-slot LOAD agent reads each scenario's pre-produced
+// Local backend only: the Stage-slot LOAD agent reads each scenario's pre-produced
 // exercise.json off disk and returns them here (verbatim). additionalProperties:true
-// so the ledger's extra `_gemma` block rides along harmlessly.
+// so the ledger-measured extras (docxCommands, the `_local` block) ride along
+// harmlessly — the judge is handed only the same fields the Claude arm reports.
 const LOAD_SCHEMA = {
 	type: "object",
 	additionalProperties: false,
@@ -237,24 +258,16 @@ const LOAD_SCHEMA = {
 			items: {
 				type: "object",
 				additionalProperties: true,
-				required: ["key", "completed", "docxCommands", "otherToolCalls", "outputPath"],
+				// `status` is the local exercise's process-lifecycle field
+				// (completed|failed). `completed` is only kept optional for backward
+				// compatibility with exercise.json files produced before the switch —
+				// don't require it.
+				required: ["key", "outputPath"],
 				properties: {
 					key: { type: "string" },
+					status: { type: "string" },
 					completed: { type: "string" },
 					summary: { type: "string" },
-					docxCommands: {
-						type: "array",
-						items: {
-							type: "object",
-							additionalProperties: true,
-							required: ["cmd", "outcome"],
-							properties: {
-								cmd: { type: "string" },
-								outcome: { type: "string" },
-							},
-						},
-					},
-					otherToolCalls: { type: "integer" },
 					deadEnds: { type: "array", items: { type: "string" } },
 					frictions: { type: "array", items: { type: "object", additionalProperties: true } },
 					outputPath: { type: "string" },
@@ -264,40 +277,17 @@ const LOAD_SCHEMA = {
 	},
 };
 
+// What an exercise agent reports back. Deliberately NO tool-call tallies: agents
+// under-count their own calls ~2×, so the harness measures tool economy and tokens
+// from the transcripts after the run (scripts/exercise-metrics.ts) — the agent's
+// job here is the qualitative account (what happened, what hurt), not bookkeeping.
 const EXERCISE_SCHEMA = {
 	type: "object",
 	additionalProperties: false,
-	required: [
-		"completed",
-		"summary",
-		"docxCommands",
-		"otherToolCalls",
-		"frictions",
-		"outputPath",
-	],
+	required: ["completed", "summary", "frictions", "outputPath"],
 	properties: {
 		completed: { type: "string", enum: ["yes", "partial", "no"] },
 		summary: { type: "string" },
-		docxCommands: {
-			type: "array",
-			description:
-				"Every docx-cli invocation you made, in order. This is the docx half of your tool economy.",
-			items: {
-				type: "object",
-				additionalProperties: false,
-				required: ["cmd", "outcome"],
-				properties: {
-					cmd: { type: "string" },
-					outcome: { type: "string", enum: ["ok", "error", "confusing"] },
-					note: { type: "string" },
-				},
-			},
-		},
-		otherToolCalls: {
-			type: "integer",
-			description:
-				"Exact count of NON-docx tool calls you made (file reads, ls/cat, any non-docx shell). docx-cli invocations belong in docxCommands, NOT here. This is the non-docx half of your tool economy.",
-		},
 		deadEnds: { type: "array", items: { type: "string" } },
 		frictions: {
 			type: "array",
@@ -332,6 +322,16 @@ const RENDER_SCHEMA = {
 					rendered: { type: "boolean" },
 					pages: { type: "array", items: { type: "string" } },
 					baselinePages: { type: "array", items: { type: "string" } },
+					markdownPath: {
+						type: "string",
+						description:
+							"Absolute path to the saved markdown read view (read.md) of the OUTPUT doc, or empty if `docx read` failed.",
+					},
+					baselineMarkdownPath: {
+						type: "string",
+						description:
+							"Absolute path to the saved markdown read view (read.md) of the pristine BASELINE doc, or empty if there's no baseline or the read failed.",
+					},
 					error: { type: "string" },
 				},
 			},
@@ -382,29 +382,32 @@ const VERDICT_SCHEMA = {
 };
 
 // ---------------------------------------------------------------------------
-// Phase 0 — Stage (one agent). Copy ONLY the active scenarios' folders from the
+// Phase 0 — Stage (one agent). Stage ONLY the active scenarios' folders from the
 // pristine scenarios dir into the run workspace, one result folder per scenario
-// (<runDir>/<key>/). Each scenario folder is self-describing (task.md, criteria.md,
-// the fixture, assets/), so staging is a recursive folder copy that then strips the
-// judge-only criteria.md from the agent's workspace. The skill only makes the empty
-// run dir; the copy lives here because
-// workflow scripts can't touch the filesystem, so it runs in an agent. Runs BEFORE
-// the exercise token snapshot below, so it doesn't pollute the Haiku measurement.
+// (<runDir>/<key>/), by running scripts/stage-scenario.ts per scenario — the SAME
+// script the local corpus runner uses, so every backend stages identically. The
+// script copies the folder, strips the judge-only criteria.md, and verifies; the
+// agent just runs it and relays the verdicts (workflow scripts can't touch the
+// filesystem, so an agent carries the commands).
 // ---------------------------------------------------------------------------
 phase("Stage");
-if (usingGemma) {
-	// The local harness already staged each folder AND ran the exercise out of band,
-	// leaving <runDir>/<key>/exercise.json. Re-staging would clobber the worked docs,
-	// so instead of a Stage copy we LOAD those results here (inline args.exercises
-	// wins if provided; otherwise an agent reads them off disk — the workflow's JS has
-	// no filesystem access of its own).
+if (usingLocal) {
+	// The local corpus runner already staged each folder AND ran the exercise out of
+	// band, leaving <runDir>/<key>/exercise.json. Re-staging would clobber the worked
+	// docs, so instead of a Stage copy we take those results here. TWO paths:
+	//   • DETERMINISTIC (preferred): the caller passes args.exercises, read straight
+	//     off disk by scripts/collect-exercises.ts — the code-computed `status` and the
+	//     rest reach the workflow without a model in the loop.
+	//   • FALLBACK: no args.exercises, so a LOAD agent (an LLM) reads the files and
+	//     returns them — used only because the workflow's JS has no filesystem access.
+	//     The status is still code-computed on disk; this hop just re-reads it.
 	if (preByKey.size === 0) {
 		const loadTargets = active.map((scenario) => ({
 			key: scenario.key,
 			path: `${runDir}/${scenario.key}/exercise.json`,
 		}));
 		const loaded = await agent(loadPrompt(loadTargets), {
-			label: "load:gemma-exercises",
+			label: "load:local-exercises",
 			phase: "Stage",
 			agentType: "general-purpose",
 			schema: LOAD_SCHEMA,
@@ -415,11 +418,11 @@ if (usingGemma) {
 	}
 	if (preByKey.size === 0) {
 		throw new Error(
-			`Gemma backend: no exercise results — pass args.exercises or ensure ${runDir}/<key>/exercise.json exists (run run-gemma-corpus.sh first).`,
+			`Local backend: no exercise results — pass args.exercises or ensure ${runDir}/<key>/exercise.json exists (run scripts/run-local-corpus.ts first).`,
 		);
 	}
 	log(
-		`Gemma backend: loaded ${preByKey.size} pre-produced result(s): ${[...preByKey.keys()].join(", ")}`,
+		`Local backend: loaded ${preByKey.size} pre-produced result(s): ${[...preByKey.keys()].join(", ")}`,
 	);
 } else {
 	const stageTargets = active.map((scenario) => ({
@@ -447,28 +450,37 @@ if (usingGemma) {
 
 // ---------------------------------------------------------------------------
 // Phases 1–3 — Exercise → Render → Judge, PIPELINED per scenario. Each scenario
-// flows on its own: its Haiku exercise runs in parallel with the others, and the
-// MOMENT that exercise finishes its render is enqueued — so the serial render
-// queue starts draining as soon as the FIRST exercise completes instead of
-// waiting for the slowest. The moment a render finishes, its judge runs. Renders
-// are funneled through a 1-slot gate (serializeRender) because Word-mac drives a
-// single app instance: two concurrent renders silently export the WRONG document
-// (verified empirically). Judges only READ the produced PNGs, so they fan out.
+// flows on its own: its exercise runs in parallel with the others, and the
+// MOMENT that exercise finishes, its render is enqueued — so the render queue
+// starts draining as soon as the FIRST exercise completes instead of waiting for
+// the slowest. The moment a render finishes, its judge runs. This holds for BOTH
+// arms: a Claude exercise resolves when the agent finishes; a local exercise
+// resolves the instant it's loaded from disk — either way the render fires right
+// then. Each render produces TWO artifacts: the page PNGs (renders/output/) and
+// the markdown read view (read.md) of the finished doc.
 //
-// Trade-off: because render/judge now overlap the exercises, we no longer isolate
-// the Haiku token cost with a budget.spent() window (other models run in the same
-// span). Accurate per-agent tokens + wall-clock time come from the skill's
-// transcript pass (scripts/haiku-metrics.ts); the self-reported docx/other tool
-// split below is independent of this and unaffected.
+// Renders are funneled through a 1-slot gate (serializeRender) WITHIN this run so
+// render agents don't sit idle in the agent pool waiting on Word. Correctness
+// across runs is the CLI's job: `docx render --engine word` takes a cross-process
+// advisory lock around the Word automation (src/core/render/engines/word-mac.ts),
+// so up to ~3 concurrent workflow runs can share the single Word instance —
+// their renders queue on the lock instead of corrupting each other. (The local
+// corpus runner ALSO renders + reads each doc the moment it finishes, out of band,
+// for during-run eyeballing; the workflow re-renders here with Word so the judge's
+// PNGs are engine-consistent with the Claude arms regardless of the corpus box.)
+//
+// Exercise-agent tokens + wall-clock + tool split are NOT collected here — the
+// skill's post-run transcript pass (scripts/exercise-metrics.ts) measures them
+// accurately (the runtime gives this script no token API and bans clocks).
 // ---------------------------------------------------------------------------
 phase("Exercise");
 
-// 1-slot gate that serializes every Word render across the whole pipeline. Reset
-// per run; serializeRender (hoisted, below) chains each render behind the previous.
+// 1-slot gate that serializes this run's Word renders. Reset per run;
+// serializeRender (hoisted, below) chains each render behind the previous.
 let renderGate = Promise.resolve();
 
 const pipelines = active.map((scenario) => {
-	const exerciseP = usingGemma
+	const exerciseP = usingLocal
 		? Promise.resolve(
 				preByKey.has(scenario.key)
 					? { ...preByKey.get(scenario.key), key: scenario.key }
@@ -497,6 +509,7 @@ const pipelines = active.map((scenario) => {
 			? agent(judgePrompt(scenario, exercise, render), {
 					label: `judge:${scenario.key}`,
 					phase: "Judge",
+					model: JUDGE_MODEL,
 					agentType: "general-purpose",
 					schema: VERDICT_SCHEMA,
 				})
@@ -512,17 +525,7 @@ const exercises = (
 	await Promise.all(pipelines.map((pipeline) => pipeline.exerciseP))
 ).filter(Boolean);
 log(
-	`Exercise done: ${exercises.map((e) => `${e.key}=${e.completed}`).join(", ")}`,
-);
-
-// Tool economy — Haiku agents only, split docx-cli vs everything else. The headline
-// benchmark metric: how much of a weak agent's effort docx-cli absorbs versus how
-// much it spends working around the tool. (docx/other counts are self-reported per
-// agent; the skill's haiku-metrics.ts pass produces the accurate transcript-measured
-// counts, tokens, and per-agent time for the report.)
-const benchmark = buildBenchmark(exercises);
-log(
-	`Tool economy (Haiku): ${benchmark.totals.docxCalls} docx + ${benchmark.totals.otherCalls} other = ${benchmark.totals.totalCalls} calls; docx share ${Math.round(benchmark.totals.docxShare * 100)}%`,
+	`Exercise done: ${exercises.map((e) => `${e.key}=${e.status || e.completed}`).join(", ")}`,
 );
 
 const renders = (
@@ -540,26 +543,27 @@ log(
 );
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Synthesize (one strong agent). Prioritized improvement report.
+// Phase 4 — Synthesize (fable). Prioritized improvement report.
 // ---------------------------------------------------------------------------
 phase("Synthesize");
-const report = await agent(synthPrompt(active, exercises, verdicts, benchmark), {
+const report = await agent(synthPrompt(active, exercises, verdicts), {
 	label: "synthesize",
 	phase: "Synthesize",
+	model: SYNTH_MODEL,
 	agentType: "general-purpose",
 });
 
-return { arm, report, runDir, binary, exercises, verdicts, benchmark };
+return { arm, report, runDir, binary, exercises, verdicts };
 
 // ===========================================================================
 // Prompt builders (hoisted function declarations)
 // ===========================================================================
 
 // Dispatch the exercise prompt by arm. The docx-cli arm (default) is the original
-// prompt, unchanged; the anthropic-docx-skill arm is the fair competitor analog —
-// same task, same scenario folder, same structured report, but its toolset is the
-// Anthropic docx skill (read its SKILL.md, run its scripts, hand-edit OOXML) instead
-// of the docx-cli binary.
+// prompt; the anthropic-docx-skill arm is the fair competitor analog — same task,
+// same scenario folder, same structured report, but its toolset is the Anthropic
+// docx skill (read its SKILL.md, run its scripts, hand-edit OOXML) instead of the
+// docx-cli binary.
 function exercisePrompt(scenario) {
 	return arm === "anthropic-docx-skill"
 		? exercisePromptAnthropic(scenario)
@@ -573,7 +577,7 @@ function exercisePromptDocxCli(scenario) {
 			? `Your working document (already a private copy — edit it IN PLACE, do NOT use -o/--output):\n  ${dir}/${scenario.doc}`
 			: `You are authoring from scratch. Create your output at EXACTLY this path:\n  ${dir}/${scenario.doc}`;
 
-	return `You are stress-testing **docx-cli**, a command-line tool that lets agents read, edit, and comment on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent (think Haiku): you have NOT used this tool before. Discover everything you need from the tool's own help — do not assume flags.
+	return `You are stress-testing **docx-cli**, a command-line tool that lets agents read, edit, and comment on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent: you have NOT used this tool before. Discover everything you need from the tool's own help — do not assume flags.
 
 The CLI executable is at this absolute path (invoke it directly):
   ${binary}
@@ -603,12 +607,10 @@ Read ${dir}/task.md, then carry the task out on the working document above. The 
 - Make a genuine, complete attempt. Finish the task if you can.
 
 ## What to report (this is the actual product of your run)
-Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose:
+Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose. Do NOT tally your tool calls or tokens — the harness measures those from your transcript; your job is the qualitative account:
 - completed: yes | partial | no
 - summary: one short paragraph of what you actually accomplished.
-- docxCommands: EVERY docx-cli invocation you ran, in order, each with outcome (ok | error | confusing) and a brief note (especially WHY something errored or confused you). This is measured — be complete and accurate.
-- otherToolCalls: the exact integer count of every NON-docx tool call you made (reading the task/brief/asset files, ls, cat, any non-docx shell). Do NOT count docx-cli runs here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into docx-cli versus working around it, so count carefully.
-- deadEnds: wrong turns, retries, things you expected to work but didn't.
+- deadEnds: wrong turns, retries, things you expected to work but didn't (name the specific command and what it did).
 - frictions: concrete "what could have been easier?" points, each with severity (blocker | major | minor) and a suggested fix. Include discoverability gaps (couldn't find the right command/flag), confusing output, and anything that made a weak agent likely to fail.
 - outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
 }
@@ -628,7 +630,7 @@ function exercisePromptAnthropic(scenario) {
 			? `Your working document (already a private copy — edit it IN PLACE, inside your scenario folder):\n  ${dir}/${scenario.doc}`
 			: `You are authoring from scratch. Create your output at EXACTLY this path:\n  ${dir}/${scenario.doc}`;
 
-	return `You are stress-testing **the Anthropic "docx" Agent Skill**, the official skill for creating, reading, editing, and commenting on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent (think Haiku): you have NOT used this skill before. Discover everything you need from the skill's own instructions — do not assume a workflow.
+	return `You are stress-testing **the Anthropic "docx" Agent Skill**, the official skill for creating, reading, editing, and commenting on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent: you have NOT used this skill before. Discover everything you need from the skill's own instructions — do not assume a workflow.
 
 The docx skill is installed at this absolute path:
   ${competitorDir}
@@ -657,37 +659,41 @@ Read ${dir}/task.md, then carry the task out on the working document above. The 
 - Make a genuine, complete attempt. Finish the task if you can.
 
 ## What to report (this is the actual product of your run)
-Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose:
+Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose. Do NOT tally your tool calls or tokens — the harness measures those from your transcript; your job is the qualitative account:
 - completed: yes | partial | no
 - summary: one short paragraph of what you actually accomplished.
-- docxCommands: EVERY document-work command you ran, in order — each helper-script invocation (unpack/pack/comment/accept_changes), each pandoc call, each Node \`docx\` script run, and each raw-XML edit step — with outcome (ok | error | confusing) and a brief note (especially WHY something errored or confused you). This is your tool economy and it is measured — be complete and accurate.
-- otherToolCalls: the exact integer count of every OTHER tool call (reading task/asset files, ls, cat, generic shell that wasn't a document operation). Do NOT count the document-work commands above here — those go in docxCommands. We use docxCommands-count vs otherToolCalls to measure how much of your effort went into the skill versus working around it, so count carefully.
-- deadEnds: wrong turns, retries, things you expected to work but didn't.
+- deadEnds: wrong turns, retries, things you expected to work but didn't (name the specific step and what it did).
 - frictions: concrete "what could have been easier?" points, each with severity (blocker | major | minor) and a suggested fix. Include discoverability gaps, confusing output, and anything that made a weak agent likely to fail.
 - outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
 }
 
 function renderPrompt(target) {
-	const baselineLine = target.baselineDoc
-		? `\n  ALSO render the pristine baseline ${target.baselineDoc} into ${target.baselineOutDir}`
+	const baselineBlock = target.baselineDoc
+		? `\n  3. render the PRISTINE BASELINE ${target.baselineDoc} into ${target.baselineOutDir} (the "before" the output is compared against)
+  4. save the baseline's markdown read view: \`${binary} read ${target.baselineDoc} > ${target.baselineMdPath}\``
 		: "";
+	const baselineReturn = target.baselineDoc
+		? ` the list of baseline page PNG paths, the \`baselineMarkdownPath\` (${target.baselineMdPath} if that read succeeded, else empty),`
+		: " an empty baseline page list and empty \`baselineMarkdownPath\` (this scenario has no pristine source — it was authored from scratch),";
 
-	return `You are the RENDER step of an evaluation harness. Render the finished .docx to page PNGs using docx-cli's render command, driven by Microsoft **Word**.
+	return `You are the RENDER step of an evaluation harness. Produce, for the finished .docx AND (when there's a pristine source) its "before" baseline: (1) page PNGs via docx-cli's render command, driven by Microsoft **Word**, and (2) a markdown read view saved to a file. Both the OUTPUT and the BASELINE get their own PNGs + read.md so the judge can compare before/after both visually and textually.
 
 The CLI executable:
   ${binary}
 
-Command shape (confirm with \`${binary} render --help\`):
-  ${binary} render <FILE> --engine word --out <DIR>
+Command shapes (confirm with \`${binary} render --help\` and \`${binary} read --help\`):
+  ${binary} render <FILE> --engine word --out <DIR>       # → page PNGs
+  ${binary} read <FILE> > <FILE.md>                        # → markdown read view (prints to stdout; redirect to a file)
 
-⚠️ CRITICAL: Render STRICTLY ONE AT A TIME (sequentially). The Word engine drives a single Word application instance and concurrent renders corrupt each other. Never background a render or start a second before the first returns.
+Renders are safe to run back-to-back: the CLI itself serializes Word access across processes with a lock, so a render may briefly WAIT if another run holds Word. Give each render command a generous timeout (10 minutes) and run them SEQUENTIALLY — never background one or start a second before the first returns. (\`read\` is instant and never touches Word.)
 
-Create output directories with \`mkdir -p\` as needed. Render this target (key "${target.key}"):
-  render ${target.output} into ${target.outDir}${baselineLine}
+Create output directories with \`mkdir -p\` as needed. For this target (key "${target.key}"):
+  1. render ${target.output} into ${target.outDir}
+  2. save the output's markdown read view: \`${binary} read ${target.output} > ${target.mdPath}\` (write it even if the render step failed — the markdown does not depend on Word).${baselineBlock}
 
-Capture the produced PNG page paths (the render command prints them). If a render fails, capture the error text and move on — do not retry more than once.
+Capture the produced PNG page paths (each render command prints them). If a render fails, capture the error text and move on — do not retry more than once. If a \`read\` fails, note it in \`error\` and return an empty path for that side.
 
-Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether it rendered, the list of output page PNG paths, the list of baseline page PNG paths (empty if none), and any error text.`;
+Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether the output rendered, the list of output page PNG paths, the \`markdownPath\` (${target.mdPath} if that read succeeded, else empty),${baselineReturn} and any error text.`;
 }
 
 function judgePrompt(scenario, exercise, render) {
@@ -699,43 +705,58 @@ function judgePrompt(scenario, exercise, render) {
 	const outputPath =
 		(exercise && exercise.outputPath) || `${dir}/${scenario.doc}`;
 	const reviewPath = `${dir}/review.md`;
-	const docxCommands = (exercise && exercise.docxCommands) || [];
-	const otherToolCalls = (exercise && exercise.otherToolCalls) || 0;
-	const docxErrors = docxCommands.filter(
-		(command) => command.outcome === "error" || command.outcome === "confusing",
-	).length;
+	// Every backend hands the judge the SAME fields — the qualitative account. Tool
+	// counts are deliberately absent (they're measured post-run from transcripts or
+	// the local ledger, not judged). The completion signal differs by arm: a Claude
+	// exercise self-reports `completed` (yes|partial|no); a local exercise carries a
+	// `status` (completed|failed = did the harness process finish or get killed). Both
+	// are passed through; JSON.stringify drops whichever is undefined for this arm.
 	const exerciseJson = exercise
 		? JSON.stringify(
 				{
+					status: exercise.status,
 					completed: exercise.completed,
 					summary: exercise.summary,
 					frictions: exercise.frictions,
 					deadEnds: exercise.deadEnds,
 					outputPath: exercise.outputPath,
-					// Self-reported tool economy — the docx-cli call log (each with its
-					// outcome) plus the non-docx call count. The judge uses this to GROUND
-					// its agent-struggle assessment, not to penalize a correct output.
-					toolEconomy: {
-						docxCalls: docxCommands.length,
-						docxErrorsOrConfusing: docxErrors,
-						otherToolCalls,
-						docxCommands,
-					},
 				},
 				null,
 				2,
 			)
 		: "(the exercise agent returned nothing)";
+	// Local-arm context: a run the harness couldn't finish (watchdog kill / crash)
+	// left a partial document — tell the judge so it attributes obviously-unfinished
+	// output to the run being cut short, not necessarily a tool defect.
+	const statusNote =
+		exercise && exercise.status === "failed"
+			? `\n\n**Run status: FAILED** — the local harness run was cut short (watchdog timeout or crash) before it finished, so the document is whatever partial state it reached. Grade the ACTUAL rendered output; attribute clearly-unfinished content to the run being killed (a run/harness limitation), not automatically a docx-cli defect.`
+			: "";
 	const pages = (render && render.pages) || [];
 	const baselinePages = (render && render.baselinePages) || [];
+	const markdownPath = (render && render.markdownPath) || "";
+	const baselineMarkdownPath = (render && render.baselineMarkdownPath) || "";
 	const renderLine = render
-		? `Rendered: ${render.rendered}. Output page PNGs:\n${pages.map((p) => `  ${p}`).join("\n") || "  (none)"}${baselinePages.length ? `\nBaseline page PNGs:\n${baselinePages.map((p) => `  ${p}`).join("\n")}` : ""}${render.error ? `\nRender error: ${render.error}` : ""}`
+		? [
+				`Rendered: ${render.rendered}.`,
+				`OUTPUT page PNGs:\n${pages.map((p) => `  ${p}`).join("\n") || "  (none)"}`,
+				markdownPath ? `OUTPUT markdown read view: ${markdownPath}` : "",
+				baselinePages.length
+					? `BASELINE (pristine "before") page PNGs:\n${baselinePages.map((p) => `  ${p}`).join("\n")}`
+					: "",
+				baselineMarkdownPath
+					? `BASELINE markdown read view: ${baselineMarkdownPath}`
+					: "",
+				render.error ? `Render error: ${render.error}` : "",
+			]
+				.filter(Boolean)
+				.join("\n")
 		: "(no render result for this scenario)";
 
 	// Competitor-arm judge preamble (empty for docx-cli) — see ARMS.
 	const armNote = ARMS[arm].judgeNote;
 
-	return `You are a STRICT evaluator judging whether ${toolName} let a weak (${modelLabel}) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: a self-reported "completed: yes" means nothing until you verify it.${armNote}
+	return `You are a STRICT evaluator judging whether ${toolName} let a weak (${modelLabel}) agent complete a real task, and whether the result is correct and well-formed. Be skeptical: neither the agent's self-reported \`completed\` nor the run's \`status\` is a grade — they describe the run, not the output. Verify the actual document before you conclude anything.${armNote}${statusNote}
 
 ## Scenario: ${scenario.key} — ${scenario.bucket}
 Two files define this evaluation — READ BOTH first:
@@ -743,7 +764,7 @@ Two files define this evaluation — READ BOTH first:
   ${criteriaPath}      — the ground-truth GRADING RUBRIC: the precise, tool-specific checks that define "correct" (the agent never saw this — it was withheld from the agent's workspace; read it from this pristine path)
 The criteria.md is the authority on what passes; task.md is the human request it's graded against.
 
-## The weak agent's self-report
+## The weak agent's account of its run
 ${exerciseJson}
 
 ## Renders produced (Word)
@@ -751,10 +772,18 @@ ${renderLine}
 
 ## How to judge
 1. READ ${dir}/task.md (the request) and ${criteriaPath} (the grading rubric you judge against).
-2. READ the output page PNG(s) with the Read tool and look at them critically — does the document actually accomplish the task and look right (layout, no leftover placeholders/highlights, tables intact, figure present, columns present, etc.)?
+2. READ **all** of this scenario's evidence with the Read tool — every page PNG AND every markdown read view listed in "Renders produced" above.${
+		hasBaseline(scenario)
+			? ` That means all FOUR: the OUTPUT page PNGs, the OUTPUT markdown read view (${markdownPath || "read.md"}), the BASELINE (pristine "before") page PNGs, AND the BASELINE markdown read view (${baselineMarkdownPath || "baseline read.md"}). Read them all before you judge — do not skip the baseline.`
+			: " (This scenario was authored from scratch — read the OUTPUT page PNGs and the OUTPUT markdown read view; there is no baseline.)"
+	} Look at the PNGs critically — does the document accomplish the task and look right (layout, no leftover placeholders/highlights, tables intact, figure present, columns present, etc.)? The markdown read views give you the exact text/structure.
 3. Run \`${binary} read ${outputPath}\` to confirm the changes SURVIVE THE WRITE→READ LOOP — this is docx-cli's core invariant; an edit that isn't retrievable on the next read is a failure. Use \`--ast\` if you need structure (e.g. section columns, tracked changes), and \`${binary} track-changes list\` / \`${binary} comments list\` where the scenario calls for them.
-4. ${scenario.baseline ? "Compare the BASELINE renders against the OUTPUT renders: confirm ONLY the intended cells changed and all other formatting/headers/footers/structure is preserved." : "Cross-check the render against the criteria."}
-5. Weigh the agent's TOOL ECONOMY (in the self-report's \`toolEconomy\`: the docx-cli call log with each call's outcome, plus the non-docx call count). Use it to GROUND your agent-struggle read — many calls or several \`error\`/\`confusing\` outcomes on a simple task is a UX signal; cite the specific commands that errored. IMPORTANT: this informs the agent-struggle / UX dimension ONLY. Do NOT downgrade \`taskSuccess\`, \`rendersCorrectly\`, or \`formattingPreserved\` because the agent thrashed — those are judged purely from the render + the write→read loop. A correct output reached via a painful path is still a task SUCCESS with a UX demerit.
+4. ${
+		hasBaseline(scenario)
+			? `BEFORE/AFTER COMPARISON — this scenario started from a pristine source, so you have BOTH a baseline and an output render (all read in step 2). Compare them TWO ways: (a) VISUAL — the BASELINE page PNGs vs the OUTPUT page PNGs: confirm ONLY the intended content changed and all other formatting/headers/footers/layout/structure is preserved; (b) TEXTUAL — diff the BASELINE markdown read view against the OUTPUT markdown read view: this is the precise record of what text/structure changed, so an unintended change that's hard to spot in the render is obvious here.`
+			: "Cross-check the OUTPUT render and its markdown read view against the criteria — this scenario was authored from scratch, so there is no baseline to diff against."
+	}
+5. Read the agent's account (summary, deadEnds, frictions) as qualitative UX evidence — an agent that thrashed or hit dead ends on a simple task is a UX signal; cite the specific commands or steps it names. IMPORTANT: this informs the agent-struggle / UX dimension ONLY. Do NOT downgrade \`taskSuccess\`, \`rendersCorrectly\`, or \`formattingPreserved\` because the agent struggled — those are judged purely from the render + the write→read loop. A correct output reached via a painful path is still a task SUCCESS with a UX demerit. (Tool-call counts and tokens are measured from transcripts after the run — do not estimate or judge them here.)
 6. Separate two questions: did the AGENT struggle (a UX problem) vs. is the TOOL broken (a bug)? Both matter.
 
 The CLI executable for your verification commands: ${binary}
@@ -762,14 +791,14 @@ The CLI executable for your verification commands: ${binary}
 ## Write your review to disk
 After you've judged, WRITE a human-readable Markdown review to EXACTLY this path (use the Write tool):
   ${reviewPath}
-The review must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Tool economy** section (the self-reported docx-cli call count, how many errored/confused, the non-docx call count, and a one-line read on whether the path to the result was smooth or a slog — naming the specific commands that tripped the agent up). This file is the saved judge's review for this task — make it complete and self-contained. (A precise, transcript-measured per-task metrics file lands next to it after the run; your Tool economy section is the qualitative read on the self-reported numbers.)
+The review must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Frictions** section (the agent's reported frictions/dead-ends and your one-line read on whether the path to the result was smooth or a slog). This file is the saved judge's review for this task — make it complete and self-contained. ${judgeMetricsNote}
 
 Then return the structured verdict. Record BOTH sides for this task:
 - merits: what went right (what the tool made easy, what the agent got correct, parts of the output that are well-formed). Always list at least one if anything worked.
 - defects: the demerits — concrete, evidence-backed failures (cite what you saw in the render or read output), each with a severity.`;
 }
 
-function synthPrompt(scenarios, exercises, verdicts, benchmark) {
+function synthPrompt(scenarios, exercises, verdicts) {
 	const payload = JSON.stringify(
 		{
 			scenarios: scenarios.map((scenario) => ({
@@ -777,9 +806,19 @@ function synthPrompt(scenarios, exercises, verdicts, benchmark) {
 				bucket: scenario.bucket,
 				kind: scenario.kind,
 			})),
-			exercises,
+			// Strip the local arm's ledger extras — the synth reads the same qualitative
+			// account the judge did. status (local process lifecycle) and completed
+			// (Claude self-report) are both passed; the undefined one drops out.
+			exercises: exercises.map((exercise) => ({
+				key: exercise.key,
+				status: exercise.status,
+				completed: exercise.completed,
+				summary: exercise.summary,
+				deadEnds: exercise.deadEnds,
+				frictions: exercise.frictions,
+				outputPath: exercise.outputPath,
+			})),
 			verdicts,
-			benchmark,
 		},
 		null,
 		2,
@@ -789,7 +828,7 @@ function synthPrompt(scenarios, exercises, verdicts, benchmark) {
 	const armClause = ARMS[arm].synthClause;
 	return `You are writing the final report of an adversarial usability review of **${toolName}**. Weak (${modelLabel}) agents attempted ${scenarios.length} real document tasks; a stricter judge then graded each result against ground truth using Word renders and the write→read loop. Your audience is the engineer who maintains docx-cli${armClause}. The central question: **can weak agents actually use this tool to get real work done, and what should we fix first?**
 
-Here is all the data (every weak agent's self-report + every judge verdict):
+Here is all the data (every weak agent's account + every judge verdict):
 \`\`\`json
 ${payload}
 \`\`\`
@@ -797,92 +836,61 @@ ${payload}
 Write a thorough, prioritized Markdown report with these sections:
 
 1. **Executive summary** — can weak agents use docx-cli today? Overall pass rate, the headline strengths, and the 2–3 biggest problems.
-2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly | formatting preserved | docx calls | other tool calls | top merit | top demerit. The docx/other call counts come from \`benchmark.perScenario\`.
+2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly | formatting preserved | top merit | top demerit.
 2b. **Per-task merits & demerits** — for EVERY scenario, a short block listing its merits (what worked) and its demerits (defects/failures) from the judge verdicts. The user explicitly wants both sides for each task.
-2c. **Tool economy** — a short subsection on the ${modelLabel} tool split from \`benchmark\`. Keep this QUALITATIVE: per-scenario outliers (which tasks needed the most docx calls or the most non-docx workaround calls), the friction patterns they reveal, and what that says about ergonomics. A high non-docx share, or many docx calls for a simple task, is a friction signal. ${benchmarkAccuracyNote} Prefer relative/ordinal claims ("resume needed the most calls") over absolute totals here.
 3. **Cross-cutting themes** — group findings into: Discoverability, CLI ergonomics / surface, Correctness & bugs, Formatting fidelity / preservation, Missing capabilities. Rank themes by impact. For each, give the EVIDENCE (which scenarios, specific commands, judge defects, verbatim friction quotes) and a concrete, actionable recommendation.
 4. **Prioritized fixes** — a numbered top 5–8 list, highest leverage first, each tied to the evidence above and phrased as something the maintainer can act on (ideally pointing at the command/flag/output to change).
 5. **What worked well** — what weak agents found easy; don't only criticize.
 
-Cite scenario keys throughout and quote agent friction verbatim where it's illuminating. Return the COMPLETE report as your final message — it will be saved to disk and shown to the maintainer.`;
+${synthMetricsNote}
+
+Cite scenario keys throughout and quote agent friction verbatim where it's illuminating.
+
+## Write your report to disk
+After you've written the report, WRITE it to EXACTLY this path (use the Write tool):
+  ${runDir}/REPORT.md
+This is the saved run-level report the maintainer reads — the workflow itself does no file I/O, so if you don't write it, it is lost. Then ALSO return the COMPLETE report as your final message.`;
 }
 
-// Build the stage agent's prompt: for each active scenario, recursively copy its
-// pristine folder into its own run-dir subfolder, then verify the required inputs
-// landed. The scenario folder is the unit of staging — task.md, the fixture, and
-// assets/ travel together; criteria.md is the JUDGE's answer key and is deliberately
-// WITHHELD from the agent's run workspace (deleted after copy) so a weak agent can't
-// read the rubric. The judge reads criteria.md from the pristine source instead.
-// Gemma backend only: read each scenario's pre-produced exercise.json off disk and
-// return them verbatim. The local run already produced these; the workflow's JS can't
-// read files, so an agent does it and hands the parsed objects back.
+// Local backend only: read each scenario's pre-produced exercise.json off disk and
+// return them verbatim. The corpus runner already produced these (ledger-measured);
+// the workflow's JS can't read files, so an agent does it and hands the parsed
+// objects back.
 function loadPrompt(targets) {
 	const lines = targets
 		.map((target) => `  ${target.key}: ${target.path}`)
 		.join("\n");
-	return `You are the LOAD step of an evaluation harness. The exercise phase already ran — a local Gemma model edited each document out of band and left a parsed RESULT json per scenario. READ each file below with the Read tool and return their contents.
+	return `You are the LOAD step of an evaluation harness. The exercise phase already ran — a local agent harness worked each document out of band and left a parsed RESULT json per scenario. READ each file below with the Read tool and return their contents.
 
 Files (one per scenario):
 ${lines}
 
-Return { exercises: [ … ] } where each array item is the EXACT parsed JSON object from one file — copy every field VERBATIM: key, completed, summary, docxCommands (EVERY entry, with its cmd + outcome), otherToolCalls, deadEnds, frictions, outputPath. Do NOT summarize, truncate, reorder, or invent anything, and do not drop docxCommands entries. If a file is missing or unreadable, OMIT that scenario rather than fabricating a result.`;
+Return { exercises: [ … ] } where each array item is the EXACT parsed JSON object from one file — copy every field VERBATIM: key, status (older files may say completed instead — keep whichever is present), summary, deadEnds, frictions, outputPath (plus any extra fields the file carries, e.g. docxCommands and _local — keep them as-is). Do NOT summarize, truncate, reorder, or invent anything. If a file is missing or unreadable, OMIT that scenario rather than fabricating a result.`;
 }
 
+// Build the stage agent's prompt: run scripts/stage-scenario.ts once per active
+// scenario. The script owns the logic (copy the folder, strip the judge-only
+// criteria.md, verify the required inputs) and prints a one-line JSON verdict
+// {key, staged, missing} — nonzero exit means something's wrong. The agent just
+// executes and relays.
 function stagePrompt(targets) {
 	const lines = targets
-		.map((target) => {
-			const docLine = target.requireDoc
-				? `\n      then verify the destination has: ${target.dstDir}/task.md and ${target.dstDir}/${target.requireDoc}, and verify ${target.dstDir}/criteria.md is ABSENT (it must NOT be in the agent's workspace)`
-				: `\n      then verify the destination has: ${target.dstDir}/task.md, and verify ${target.dstDir}/criteria.md is ABSENT (authoring scenario — no fixture .docx; criteria.md must NOT be in the agent's workspace)`;
-			return `  - "${target.key}": \`mkdir -p ${target.dstDir}\` then copy the FOLDER CONTENTS and remove the answer key: \`cp -R ${target.srcDir}/. ${target.dstDir}/ && rm -f ${target.dstDir}/criteria.md\`${docLine}`;
-		})
+		.map(
+			(target) =>
+				`  bun ${scriptsDir}/stage-scenario.ts ${target.srcDir} ${target.dstDir}${target.requireDoc ? ` --require-doc ${target.requireDoc}` : ""}`,
+		)
 		.join("\n");
 
-	return `You are the STAGE step of an evaluation harness. Seed an isolated run workspace by copying EXACTLY the listed scenario folders to their destinations and nothing else. Each pristine scenario folder holds task.md, criteria.md, the fixture .docx, and assets/ — but criteria.md is the GRADER's answer key and must NEVER reach the agent's workspace, so you copy the folder and then DELETE criteria.md from the destination.
+	return `You are the STAGE step of an evaluation harness. Seed an isolated run workspace by running the staging script below once per scenario — it copies the scenario folder, strips the judge-only answer key (criteria.md), and verifies the required inputs landed, printing a one-line JSON verdict {key, staged, missing} (exit 0 = staged cleanly).
 
-Scenario folders to stage:
+Run EXACTLY these commands, one at a time:
 ${lines}
 
-For each scenario: \`mkdir -p\` the destination, then \`cp -R <srcDir>/. <dstDir>/ && rm -f <dstDir>/criteria.md\` (the trailing \`/.\` copies the CONTENTS including assets/; the \`rm\` strips the answer key). Sources are pristine — never edit them. Do not copy any folders beyond this list. Do not retry a failed copy more than once.
+Sources are pristine — never edit them, and do not stage anything beyond this list. If a command exits nonzero, capture its verdict's \`missing\` lines (or the error text if it produced no JSON); do not retry more than once.
 
 Return the structured result:
-- staged: the destination folders that now exist with task.md (+ the fixture) present AND criteria.md absent (verify each with a test/ls before listing the folder).
-- missing: one human-readable line for anything wrong — a scenario whose copy failed, a required file (task.md / the fixture) absent, OR criteria.md still present in the destination (a leak of the answer key — report it), formatted like "key: <what is wrong>". Empty array if everything is correct.`;
-}
-
-// Aggregate the Haiku tool economy from the exercise self-reports: docx-cli calls
-// vs every other tool call, per scenario and in total. docxCalls is the length of
-// the reported docxCommands log; otherCalls is the agent's otherToolCalls count.
-function buildBenchmark(exerciseResults) {
-	const perScenario = exerciseResults.map((exercise) => {
-		const docxCalls = (exercise.docxCommands || []).length;
-		const otherCalls = exercise.otherToolCalls || 0;
-		const totalCalls = docxCalls + otherCalls;
-		return {
-			key: exercise.key,
-			completed: exercise.completed,
-			docxCalls,
-			otherCalls,
-			totalCalls,
-			docxShare: totalCalls ? Number((docxCalls / totalCalls).toFixed(3)) : 0,
-		};
-	});
-	const docxCalls = perScenario.reduce((acc, row) => acc + row.docxCalls, 0);
-	const otherCalls = perScenario.reduce((acc, row) => acc + row.otherCalls, 0);
-	const totalCalls = docxCalls + otherCalls;
-	return {
-		note: usingGemma
-			? `Exercise via local harness (${modelLabel}). Tool counts are LEDGER-MEASURED (every call + exit code) — accurate, not self-reported.`
-			: `Exercise agents only (model: ${exerciseModel}). Tool counts are self-reported; the skill's haiku-metrics.ts pass over the transcripts has the accurate per-agent counts, tokens, and time (the pipeline overlaps phases, so tokens can't be isolated in-workflow).`,
-		perScenario,
-		totals: {
-			scenarios: perScenario.length,
-			docxCalls,
-			otherCalls,
-			totalCalls,
-			docxShare: totalCalls ? Number((docxCalls / totalCalls).toFixed(3)) : 0,
-		},
-	};
+- staged: the scenario keys whose verdict said staged:true.
+- missing: every \`missing\` line from the verdicts, plus a "key: <error>" line for any command that failed without a verdict. Empty array if everything staged cleanly.`;
 }
 
 // Normalize the `only` scenario filter into an array of trimmed keys (or undefined
@@ -896,11 +904,11 @@ function normalizeOnly(value) {
 	return cleaned.length ? cleaned : undefined;
 }
 
-// 1-slot async gate serializing every Word render across the pipeline: Word-mac is
-// a single app instance, so renders must run strictly one at a time even though
-// exercises and judges fan out. Each call queues behind the previous render; the
-// gate advances regardless of success/failure so one bad render can't wedge the
-// rest. (`renderGate` is the per-run `let` declared next to the pipeline.)
+// 1-slot async gate serializing THIS run's Word renders so render agents don't
+// pile up idle in the agent pool. (Cross-process safety is the CLI's advisory
+// lock — see the pipeline comment.) Each call queues behind the previous render;
+// the gate advances regardless of success/failure so one bad render can't wedge
+// the rest. (`renderGate` is the per-run `let` declared next to the pipeline.)
 function serializeRender(thunk) {
 	const run = renderGate.then(thunk, thunk);
 	renderGate = run.then(
@@ -910,20 +918,25 @@ function serializeRender(thunk) {
 	return run;
 }
 
-// Render ONE scenario's output (plus its baseline, if any) into that scenario's
-// result folder (<runDir>/<key>/renders/{output,baseline}/) and return the render
-// record. A failed render degrades to a rendered:false record the judge can still
-// handle rather than rejecting.
+// Render ONE scenario's output (plus its baseline, if it has a pristine source) into
+// that scenario's result folder (<runDir>/<key>/renders/{output,baseline}/). Each of
+// the two render dirs gets BOTH its page PNGs and a read.md (markdown read view of
+// that doc), so the judge can diff before/after visually AND textually. A failed
+// render degrades to a rendered:false record the judge can still handle rather than
+// rejecting.
 function renderOne(scenario) {
 	const dir = `${runDir}/${scenario.key}`;
+	const baseline = hasBaseline(scenario);
 	const target = {
 		key: scenario.key,
 		output: `${dir}/${scenario.doc}`,
 		outDir: `${dir}/renders/output/`,
-		baselineDoc: scenario.baseline
+		mdPath: `${dir}/renders/output/read.md`,
+		baselineDoc: baseline
 			? `${scenariosDir}/${scenario.key}/${scenario.doc}`
 			: null,
-		baselineOutDir: scenario.baseline ? `${dir}/renders/baseline/` : null,
+		baselineOutDir: baseline ? `${dir}/renders/baseline/` : null,
+		baselineMdPath: baseline ? `${dir}/renders/baseline/read.md` : null,
 	};
 	return agent(renderPrompt(target), {
 		label: `render:${scenario.key}`,

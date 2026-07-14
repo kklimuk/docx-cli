@@ -1,31 +1,40 @@
 #!/usr/bin/env bun
 /**
- * Measure the Haiku exercise agents' cost/effort from a workflow run's transcripts.
+ * Roll up each exercise's cost/effort/correctness into one per-scenario metrics table,
+ * for BOTH backends:
+ *   - Claude (haiku/sonnet): reconstruct tokens + wall-clock + tool split from the
+ *     workflow's agent transcripts (the runtime gives the workflow no token API and
+ *     bans clocks, so this post-run pass reads the transcript jsonl instead).
+ *   - Local harness: read the SAME numbers straight from each scenario's exercise.json
+ *     `_local` block (ledger-measured by run-local-corpus.ts — the local model never
+ *     self-reports). No transcripts exist for a local run, so pass `--local`.
+ * Either way it also pulls in CORRECTNESS — the judge's task-success verdict, read
+ * from <run_dir>/<key>/verdict.json (written by the skill from the workflow's return).
  *
- * The workflow runtime gives the script no token-usage API and bans clocks, so tokens
- * and per-agent wall-clock time can't be emitted from inside the workflow. They ARE in
- * each agent's transcript jsonl (per-message `usage`, per-line `timestamp`), so this
- * post-run pass reconstructs them — accurately, and only for the Haiku exercise agents.
+ * The two token-source semantics line up column-for-column: fresh input (non-cache),
+ * cache read (KV/prompt-cache reuse — cheap), output, and a cache-cost-weighted
+ * "effective input". A local KV cache has no write premium, so its cache-write column
+ * is 0; the reuse still shows up as cache read.
  *
  * Usage:
- *   haiku-metrics.ts <transcript_dir> <run_dir> <binary_path> [exercise_model]
+ *   exercise-metrics.ts <transcript_dir> <run_dir> <binary> [model]   # Claude
+ *   exercise-metrics.ts --local <run_dir> [label]                     # local harness
  *
- * <transcript_dir> is the "Transcript dir" printed when the workflow was launched
- * (…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
- * <run_dir>/haiku-metrics.json (the run-level aggregate), drops each scenario's
- * measured row into <run_dir>/<key>/metrics.json (so each per-task result folder is
- * self-contained), and prints the Markdown table to stdout.
+ * Writes <run_dir>/exercise-metrics.{md,json} (run-level), drops each scenario's row
+ * into <run_dir>/<key>/metrics.json (so each per-task folder is self-contained), and
+ * prints the Markdown section to stdout (the skill appends it to REPORT.md).
  */
 
 const USAGE = `Usage:
-  haiku-metrics.ts <transcript_dir> <run_dir> <binary_path> [exercise_model]
+  exercise-metrics.ts <transcript_dir> <run_dir> <binary> [model]   # Claude (from transcripts)
+  exercise-metrics.ts --local <run_dir> [label]                     # local harness (from exercise.json)
 
-[exercise_model] is the model the exercise agents ran (default "haiku"); pass the
-workflow's args.model here (e.g. "sonnet") so the matching agents are measured.
-<transcript_dir> is the "Transcript dir" printed when the workflow was launched
-(…/subagents/workflows/wf_<id>). Writes <run_dir>/haiku-metrics.md and
-<run_dir>/haiku-metrics.json, drops each scenario's row into <run_dir>/<key>/metrics.json,
-and prints the Markdown table to stdout.`;
+Claude: [model] is the exercise-agent model substring to measure (default "haiku");
+pass the workflow's args.model (e.g. "sonnet") so the matching agents are measured.
+<transcript_dir> is the "Transcript dir" printed when the workflow was launched.
+Local: [label] names the harness/model in the output (default "local").
+Both write <run_dir>/exercise-metrics.{md,json}, drop each scenario's row into
+<run_dir>/<key>/metrics.json, and print the Markdown section to stdout.`;
 
 const FILE_TO_KEY: Record<string, string> = {
 	"mnda.docx": "mnda",
@@ -104,6 +113,7 @@ function isDocxCall(toolName: unknown, toolInput: unknown, binary: string): bool
 // Prompt-cache cost weights relative to a normal input token (uniform across models):
 // a cache WRITE costs ~25% more, a cache READ ~90% less. Summing raw cache into the
 // input count overstates a cache hit's cost ~10x, so effectiveInput() reweights it.
+// A local KV cache has no write premium, so its cache-write term is always 0.
 const CACHE_WRITE_MULT = 1.25;
 const CACHE_READ_MULT = 0.1;
 
@@ -113,21 +123,26 @@ function effectiveInput(fresh: number, cacheWrite: number, cacheRead: number): n
 	return Math.round(fresh + CACHE_WRITE_MULT * cacheWrite + CACHE_READ_MULT * cacheRead);
 }
 
+type TaskSuccess = "success" | "partial" | "fail" | null;
+
 type AgentRow = {
 	model: string | null;
 	scenario: string | null;
+	// Correctness — the judge's task-success verdict for this scenario (from
+	// <run_dir>/<key>/verdict.json), or null if the run wasn't graded / no verdict.
+	taskSuccess: TaskSuccess;
 	inputTokens: number;
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	outputTokens: number;
 	effectiveInputTokens: number;
-	rawTokens: number;
 	durationSec: number | null;
 	docxToolCalls: number;
 	otherToolCalls: number;
 	totalToolCalls: number;
 };
 
+// ── Claude source: reconstruct a row from one agent transcript ──────────────
 async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 	const lines: any[] = [];
 	const text = await Bun.file(path).text();
@@ -200,17 +215,72 @@ async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 	return {
 		model,
 		scenario: classifyScenario(prompt),
+		taskSuccess: null, // filled in main() from verdict.json
 		inputTokens: inFresh,
 		cacheReadTokens: cacheRead,
 		cacheWriteTokens: cacheWrite,
 		outputTokens: outTokens,
 		effectiveInputTokens: effectiveInput(inFresh, cacheWrite, cacheRead),
-		rawTokens: inFresh + cacheRead + cacheWrite + outTokens,
 		durationSec: duration,
 		docxToolCalls: docxCalls,
 		otherToolCalls: otherCalls,
 		totalToolCalls: docxCalls + otherCalls,
 	};
+}
+
+// ── Local source: build a row from one scenario's exercise.json `_local` block ──
+async function measureLocalScenario(
+	runDir: string,
+	key: string,
+	label: string,
+): Promise<AgentRow | null> {
+	let entry: any;
+	try {
+		entry = await Bun.file(`${runDir}/${key}/exercise.json`).json();
+	} catch {
+		return null;
+	}
+	// `_local` (current) or `_gemma` (runs produced before the rename) — same shape.
+	const meta = entry._local ?? entry._gemma ?? {};
+	const fresh = Number(meta.freshTokensTotal) || 0;
+	const cacheRead = Number(meta.cachedTokensTotal) || 0;
+	const output = Number(meta.genTokensTotal) || 0;
+	const docxCalls = Array.isArray(entry.docxCommands) ? entry.docxCommands.length : 0;
+	const otherCalls = Number(entry.otherToolCalls) || 0;
+	// Prefer the corpus runner's total wall-clock; fall back to model compute time
+	// (ttft+gen) for older files that predate wallClockSec.
+	const wallClock =
+		Number(meta.wallClockSec) ||
+		Math.round(((Number(meta.ttftMsTotal) || 0) + (Number(meta.genMsTotal) || 0)) / 100) /
+			10;
+	return {
+		model: label,
+		scenario: key,
+		taskSuccess: null, // filled in main() from verdict.json
+		inputTokens: fresh,
+		cacheReadTokens: cacheRead,
+		cacheWriteTokens: 0, // local KV cache has no write premium
+		outputTokens: output,
+		effectiveInputTokens: effectiveInput(fresh, 0, cacheRead),
+		durationSec: wallClock || null,
+		docxToolCalls: docxCalls,
+		otherToolCalls: otherCalls,
+		totalToolCalls: docxCalls + otherCalls,
+	};
+}
+
+// Correctness for a scenario: the judge's taskSuccess from <run_dir>/<key>/verdict.json
+// (the skill writes it from the workflow's return). Missing/unreadable → null ("—").
+async function readTaskSuccess(runDir: string, key: string): Promise<TaskSuccess> {
+	try {
+		const verdict = await Bun.file(`${runDir}/${key}/verdict.json`).json();
+		const value = verdict?.taskSuccess;
+		return value === "success" || value === "partial" || value === "fail"
+			? value
+			: null;
+	} catch {
+		return null;
+	}
 }
 
 function fmtTokens(n: number | null): string {
@@ -225,7 +295,8 @@ function fmtTokens(n: number | null): string {
 }
 
 function fmtSeconds(value: number | null): string {
-	// Mirrors Python's `:g` — drop trailing zeros (12.0 → "12", 12.3 → "12.3").
+	// "—" for missing; otherwise the number as-is (JS never keeps trailing zeros, so
+	// 12.0 → "12", 12.3 → "12.3").
 	return value === null ? "—" : String(value);
 }
 
@@ -255,53 +326,66 @@ type Totals = {
 	cacheWriteTokens: number;
 	outputTokens: number;
 	effectiveInputTokens: number;
-	rawTokens: number;
 	durationSec: number;
-	docxShare?: number;
+	// Correctness rollup across scenarios (from the judge verdicts).
+	graded: number;
+	success: number;
+	partial: number;
+	fail: number;
 };
+
+function correctnessSummary(totals: Totals): string {
+	if (!totals.graded) {
+		return "not graded (no verdict.json)";
+	}
+	return `${totals.success}/${totals.graded} success · ${totals.partial} partial · ${totals.fail} fail`;
+}
 
 function renderSection(
 	rows: AgentRow[],
 	totals: Totals,
-	extras: { selfReport?: string; comparison?: string } = {},
+	modelLabel: string,
+	measuredFrom: string,
+	extras: { comparison?: string } = {},
 ): string {
-	// The '## Haiku tool & cost economy' section: a totals table, a per-scenario
-	// table, and an outliers list. Emitted to stdout (appended to REPORT.md) and reused
-	// as the body of the standalone haiku-metrics.md.
-	const lines: string[] = ["## Haiku tool & cost economy (measured from transcripts)", ""];
+	// The run-metrics section: a totals table, a per-scenario table (with a correctness
+	// column), and an outliers list. Emitted to stdout (appended to REPORT.md) and
+	// reused as the body of the standalone exercise-metrics.md.
+	const lines: string[] = [
+		`## Run metrics — ${modelLabel} (measured from ${measuredFrom})`,
+		"",
+	];
 	if (!rows.length) {
 		lines.push(
-			"_No Haiku exercise agents found in the transcripts — nothing to measure._",
+			`_No ${modelLabel} exercise results found — nothing to measure._`,
 			"",
 		);
 		return lines.join("\n");
 	}
 
 	lines.push(
-		`Reconstructed from the ${rows.length} Haiku exercise agent transcript(s): ` +
-			"docx-cli tool calls vs everything else, token cost, and wall-clock time. " +
+		`Per scenario for the ${rows.length} ${modelLabel} exercise(s): correctness (the ` +
+			"judge's task verdict), token cost, wall-clock time, and the docx-cli-vs-other " +
+			"tool split. `task` = success/partial/fail from the judge (— = not graded). " +
 			"`docx share` = docx calls ÷ total calls — a low share, or many calls for a " +
 			"simple task, is a friction signal. **eff in** = cache-cost-weighted input " +
 			`(cache write ×${CACHE_WRITE_MULT}, cache read ×${CACHE_READ_MULT}); output is ` +
-			"kept separate (different rate). See Totals for the raw cache split. **These " +
-			"measured counts supersede the self-reported tool economy in the report body — " +
-			"agents under-report their own calls.**",
+			"kept separate (different rate). See Totals for the raw cache split. Tool/token " +
+			"counts are MEASURED, never self-reported.",
 		"",
 	);
-	if (extras.selfReport) {
-		lines.push(extras.selfReport, "");
-	}
 	lines.push(
 		"### Totals",
 		"",
 		"| metric | value |",
 		"| --- | --: |",
-		`| Haiku agents | ${totals.agents} |`,
+		`| exercises | ${totals.agents} |`,
+		`| correctness | ${correctnessSummary(totals)} |`,
 		`| docx-cli calls | ${totals.docxToolCalls} |`,
 		`| other tool calls | ${totals.otherToolCalls} |`,
 		`| total tool calls | ${totals.totalToolCalls} |`,
 		`| docx share | ${pct(totals.docxToolCalls, totals.totalToolCalls)} |`,
-		`| fresh input tokens | ${fmtTokens(totals.inputTokens)} |`,
+		`| fresh input tokens (non-cache) | ${fmtTokens(totals.inputTokens)} |`,
 		`| cache reads (×${CACHE_READ_MULT}) | ${fmtTokens(totals.cacheReadTokens)} |`,
 		`| cache writes (×${CACHE_WRITE_MULT}) | ${fmtTokens(totals.cacheWriteTokens)} |`,
 		`| **effective input** (weighted) | **${fmtTokens(totals.effectiveInputTokens)}** |`,
@@ -310,12 +394,12 @@ function renderSection(
 		"",
 		"### Per scenario",
 		"",
-		"| scenario | docx | other | docx share | eff in | out | time (s) |",
-		"| --- | --: | --: | --: | --: | --: | --: |",
+		"| scenario | task | docx | other | docx share | eff in | out | time (s) |",
+		"| --- | :-- | --: | --: | --: | --: | --: | --: |",
 	);
 	for (const row of rows) {
 		lines.push(
-			`| ${row.scenario || "?"} ` +
+			`| ${row.scenario || "?"} | ${row.taskSuccess ?? "—"} ` +
 				`| ${row.docxToolCalls} | ${row.otherToolCalls} ` +
 				`| ${pct(row.docxToolCalls, row.totalToolCalls)} ` +
 				`| ${fmtTokens(row.effectiveInputTokens)} | ${fmtTokens(row.outputTokens)} ` +
@@ -323,7 +407,8 @@ function renderSection(
 		);
 	}
 	lines.push(
-		`| **total** | **${totals.docxToolCalls}** | **${totals.otherToolCalls}** ` +
+		`| **total** | **${correctnessSummary(totals)}** ` +
+			`| **${totals.docxToolCalls}** | **${totals.otherToolCalls}** ` +
 			`| **${pct(totals.docxToolCalls, totals.totalToolCalls)}** ` +
 			`| **${fmtTokens(totals.effectiveInputTokens)}** | **${fmtTokens(totals.outputTokens)}** ` +
 			`| **${fmtSeconds(totals.durationSec)}** |`,
@@ -355,46 +440,19 @@ function renderSection(
 	return lines.join("\n");
 }
 
-/** Sum the self-reported docx calls from the run's benchmark.json and contrast
- * them with the measured total, so a reader knows which number to trust. Agents
- * routinely under-count their own tool calls (~½ in practice), which is exactly
- * why the report body's self-reported economy can't be relied on. */
-async function renderSelfReportNote(
-	runDir: string,
-	measured: Totals,
-): Promise<string> {
-	try {
-		const benchmark = JSON.parse(
-			await Bun.file(`${runDir}/benchmark.json`).text(),
-		);
-		const scenarios = benchmark?.perScenario;
-		if (!Array.isArray(scenarios) || !scenarios.length) {
-			return "";
-		}
-		const selfDocx = scenarios.reduce(
-			(sum: number, s: any) => sum + (s.docxCalls || 0),
-			0,
-		);
-		if (!selfDocx) {
-			return "";
-		}
-		const ratio = measured.docxToolCalls / selfDocx;
-		return (
-			`> **Self-reported vs measured:** agents self-reported **${selfDocx}** docx ` +
-			`calls; the transcripts show **${measured.docxToolCalls}** (×${ratio.toFixed(1)}). ` +
-			"Agents under-count their own calls, so treat the report body's tool-economy " +
-			"numbers as a floor and these as the truth."
-		);
-	} catch {
-		return "";
-	}
-}
-
-/** The most-recent prior run dir (a sibling under the same parent that has a
- * haiku-metrics.json and sorts before this one — the run-id timestamps sort
- * lexically), or null on the first run. */
+/** The most-recent prior run dir (a sibling under the same parent that has a metrics
+ * json for the SAME backend and sorts before this one — the run-id timestamps sort
+ * lexically), or null on the first run. Subtleties:
+ * - Backend-matched: a local run only compares against prior LOCAL runs and a Claude
+ *   run against Claude runs — cross-backend eff-input is apples-to-oranges.
+ * - Concurrent 3-at-a-time batches share a timestamp with an -rN suffix
+ *   ($TS-r1/-r2/-r3); a same-batch sibling is a REPLICATE, not a prior run — skip any
+ *   candidate whose -rN-stripped name matches ours.
+ * - Pre-refactor Claude runs wrote haiku-metrics.json (no `backend` tag → treated as
+ *   "claude"); accept both filenames so the first post-refactor run still compares. */
 async function findPriorMetrics(
 	runDir: string,
+	backend: string,
 ): Promise<{ name: string; data: any } | null> {
 	const normalized = runDir.replace(/\/+$/, "");
 	const slash = normalized.lastIndexOf("/");
@@ -403,30 +461,39 @@ async function findPriorMetrics(
 	}
 	const parent = normalized.slice(0, slash);
 	const current = normalized.slice(slash + 1);
-	let best: string | null = null;
-	for await (const path of new Bun.Glob("*/haiku-metrics.json").scan({
-		cwd: parent,
-		absolute: false,
-	})) {
-		const name = path.slice(0, path.indexOf("/"));
-		if (name >= current) {
-			continue; // skip self and any future run
+	const batchOf = (name: string) => name.replace(/-r\d+$/, "");
+	// Keep the parsed data on the winner so the chosen file isn't read+parsed twice
+	// (the backend check already had to parse it).
+	let best: { name: string; data: any } | null = null;
+	for (const pattern of ["*/exercise-metrics.json", "*/haiku-metrics.json"]) {
+		for await (const path of new Bun.Glob(pattern).scan({
+			cwd: parent,
+			absolute: false,
+		})) {
+			const name = path.slice(0, path.indexOf("/"));
+			if (name >= current) {
+				continue; // skip self and any future run
+			}
+			if (batchOf(name) === batchOf(current)) {
+				continue; // same concurrent batch — a replicate, not a prior run
+			}
+			if (best !== null && name <= best.name) {
+				continue; // already have a more recent candidate — no need to read this one
+			}
+			let data: any;
+			try {
+				data = JSON.parse(await Bun.file(`${parent}/${path}`).text());
+			} catch {
+				continue;
+			}
+			// Pre-refactor Claude runs have no `backend` tag → treat as "claude".
+			if ((data?.backend ?? "claude") !== backend) {
+				continue; // don't compare across backends
+			}
+			best = { name, data };
 		}
-		if (best === null || name > best) {
-			best = name;
-		}
 	}
-	if (!best) {
-		return null;
-	}
-	try {
-		const data = JSON.parse(
-			await Bun.file(`${parent}/${best}/haiku-metrics.json`).text(),
-		);
-		return { name: best, data };
-	} catch {
-		return null;
-	}
+	return best;
 }
 
 /** A run-over-run comparison table (this run vs the previous one) with a short,
@@ -449,15 +516,18 @@ function renderComparison(
 			priorByKey[r.scenario] = r;
 		}
 	}
-	const delta = (now: number, before: number): string => {
-		const d = now - before;
-		const sign = d >= 0 ? "+" : "−";
-		return `${sign}${fmtTokens(Math.abs(d))}`;
+	// Signed delta (now − before). `fmt` shapes the magnitude: fmtTokens for token
+	// columns, String (default) for raw call counts.
+	const signedDelta = (
+		now: number,
+		before: number,
+		fmt: (value: number) => string = String,
+	): string => {
+		const difference = now - before;
+		return `${difference >= 0 ? "+" : "−"}${fmt(Math.abs(difference))}`;
 	};
-	const deltaCalls = (now: number, before: number): string => {
-		const d = now - before;
-		return `${d >= 0 ? "+" : "−"}${Math.abs(d)}`;
-	};
+	const delta = (now: number, before: number) => signedDelta(now, before, fmtTokens);
+	const deltaCalls = (now: number, before: number) => signedDelta(now, before);
 
 	const out: string[] = [
 		`### vs previous run (\`${priorName}\`)`,
@@ -516,14 +586,14 @@ function renderComparison(
 	return out.join("\n");
 }
 
-function renderDocument(section: string, transcriptDir: string, generatedAt: string): string {
-	// Standalone haiku-metrics.md: a titled, dated document wrapping the section.
-	return `# Haiku metrics\n\n_Generated ${generatedAt} from \`${transcriptDir}\`._\n\n${section}`;
+function renderDocument(section: string, sourceDir: string, generatedAt: string): string {
+	// Standalone exercise-metrics.md: a titled, dated document wrapping the section.
+	return `# Exercise metrics\n\n_Generated ${generatedAt} from \`${sourceDir}\`._\n\n${section}`;
 }
 
 function localIsoSeconds(date: Date): string {
-	// Mirrors Python's datetime.now().astimezone().isoformat(timespec="seconds"):
-	// local time with the UTC offset, to the second (e.g. 2026-06-08T21:54:30-07:00).
+	// Local time with the UTC offset, to the second — ISO 8601 with no sub-second
+	// component (e.g. 2026-06-08T21:54:30-07:00).
 	const pad = (n: number) => String(n).padStart(2, "0");
 	const offsetMin = -date.getTimezoneOffset();
 	const sign = offsetMin >= 0 ? "+" : "-";
@@ -535,19 +605,12 @@ function localIsoSeconds(date: Date): string {
 	);
 }
 
-async function main(): Promise<void> {
-	const argv = Bun.argv.slice(2);
-	if (argv.length < 3) {
-		console.log(USAGE);
-		process.exit(2);
-	}
-	const [transcriptDir, runDir, binary] = argv;
-	// Optional 4th arg: the exercise-agent model substring to measure (default "haiku").
-	// The workflow's `model` override (args.model) can probe a stronger model (e.g.
-	// "sonnet"); pass that same substring here so the matching exercise agents are the
-	// ones measured, not silently filtered out.
-	const modelFilter = (argv[3] || "haiku").toLowerCase();
-
+// Collect the rows for a Claude run by measuring every matching agent transcript.
+async function collectClaudeRows(
+	transcriptDir: string,
+	binary: string,
+	modelFilter: string,
+): Promise<AgentRow[]> {
 	const paths: string[] = [];
 	for await (const path of new Bun.Glob("agent-*.jsonl").scan({
 		cwd: transcriptDir,
@@ -557,22 +620,79 @@ async function main(): Promise<void> {
 	}
 	paths.sort();
 
-	const rows: AgentRow[] = [];
-	for (const path of paths) {
-		const row = await measureAgent(path, binary ?? "");
-		// Exercise agents only (matched by model substring) — the opus render/judge/synth
-		// agents don't count.
-		if (!row.model || !row.model.toLowerCase().includes(modelFilter)) {
-			continue;
-		}
-		rows.push(row);
-	}
-
+	// Read the transcripts concurrently (each is an independent file), then keep only
+	// the exercise agents (matched by model substring) — the opus/fable stage/render/
+	// judge/synth agents don't count.
+	const measured = await Promise.all(paths.map((path) => measureAgent(path, binary)));
+	const rows = measured.filter(
+		(row) => row.model && row.model.toLowerCase().includes(modelFilter),
+	);
 	if (rows.length === 0 && paths.length > 0) {
 		process.stderr.write(
-			`haiku-metrics: 0 of ${paths.length} agent transcripts matched the model filter ` +
+			`exercise-metrics: 0 of ${paths.length} agent transcripts matched the model filter ` +
 				`"${modelFilter}" — for a non-haiku run, pass the exercise model as the 4th arg.\n`,
 		);
+	}
+	return rows;
+}
+
+// Collect the rows for a local run by reading every scenario's exercise.json.
+async function collectLocalRows(runDir: string, label: string): Promise<AgentRow[]> {
+	const keys = new Set<string>();
+	for await (const rel of new Bun.Glob("*/exercise.json").scan({ cwd: runDir })) {
+		keys.add(rel.slice(0, rel.indexOf("/")));
+	}
+	// Read each scenario's exercise.json concurrently (independent files); drop any
+	// that failed to parse (measureLocalScenario returns null).
+	const measured = await Promise.all(
+		[...keys].map((key) => measureLocalScenario(runDir, key, label)),
+	);
+	const rows = measured.filter((row): row is AgentRow => row !== null);
+	if (!rows.length) {
+		process.stderr.write(
+			`exercise-metrics --local: no exercise.json files under ${runDir} — run run-local-corpus.ts first.\n`,
+		);
+	}
+	return rows;
+}
+
+async function main(): Promise<void> {
+	const argv = Bun.argv.slice(2);
+	const isLocal = argv[0] === "--local";
+
+	let rows: AgentRow[];
+	let runDir: string;
+	let modelLabel: string;
+	let backend: string;
+	let measuredFrom: string;
+	let sourceDir: string;
+
+	if (isLocal) {
+		runDir = argv[1] ?? "";
+		modelLabel = argv[2] || "local";
+		if (!runDir) {
+			console.log(USAGE);
+			process.exit(2);
+		}
+		backend = "local";
+		measuredFrom = "the harness ledger";
+		sourceDir = runDir;
+		rows = await collectLocalRows(runDir, modelLabel);
+	} else {
+		if (argv.length < 3) {
+			console.log(USAGE);
+			process.exit(2);
+		}
+		const [transcriptDir, run, binary] = argv;
+		runDir = run ?? "";
+		// Optional 4th arg: the exercise-agent model substring to measure (default
+		// "haiku"); pass the workflow's args.model (e.g. "sonnet") so the matching
+		// agents are the ones measured, not silently filtered out.
+		modelLabel = (argv[3] || "haiku").toLowerCase();
+		backend = "claude";
+		measuredFrom = "transcripts";
+		sourceDir = transcriptDir ?? "";
+		rows = await collectClaudeRows(transcriptDir ?? "", binary ?? "", modelLabel);
 	}
 
 	rows.sort((a, b) => {
@@ -581,8 +701,17 @@ async function main(): Promise<void> {
 		return left < right ? -1 : left > right ? 1 : 0;
 	});
 
+	// Correctness — pull the judge's verdict for each scenario (both backends).
+	for (const row of rows) {
+		if (row.scenario) {
+			row.taskSuccess = await readTaskSuccess(runDir, row.scenario);
+		}
+	}
+
 	const total = (field: keyof AgentRow) =>
 		rows.reduce((sum, row) => sum + ((row[field] as number) || 0), 0);
+	const countTask = (value: TaskSuccess) =>
+		rows.filter((row) => row.taskSuccess === value).length;
 
 	const totals: Totals = {
 		agents: rows.length,
@@ -594,26 +723,28 @@ async function main(): Promise<void> {
 		cacheWriteTokens: total("cacheWriteTokens"),
 		outputTokens: total("outputTokens"),
 		effectiveInputTokens: total("effectiveInputTokens"),
-		rawTokens: total("rawTokens"),
 		durationSec: Math.round(rows.reduce((sum, row) => sum + (row.durationSec || 0), 0) * 10) / 10,
+		graded: rows.filter((row) => row.taskSuccess !== null).length,
+		success: countTask("success"),
+		partial: countTask("partial"),
+		fail: countTask("fail"),
 	};
-	totals.docxShare = totals.totalToolCalls
-		? Math.round((totals.docxToolCalls / totals.totalToolCalls) * 1000) / 1000
-		: 0;
 
 	const generatedAt = localIsoSeconds(new Date());
-	const selfReport = await renderSelfReportNote(runDir ?? "", totals);
-	const prior = await findPriorMetrics(runDir ?? "");
+	const prior = await findPriorMetrics(runDir, backend);
 	const comparison = prior
 		? renderComparison(prior.name, prior.data, rows, totals)
 		: "";
-	const section = renderSection(rows, totals, { selfReport, comparison });
-	const document = renderDocument(section, transcriptDir ?? "./tmp/", generatedAt);
+	const section = renderSection(rows, totals, modelLabel, measuredFrom, { comparison });
+	const document = renderDocument(section, sourceDir || "./tmp/", generatedAt);
 
-	const outMd = `${runDir}/haiku-metrics.md`;
-	const outJson = `${runDir}/haiku-metrics.json`;
+	const outMd = `${runDir}/exercise-metrics.md`;
+	const outJson = `${runDir}/exercise-metrics.json`;
 	await Bun.write(outMd, document);
-	await Bun.write(outJson, JSON.stringify({ perScenario: rows, totals }, null, 2));
+	await Bun.write(
+		outJson,
+		JSON.stringify({ backend, label: modelLabel, perScenario: rows, totals }, null, 2),
+	);
 
 	// Per-task: drop each classified scenario's measured row into its result folder,
 	// so <run_dir>/<key>/ is self-contained alongside the docx, renders/, and review.md.

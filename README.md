@@ -27,7 +27,7 @@ We measured it — a controlled A/B bake-off: **six real document tasks** (fill 
 - **The cost and speed penalties are model-independent** — ~2.2–2.6× more tokens and ~1.7–2× slower at *both* tiers, with token/time ranges that never overlap.
 - **Word couldn't reliably open the default skill's work** — it failed to open 5 of 36 of its outputs; all 36 of docx-cli's opened on the first try.
 
-Full methodology, per-task rubric, and side-by-side renders: **[the bake-off writeup](https://kklimuk.github.io/docx-cli/)**.
+Full methodology, per-task rubrics, and the harness that produced these numbers: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).
 
 ## Install
 
