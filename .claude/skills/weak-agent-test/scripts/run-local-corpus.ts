@@ -7,19 +7,22 @@
  *   stageScenario() + local prep  →  bun <harness>/src/index.ts --cwd … --prompt-file …  →  parseLedger()
  *     →  render + read (immediate, per scenario)
  * producing <runDir>/<key>/{<doc>, exercise.json, local-run.log, read.md,
- * renders/output/*.png}. A failed or timed-out run does NOT abort the corpus — it's
+ * renders/output/*.png} plus a run-level <runDir>/corpus.log (the top-level
+ * orchestration log — which scenario, what status, how long — written by the run
+ * itself, so it's ALWAYS in the run dir and never depends on a stdout redirect). A
+ * failed or timed-out run does NOT abort the corpus — it's
  * recorded with status "failed" (watchdog kill or crash) and the loop moves on. Each
  * exercise.json carries a `status` of "completed" (ran to its own stop) or "failed";
  * that's process lifecycle only — the workflow's judge decides task quality.
  *
  * The moment a scenario finishes, this renders its doc to page PNGs and saves its
- * markdown read view — so a long unattended GPU run produces eyeball-able artifacts
- * as it goes, not only after a later workflow pass. Those are the DURING-RUN feedback
- * copy: JUDGING still happens in the workflow. Hand the runDir to the workflow with
- * exerciseBackend: "local" and it loads each exercise.json and runs the SAME Render /
- * Judge / Synthesize pipeline the Claude arms get (re-rendering with Word so the
- * judge's PNGs are engine-consistent) — identical grading is what makes the local
- * numbers comparable to Haiku's.
+ * markdown read view into the SAME paths the workflow uses — so a long unattended GPU
+ * run produces eyeball-able artifacts as it goes, AND those become the grading renders:
+ * JUDGING still happens in the workflow, but its render step is idempotent and REUSES
+ * these (re-rendering only anything missing), so nothing is rendered twice. Hand the
+ * runDir to the workflow with exerciseBackend: "local" and it loads each exercise.json
+ * and runs the SAME Render / Judge / Synthesize pipeline the Claude arms get — identical
+ * grading is what makes the local numbers comparable to Haiku's.
  *
  * Usage:
  *   run-local-corpus.ts <scenariosDir> <runDir> <binary> <harness> [--context N] [--timeout SEC] [key...]
@@ -50,16 +53,26 @@ const MANIFEST = [
 const { scenariosDir, runDir, binary, harness, contextSize, timeoutSec, keys } =
 	parseArgs(Bun.argv.slice(2));
 
+// Tee all corpus-level progress into <runDir>/corpus.log so the orchestration log is
+// ALWAYS in the run itself — never dependent on the caller redirecting stdout. (Per-
+// scenario harness output still streams to <dir>/local-run.log; this is the top-level
+// "which scenario, what status, how long" log.) clog/cerr (hoisted, below) write to
+// BOTH the console and this sink. If a caller ALSO redirects stdout to this same path,
+// drop that redirect — it's redundant now and would race this writer.
+await Bun.$`mkdir -p ${runDir}`.quiet().nothrow();
+const corpusLog = Bun.file(`${runDir}/corpus.log`).writer();
+
 // Catch a wrong harness path up front, before a 25-minute watchdog wait does.
 if (!(await Bun.file(`${harness}/src/index.ts`).exists())) {
-	console.error(`Harness entry not found: ${harness}/src/index.ts`);
+	cerr(`Harness entry not found: ${harness}/src/index.ts`);
+	await corpusLog.end();
 	process.exit(1);
 }
 
 for (const scenario of MANIFEST) {
 	if (keys.length && !keys.includes(scenario.key)) continue;
 	const dir = `${runDir}/${scenario.key}`;
-	console.log(`=================== ${scenario.key} (${scenario.kind}, ${scenario.doc}) ===================`);
+	clog(`=================== ${scenario.key} (${scenario.kind}, ${scenario.doc}) ===================`);
 
 	// A failed stage skips THIS scenario, never the corpus (a long unattended GPU
 	// run must survive one bad folder) — hence the catch-to-skip.
@@ -69,7 +82,7 @@ for (const scenario of MANIFEST) {
 		scenario.kind === "edit" ? scenario.doc : null,
 	).catch((error) => ({ staged: false, missing: [String(error)] }));
 	if (!staged.staged) {
-		console.error(`[${scenario.key}] STAGE FAILED — skipping: ${staged.missing.join("; ")}`);
+		cerr(`[${scenario.key}] STAGE FAILED — skipping: ${staged.missing.join("; ")}`);
 		continue;
 	}
 	await prepareLocalWorkspace(dir, scenario.doc, scenario.kind);
@@ -78,9 +91,7 @@ for (const scenario of MANIFEST) {
 	const { exitCode, signalCode, timedOut } = await runHarness(dir, timeoutSec);
 	const elapsedSec = Math.round((Date.now() - started) / 1000);
 	if (timedOut) {
-		console.error(
-			`[${scenario.key}] TIMEOUT at ${timeoutSec}s — watchdog killed the run`,
-		);
+		cerr(`[${scenario.key}] TIMEOUT at ${timeoutSec}s — watchdog killed the run`);
 	}
 
 	// status = process lifecycle only (completed vs failed); the judge owns quality.
@@ -96,25 +107,26 @@ for (const scenario of MANIFEST) {
 		result._local.wallClockSec = elapsedSec;
 		await Bun.write(`${dir}/exercise.json`, `${JSON.stringify(result, null, 2)}\n`);
 	} catch (error) {
-		console.error(`[${scenario.key}] PARSE FAILED: ${error}`);
+		cerr(`[${scenario.key}] PARSE FAILED: ${error}`);
 	}
 
 	// Render + read IMMEDIATELY so the run produces eyeball-able artifacts as it goes:
 	// the OUTPUT doc, plus its pristine BASELINE source when there is one (every edit
 	// scenario — author scenarios have no source). Best-effort: a render/read failure
-	// never aborts the corpus (the workflow re-does both for grading anyway).
+	// never aborts the corpus (the workflow's idempotent render fills any gap).
 	const baselineSrc =
 		scenario.kind === "edit"
 			? `${scenariosDir}/${scenario.key}/${scenario.doc}`
 			: null;
 	await renderAndRead(dir, scenario.doc, scenario.key, baselineSrc);
 
-	console.log(
+	clog(
 		`[${scenario.key}] status=${status}${reason ? ` (${reason})` : ""} rc=${exitCode} elapsed=${elapsedSec}s`,
 	);
 }
-console.log("=================== corpus done ===================");
-console.log(`Next: run the weak-agent-test workflow with { runDir: "${runDir}", exerciseBackend: "local" } to render/judge/synthesize these results.`);
+clog("=================== corpus done ===================");
+clog(`Next: run the weak-agent-test workflow with { runDir: "${runDir}", exerciseBackend: "local" } to render/judge/synthesize these results.`);
+await corpusLog.end();
 
 // Prep the scenario folder for a harness run: pre-authorize the docx binary and
 // render the static prompt template. No model involved.
@@ -174,12 +186,14 @@ async function prepareLocalWorkspace(
 	);
 }
 
-// Render + read the "immediate feedback" artifacts the moment a scenario finishes:
-// the OUTPUT doc into <dir>/renders/output/ and, when a pristine source exists, the
-// BASELINE into <dir>/renders/baseline/. Each render dir gets BOTH its page PNGs and
-// a read.md, mirroring the workflow's layout so the during-run tree matches. All
-// best-effort (a failure logs and returns; the corpus must not abort, and the
-// workflow re-renders/re-reads with Word for grading anyway).
+// Render + read each scenario's artifacts the moment it finishes: the OUTPUT doc into
+// <dir>/renders/output/ and, when a pristine source exists, the BASELINE into
+// <dir>/renders/baseline/. Each render dir gets BOTH its page PNGs and a read.md,
+// mirroring the workflow's layout EXACTLY (same paths). These are the primary renders
+// for the local backend — the workflow's render step is idempotent and REUSES them
+// (re-rendering only what's missing), so this isn't throwaway "eyeballing" work; it's
+// what the judge grades. All best-effort (a failure logs and returns; the corpus must
+// not abort, and the workflow fills any gap).
 async function renderAndRead(
 	dir: string,
 	doc: string,
@@ -193,9 +207,9 @@ async function renderAndRead(
 }
 
 // Render one doc to <outDir>/*.png and save its markdown read view to <outDir>/read.md.
-// The read view is engine-independent (AST-as-markdown, no rendering); the PNGs use
-// the default engine (Word on this mac, LibreOffice elsewhere) — the workflow
-// re-renders with Word so the judge's PNGs stay engine-consistent.
+// The read view is engine-independent (AST-as-markdown, no rendering); the PNGs use the
+// default engine — Word on the mac the local harness runs on, which is the same engine
+// the workflow grades on, so the workflow reuses these instead of re-rendering.
 async function renderReadOne(
 	srcDoc: string,
 	outDir: string,
@@ -203,7 +217,7 @@ async function renderReadOne(
 	label: string,
 ): Promise<void> {
 	if (!(await Bun.file(srcDoc).exists())) {
-		console.error(`[${key}] no ${label} doc at ${srcDoc} (nothing to render/read)`);
+		cerr(`[${key}] no ${label} doc at ${srcDoc} (nothing to render/read)`);
 		return;
 	}
 	await Bun.$`mkdir -p ${outDir}`.quiet().nothrow();
@@ -211,7 +225,7 @@ async function renderReadOne(
 	if (read.exitCode === 0) {
 		await Bun.write(`${outDir}/read.md`, read.stdout);
 	} else {
-		console.error(
+		cerr(
 			`[${key}] ${label} READ FAILED (continuing): ${read.stderr.toString().trim() || "(no stderr)"}`,
 		);
 	}
@@ -219,7 +233,7 @@ async function renderReadOne(
 		.quiet()
 		.nothrow();
 	if (render.exitCode !== 0) {
-		console.error(
+		cerr(
 			`[${key}] ${label} RENDER FAILED (continuing): ${render.stderr.toString().trim() || "(no stderr)"}`,
 		);
 	}
@@ -291,6 +305,21 @@ function deriveStatus(
 	if (timedOut) return { status: "failed", reason: "watchdog timeout" };
 	if (signalCode) return { status: "failed", reason: `crash (${signalCode})` };
 	return { status: "completed", reason: "" };
+}
+
+// Tee a line to the console AND <runDir>/corpus.log (flushed per line so a crash mid-
+// run still leaves the log on disk). clog → stdout; cerr → stderr. Both reference the
+// module-level corpusLog sink, opened once runDir is known.
+function clog(message: string): void {
+	console.log(message);
+	corpusLog.write(`${message}\n`);
+	corpusLog.flush();
+}
+
+function cerr(message: string): void {
+	console.error(message);
+	corpusLog.write(`${message}\n`);
+	corpusLog.flush();
 }
 
 function parseArgs(argv: string[]): {

@@ -1,6 +1,6 @@
 ---
 name: weak-agent-test
-description: "Run the weak-agent adversarial test harness against docx-cli. Spawns weak exercise agents (Haiku by default, Sonnet to probe, or a local agent harness's pre-produced runs) to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, has fable judge them against ground-truth rubrics, measures each exercise's tool economy, token cost, wall-clock, and correctness (from transcripts for Claude, the exercise.json ledger for the local harness), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
+description: "Run the weak-agent adversarial test harness against docx-cli. Spawns weak exercise agents (Haiku by default, Sonnet to probe, or a local agent harness's pre-produced runs) to perform real document tasks over six scenarios — five editing (MNDA form-fill + font fidelity, invoice table-edit/restructure + logo replace, résumé styling, contract redlining + commenting, contract finalize via accept/reject + comment reply/resolve) and one authoring (T. S. Eliot poetry journal: multi-column, verse, footnotes, links, figure) — renders every result with Word, has opus judge them against ground-truth rubrics, measures each exercise's tool economy, token cost, wall-clock, and correctness (from transcripts for Claude, the exercise.json ledger for the local harness), and synthesizes a prioritized ergonomics report. Use when the user says 'adversarial review', 'test docx-cli with weak agents', 'run the haiku harness', 'weak agent test', or wants to re-run yesterday's adversarial process."
 allowed-tools: Bash, Read, Write, Glob, Workflow
 metadata:
   internal: true
@@ -12,8 +12,8 @@ This harness answers one question: **can weak agents actually use docx-cli to ge
 real work done, and what should we fix first?** It runs the `weak-agent-test`
 workflow (`.claude/workflows/weak-agent-test.js`), which fans out one weak exercise
 agent per scenario (Haiku by default — swappable to Sonnet via `args.model`), renders
-every output with Microsoft Word, grades each against ground-truth criteria with a
-**fable** judge, and has **fable** synthesize a prioritized improvement report.
+every output with Microsoft Word, grades each against ground-truth criteria with an
+**opus** judge, and has **opus** synthesize a prioritized improvement report.
 Exercise agents do NOT self-report tool counts — every tool-economy and token number
 is **measured** after the run (agents under-count their own calls ~2×, so self-reports
 were dropped): from the agent transcripts for the Claude arms, from each scenario's
@@ -37,8 +37,10 @@ scenario folder is self-describing and holds everything that scenario needs:
   scenarios).
 
 The workflow's `SCENARIOS` manifest holds only the per-scenario **routing** metadata
-(key, bucket label, `edit`/`author` kind, the doc filename, whether to render a
-baseline); the actual request/criteria/fixture/assets all live in the folder. The skill is
+(key, bucket label, `edit`/`author` kind, the doc filename); whether a baseline gets
+rendered is DERIVED from the kind (every `edit` scenario has a pristine source, so it
+gets one — see `hasBaseline()`), not a stored field. The actual
+request/criteria/fixture/assets all live in the folder. The skill is
 therefore self-contained and travels with its test corpus. To change what a scenario
 tests, edit the files in its folder. (Heavy, ephemeral run outputs — edited docx,
 renders, reviews, the report — are dumped to `./tmp/docx-weak-agent-test/<ts>/`,
@@ -74,10 +76,13 @@ The **render step fires the moment each task finishes** (for both arms) and prod
 for the OUTPUT and — whenever a pristine source exists (every edit scenario) — its
 BASELINE "before", BOTH deliverables in each render dir: the page PNGs AND a `read.md`
 (the markdown read view of that doc). The judge reads all four (output PNGs + read.md,
-baseline PNGs + read.md) to compare before/after both visually and textually. For the
-local backend the corpus runner ALSO writes these per scenario as it goes (during-run
-eyeballing); the workflow re-renders with Word at judge time so the graded PNGs stay
-engine-consistent across arms.
+baseline PNGs + read.md) to compare before/after both visually and textually. The
+workflow's render step is **idempotent**: for the **local backend** the corpus runner
+already produced the SAME artifacts at the SAME paths as it went, so the render step
+just reuses them (re-rendering only anything missing) — no double-render; for the
+**Claude backend** nothing is pre-rendered, so it does the full Word render. Either
+way the judge grades Word-rendered PNGs (the local harness runs on the mac, where the
+corpus's default render engine IS Word).
 
 ## Steps
 
@@ -193,8 +198,8 @@ If the user passed scenario keys as arguments to this skill (e.g.
 `/weak-agent-test mnda invoice`), parse them into the `only` array. Otherwise run
 everything.
 
-Each run is heavy (6 exercise agents, serialized Word rendering, 6 fable judges + a
-fable synthesis pass); it can take many minutes. Watch live progress with `/workflows`.
+Each run is heavy (6 exercise agents, serialized Word rendering, 6 opus judges + an
+opus synthesis pass); it can take many minutes. Watch live progress with `/workflows`.
 
 ### 4. Save the report + measure the exercise metrics
 
@@ -254,8 +259,8 @@ already exist. So:
 
 ## Backends & arms
 
-The exercise slot is **swappable**; everything downstream (render → fable judge →
-fable synthesis, all against the same rubrics) is identical for every backend and
+The exercise slot is **swappable**; everything downstream (render → opus judge →
+opus synthesis, all against the same rubrics) is identical for every backend and
 arm — that's what makes the numbers comparable.
 
 - **Exercise model** (`args.model`): `"haiku"` (default) or `"sonnet"` — same
@@ -266,7 +271,9 @@ arm — that's what makes the numbers comparable.
   1. `bun "$REPO/.claude/skills/weak-agent-test/scripts/run-local-corpus.ts" "$SCENARIOS_DIR" "$RUN_DIR" "$BINARY" <HARNESS_DIR> [--context N] [--timeout SEC] [key...]`
      — serial (single GPU); stages via the same `stage-scenario.ts`, runs the
      harness per scenario, and parses each session ledger into
-     `$RUN_DIR/<key>/exercise.json`. Every number is ledger-MEASURED (the local model
+     `$RUN_DIR/<key>/exercise.json` (it also writes a run-level `$RUN_DIR/corpus.log`
+     orchestration log itself — no stdout redirect needed). Every number is
+     ledger-MEASURED (the local model
      is never asked to self-report), including a code-computed `status`
      (`completed` = the harness process ran to its own stop, `failed` = the watchdog
      killed it or it crashed on a signal — lifecycle only; the judge owns quality).
@@ -316,10 +323,11 @@ arm — that's what makes the numbers comparable.
   agent must discover the features), `criteria.md` (the judge-only grading rubric —
   withheld from the agent's run workspace, read by the judge from the pristine source),
   the fixture `.docx` (edit scenarios only), and an `assets/` folder, then add a
-  routing entry to `SCENARIOS` in the workflow (`.claude/workflows/weak-agent-test.js`)
-  AND to the `MANIFEST` in `scripts/run-local-corpus.ts`: `{ key, bucket, kind, doc,
-  baseline }`. To change what an existing scenario tests, edit the files in its
-  folder — the request/criteria/fixture/assets all live there, not in the workflow.
+  routing entry to `SCENARIOS` in the workflow (`.claude/workflows/weak-agent-test.js`,
+  shape `{ key, bucket, kind, doc }`) AND to the `MANIFEST` in
+  `scripts/run-local-corpus.ts` (shape `{ key, doc, kind }`). To change what an existing
+  scenario tests, edit the files in its folder — the request/criteria/fixture/assets all
+  live there, not in the workflow.
 
 ## Scripts
 

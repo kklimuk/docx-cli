@@ -1,7 +1,7 @@
 export const meta = {
 	name: "weak-agent-test",
 	description:
-		"Weak-agent adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, exercised by a swappable weak model (haiku default, sonnet to probe, or a local harness's pre-produced results), rendered with Word, judged and synthesized by fable.",
+		"Weak-agent adversarial test of docx-cli: 6 scenarios over real fixtures + an authoring task, exercised by a swappable weak model (haiku default, sonnet to probe, or a local harness's pre-produced results), rendered with Word, judged and synthesized by opus.",
 	phases: [
 		{
 			title: "Stage",
@@ -471,8 +471,12 @@ if (usingLocal) {
 // so up to ~3 concurrent workflow runs can share the single Word instance —
 // their renders queue on the lock instead of corrupting each other. (The local
 // corpus runner ALSO renders + reads each doc the moment it finishes, out of band,
-// for during-run eyeballing; the workflow re-renders here with Word so the judge's
-// PNGs are engine-consistent with the Claude arms regardless of the corpus box.)
+// producing the SAME artifacts at the SAME paths. So this render step is IDEMPOTENT:
+// it reuses whatever's already on disk and only renders what's MISSING — see
+// renderPrompt. For the local backend everything is already there, so this is
+// effectively a no-op collect (the corpus's own renders become the grading renders —
+// they're Word on the mac the harness runs on); for the Claude backend nothing is
+// pre-rendered, so it does the full Word render.)
 //
 // Exercise-agent tokens + wall-clock + tool split are NOT collected here — the
 // skill's post-run transcript pass (scripts/exercise-metrics.ts) measures them
@@ -704,31 +708,33 @@ Return the structured result. Be brutally honest — surfacing rough edges is th
 
 function renderPrompt(target) {
 	const baselineBlock = target.baselineDoc
-		? `\n  3. render the PRISTINE BASELINE ${target.baselineDoc} into ${target.baselineOutDir} (the "before" the output is compared against)
-  4. save the baseline's markdown read view: \`${binary} read ${target.baselineDoc} > ${target.baselineMdPath}\``
+		? `\n  3. BASELINE PNGs → ${target.baselineOutDir}: if that dir already holds \`*.png\`, SKIP; else \`mkdir -p\` it and \`${binary} render ${target.baselineDoc} --engine word --out ${target.baselineOutDir}\` (the pristine "before" the output is compared against).
+  4. BASELINE read.md → ${target.baselineMdPath}: if that file already exists, SKIP; else \`${binary} read ${target.baselineDoc} > ${target.baselineMdPath}\`.`
 		: "";
 	const baselineReturn = target.baselineDoc
-		? ` the list of baseline page PNG paths, the \`baselineMarkdownPath\` (${target.baselineMdPath} if that read succeeded, else empty),`
+		? ` the list of baseline page PNG paths (from \`ls ${target.baselineOutDir}\`), the \`baselineMarkdownPath\` (${target.baselineMdPath} if present, else empty),`
 		: " an empty baseline page list and empty \`baselineMarkdownPath\` (this scenario has no pristine source — it was authored from scratch),";
 
-	return `You are the RENDER step of an evaluation harness. Produce, for the finished .docx AND (when there's a pristine source) its "before" baseline: (1) page PNGs via docx-cli's render command, driven by Microsoft **Word**, and (2) a markdown read view saved to a file. Both the OUTPUT and the BASELINE get their own PNGs + read.md so the judge can compare before/after both visually and textually.
+	return `You are the RENDER step of an evaluation harness. Your job is to ENSURE that, for the finished .docx AND (when there's a pristine source) its "before" baseline, two artifacts exist on disk: (1) page PNGs from docx-cli's render command, driven by Microsoft **Word**, and (2) a markdown read view saved to a file. Both the OUTPUT and the BASELINE get their own PNGs + read.md so the judge can compare before/after visually and textually.
+
+**This step is IDEMPOTENT — skip work that's already done.** The local corpus runner renders + reads each doc as it finishes, so these artifacts may ALREADY be on disk. For EACH item below, CHECK FIRST (\`ls\` the dir / test the file) and only run the command if the artifact is MISSING — never re-render a doc whose PNGs already exist (Word rendering is slow; reusing them is the whole point). Either way, COLLECT the real paths and return them.
 
 The CLI executable:
   ${binary}
 
 Command shapes (confirm with \`${binary} render --help\` and \`${binary} read --help\`):
-  ${binary} render <FILE> --engine word --out <DIR>       # → page PNGs
-  ${binary} read <FILE> > <FILE.md>                        # → markdown read view (prints to stdout; redirect to a file)
+  ${binary} render <FILE> --engine word --out <DIR>       # → page PNGs (slow; SKIP if the dir already has *.png)
+  ${binary} read <FILE> > <FILE.md>                        # → markdown read view (instant; prints to stdout, redirect to a file)
 
-Renders are safe to run back-to-back: the CLI itself serializes Word access across processes with a lock, so a render may briefly WAIT if another run holds Word. Give each render command a generous timeout (10 minutes) and run them SEQUENTIALLY — never background one or start a second before the first returns. (\`read\` is instant and never touches Word.)
+Renders are safe to run back-to-back: the CLI serializes Word access across processes with a lock, so a render may briefly WAIT if another run holds Word. Give each render you actually run a generous timeout (10 minutes) and run them SEQUENTIALLY — never background one or start a second before the first returns. (\`read\` never touches Word.)
 
-Create output directories with \`mkdir -p\` as needed. For this target (key "${target.key}"):
-  1. render ${target.output} into ${target.outDir}
-  2. save the output's markdown read view: \`${binary} read ${target.output} > ${target.mdPath}\` (write it even if the render step failed — the markdown does not depend on Word).${baselineBlock}
+For this target (key "${target.key}") — CHECK-THEN-ACT on each:
+  1. OUTPUT PNGs → ${target.outDir}: if that dir already holds \`*.png\`, SKIP; else \`mkdir -p\` it and \`${binary} render ${target.output} --engine word --out ${target.outDir}\`.
+  2. OUTPUT read.md → ${target.mdPath}: if that file already exists, SKIP; else \`${binary} read ${target.output} > ${target.mdPath}\` (produce it even if the render failed — it doesn't depend on Word).${baselineBlock}
 
-Capture the produced PNG page paths (each render command prints them). If a render fails, capture the error text and move on — do not retry more than once. If a \`read\` fails, note it in \`error\` and return an empty path for that side.
+Then \`ls\` each dir to capture the REAL page-PNG paths (whether they pre-existed or you just made them). If a render you run fails, capture the error text and move on — do not retry more than once. If a \`read\` fails, note it in \`error\` and return an empty path for that side.
 
-Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether the output rendered, the list of output page PNG paths, the \`markdownPath\` (${target.mdPath} if that read succeeded, else empty),${baselineReturn} and any error text.`;
+Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether the output PNGs are present (\`rendered\`), the list of output page PNG paths, the \`markdownPath\` (${target.mdPath} if present, else empty),${baselineReturn} and any error text.`;
 }
 
 function judgePrompt(scenario, exercise, render) {
