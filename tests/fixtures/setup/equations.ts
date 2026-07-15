@@ -10,7 +10,7 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
 /**
  * Build tests/fixtures/equations.docx — the canonical equation read fixture.
  *
- * **CLI-authored**, dogfooding our own LaTeX→OMML emitter (`insert --equation`)
+ * **CLI-authored**, dogfooding our own LaTeX→OMML emitter (`docx equations add`)
  * end-to-end. One paragraph per construct with a header above describing what
  * the equation exercises, so a failing case is easy to pin down by reading
  * `docx read` output. The body is laid out in 2 columns; a column break is
@@ -272,7 +272,15 @@ let equationsInColumn = 0;
 for (const [index, [header, latex, display]] of ENTRIES.entries()) {
 	await cli("insert", out, "--after", `p${position}`, "--text", header);
 	position += 1;
-	const args = ["insert", out, "--after", `p${position}`, "--equation", latex];
+	const args = [
+		"equations",
+		"add",
+		out,
+		"--after",
+		`p${position}`,
+		"--equation",
+		latex,
+	];
 	if (display) args.push("--display");
 	await cli(...args);
 	position += 1;

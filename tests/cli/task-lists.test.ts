@@ -197,18 +197,18 @@ describe("task lists — tracked checkbox toggles", () => {
 	});
 });
 
-describe("task lists — insert --task", () => {
+describe("task lists — tasks add", () => {
 	test("creates a fresh task list paragraph with state, allocating a numId", async () => {
-		const workspace = tempWorkspace("insert-task-fresh");
+		const workspace = tempWorkspace("tasks-add-fresh");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p0",
-			"--task",
-			"unchecked",
+			"--unchecked",
 			"--text",
 			"buy groceries",
 		);
@@ -219,27 +219,27 @@ describe("task lists — insert --task", () => {
 		expect(textOf(task)).toBe("buy groceries");
 	});
 
-	test("consecutive --task inserts inherit the anchor's numId (contiguous list)", async () => {
-		const workspace = tempWorkspace("insert-task-inherit");
+	test("consecutive tasks add inherit the anchor's numId (contiguous list)", async () => {
+		const workspace = tempWorkspace("tasks-add-inherit");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p0",
-			"--task",
-			"unchecked",
+			"--unchecked",
 			"--text",
 			"A",
 		);
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p1",
-			"--task",
-			"checked",
+			"--checked",
 			"--text",
 			"B",
 		);
@@ -251,51 +251,84 @@ describe("task lists — insert --task", () => {
 		expect(b.taskState).toBe("checked");
 	});
 
-	test("--task accepts canonical strings + agent-friendly aliases", async () => {
-		const workspace = tempWorkspace("insert-task-aliases");
+	test("--checked / --unchecked set the state; default is unchecked", async () => {
+		const workspace = tempWorkspace("tasks-add-state");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		for (const value of ["checked", "true", "1"]) {
-			await runCli(
-				"insert",
-				docPath,
-				"--after",
-				"p0",
-				"--task",
-				value,
-				"--text",
-				value,
-			);
-		}
-		const blocks = await blocksOf(docPath);
-		const tasks = blocks.filter(
-			(b) => b.type === "paragraph" && b.taskState !== undefined,
+		await runCli("tasks", "add", docPath, "--after", "p0", "--text", "default");
+		await runCli(
+			"tasks",
+			"add",
+			docPath,
+			"--after",
+			"p1",
+			"--checked",
+			"--text",
+			"done",
 		);
-		for (const t of tasks) expect(t.taskState).toBe("checked");
+		const blocks = await blocksOf(docPath);
+		const p1 = blocks.find((b) => b.id === "p1") as Block;
+		const p2 = blocks.find((b) => b.id === "p2") as Block;
+		expect(p1.taskState).toBe("unchecked"); // default
+		expect(p2.taskState).toBe("checked");
 	});
 
-	test("--task with --image/--table/--section is rejected", async () => {
-		const workspace = tempWorkspace("insert-task-mutex");
+	test("--checked and --unchecked together is rejected", async () => {
+		const workspace = tempWorkspace("tasks-add-both");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		const result = await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p0",
-			"--task",
-			"checked",
-			"--table",
-			"--rows",
-			"2",
-			"--cols",
-			"2",
+			"--checked",
+			"--unchecked",
+			"--text",
+			"X",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toContain("requires --text or --runs");
+		expect(result.stdout).toContain("at most one of --checked or --unchecked");
 	});
 
-	test("--list bullet creates a plain list paragraph (no checkbox)", async () => {
+	test("without --text or --runs is rejected", async () => {
+		const workspace = tempWorkspace("tasks-add-nocontent");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Header");
+		const result = await runCli(
+			"tasks",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--checked",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("exactly one of --text or --runs");
+	});
+
+	test("--runs authors a task item's label", async () => {
+		const workspace = tempWorkspace("tasks-add-runs");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Header");
+		await runCli(
+			"tasks",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--checked",
+			"--runs",
+			'[{"type":"text","text":"ship it"}]',
+		);
+		const blocks = await blocksOf(docPath);
+		const p1 = blocks.find((b) => b.id === "p1") as Block;
+		expect(p1.taskState).toBe("checked");
+		expect(textOf(p1)).toBe("ship it");
+	});
+
+	test("--list bullet still creates a plain list paragraph (no checkbox)", async () => {
 		const workspace = tempWorkspace("insert-list-bullet");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
@@ -316,27 +349,27 @@ describe("task lists — insert --task", () => {
 		expect(textOf(p1)).toBe("plain bullet");
 	});
 
-	test("--list-level N nests a task / list item at the given level", async () => {
-		const workspace = tempWorkspace("insert-list-level");
+	test("--list-level N nests a task item at the given level", async () => {
+		const workspace = tempWorkspace("tasks-add-level");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p0",
-			"--task",
-			"unchecked",
+			"--unchecked",
 			"--text",
 			"top",
 		);
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p1",
-			"--task",
-			"checked",
+			"--checked",
 			"--list-level",
 			"1",
 			"--text",
@@ -348,38 +381,18 @@ describe("task lists — insert --task", () => {
 		expect(nested.taskState).toBe("checked");
 	});
 
-	test("--task and --list are mutually exclusive", async () => {
-		const workspace = tempWorkspace("insert-task-list-mutex");
-		const docPath = join(workspace, "out.docx");
-		await runCli("create", docPath, "--text", "Header");
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--task",
-			"checked",
-			"--list",
-			"bullet",
-			"--text",
-			"X",
-		);
-		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toContain("mutually exclusive");
-	});
-
-	test("--task under tracking surfaces as ordinary ins, the SDT survives untouched", async () => {
-		const workspace = tempWorkspace("insert-task-tracked");
+	test("under tracking surfaces as ordinary ins, the SDT survives untouched", async () => {
+		const workspace = tempWorkspace("tasks-add-tracked");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"insert",
+			"tasks",
+			"add",
 			docPath,
 			"--after",
 			"p0",
-			"--task",
-			"unchecked",
+			"--unchecked",
 			"--text",
 			"buy groceries",
 			"--author",
@@ -395,29 +408,59 @@ describe("task lists — insert --task", () => {
 	});
 });
 
-describe("task lists — edit --task", () => {
-	test("flips a task's state in place (untracked)", async () => {
-		const workspace = tempWorkspace("edit-task-untracked");
+describe("task lists — tasks check / uncheck", () => {
+	test("check flips a task's state in place (untracked)", async () => {
+		const workspace = tempWorkspace("tasks-check-untracked");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		// p1 in the fixture is "buy groceries" — unchecked.
-		await runCli("edit", docPath, "--at", "p1", "--task", "checked");
+		await runCli("tasks", "check", docPath, "--at", "p1");
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("- [x] buy groceries");
 	});
 
-	test("under tracking emits Word's canonical toggle XML (round-trip listable)", async () => {
-		const workspace = tempWorkspace("edit-task-tracked");
+	test("uncheck clears a task's state in place (untracked)", async () => {
+		const workspace = tempWorkspace("tasks-uncheck-untracked");
+		const docPath = join(workspace, "out.docx");
+		copyFileSync(FIXTURE, docPath);
+		// p2 in the fixture is "pay rent" — checked.
+		await runCli("tasks", "uncheck", docPath, "--at", "p2");
+		const result = await runCli("read", docPath);
+		expect(result.stdout).toContain("- [ ] pay rent");
+	});
+
+	test("check under tracking emits Word's canonical toggle XML (round-trip listable)", async () => {
+		const workspace = tempWorkspace("tasks-check-tracked");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		await runCli("track-changes", docPath, "on");
+		await runCli("tasks", "check", docPath, "--at", "p1", "--author", "Tester");
+		const list = await runCli("track-changes", "list", docPath);
+		const changes = list.parsed as Array<{
+			kind: string;
+			blockId: string;
+			author: string;
+		}>;
+		const toggle = changes.find(
+			(c) => c.kind === "checkboxToggle" && c.blockId === "p1",
+		);
+		expect(toggle).toBeDefined();
+		expect(toggle?.author).toBe("Tester");
+	});
+
+	test("--track records a tracked checkboxToggle even when the doc toggle is OFF", async () => {
+		const workspace = tempWorkspace("tasks-check-force-track");
+		const docPath = join(workspace, "out.docx");
+		copyFileSync(FIXTURE, docPath);
+		// The fixture's track-changes toggle is OFF; --track forces this one
+		// invocation to record a tracked change anyway (the honesty check).
 		await runCli(
-			"edit",
+			"tasks",
+			"check",
 			docPath,
 			"--at",
 			"p1",
-			"--task",
-			"checked",
+			"--track",
 			"--author",
 			"Tester",
 		);
@@ -435,24 +478,37 @@ describe("task lists — edit --task", () => {
 	});
 
 	test("on a non-task paragraph rejects with a clear hint", async () => {
-		const workspace = tempWorkspace("edit-task-bad");
+		const workspace = tempWorkspace("tasks-check-bad");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		// p0 is the heading — not a task list item.
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--task",
-			"checked",
-		);
+		const result = await runCli("tasks", "check", docPath, "--at", "p0");
 		expect(result.exitCode).toBe(2);
 		expect(result.stdout).toContain("requires a task-list paragraph");
 	});
+});
 
-	test("--task is mutex with --text", async () => {
-		const workspace = tempWorkspace("edit-task-mutex");
+describe("task lists — command extraction redirects", () => {
+	test("insert --task redirects to `docx tasks add`", async () => {
+		const workspace = tempWorkspace("insert-task-redirect");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Header");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--task",
+			"checked",
+			"--text",
+			"X",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("docx tasks add");
+	});
+
+	test("edit --task redirects to `docx tasks check`", async () => {
+		const workspace = tempWorkspace("edit-task-redirect");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		const result = await runCli(
@@ -462,11 +518,23 @@ describe("task lists — edit --task", () => {
 			"p1",
 			"--task",
 			"checked",
-			"--text",
-			"new text",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toContain("cannot be combined");
+		expect(result.stdout).toContain("docx tasks check");
+	});
+
+	test("edit --batch with a task key redirects to `docx tasks check`", async () => {
+		const workspace = tempWorkspace("edit-batch-task-redirect");
+		const docPath = join(workspace, "out.docx");
+		copyFileSync(FIXTURE, docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--batch",
+			'{"at":"p1","task":"checked"}',
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("docx tasks check");
 	});
 });
 

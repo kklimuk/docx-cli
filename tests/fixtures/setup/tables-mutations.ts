@@ -51,11 +51,11 @@ await cli("create", out, "--force", "--text", "Tables mutations fixture");
 
 // t0 — untracked structural edits.
 await cli(
-	"insert",
+	"tables",
+	"create",
 	out,
 	"--after",
 	"p0",
-	"--table",
 	"--rows",
 	"3",
 	"--cols",
@@ -109,11 +109,11 @@ await cli("tables", "format", out, "--at", "t0", "--align", "center");
 
 // t1 — tracked edits, left unaccepted so the markers persist in the fixture.
 await cli(
-	"insert",
+	"tables",
+	"create",
 	out,
 	"--after",
 	"t0",
-	"--table",
 	"--rows",
 	"2",
 	"--cols",
@@ -135,11 +135,11 @@ await cli(
 	"Heading2",
 ); // p1
 await cli(
-	"insert",
+	"tables",
+	"create",
 	out,
 	"--after",
 	"p1",
-	"--table",
 	"--rows",
 	"2",
 	"--cols",

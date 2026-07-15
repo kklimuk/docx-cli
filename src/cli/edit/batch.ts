@@ -24,7 +24,6 @@ import { removeParagraphLine } from "@core/track-changes/replace";
 import {
 	normalizeHexColor,
 	parseSpacingIndentFlags,
-	parseTaskFlag,
 	readJsonlObjects,
 } from "../parse-helpers";
 import {
@@ -45,7 +44,7 @@ type RawValues = Record<
 
 /** `docx edit --batch FILE.jsonl`: apply many edits from one read. Each JSONL
  *  line is `{ at, <one content field> }` — content is `text`, `clear`,
- *  `markdown`, `runs`, or `task`, OR a content-free run-formatting entry (set
+ *  `markdown`, or `runs`, OR a content-free run-formatting entry (set
  *  `bold`/`italic`/`underline`/`strike`/`color`/`highlight`/`shade`/`font`/`size`/
  *  `caps`/`smallcaps`/`superscript`/`subscript` on the existing text — the inverse
  *  of `clear`), plus per-entry `style`/`alignment`/`author`. All entries resolve
@@ -67,7 +66,7 @@ export async function runEditBatch(
 		return fail(
 			"USAGE",
 			`--batch reads each edit from the JSONL file; don't also pass --${conflicting} on the CLI`,
-			"Put per-entry fields (at, text, clear, markdown, runs, code, task, style, …) on each JSONL line.",
+			"Put per-entry fields (at, text, clear, markdown, runs, style, …) on each JSONL line.",
 		);
 	}
 
@@ -206,7 +205,7 @@ const SINGLE_SHOT_FLAGS = [
 // `clear` is NOT in here — it's a modifier that can stand alone OR ride along
 // with one content key (fill text AND strip formatting in one entry, e.g.
 // {at, text, clear:"highlight"} — the canonical form-fill + un-highlight move).
-const CONTENT_KEYS = ["text", "markdown", "runs", "code", "task"] as const;
+const CONTENT_KEYS = ["text", "markdown", "runs"] as const;
 
 // Run-formatting keys (the inverse of `clear`): like `clear`, they can stand
 // alone (set formatting on existing text) OR ride along with one content key
@@ -273,6 +272,26 @@ async function resolveEntry(
 	if (typeof at !== "string" || at.length === 0) {
 		throw new EntryError("USAGE", `entry ${index}: "at" is required`);
 	}
+	// Task-checkbox toggling moved to its own noun-verb command — no longer a
+	// batch content key. Redirect rather than hit the generic "no content" error.
+	if (raw.task !== undefined) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: edit no longer toggles task checkboxes — use \`docx tasks check\` / \`docx tasks uncheck\` (--at pN, not batchable)`,
+		);
+	}
+	// Code blocks likewise moved out — same redirect, so a batch `code` entry
+	// points at the noun-verb instead of the generic "no content" dead-end.
+	if (
+		raw.code !== undefined ||
+		raw["code-file"] !== undefined ||
+		raw.language !== undefined
+	) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: edit no longer builds code blocks — replace a block with \`docx code edit --at pN\` (not batchable)`,
+		);
+	}
 	if (/^s\d+$/.test(at)) {
 		throw new EntryError(
 			"USAGE",
@@ -284,7 +303,7 @@ async function resolveEntry(
 		throw new EntryError(
 			"USAGE",
 			`entry ${index}: equation edits (${at}) aren't supported in --batch`,
-			"Edit equations individually with `docx edit --at eqN`.",
+			"Edit equations individually with `docx equations edit --at eqN`.",
 		);
 	}
 	try {
@@ -498,7 +517,7 @@ async function buildApply(
 		throw new EntryError(
 			"USAGE",
 			`entry ${index}: a character span (${raw.at}) supports "text", "clear", or run-formatting (bold/color/font/…)`,
-			"Use a whole-paragraph locator (pN) for markdown/runs/code/task.",
+			"Use a whole-paragraph locator (pN) for markdown/runs.",
 		);
 	}
 
@@ -555,45 +574,12 @@ async function buildWholeParagraphContent(
 				},
 			);
 	}
-	if (kind === "task") {
-		const taskRaw = requireString(raw.task, index, "task");
-		const checked = parseTaskFlag(taskRaw);
-		if (checked === null) {
-			throw new EntryError(
-				"USAGE",
-				`entry ${index}: "task" must be "checked" or "unchecked", got "${taskRaw}"`,
-			);
-		}
-		return () => {
-			new Edit(document).taskToggle(blockRef, checked, {
-				authorFlag: author,
-				track: opts.track,
-			});
-			return blockRef.node; // toggled in place
-		};
-	}
 	if (kind === "runs") {
 		const runs = readRuns(raw.runs, index);
 		return () =>
 			new Edit(document).paragraph(
 				blockRef,
 				{ kind: "runs", runs, paragraphOptions },
-				{ authorFlag: author, track: opts.track },
-			);
-	}
-	if (kind === "code") {
-		const content = requireString(raw.code, index, "code");
-		const language =
-			typeof raw.language === "string" ? raw.language : undefined;
-		return () =>
-			new Edit(document).paragraph(
-				blockRef,
-				{
-					kind: "code",
-					content,
-					...(language ? { language } : {}),
-					paragraphOptions,
-				},
 				{ authorFlag: author, track: opts.track },
 			);
 	}

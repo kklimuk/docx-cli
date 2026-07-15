@@ -200,7 +200,7 @@ export type EquationReference = {
 	blockId: string;
 	display: boolean;
 	/** Reconstructed LaTeX from the reader's `ommlToLatex(node)` pass. Cached
-	 *  here so `edit --at eqN --display`/`--inline` mode-toggles work for
+	 *  here so `equations edit --at eqN --display`/`--inline` mode-toggles work for
 	 *  equations inside table cells too — walking `view.doc.blocks` to find
 	 *  the run's `latex` field misses cell paragraphs. */
 	latex: string;

@@ -55,7 +55,15 @@ export class Equations {
 	 * <w:ins>NEW</w:ins>` instead of an in-place splice. */
 	edit(
 		id: string,
-		options: { latex?: string; display?: boolean; author?: string } = {},
+		options: {
+			latex?: string;
+			display?: boolean;
+			author?: string;
+			/** Force tracked emission (the resolved `--track || doc-toggle` decision
+			 *  the CLI passes). Undefined falls back to the document toggle, so
+			 *  callers that don't decide keep the pre-existing behavior. */
+			track?: boolean;
+		} = {},
 	): void {
 		const reference = this.document.body.equationReferences.get(id);
 		if (!reference) throw new EquationNotFoundError(id);
@@ -67,7 +75,7 @@ export class Equations {
 		const index = reference.parent.indexOf(reference.node);
 		if (index === -1) throw new EquationStaleError(id);
 
-		if (this.document.isTrackChangesEnabled()) {
+		if (options.track ?? this.document.isTrackChangesEnabled()) {
 			const allocator = new TrackChanges(this.document).createAllocator();
 			const author = resolveAuthor(options.author);
 			const date = resolveDate();
@@ -129,8 +137,8 @@ export function latexToOmml(latex: string, display = false): XmlNode {
  *
  *  @public Staged for the S8 markdown walker — when it compiles `$…$` /
  *  `$$…$$` from a markdown source it'll emit `<Equation latex>` directly,
- *  alongside its other JSX components. The CLI (`insert --equation` /
- *  `edit --at eqN --equation`) calls `latexToOmml` directly instead of
+ *  alongside its other JSX components. The CLI (`docx equations add` /
+ *  `docx equations edit`) calls `latexToOmml` directly instead of
  *  going through this wrapper. */
 export function Equation({
 	latex,

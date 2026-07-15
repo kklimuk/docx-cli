@@ -280,7 +280,7 @@ docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all
 # Batch — apply many changes from ONE read (no re-reading between edits). Keys
 # on each JSONL line mirror the command's flags; all locators address the doc as
 # read. insert/edit also accept --batch - to read JSONL from stdin.
-docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs|code|task>, style?, … }
+docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs>, style?, … }
 docx insert  FILE --batch additions.jsonl   # { after|before, <content>, style?, color?, … }
 docx replace FILE --batch script.jsonl      # { pattern, replacement, at?, regex?, all?, limit?, … } applied in order ("at" scopes that entry to one paragraph)
 docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (pN/tN/cell), resolved live-first
@@ -322,10 +322,9 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #       NOTE: in a single no-content call (or one --batch entry) these run-format SET flags and the
 #       paragraph properties (--style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/
 #       --hanging/--tabs) can't ride together — use separate calls/entries, or add --text to set both.
-#   --task checked|unchecked | --list bullet|ordered [--list-level N]   (insert)
-#   --task checked|unchecked                                            (edit, flip in place)
-#   --table --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (insert)
-#   --image SRC [--alt T] [--width IN] [--height IN] [--caption "Figure 1: …"]   (insert; SRC = path, data: URI, or http(s) URL; --caption adds a Word "Caption"-styled line under the figure)
+#   --list bullet|ordered [--list-level N]   (insert; for a task-list CHECKBOX use `docx tasks add`)
+#   --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (docx tables create)
+#   --image SRC [--alt T] [--width IN] [--height IN] [--caption "Figure 1: …"]   (docx images add; SRC = path, data: URI, or http(s) URL; --caption adds a Word "Caption"-styled line under the figure)
 #   --page-break | --column-break | --section [--columns N] [--type T]   (insert)
 
 docx comments add     FILE --at LOCATOR --text "..." [--author NAME] [--current | --baseline]
@@ -353,6 +352,8 @@ docx headers clear FILE [--at sN] [--type T | --first-page | --even | --odd]
 docx footers set   FILE …   # identical flags, kind=footer (e.g. --page-number --of-pages → "Page X of Y")
 docx footers clear FILE …
 
+docx images add     FILE (--after | --before) LOCATOR --image SRC [--alt T] [--width IN] [--height IN] [--caption "..."]
+docx images add     FILE (--at-start | --at-end) --image SRC [options]   # SRC = path, data: URI, or http(s) URL
 docx images extract FILE --to DIR [--at imgN]            # --to = output directory; --at picks one image
 docx images replace FILE --at imgN --with ./new.png
 docx images delete  FILE --at imgN
@@ -361,6 +362,7 @@ docx hyperlinks add     FILE --at pN:S-E --url URL
 docx hyperlinks replace FILE --at linkN --with URL
 docx hyperlinks delete  FILE --at linkN
 
+docx tables create        FILE (--after|--before LOCATOR | --at-start|--at-end) --rows N --cols M [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]
 docx tables insert-row    FILE --at tN [--position INDEX] [--cells "a,b,c"]
 docx tables delete-row    FILE --at tN:rR
 docx tables insert-column FILE --at tN [--position INDEX] [--width TWIPS]
@@ -378,6 +380,15 @@ docx lists set            FILE --at pN [--start N] [--format FMT] [--restart] [-
                           # FMT = decimal | lower-alpha | upper-alpha | lower-roman | upper-roman.
                           # --restart splits a fresh list off here; --continue picks up the previous
                           # list's numbering instead of restarting. Untracked (Word records no revision).
+
+docx tasks add            FILE (--after | --before) LOCATOR (--text LABEL | --runs JSON) [--checked | --unchecked] [--list-level N]
+docx tasks add            FILE (--at-start | --at-end) (--text LABEL | --runs JSON) [--checked | --unchecked]
+                          # insert a GFM task-list checkbox item (☐ default, ☒ with --checked). Consecutive
+                          # adds after a list anchor build ONE contiguous list.
+docx tasks check          FILE --at pN            # mark an existing task done (☒), in place
+docx tasks uncheck        FILE --at pN            # clear an existing task (☐), in place
+                          # check/uncheck take --track to redline the toggle even with the doc toggle off
+                          # (surfaces as a checkboxToggle in `track-changes list`).
 
 docx track-changes on|off FILE
 docx track-changes list   FILE [--json]
@@ -438,7 +449,7 @@ Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are de
 | `imgN` (image)                  | `docx images list FILE`                                                                                                                  | `images extract/replace/delete --at`                                          |
 | `linkN` (hyperlink)             | `docx hyperlinks list FILE`                                                                                                              | `hyperlinks replace/delete --at`                                              |
 | `tcN` (tracked change)          | `docx track-changes list FILE`                                                                                                           | `track-changes accept/reject --at`                                            |
-| `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `edit --at eqN --equation`                                                    |
+| `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `equations edit --at eqN`                                                    |
 
 Each `list` verb prints a bare JSON array where every item's `id` is exactly the handle you feed back to `--at` — pipe through `jq` to filter (`docx comments list doc.docx | jq '.[] | select(.author=="Jane")'`).
 

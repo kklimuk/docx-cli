@@ -247,6 +247,13 @@ const COMMANDS: string[][] = [
 	["wc"],
 	["outline"],
 	["render"],
+	["code", "add"],
+	["code", "edit"],
+	["equations", "add"],
+	["equations", "edit"],
+	["tasks", "add"],
+	["tasks", "check"],
+	["tasks", "uncheck"],
 	["info", "schema"],
 	["info", "locators"],
 	["comments", "add"],
@@ -262,6 +269,7 @@ const COMMANDS: string[][] = [
 	["endnotes", "edit"],
 	["endnotes", "delete"],
 	["endnotes", "list"],
+	["images", "add"],
 	["images", "list"],
 	["images", "extract"],
 	["images", "replace"],
@@ -270,6 +278,7 @@ const COMMANDS: string[][] = [
 	["hyperlinks", "list"],
 	["hyperlinks", "replace"],
 	["hyperlinks", "delete"],
+	["tables", "create"],
 	["tables", "insert-row"],
 	["tables", "delete-row"],
 	["tables", "insert-column"],
@@ -328,13 +337,14 @@ describe("stdin '-' ingress (process boundary)", () => {
 		expect(markdown).toContain("TWO");
 	});
 
-	test("insert --code-file - reads the code body from stdin", async () => {
+	test("code add --code-file - reads the code body from stdin", async () => {
 		const docPath = join(tempWorkspace("stdin-code"), "doc.docx");
 		await runCli("create", docPath, "--text", "intro");
 
 		const result = await spawnCliStdin(
 			"print(1)\nprint(2)\n",
-			"insert",
+			"code",
+			"add",
 			docPath,
 			"--after",
 			"p0",

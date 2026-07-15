@@ -33,8 +33,10 @@ const TOP_LEVEL_MUTATORS = new Set([
  *  these subcommands are mutators. Anything not in here (e.g. `comments
  *  list`, `track-changes list`, `images extract`) is a read. */
 const SUBVERB_MUTATORS: Record<string, Set<string>> = {
+	code: new Set(["add", "edit"]),
 	comments: new Set(["add", "reply", "resolve", "delete"]),
 	endnotes: new Set(["add", "edit", "delete"]),
+	equations: new Set(["add", "edit"]),
 	footers: new Set(["set", "clear"]),
 	footnotes: new Set(["add", "edit", "delete"]),
 	headers: new Set(["set", "clear"]),
@@ -52,6 +54,7 @@ const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 		"unmerge",
 		"borders",
 	]),
+	tasks: new Set(["add", "check", "uncheck"]),
 	"track-changes": new Set(["on", "off", "accept", "reject", "apply"]),
 };
 

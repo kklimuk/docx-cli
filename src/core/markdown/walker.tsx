@@ -176,7 +176,7 @@ function blockquoteBlocks(
 function mathParagraph(node: MdMath): XmlNode {
 	try {
 		// `latexToOmml(_, true)` returns `<m:oMathPara><m:oMath>…</m:oMath></m:oMathPara>`,
-		// which sits as a direct `<w:p>` child (the same shape `insert --equation
+		// which sits as a direct `<w:p>` child (the same shape `docx equations add
 		// --display` emits via `EquationParagraph` in `core/insert/index.tsx`).
 		const omml = latexToOmml(node.value, true);
 		return <w.p>{omml}</w.p>;

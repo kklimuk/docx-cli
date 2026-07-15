@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml, trackedKinds } from "./helpers";
+import { trackedKinds } from "./helpers";
 
 type AstParagraph = {
 	id: string;
@@ -345,19 +345,14 @@ describe("docx insert --page-break / --column-break", () => {
 });
 
 /**
- * Two ergonomics fixes surfaced by the weak-model adversarial run:
- *   - `--text` with embedded newlines/tabs → real `<w:br/>` / `<w:tab/>` (not a
- *     literal \n that Word swallows). Verse/addresses stay line-per-line, and
- *     `read` round-trips them.
- *   - `insert --image --caption` / `images add --caption` → a native Word
- *     "Caption"-styled paragraph under the figure (Table-of-Figures-able).
+ * Ergonomics fix surfaced by the weak-model adversarial run: `--text` with
+ * embedded newlines/tabs → real `<w:br/>` / `<w:tab/>` (not a literal \n that
+ * Word swallows). Verse/addresses stay line-per-line, and `read` round-trips
+ * them. (Image captions moved to images.test.ts with the `docx images add` verb.)
  */
 
 type Run = { type: string; text?: string; kind?: string };
 type Block = { id: string; type: string; style?: string; runs?: Run[] };
-
-const ASSETS = join(import.meta.dir, "..", "fixtures", "assets");
-const PNG = join(ASSETS, "sample.png");
 
 async function blocks(path: string): Promise<Block[]> {
 	const result = await runCli("read", path, "--ast");
@@ -428,155 +423,18 @@ describe("--text newlines and tabs", () => {
 	});
 });
 
-describe("image captions", () => {
-	test("insert --image --caption adds a Caption-styled paragraph below the figure", async () => {
-		const path = newDoc("cap-insert");
-		await runCli("create", path, "--text", "Report.");
-		const result = await runCli(
-			"insert",
-			path,
-			"--after",
-			"p0",
-			"--image",
-			PNG,
-			"--caption",
-			"Figure 1: Quarterly revenue",
-		);
-		expect(result.exitCode).toBe(0);
-		// Two blocks minted: the figure paragraph and the caption paragraph.
-		const all = await blocks(path);
-		const caption = all.find((b) => b.style === "Caption");
-		expect(caption).toBeDefined();
-		expect((caption?.runs ?? []).map((run) => run.text).join("")).toBe(
-			"Figure 1: Quarterly revenue",
-		);
-	});
-
-	test("the Caption style is provisioned in styles.xml", async () => {
-		const path = newDoc("cap-style");
-		await runCli("create", path, "--text", "Report.");
-		await runCli(
-			"insert",
-			path,
-			"--after",
-			"p0",
-			"--image",
-			PNG,
-			"--caption",
-			"Fig 1",
-		);
-		// styles.xml provisioning is exercised by the doc opening cleanly here.
-		expect((await runCli("read", path, "--ast")).exitCode).toBe(0);
-		// The caption paragraph carries the Caption pStyle (proves the style was
-		// referenced).
-		const caption = (await blocks(path)).find((b) => b.style === "Caption");
-		expect(caption).toBeDefined();
-	});
-
-	test("images add --caption (alias) works the same way", async () => {
-		const path = newDoc("cap-alias");
-		await runCli("create", path, "--text", "Report.");
-		const result = await runCli(
-			"images",
-			"add",
-			path,
-			"--image",
-			PNG,
-			"--after",
-			"p0",
-			"--caption",
-			"Figure A",
-		);
-		expect(result.exitCode).toBe(0);
-		const caption = (await blocks(path)).find((b) => b.style === "Caption");
-		expect((caption?.runs ?? []).map((run) => run.text).join("")).toBe(
-			"Figure A",
-		);
-	});
-
-	test("no --caption → no Caption paragraph", async () => {
-		const path = newDoc("cap-none");
-		await runCli("create", path, "--text", "Report.");
-		await runCli("insert", path, "--after", "p0", "--image", PNG);
-		const caption = (await blocks(path)).find((b) => b.style === "Caption");
-		expect(caption).toBeUndefined();
-	});
-});
-
 // Regression: spacing/indent flags used to be silently dropped on several insert
 // content kinds (exit 0, no effect) — the weak-agent footgun. They must either
-// take effect (code/equation/image: meaningful, single/uniform paragraphs) or be
-// rejected up front (markdown: the source owns block layout).
+// take effect or be rejected up front (markdown: the source owns block layout).
+// (Code, equations, and images moved to their own noun-verb commands; their
+// spacing threading is covered in code.test.ts / equations.test.ts /
+// images.test.ts.)
 describe("insert — spacing/indent across content kinds (no silent drop)", () => {
 	async function withAnchor(label: string): Promise<string> {
 		const path = newDoc(label);
 		await runCli("create", path, "--text", "Anchor.");
 		return path;
 	}
-
-	test("--code threads spacing/indent onto every code paragraph", async () => {
-		const path = await withAnchor("ins-code-spacing");
-		expect(
-			(
-				await runCli(
-					"insert",
-					path,
-					"--after",
-					"p0",
-					"--code",
-					"a = 1\nb = 2",
-					"--language",
-					"python",
-					"--space-after",
-					"12",
-					"--indent-left",
-					"0.5",
-				)
-			).exitCode,
-		).toBe(0);
-		for (const id of ["p1", "p2"]) {
-			const paragraph = (await readParagraphs(path)).find((b) => b.id === id);
-			expect(paragraph?.spacing).toEqual({ after: 240 });
-			expect(paragraph?.indent).toEqual({ left: 720 });
-		}
-	});
-
-	test("--equation threads spacing/indent onto the equation paragraph", async () => {
-		const path = await withAnchor("ins-eq-spacing");
-		await runCli(
-			"insert",
-			path,
-			"--after",
-			"p0",
-			"--equation",
-			"x = y",
-			"--space-before",
-			"12",
-			"--indent-left",
-			"0.5",
-		);
-		const xml = await readDocumentXml(path);
-		expect(xml).toContain('<w:spacing w:before="240"/>');
-		expect(xml).toContain('<w:ind w:left="720"/>');
-	});
-
-	test("--image threads spacing onto the figure paragraph", async () => {
-		const path = await withAnchor("ins-img-spacing");
-		await runCli(
-			"insert",
-			path,
-			"--after",
-			"p0",
-			"--image",
-			PNG,
-			"--width",
-			"1",
-			"--space-after",
-			"12",
-		);
-		const figure = (await readParagraphs(path)).find((b) => b.id === "p1");
-		expect(figure?.spacing).toEqual({ after: 240 });
-	});
 
 	test("--markdown rejects spacing/indent flags (the source owns block layout)", async () => {
 		const path = await withAnchor("ins-md-reject");
@@ -594,376 +452,6 @@ describe("insert — spacing/indent across content kinds (no silent drop)", () =
 		expect((result.parsed as { error?: string }).error).toContain(
 			"can't be combined with --markdown",
 		);
-	});
-});
-
-type CodeBlockAst = {
-	id: string;
-	type: string;
-	style?: string;
-	runs?: Array<{
-		type: string;
-		text?: string;
-		runStyle?: string;
-		color?: string;
-		bold?: boolean;
-	}>;
-};
-
-async function blocksOf(docPath: string): Promise<CodeBlockAst[]> {
-	const result = await runCli("read", docPath, "--ast");
-	return (result.parsed as { blocks: CodeBlockAst[] }).blocks;
-}
-
-describe("docx insert --code", () => {
-	test("inline --code: each \\n becomes its own CodeBlock paragraph", async () => {
-		const docPath = join(tempWorkspace("code-inline"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"line one\nline two\nline three",
-		);
-
-		const blocks = await blocksOf(docPath);
-		// 1 intro + 3 code lines + 1 sectionBreak.
-		expect(blocks).toHaveLength(5);
-		const codeBlocks = blocks.filter((b) => b.style === "CodeBlock");
-		expect(codeBlocks).toHaveLength(3);
-		const texts = codeBlocks.map(
-			(b) => b.runs?.map((r) => r.text ?? "").join("") ?? "",
-		);
-		expect(texts).toEqual(["line one", "line two", "line three"]);
-		// Every run carries the Code character style — defensive against Word
-		// versions that don't cascade pStyle's font through to runs.
-		for (const b of codeBlocks) {
-			for (const r of b.runs ?? []) expect(r.runStyle).toBe("Code");
-		}
-	});
-
-	test("--code-file PATH: reads content from the file", async () => {
-		const workspace = tempWorkspace("code-file");
-		const docPath = join(workspace, "out.docx");
-		const snippetPath = join(workspace, "snippet.py");
-		await Bun.write(snippetPath, "def hello():\n    return 42\n");
-
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code-file",
-			snippetPath,
-		);
-
-		const blocks = await blocksOf(docPath);
-		const codeBlocks = blocks.filter((b) => b.style === "CodeBlock");
-		// Trailing newline becomes a (visible-but-empty) fourth paragraph; this
-		// matches "what was in the file" semantically, and the markdown render
-		// collapses it back to a clean fenced block.
-		expect(codeBlocks.length).toBeGreaterThanOrEqual(2);
-		const joined = codeBlocks
-			.map((b) => b.runs?.map((r) => r.text ?? "").join("") ?? "")
-			.join("\n");
-		expect(joined).toContain("def hello():");
-		expect(joined).toContain("    return 42");
-	});
-
-	// `--code-file -` (stdin) is exercised only by manual review and by an
-	// agent running the real binary — the in-process harness shares the test
-	// runner's stdin so attempting to consume it never returns EOF. The
-	// `--code-file PATH` test above exercises the file-resolution flow; the
-	// stdin branch is a one-line conditional that swaps `Bun.file(path)` for
-	// `Bun.stdin.stream()`.
-
-	test("--language typescript applies token colors", async () => {
-		const docPath = join(tempWorkspace("code-ts"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"function foo() { return 42; }",
-			"--language",
-			"typescript",
-		);
-
-		const blocks = await blocksOf(docPath);
-		const codeBlock = blocks.find((b) => b.style?.startsWith("CodeBlock"));
-		expect(codeBlock).toBeDefined();
-		const runs = codeBlock?.runs ?? [];
-		// At least the `function` and `return` keyword tokens should pick up
-		// the keyword color (CF222E in our palette).
-		const colored = runs.filter((r) => r.color);
-		expect(colored.length).toBeGreaterThan(0);
-		const keywordRun = runs.find((r) => r.text === "function");
-		expect(keywordRun?.color).toBe("CF222E");
-	});
-
-	test("unknown --language degrades to uncolored (block still inserts)", async () => {
-		const docPath = join(tempWorkspace("code-unknown-lang"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"sub foo { 42 }",
-			"--language",
-			"klingon-script", // not a real lowlight language
-		);
-		expect(result.exitCode).toBe(0);
-		const blocks = await blocksOf(docPath);
-		const codeBlock = blocks.find((b) => b.style?.startsWith("CodeBlock"));
-		expect(codeBlock).toBeDefined();
-		// Single uncolored run when language is unrecognized.
-		const runs = codeBlock?.runs ?? [];
-		expect(runs.every((r) => r.color === undefined)).toBe(true);
-	});
-
-	test("provisions Code AND CodeBlock styles in styles.xml", async () => {
-		const docPath = join(tempWorkspace("code-styles"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"plain text\nsecond line",
-		);
-
-		const pkg = await Pkg.open(docPath);
-		const stylesXml = await pkg.readText("word/styles.xml");
-		expect(stylesXml).toContain('w:styleId="Code"');
-		expect(stylesXml).toContain('w:styleId="CodeBlock"');
-	});
-
-	test("--language LANG provisions a CodeBlock-LANG style basedOn CodeBlock", async () => {
-		const docPath = join(tempWorkspace("code-lang-style"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"function foo() {}",
-			"--language",
-			"typescript",
-		);
-
-		// Each emitted paragraph carries the per-language pStyle, so the
-		// language survives round-trip through Word/LibreOffice (basedOn
-		// preserves the rendering).
-		const blocks = await blocksOf(docPath);
-		const codeBlock = blocks.find((b) => b.type === "paragraph" && b.style);
-		expect(codeBlock?.style).toBe("CodeBlock-typescript");
-
-		// And the derived style is provisioned in styles.xml, basedOn CodeBlock.
-		const pkg = await Pkg.open(docPath);
-		const stylesXml = await pkg.readText("word/styles.xml");
-		expect(stylesXml).toContain('w:styleId="CodeBlock-typescript"');
-		expect(stylesXml).toMatch(
-			/w:styleId="CodeBlock-typescript"[\s\S]*?<w:basedOn w:val="CodeBlock"\/>/,
-		);
-	});
-
-	test("an unknown language still gets a derived style (degraded, not lost)", async () => {
-		// `klingon-script` isn't in lowlight's grammar list, so token colors
-		// drop to plain. But the language NAME survives via the pStyle suffix
-		// so `read --markdown` still tags the fenced block with the language.
-		const docPath = join(tempWorkspace("code-lang-unknown"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"sub foo { 42 }",
-			"--language",
-			"klingon-script",
-		);
-		const blocks = await blocksOf(docPath);
-		const codeBlock = blocks.find((b) => b.type === "paragraph" && b.style);
-		expect(codeBlock?.style).toBe("CodeBlock-klingon-script");
-	});
-
-	test("--language requires --code OR --code-file (orphan check)", async () => {
-		const docPath = join(tempWorkspace("code-orphan"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		// --language without any --code/--code-file is an orphan sub-flag.
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--text",
-			"Just text",
-			"--language",
-			"python",
-		);
-		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { code: string }).code).toBe("USAGE");
-	});
-
-	test("--code and --code-file are mutually exclusive", async () => {
-		const docPath = join(tempWorkspace("code-conflict"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"foo",
-			"--code-file",
-			"some.py",
-		);
-		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { code: string }).code).toBe("USAGE");
-	});
-});
-
-describe("docx read --markdown for code blocks", () => {
-	test("consecutive CodeBlock paragraphs collapse into one fenced block", async () => {
-		const docPath = join(tempWorkspace("code-render"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"function foo() {\n  return 42;\n}",
-		);
-
-		const result = await runCli("read", docPath);
-		const md = result.stdout;
-		// Three lines wrapped in one fenced block. Locator comments sit on their
-		// OWN lines bracketing the fence — never glued to a fence line, which
-		// would break a downstream markdown parser (CommonMark/markdown-it).
-		expect(md).toContain("function foo() {");
-		expect(md).toContain("  return 42;");
-		expect(md).toContain("}");
-		expect(md).toContain("<!-- p1 -->");
-		expect(md).toContain("<!-- p3 -->");
-		// The fence lines themselves are clean: no comment glued to an opening
-		// info string, no content after a closing fence.
-		expect(md).toMatch(/<!-- p1 -->\n```\n/); // open locator, then a bare fence
-		expect(md).toMatch(/\n```\n<!-- p3 -->/); // bare close fence, then locator
-		expect(md).not.toMatch(/```[^\n]*<!--/); // never a comment on a fence line
-	});
-
-	test("--language LANG round-trips to a tagged GFM fence", async () => {
-		const docPath = join(tempWorkspace("code-render-lang"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"function foo() {\n  return 42;\n}",
-			"--language",
-			"typescript",
-		);
-		const md = (await runCli("read", docPath)).stdout;
-		// Fence opens with the language tag recovered from the pStyle suffix —
-		// on a CLEAN info-string line (no locator glued to it, which would make a
-		// parser read the language as `typescript<!--` and lose highlighting).
-		expect(md).toContain("```typescript\n");
-		expect(md).not.toContain("```typescript<!--");
-		expect(md).toMatch(/<!-- p1 -->\n```typescript/);
-		expect(md).toContain("function foo() {");
-	});
-
-	test("read-output code fence re-imports with its language intact (parse-validity)", async () => {
-		// The regression that the string-shape assertions above missed: emitting
-		// the locator ON the fence line corrupts the language id, so re-parsing
-		// `read --markdown` output (what a downstream tool — or our own importer —
-		// does) recovers the WRONG language. Round-trip read→import→read and
-		// assert the fenced language survives.
-		const docPath = join(tempWorkspace("code-fence-reparse"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"const x = 1;\nconst y = 2;",
-			"--language",
-			"typescript",
-		);
-
-		// Feed read --markdown back through create --from, then read again.
-		const ws = tempWorkspace("code-fence-reparse-rt");
-		const mdPath = join(ws, "doc.md");
-		await Bun.write(mdPath, (await runCli("read", docPath)).stdout);
-		const dst = join(ws, "rt.docx");
-		await runCli("create", dst, "--from", mdPath);
-
-		const reread = (await runCli("read", dst)).stdout;
-		// The language tag must survive the round-trip — a corrupted info string
-		// would re-import as a bare/garbled CodeBlock and lose it.
-		expect(reread).toContain("```typescript\n");
-		expect(reread).toContain("const x = 1;");
-		const blocks = (
-			(await runCli("read", dst, "--ast")).parsed as {
-				blocks: Array<{ style?: string }>;
-			}
-		).blocks;
-		expect(blocks.some((b) => b.style === "CodeBlock-typescript")).toBe(true);
-	});
-
-	test("token colors are stripped from the fenced rendering (source survives)", async () => {
-		const docPath = join(tempWorkspace("code-render-colors"), "out.docx");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code",
-			"return 42;",
-			"--language",
-			"typescript",
-		);
-
-		const md = (await runCli("read", docPath)).stdout;
-		// No HTML span / color leakage in the fenced rendering — just literal
-		// source text between the fences.
-		expect(md).not.toMatch(/<span style="color/);
-		expect(md).toContain("return 42;");
-	});
-
-	test("inline runStyle: Code emits backticks in the rendered markdown", async () => {
-		const docPath = join(tempWorkspace("code-inline-render"), "out.docx");
-		await runCli("create", docPath, "--text", "Plain.");
-		await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--runs",
-			JSON.stringify([
-				{ type: "text", text: "use " },
-				{ type: "text", text: "foo()", runStyle: "Code" },
-				{ type: "text", text: " here" },
-			]),
-		);
-
-		const md = (await runCli("read", docPath)).stdout;
-		expect(md).toContain("use `foo()` here");
 	});
 });
 
@@ -1215,11 +703,11 @@ describe("insert --at-start / --at-end (boundary placement)", () => {
 		await runCli("create", docPath, "--text", "TAIL");
 		// Push a table above p0 so the document now BEGINS with a table.
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--before",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -1245,11 +733,11 @@ describe("insert --at-start / --at-end (boundary placement)", () => {
 		const docPath = newDoc("boundary-table-last");
 		await runCli("create", docPath, "--text", "HEAD");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -1368,23 +856,35 @@ describe("docx insert — inline escape decoding (--text / --markdown)", () => {
 			true,
 		);
 	});
+});
 
-	test("--caption decodes \\n into a line break (it's a body paragraph)", async () => {
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--image",
-			"tests/fixtures/assets/sample.png",
-			"--caption",
-			"Fig 1\\nSource: X",
-		);
+// Contextual `--help`: `--text`/`--runs` route to a focused slice (same shim as
+// edit's `pickHelp`), so a weak agent that types a content flag then `--help`
+// lands on the guidance for that flag rather than the full default screen.
+describe("docx insert — contextual --help", () => {
+	test("--text --help focuses on formatting a new paragraph (mentions --bold and --markdown)", async () => {
+		const def = (await runCli("insert", "--help")).stdout;
+		const result = await runCli("insert", "--text", "--help");
 		expect(result.exitCode).toBe(0);
-		const paragraphs = await readParagraphs(docPath);
-		const caption = paragraphs.find((p) => p.style === "Caption");
-		expect((caption?.runs ?? []).some((run) => run.type === "break")).toBe(
-			true,
-		);
+		expect(result.stdout).toContain("--bold");
+		expect(result.stdout).toContain("--markdown");
+		expect(result.stdout).not.toBe(def);
+	});
+
+	test("--runs --help exposes the Run[] JSON", async () => {
+		const result = await runCli("insert", "--runs", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Run[]");
+		expect(result.stdout).toContain("vertAlign");
+	});
+
+	test("default --help leads with --markdown and defers the per-run JSON to --runs --help", async () => {
+		const result = await runCli("insert", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("--markdown");
+		// The default must NOT dump the full per-run JSON schema…
+		expect(result.stdout).not.toContain("vertAlign");
+		// …it points at the variant that does.
+		expect(result.stdout).toContain("--runs --help");
 	});
 });

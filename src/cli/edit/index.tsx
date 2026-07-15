@@ -19,12 +19,6 @@ import {
 	type XmlNode,
 } from "@core";
 import type { ParagraphOptions, TabStop } from "@core/blocks";
-import {
-	EquationNotFoundError,
-	EquationParseError,
-	EquationStaleError,
-	Equations,
-} from "@core/equation";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
@@ -34,7 +28,7 @@ import {
 	parseRunsArg,
 	parseSectionFlags,
 	parseSpacingIndentFlags,
-	parseTaskFlag,
+	pickContextualHelp,
 	rejectMarkdownInText,
 	rejectShellMangledValue,
 } from "../parse-helpers";
@@ -45,8 +39,8 @@ import {
 	resolveBlockOrFail,
 	resolveBlockRangeOrFail,
 	resolveTracked,
-	respond,
 	respondAck,
+	respondEditDryRun,
 	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
@@ -60,19 +54,11 @@ import {
 } from "./tabs";
 
 const AT_FORMS = describeForms(
-	[
-		"paragraph",
-		"span",
-		"blockRange",
-		"cellParagraph",
-		"cellSpan",
-		"section",
-		"equation",
-	],
+	["paragraph", "span", "blockRange", "cellParagraph", "cellSpan", "section"],
 	"                      ",
 );
 
-const HELP = `docx edit — replace a paragraph (or paragraph range), a section, or an equation
+const EDIT_HELP = `docx edit — replace a paragraph (or paragraph range) or a section
 
 Usage:
   docx edit FILE --at LOCATOR <content> [options]
@@ -82,218 +68,200 @@ Usage:
 Locator (required):
   --at LOCATOR      What to edit. One of:
 ${AT_FORMS}
-                    pN / pN-pM take paragraph content (below); sN takes
-                    --columns/--type; eqN takes --equation/--display/--inline.
-                    A character span (pN:S-E, or a cell paragraph
-                    tN:rRcC:pK:S-E) replaces just those characters with --text,
-                    inheriting the existing run's formatting (keeps bold/font) —
-                    paste a locator straight from \`docx find\`. This is how you
-                    fill a formatted/tabbed template line: a tab is preserved,
-                    so replace the text on EITHER side of it (find the bold label,
-                    find the value) — no need to rebuild --runs. \`docx replace
-                    OLD NEW\` does the same by phrase. See \`docx info locators\`.
+                    A character span (pN:S-E, or a cell paragraph tN:rRcC:pK:S-E)
+                    replaces just those characters — paste a span straight from
+                    \`docx find\`. sN takes --columns/--type; edit an equation with
+                    \`docx equations edit --at eqN\`. See \`docx info locators\`.
 
-Paragraph content (one required for paragraph / range locators — UNLESS you pass
-only --style/--alignment below, which restyle the paragraph in place):
-  --text TEXT       Replace with a single-run paragraph. Empty --text ("")
-                    REMOVES the line (same as \`docx delete --at pN\`; a table
-                    cell's last paragraph is blanked, not deleted, so the cell
-                    stays valid). To keep an empty spacer paragraph, use
-                    --runs '[]'. On a SPAN locator (pN:S-E) empty --text instead
-                    deletes just those characters.
-  --runs JSON       Replace with custom runs (Run[] JSON)
-  --code TEXT       Replace with a code block — newlines split into one
-                    CodeBlock-styled paragraph per source line
-  --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin)
-  --markdown TEXT   Replace with parsed GFM markdown. Same dialect as
-                    'docx insert --markdown' (headings, lists, tables, code,
-                    blockquotes, links, math, footnotes, CriticMarkup, …).
-                    Multi-block sources expand naturally — a paragraph
-                    locator gets replaced by however many blocks the source
-                    parses to.
-  --markdown-file PATH  Same as --markdown, but read content from PATH
-                    (use "-" for stdin).
+Common edits:
+  Fill a line          --at pN --markdown "New **bold** text"  (parsed GFM — the
+                                                                default for formatting)
+                       --at pN --text "Plain literal text"     (verbatim, one run)
+  Fill part of a line  --at pN:S-E --text "Delaware"           (a span from \`docx find\`)
+  Format text          --at pN --text "Title" --bold           (→ \`docx edit --text --help\`)
+  Remove a line        --at pN --text ""
+  Restyle in place     --at pN --style Heading1   ·   --at pN --tabs right
+  Many at once         --batch edits.jsonl
+
+Content (one required for a paragraph / range locator — UNLESS you pass only the
+paragraph/formatting options below, which adjust the paragraph in place):
+  --markdown TEXT   Replace with parsed GFM markdown (headings, lists, tables,
+                    code, links, math, footnotes, CriticMarkup, …). Same dialect
+                    as \`docx insert --markdown\`. A multi-block source expands —
+                    the paragraph is replaced by however many blocks it parses to.
+  --markdown-file PATH  Same as --markdown, but read content from PATH ("-" = stdin).
+  --text TEXT       Replace with a single LITERAL run — every character verbatim.
+                    Empty "" REMOVES the line (a table cell's last paragraph is
+                    blanked, not deleted). To FORMAT it, add run-formatting flags
+                    or use --markdown — see \`docx edit --text --help\`.
+  --runs JSON       Replace with custom runs (Run[] JSON). Field list + the full
+                    run-formatting flag list: \`docx edit --runs --help\`.
   --clear ATTRS     Strip run formatting in place, keeping the text. ATTRS is a
-                    comma list of: bold, italic, strike, underline, highlight,
-                    shade, color, font, size, vertalign, caps, smallcaps, style
-                    — or "all". Repeatable: \`--clear highlight --clear underline\`
-                    accumulates (same as \`--clear highlight,underline\`).
-                    Works on a whole paragraph (pN) or a span
-                    (pN:S-E). Pairs with \`docx find --highlight\`. (Not tracked.)
-                    Can RIDE ALONG with content (whole paragraph OR span):
-                    \`--text "Delaware" --clear highlight\` fills then strips the
-                    highlight in ONE call — the form-fill + un-highlight move,
-                    and the natural \`find --highlight | edit\` one-shot. Prefer
-                    this over \`--clear all\`, which also drops the font size.
-  --task STATE      Flip a task-list item's checkbox state in place ("checked" or
-                    "unchecked"). Requires a single paragraph locator that is
-                    already a GFM task list item (has a leading <w14:checkbox/>
-                    SDT). Under track-changes, emits Word's canonical toggle
-                    shape (ins/del pair inside sdtContent + w14:checked flip);
-                    "track-changes list" surfaces it as a checkboxToggle revision.
+                    comma list (bold, italic, underline, highlight, shade, color,
+                    font, size, …) or "all". Rides along with content on a
+                    paragraph or span: \`--text "Delaware" --clear highlight\` fills
+                    then un-highlights in one call. (Not tracked.)
 
-Equation editing (requires --at eqN):
-  --equation LATEX  Replace the equation's content with new LaTeX. Goes through
-                    temml → MathML → OMML.
-  --display         Switch the equation to display mode (block, $$…$$). Can be
-                    combined with --equation, or used alone to toggle mode.
-  --inline          Switch to inline mode ($…$). Mutex with --display.
-
-Paragraph options:
+Paragraph options (pass ALONE to adjust the paragraph in place, keeping its
+text/runs — or ride along with --text to fill AND format in one call):
   --style NAME       Paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
-  --space-before PT  Space above the paragraph, in points (e.g. 12)
-  --space-after PT   Space below the paragraph, in points (e.g. 6)
-  --line-spacing N   Line spacing: a multiple (1, 1.5, 2), a name (single,
-                     double), or an exact point height (15pt, or "15pt atLeast")
-  --indent-left IN   Left indent, in inches (e.g. 0.5 or 0.5in; negative outdents)
-  --indent-right IN  Right indent, in inches (negative outdents into the margin)
-  --first-line IN    First-line indent, in inches (negative ok; mutex w/ --hanging)
-  --hanging IN       Hanging indent, in inches (mutex with --first-line)
-  --tabs SPEC        Replace the paragraph's tab stops. SPEC is:
-                       right   — a single RIGHT tab flush at the text margin.
-                                 This is the CURE for the \`docx:layout … warn=…\`
-                                 hint \`read\` prints on a line whose trailing
-                                 content sits on a fixed LEFT tab: a long value
-                                 (e.g. "San Francisco, CA") overflows the margin
-                                 and WRAPS to a second line. A right tab at the
-                                 margin right-aligns it instead, so it never wraps.
-                       clear   — remove the paragraph's tab stops.
-                       <list>  — explicit stops, e.g. \`right@7.5in\` or
-                                 \`left@1in,right@7.5in\` (ALIGN@POSin, comma list).
-  Pass any of --style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/
-  --hanging/--tabs ALONE (no content flag) to adjust the paragraph in place,
-  keeping its text/runs: \`docx edit doc.docx --at p4 --style Heading1\`,
-  \`docx edit doc.docx --at p4 --space-after 6 --line-spacing 1.5\`,
-  \`docx edit doc.docx --at p9 --tabs right\`. They also ride along with --text
-  (fill the line AND format it), work per-entry in --batch, and apply across a
-  RANGE (\`--at p0-p9 --line-spacing 2\` sets every paragraph). Under track-changes
-  these are recorded as a tracked \`<w:pPrChange>\` revision (accept/reject in Word).
-  ONE-CALL cure: a RANGE locator fixes every wrapping tab line at once —
-  \`docx edit doc.docx --at p9-p38 --tabs right\` (the exact "fix-all" command
-  \`read\` prints at the top when lines wrap; it skips paragraphs with no tab stops).
+  --space-before PT / --space-after PT   Space above / below, in points
+  --line-spacing N   A multiple (1, 1.5, 2), a name (single, double), or 15pt
+  --indent-left IN / --indent-right IN   Indent, in inches (negative outdents)
+  --first-line IN / --hanging IN         First-line / hanging indent, in inches
+  --tabs SPEC        Replace the paragraph's tab stops. SPEC is \`right\` (a single
+                     RIGHT tab at the text margin — the CURE for the \`docx:layout\`
+                     wrap warning \`read\` prints when a long right-edge value wraps),
+                     \`clear\`, or an explicit list (\`left@1in,right@7.5in\`). A RANGE
+                     locator fixes every wrapping line at once: \`--at pN-pM --tabs
+                     right\` (the "fix-all" command \`read\` prints).
+  These apply across a RANGE (\`--at p0-p9 --line-spacing 2\`) and record a tracked
+  <w:pPrChange> under track-changes.
 
-Run formatting (the inverse of --clear — SET formatting on EXISTING text):
-  Pass any of these ALONE (no content flag) to format the text already there,
-  keeping it. Target a span (pN:S-E), a whole paragraph (pN), or a range (pN-pM)
-  — paste a span straight from \`docx find\`. They also ride along with --text to
-  fill AND format in one call (e.g. \`--text "Title" --bold\`).
-  --bold            Bold
-  --italic          Italic
-  --underline       Underline (single). Other styles via --runs JSON.
-  --strike          Strikethrough
-  --color HEX       Text color, hex (e.g., 800080 for purple; no '#')
-  --highlight NAME  Highlighter color (yellow, green, cyan, magenta, red, …)
-  --shade HEX       Background fill, arbitrary hex (no '#')
-  --font NAME       Font family (e.g., "Times New Roman")
-  --size PT         Font size in points (e.g., 12 or 11.5)
-  --caps            ALL CAPS (display only — the text stays as typed)
-  --smallcaps       Small caps
-  --superscript     Superscript    --subscript    Subscript
-  To turn a property OFF, use --clear (e.g. \`--clear bold\`). Like --clear and
-  --style, formatting changes apply DIRECTLY — they are NOT recorded as tracked
-  changes (Word's <w:rPrChange> isn't modeled), regardless of --track / the
-  document's track-changes toggle.
-
-Code options (only with --code / --code-file):
-  --language LANG   Syntax-highlight via lowlight (37 common languages bundled).
-                    Survives round-trip via a CodeBlock-LANG pStyle suffix.
+Run formatting: set --bold/--italic/--color/--font/… on EXISTING or new text.
+Full flag list + Run[] JSON detail: \`docx edit --runs --help\`.
 
 Section options (for section locators sN):
   --columns N        Number of columns for the targeted section
   --type T           continuous | nextPage | evenPage | oddPage | nextColumn
 
-Formatting (single-paragraph --text only):
-  By default --text preserves run-level formatting (bold/italic/color/etc.)
-  on words shared between the old and new text via a word-level diff. New
-  words inherit formatting from the nearest unchanged neighbor. Pass
-  --no-formatting to fall back to a single fresh run with no formatting.
-  Passing --color/--bold/--italic also bypasses preservation — those flags
-  apply uniformly to the new paragraph. Range edits (pN-pM) always rewrite
-  the span wholesale; per-word formatting preservation is not applied.
-
 Batch (--batch PATH | -):
-  Apply many edits from one read — no need to re-read between changes. Each
-  JSONL line is one edit: { "at": LOCATOR, <one content field> }. Content is
-  "text", "markdown", "runs", "code", or "task"; whole-paragraph entries may
-  also carry "style"/"alignment"/"color"/"bold"/"italic"/"author". An entry may
-  ALSO carry "clear" alongside its content — whole paragraph OR span — to fill
-  then strip formatting in one entry ({ "at": p, "text": "...", "clear": "highlight" })
-  — the form-fill + un-highlight move; "clear" alone (no content) is also valid.
-  To REMOVE a line in the same sweep, give an entry empty "text" ({ "at": "pN",
-  "text": "" }) or "delete": true — both drop the paragraph (a table cell's last
-  paragraph is blanked, not deleted). So a form-fill is ONE batch: fill the
-  cells that have values, remove the leftover placeholder lines.
-  All locators address the document AS READ. A paragraph takes one whole-
-  paragraph edit OR several non-overlapping spans (applied right-to-left so
-  offsets stay valid) OR one removal. Range (pN-pM), section (sN), and equation
-  (eqN) edits run one at a time, not in a batch. Don't mix --batch with --at/--text/etc.
-  Tip: a value reaches docx-cli verbatim through the JSONL file — no shell in the
-  way — so prefer --batch for money ($1,250.00), regex, or other shell-special
-  text. (A bare --text value may also start with "-"; it no longer needs "=".)
+  Apply many edits from one read. Each JSONL line is one edit: { "at": LOCATOR,
+  <one content field> } — content is "text"/"markdown"/"runs"; a whole-paragraph
+  entry may also carry "style"/"alignment"/"clear". Empty "text" or "delete": true
+  removes a line. All locators address the document AS READ. Range (pN-pM) and
+  section (sN) edits run one at a time, not in a batch. Don't mix --batch with
+  --at/--text/etc.
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
-  --track           Record this edit as a tracked change even when the
-                    document's track-changes toggle is off (it is OFF by
-                    default — check with \`docx track-changes list FILE\`).
-  --no-formatting   Replace with a single fresh run; do not preserve rPr
-                    on unchanged words
+  --track           Record this edit as a tracked change even when the document's
+                    toggle is off (check with \`docx track-changes list FILE\`).
+  --no-formatting   Replace with a single fresh run; don't preserve rPr on
+                    unchanged words
   -o, --output PATH Write to PATH instead of overwriting FILE
   --dry-run         Print what would change; do not write the file
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — an in-place edit shifts nothing, so the
-  edited locator is unchanged and there's nothing to mint. --verbose prints {ok:true, operation,
-  path, locator}. Errors print {code, error, hint?} with a nonzero exit.
-  Heads up: a locator you hold from BEFORE a structural edit (an insert/delete elsewhere renumbers
-  ids) is stale — it lands on the wrong block or errors BLOCK_NOT_FOUND. Re-read after any
-  insert/delete, or apply the whole set from one read with --batch (above). Discover ids with
-  \`docx read FILE --ast\` (equation ids appear on EquationRun nodes).
+  Prints a one-line confirmation on success (exit 0) — an in-place edit shifts
+  nothing, so the edited locator is unchanged and there's nothing to mint.
+  --verbose prints {ok:true, operation, path, locator}. Errors print {code, error,
+  hint?} with a nonzero exit. Heads up: a locator you hold from BEFORE a structural
+  edit (an insert/delete elsewhere renumbers ids) is stale — re-read after any
+  insert/delete, or apply the whole set from one read with --batch.
 
 Examples:
-  docx find doc.docx "fill in state"            # → p4:25-38
+  docx find doc.docx "fill in state"                   # → p4:25-38
   docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
   docx edit doc.docx --at p5 --text ""                 # remove a placeholder line
-  docx edit doc.docx --at p4:25-38 --clear highlight   # un-highlight that span
-  docx edit doc.docx --at p4:4-13 --bold --color C00000 # bold + red that span
-  docx edit doc.docx --at p2 --font "Times New Roman" --size 12  # restyle a paragraph's runs
-  docx edit doc.docx --at p4 --text "Delaware" --clear highlight  # fill + un-highlight
-  docx edit doc.docx --at p2 --clear all               # strip all run formatting
-  docx edit doc.docx --at p3 --text "Replaced." --style Heading2
-  docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
-  docx edit doc.docx --at p2-p5 --text "Rewrite this section as one paragraph."
-  docx edit doc.docx --at p3-p7 --code-file new-snippet.go --language go
-  docx edit doc.docx --at s0 --columns 2 --type continuous
-  docx edit doc.docx --at eq0 --equation "x = \\\\frac{-b}{2a}" --display
-  docx edit doc.docx --batch fills.jsonl            # fill many spans at once
+  docx edit doc.docx --at p4 --text "Title" --bold     # fill + format in one call
+  docx edit doc.docx --at p3 --markdown "## Revised heading"
+  docx edit doc.docx --at p2 --style Heading2
+  docx edit doc.docx --at p9-p38 --tabs right          # fix every wrapping tab line
+  docx edit doc.docx --batch fills.jsonl               # fill many spans at once
+`;
 
-Batch JSONL example (one edit per line):
-  {"at": "p4:25-38", "text": "Delaware"}
-  {"at": "t0:r1c2:p0", "text": "$4.2M"}
-  {"at": "p9", "clear": "highlight"}
-  {"at": "p3:0-5", "bold": true, "color": "C00000"}
-  {"at": "t1:r1c1:p0", "text": "June 8, 2026", "clear": "highlight"}
-  {"at": "t0:r0c0:p5", "text": ""}          # remove a leftover placeholder line
-  {"at": "p7", "delete": true}              # same, explicit
-  {"at": "p1", "markdown": "## Revised heading"}
+const EDIT_TEXT_HELP = `docx edit --text — replace a line's text and format it
+
+Usage:
+  docx edit FILE --at pN --text "New text" [formatting]
+  docx edit FILE --at pN:S-E --text "New text" [formatting]   # just a span
+
+--text writes LITERAL characters — every character lands verbatim in a single
+run. \`--text "**bold**"\` bakes in a literal ** (the markdown guard rejects it).
+To get FORMATTED text there are two paths:
+
+  1. Run-formatting flags that ride along with --text (they format the whole new
+     run; on a span pN:S-E too):
+       --bold            Bold                 --italic       Italic
+       --underline       Underline (single)   --strike       Strikethrough
+       --color HEX       Text color (C00000)  --highlight NAME  Highlighter
+       --shade HEX       Background fill hex   --font NAME    Font family
+       --size PT         Font size (points)    --caps         All caps
+       --smallcaps       Small caps            --superscript / --subscript
+     e.g. \`--at pN --text "Title" --bold --color C00000\`.
+
+  2. Use --markdown instead of --text for inline syntax (**bold**, \`code\`,
+     [links](url), ~~strike~~) and MIXED / multi-run formatting in one line:
+       docx edit FILE --at pN --markdown "New **bold** and *italic* text"
+
+Other --text behavior:
+  --text ""         Empty removes the line (a table cell's last paragraph is
+                    blanked, not deleted). To keep an empty spacer, use --runs '[]'.
+  --clear ATTRS     Strip formatting while filling: \`--text "Delaware" --clear
+                    highlight\` fills then un-highlights in one call.
+  --no-formatting   Replace with a single fresh run, dropping the per-word rPr
+                    preservation --text applies by default.
+
+Run-formatting flags apply DIRECTLY — never tracked (Word's <w:rPrChange> isn't
+modeled). To SET formatting WITHOUT changing the text, see \`docx edit --runs --help\`.
+
+Examples:
+  docx edit doc.docx --at p4 --text "Delaware"
+  docx edit doc.docx --at p4 --text "Title" --bold --color C00000
+  docx edit doc.docx --at p4:4-13 --text "flawless" --italic
+  docx edit doc.docx --at p4 --markdown "New **bold** text"
+`;
+
+const EDIT_RUNS_HELP = `docx edit --runs — build runs from JSON, or set formatting on existing text
+
+Two advanced surfaces. Prefer --text + flags or --markdown unless you need one.
+
+--runs JSON — replace a paragraph with an explicit array of runs (Run[] JSON).
+Each run object may carry:
+  { "type": "text", "text": "…",
+    "bold": true, "italic": true, "underline": true, "strike": true,
+    "color": "C00000",         // hex, no '#'
+    "highlight": "yellow",     // named highlighter
+    "shade": "EEEEEE",         // background fill, hex
+    "font": "Times New Roman", "size": 12,
+    "caps": true, "smallcaps": true,
+    "vertAlign": "superscript" | "subscript" }
+  e.g. --runs '[{"type":"text","text":"X","bold":true},{"type":"text","text":" y"}]'
+
+SET formatting on EXISTING text (no content flag — the text is kept). Target a
+span (pN:S-E), a whole paragraph (pN), or a range (pN-pM) — paste a span from
+\`docx find\`:
+  --bold            Bold                 --italic       Italic
+  --underline       Underline (single)   --strike       Strikethrough
+  --color HEX       Text color (hex)     --highlight NAME  Highlighter
+  --shade HEX       Background fill hex   --font NAME    Font family
+  --size PT         Font size (points)    --caps         All caps
+  --smallcaps       Small caps            --superscript / --subscript
+  --clear ATTRS     Turn formatting OFF (comma list, or "all")
+
+These apply DIRECTLY — never recorded as tracked changes (Word's <w:rPrChange>
+isn't modeled), regardless of --track or the document's track-changes toggle.
+
+Examples:
+  docx edit doc.docx --at p2 --font "Times New Roman" --size 12
+  docx edit doc.docx --at p4:4-13 --bold --color C00000
+  docx edit doc.docx --at p0-p9 --italic           # format every paragraph in range
+  docx edit doc.docx --at p2 --clear all           # strip all run formatting
+  docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
 `;
 
 export async function run(args: string[]): Promise<number> {
-	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	const help = pickContextualHelp(args, {
+		default: EDIT_HELP,
+		text: EDIT_TEXT_HELP,
+		runs: EDIT_RUNS_HELP,
+	});
+	const parsed = await tryParseArgs(args, OPTION_SPEC, help);
 	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
-		await writeStdout(HELP);
+		await writeStdout(help);
 		return EXIT.OK;
 	}
 
 	setVerboseAck(Boolean(parsed.values.verbose));
 
 	const filePath = parsed.positionals[0];
-	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
+	if (!filePath) return fail("USAGE", "Missing FILE argument", EDIT_HELP);
 
 	const batchInput = parsed.values.batch as string | undefined;
 	if (batchInput !== undefined) {
@@ -323,17 +291,10 @@ export async function run(args: string[]): Promise<number> {
 			return fail(
 				"USAGE",
 				"Range locators (pN-pM) don't accept --columns/--type — use sN for section edits",
-				HELP,
+				EDIT_HELP,
 			);
 		}
 		return commitRangeEdit(document, opts);
-	}
-
-	// Equation locator (`eqN`) targets an `<m:oMath>` inside a paragraph, not
-	// the paragraph itself — resolves via the Equations lens, not the block
-	// resolver.
-	if (opts.spec.kind === "equation") {
-		return commitEquationEdit(document, opts.spec, opts);
 	}
 
 	// Character-span locator (`pN:S-E` or a cell paragraph `tN:rRcC:pK:S-E`):
@@ -388,8 +349,8 @@ async function commitSpanEdit(
 	) {
 		return fail(
 			"USAGE",
-			"A character-span locator (pN:S-E) supports --text, --clear, or run-formatting flags (--bold/--color/--font/…). Use a whole-paragraph locator (pN) for --markdown/--runs/--code.",
-			HELP,
+			"A character-span locator (pN:S-E) supports --text, --clear, or run-formatting flags (--bold/--color/--font/…). Use a whole-paragraph locator (pN) for --markdown/--runs.",
+			EDIT_HELP,
 		);
 	}
 	if (spec.kind === "text") {
@@ -404,7 +365,7 @@ async function commitSpanEdit(
 			return fail(
 				"USAGE",
 				"--style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/--hanging/--tabs apply to a whole paragraph, not a character span (pN:S-E). Use a whole-paragraph locator (pN).",
-				HELP,
+				EDIT_HELP,
 			);
 		}
 	}
@@ -450,7 +411,7 @@ async function commitSpanEdit(
 	return emitEditAck(opts);
 }
 
-/** Single-block edit: section / task / paragraph dispatch through the Edit
+/** Single-block edit: section / paragraph dispatch through the Edit
  * lens. The lens handles tracked-vs-untracked, style ensures, and the
  * formatting-preservation decision. */
 async function commitBlockEdit(
@@ -469,17 +430,7 @@ async function commitBlockEdit(
 		let resultNode: XmlNode | null = null;
 		if (opts.spec.kind === "section") {
 			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag, track });
-		} else if (opts.spec.kind === "task") {
-			edit.taskToggle(blockRef, opts.spec.checked, {
-				authorFlag: opts.authorFlag,
-				track,
-			});
-			resultNode = blockRef.node;
-		} else if (
-			opts.spec.kind === "text" ||
-			opts.spec.kind === "runs" ||
-			opts.spec.kind === "code"
-		) {
+		} else if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
 			resultNode = edit.paragraph(blockRef, opts.spec, {
 				authorFlag: opts.authorFlag,
 				noFormatting: opts.noFormatting,
@@ -545,27 +496,17 @@ async function commitRangeEdit(
 ): Promise<number> {
 	if (opts.spec.kind === "section") {
 		// Type narrowing — caller already rejected this above.
-		return fail("USAGE", "Section edits don't support range locators", HELP);
-	}
-	if (opts.spec.kind === "task") {
 		return fail(
 			"USAGE",
-			"--task takes a single paragraph locator (pN), not a range",
-			HELP,
-		);
-	}
-	if (opts.spec.kind === "equation") {
-		return fail(
-			"USAGE",
-			"--equation takes a single equation locator (eqN), not a paragraph range",
-			HELP,
+			"Section edits don't support range locators",
+			EDIT_HELP,
 		);
 	}
 	if (opts.spec.kind === "removeLine") {
 		return fail(
 			"USAGE",
 			"Empty --text removes a single paragraph, not a range — use `docx delete --at pN-pM` to remove a span of paragraphs.",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 	if (opts.spec.kind === "paragraphProps") {
@@ -581,14 +522,14 @@ async function commitRangeEdit(
 		return fail(
 			"USAGE",
 			"Set run formatting on a replaced range in a separate call: `edit --at pN-pM --bold` (or --color/--font/…) after the content edit.",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 	if (opts.clearTags) {
 		return fail(
 			"USAGE",
 			"Strip run formatting on a replaced range in a separate call: `edit --at pN-pM --clear bold` (or --clear highlight/…) after the content edit.",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 
@@ -605,11 +546,7 @@ async function commitRangeEdit(
 		const resolved = await resolveMarkdownBlocks(document, opts.spec);
 		if (typeof resolved === "number") return resolved;
 		spec = resolved;
-	} else if (
-		opts.spec.kind === "text" ||
-		opts.spec.kind === "runs" ||
-		opts.spec.kind === "code"
-	) {
+	} else if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
 		spec = opts.spec;
 	} else {
 		return fail("USAGE", "Unsupported edit spec for range locator");
@@ -779,61 +716,54 @@ function isListParagraph(node: XmlNode): boolean {
 	return node.findChild("w:pPr")?.findChild("w:numPr") !== undefined;
 }
 
-/** Resolve an `eqN` locator, splice in a new OMML subtree, save. The spec
- *  carries optional `latex` (content swap) and `display` (mode toggle).
- *  At least one must change something, else it's a no-op error.
- *
- *  Tracking: when `<w:trackChanges/>` is on, the splice is replaced by a
- *  paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>`. Word's accept-all picks
- *  the right equation but leaves an empty container skeleton next to it —
- *  a Word normalization quirk that's cosmetic. */
-async function commitEquationEdit(
-	document: Document,
-	spec: Extract<EditSpec, { kind: "equation" }>,
-	opts: ValidatedOptions,
-): Promise<number> {
-	if (spec.latex === undefined && spec.display === undefined) {
-		return fail(
-			"USAGE",
-			"--equation requires --equation NEW_LATEX, --display, or --inline",
-		);
-	}
-
-	if (opts.dryRun) return respondDryRun(opts);
-
-	try {
-		new Equations(document).edit(spec.locator, {
-			latex: spec.latex,
-			display: spec.display,
-			author: opts.authorFlag,
-		});
-	} catch (error) {
-		if (error instanceof EquationNotFoundError) {
-			return fail("BLOCK_NOT_FOUND", error.message);
-		}
-		if (error instanceof EquationStaleError) {
-			return fail("BLOCK_NOT_FOUND", error.message);
-		}
-		if (error instanceof EquationParseError) {
-			return fail(
-				"USAGE",
-				`Could not parse LaTeX equation: ${error.message}`,
-				"Check the LaTeX syntax — temml accepts most KaTeX/MathJax LaTeX.",
-			);
-		}
-		throw error;
-	}
-
-	await document.save(opts.outputPath);
-	return emitEditAck(opts);
-}
-
 async function validateSingleShotOptions(
 	filePath: string,
 	values: RawValues,
 ): Promise<ValidatedOptions | number> {
 	const locator = values.at as string | undefined;
-	if (!locator) return fail("USAGE", "Missing --at LOCATOR", HELP);
+	if (!locator) return fail("USAGE", "Missing --at LOCATOR", EDIT_HELP);
+
+	// Equation editing moved to its own noun-verb command. Fire on the eqN
+	// locator OR the equation flags (still declared in OPTION_SPEC so they parse
+	// and hit this explicit redirect rather than a generic "unknown option").
+	if (
+		/^eq\d+$/.test(locator) ||
+		values.equation !== undefined ||
+		values.display === true ||
+		values.inline === true
+	) {
+		return fail(
+			"USAGE",
+			"edit no longer edits equations — use `docx equations edit`",
+			'e.g. `docx equations edit FILE --at eqN --equation "x^2"` (or --display/--inline). See `docx equations edit --help`.',
+		);
+	}
+
+	// Task-checkbox toggling moved to its own noun-verb command. Fire on the
+	// `--task` flag (still declared in OPTION_SPEC so it parses and hits this
+	// explicit redirect rather than a generic "unknown option").
+	if (values.task !== undefined) {
+		return fail(
+			"USAGE",
+			"edit no longer toggles task checkboxes — use `docx tasks check` / `docx tasks uncheck`",
+			"e.g. `docx tasks check FILE --at pN` (or `docx tasks uncheck FILE --at pN`). See `docx tasks --help`.",
+		);
+	}
+
+	// Code blocks moved to their own noun-verb command. Hoisted here (like
+	// equations/tasks above) so it fires for ANY locator — a section locator +
+	// `--code` gets the redirect too, not a confusing "section needs --columns".
+	if (
+		values.code !== undefined ||
+		values["code-file"] !== undefined ||
+		values.language !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"edit no longer builds code blocks — insert with `docx code add`, replace a block with `docx code edit --at pN`",
+			"e.g. `docx code edit FILE --at pN --code-file snippet.py --language python`. See `docx code edit --help`.",
+		);
+	}
 
 	const paragraphOptions = await parseParagraphOptions(values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
@@ -870,7 +800,6 @@ async function validateSingleShotOptions(
 	if (
 		spec.kind === "text" ||
 		spec.kind === "runs" ||
-		spec.kind === "code" ||
 		spec.kind === "markdown"
 	) {
 		const parsed = parseRunFormat(values);
@@ -938,6 +867,10 @@ const OPTION_SPEC = {
 	// value may itself be a comma list (`--clear highlight,underline`).
 	clear: { type: "string", multiple: true },
 	language: { type: "string" },
+	// Task toggling moved to `docx tasks check`/`uncheck`, equations to `docx
+	// equations edit`; these stay declared so `edit --at pN --task …` /
+	// `--equation …` parse and hit the explicit redirects in
+	// validateSingleShotOptions rather than a generic "unknown option" error.
 	task: { type: "string" },
 	equation: { type: "string" },
 	display: { type: "boolean" },
@@ -1013,31 +946,14 @@ type EditSpec =
 	  }
 	| { kind: "runs"; runs: Run[]; paragraphOptions: ParagraphOptions }
 	| {
-			kind: "code";
-			content: string;
-			language?: string;
-			paragraphOptions: ParagraphOptions;
-	  }
-	| {
 			kind: "markdown";
 			source: string;
 			paragraphOptions: ParagraphOptions;
 	  }
-	| { kind: "task"; checked: boolean }
 	| { kind: "removeLine" }
 	| { kind: "clear"; tags: Set<string> }
 	| { kind: "setFormat"; format: RunFormat }
-	| { kind: "paragraphProps"; paragraphOptions: ParagraphOptions }
-	| {
-			kind: "equation";
-			locator: string;
-			/** `undefined` means "keep the existing LaTeX" (a pure display-mode
-			 *  toggle); a string means replace the content. */
-			latex: string | undefined;
-			/** `undefined` means "keep the existing display flag"; a boolean
-			 *  switches to that mode. */
-			display: boolean | undefined;
-	  };
+	| { kind: "paragraphProps"; paragraphOptions: ParagraphOptions };
 
 type TextFormatting = {
 	color?: string;
@@ -1054,21 +970,25 @@ async function validateSectionEdit(
 		return fail(
 			"USAGE",
 			"Section locators (sN) take --columns and --type, not --text/--runs",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 	// A section break has no runs — run-formatting/clear flags would silently do
-	// nothing, so reject them with a targeted message (mirrors the --task/--equation
-	// guards) instead of letting them fall through to the columns/type check.
+	// nothing, so reject them with a targeted message instead of letting them
+	// fall through to the columns/type check.
 	if (hasRunFormatFlags(values) || values.clear !== undefined) {
 		return fail(
 			"USAGE",
 			"Section locators (sN) take --columns and --type — run-formatting flags (--bold/--color/--font/…) and --clear apply to a paragraph's runs, which a section break has none of.",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 	if (values.columns === undefined && values.type === undefined) {
-		return fail("USAGE", "Section edit requires --columns and/or --type", HELP);
+		return fail(
+			"USAGE",
+			"Section edit requires --columns and/or --type",
+			EDIT_HELP,
+		);
 	}
 	const sectionFlags = await parseSectionFlags(values);
 	if (typeof sectionFlags === "number") return sectionFlags;
@@ -1088,14 +1008,18 @@ async function parseClearTagsOrFail(
 		.map((name) => name.trim().toLowerCase())
 		.filter(Boolean);
 	if (names.length === 0) {
-		return fail("USAGE", "--clear needs an attribute name, or 'all'", HELP);
+		return fail(
+			"USAGE",
+			"--clear needs an attribute name, or 'all'",
+			EDIT_HELP,
+		);
 	}
 	const tags = resolveClearTags(names);
 	if (!tags) {
 		return fail(
 			"USAGE",
 			`--clear: unknown attribute in "${raw.join(",")}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
-			HELP,
+			EDIT_HELP,
 		);
 	}
 	return tags;
@@ -1109,7 +1033,7 @@ async function validateParagraphEdit(
 		return fail(
 			"USAGE",
 			"--columns and --type require a section locator (sN)",
-			HELP,
+			EDIT_HELP,
 		);
 	}
 
@@ -1121,32 +1045,15 @@ async function validateParagraphEdit(
 	// the content edit); here we only return the clear-alone spec.
 	const clearFlag = values.clear as string[] | undefined;
 	if (clearFlag !== undefined) {
-		if (
-			values.equation !== undefined ||
-			values.display === true ||
-			values.inline === true
-		) {
-			return fail(
-				"USAGE",
-				"--clear can't be combined with --equation/--display/--inline",
-				HELP,
-			);
-		}
-		const hasContent = [
-			"text",
-			"runs",
-			"code",
-			"code-file",
-			"markdown",
-			"markdown-file",
-			"task",
-		].some((flag) => values[flag] !== undefined);
+		const hasContent = ["text", "runs", "markdown", "markdown-file"].some(
+			(flag) => values[flag] !== undefined,
+		);
 		if (!hasContent) {
 			if (hasRunFormatFlags(values)) {
 				return fail(
 					"USAGE",
 					"Strip formatting (--clear) and set formatting (--bold/--color/--font/…) can't combine in one call — do them in separate calls.",
-					HELP,
+					EDIT_HELP,
 				);
 			}
 			const tags = await parseClearTagsOrFail(clearFlag);
@@ -1158,94 +1065,6 @@ async function validateParagraphEdit(
 	}
 	const text = decodeInlineEscapes(values.text as string | undefined);
 	const runsJson = values.runs as string | undefined;
-	const codeInline = values.code as string | undefined;
-	const codeFile = values["code-file"] as string | undefined;
-	const language = values.language as string | undefined;
-	const taskFlag = values.task as string | undefined;
-	const equationFlag = values.equation as string | undefined;
-	const displayFlag = values.display as boolean | undefined;
-	const inlineFlag = values.inline as boolean | undefined;
-
-	// `--equation` swaps the LaTeX (and optionally display mode) of an
-	// `eqN`-addressed equation. `--display` / `--inline` alone (without
-	// `--equation`) toggle the display mode but keep the existing LaTeX.
-	const equationLike =
-		equationFlag !== undefined || displayFlag === true || inlineFlag === true;
-	if (equationLike) {
-		const otherContent = [
-			text !== undefined,
-			runsJson !== undefined,
-			codeInline !== undefined,
-			codeFile !== undefined,
-			taskFlag !== undefined,
-		].filter(Boolean).length;
-		if (otherContent > 0) {
-			return fail(
-				"USAGE",
-				"--equation / --display / --inline cannot be combined with --text/--runs/--code/--code-file/--task",
-				HELP,
-			);
-		}
-		if (displayFlag && inlineFlag) {
-			return fail(
-				"USAGE",
-				"--display and --inline are mutually exclusive",
-				HELP,
-			);
-		}
-		if (hasRunFormatFlags(values)) {
-			return fail(
-				"USAGE",
-				"--equation/--display/--inline can't combine with run-formatting flags (--bold/--color/--font/…)",
-				HELP,
-			);
-		}
-		const displayMode: boolean | undefined = displayFlag
-			? true
-			: inlineFlag
-				? false
-				: undefined;
-		return {
-			kind: "equation",
-			locator: values.at as string,
-			latex: equationFlag,
-			display: displayMode,
-		};
-	}
-
-	// `--task` is its own content kind — it flips an existing task's state in
-	// place rather than replacing the paragraph.
-	if (taskFlag !== undefined) {
-		const otherFlags = [
-			text !== undefined,
-			runsJson !== undefined,
-			codeInline !== undefined,
-			codeFile !== undefined,
-		].filter(Boolean).length;
-		if (otherFlags > 0) {
-			return fail(
-				"USAGE",
-				"--task cannot be combined with --text, --runs, --code, or --code-file",
-				HELP,
-			);
-		}
-		if (hasRunFormatFlags(values)) {
-			return fail(
-				"USAGE",
-				"--task can't combine with run-formatting flags (--bold/--color/--font/…)",
-				HELP,
-			);
-		}
-		const checked = parseTaskFlag(taskFlag);
-		if (checked === null) {
-			return fail(
-				"USAGE",
-				`--task must be "checked" or "unchecked", got "${taskFlag}"`,
-				HELP,
-			);
-		}
-		return { kind: "task", checked };
-	}
 
 	const markdownInline = decodeInlineEscapes(
 		values.markdown as string | undefined,
@@ -1254,8 +1073,6 @@ async function validateParagraphEdit(
 	const contentFlags = [
 		text !== undefined,
 		runsJson !== undefined,
-		codeInline !== undefined,
-		codeFile !== undefined,
 		markdownInline !== undefined,
 		markdownFile !== undefined,
 	].filter(Boolean).length;
@@ -1275,12 +1092,12 @@ async function validateParagraphEdit(
 				return fail(
 					"USAGE",
 					"Set run formatting (--bold/--color/--font/…) and paragraph properties (--style/--alignment/--tabs) in separate calls, or use --text to set both on new content.",
-					HELP,
+					EDIT_HELP,
 				);
 			}
 			const parsed = parseRunFormat(values);
 			if (parsed === null) {
-				return fail("USAGE", "No run-formatting flags to apply", HELP);
+				return fail("USAGE", "No run-formatting flags to apply", EDIT_HELP);
 			}
 			if ("error" in parsed) return fail("USAGE", parsed.error, parsed.hint);
 			return { kind: "setFormat", format: parsed };
@@ -1295,25 +1112,17 @@ async function validateParagraphEdit(
 		}
 		return fail(
 			"USAGE",
-			"Missing content: pass --text, --runs, --code, --code-file, --markdown, --markdown-file, --task, or --equation — or run-formatting flags (--bold/--color/--font/--size/--underline/…) to format the EXISTING text, or --style/--alignment/--tabs to adjust the paragraph in place",
-			HELP,
+			"Missing content: pass --text, --runs, --markdown, or --markdown-file — or run-formatting flags (--bold/--color/--font/--size/--underline/…) to format the EXISTING text, or --style/--alignment/--tabs to adjust the paragraph in place",
+			EDIT_HELP,
 		);
 	}
 	if (contentFlags > 1) {
 		return fail(
 			"USAGE",
-			"Pass only one of --text, --runs, --code, --code-file, --markdown, --markdown-file",
-			HELP,
+			"Pass only one of --text, --runs, --markdown, --markdown-file",
+			EDIT_HELP,
 		);
 	}
-	if (
-		language !== undefined &&
-		codeInline === undefined &&
-		codeFile === undefined
-	) {
-		return fail("USAGE", "--language requires --code or --code-file", HELP);
-	}
-
 	if (text !== undefined) {
 		// Whole-paragraph empty --text REMOVES the line (the move weak agents
 		// reach for when clearing a placeholder). It routes to the same cell-safe
@@ -1339,7 +1148,7 @@ async function validateParagraphEdit(
 				return fail(
 					"USAGE",
 					"Empty --text removes the line and can't combine with --clear / run-formatting / --style/--alignment/--tabs — drop those flags, or use --runs '[]' to keep an empty (formatted) spacer paragraph.",
-					HELP,
+					EDIT_HELP,
 				);
 			}
 			return { kind: "removeLine" };
@@ -1360,24 +1169,9 @@ async function validateParagraphEdit(
 		};
 	}
 
-	if (codeInline !== undefined || codeFile !== undefined) {
-		const content =
-			codeInline !== undefined
-				? codeInline
-				: await loadCodeFile(codeFile as string);
-		if (typeof content === "number") return content;
-		return {
-			kind: "code",
-			content,
-			...(language ? { language } : {}),
-			paragraphOptions,
-		};
-	}
-
 	if (markdownInline !== undefined || markdownFile !== undefined) {
 		// Markdown encodes its own block styling — paragraph-level flags
-		// would be silently dropped. Reject up front for the same reason
-		// `--language` is gated to `--code` / `--code-file`.
+		// would be silently dropped. Reject up front.
 		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
 			(flag) => values[flag] !== undefined,
 		);
@@ -1385,7 +1179,7 @@ async function validateParagraphEdit(
 			return fail(
 				"USAGE",
 				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
-				HELP,
+				EDIT_HELP,
 			);
 		}
 		const source =
@@ -1441,22 +1235,6 @@ async function resolveMarkdownBlocks(
 	}
 }
 
-/** Read content for `--code-file PATH`. `-` means stdin (handled the same as
- *  `insert --code-file -`). Mirrors `cli/insert/index.tsx::resolveCodeSpec`. */
-async function loadCodeFile(path: string): Promise<string | number> {
-	try {
-		return path === "-"
-			? await new Response(Bun.stdin.stream()).text()
-			: await Bun.file(path).text();
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return fail(
-			"FILE_NOT_FOUND",
-			`Failed to read --code-file ${path}: ${message}`,
-		);
-	}
-}
-
 async function parseParagraphOptions(
 	values: RawValues,
 ): Promise<ParagraphOptions | number> {
@@ -1493,13 +1271,12 @@ async function parseParagraphOptions(
 }
 
 /** Set `tabs` on the spec's `paragraphOptions` (every paragraph-content kind that
- *  carries them). Section/task/clear/equation specs have no paragraph options, so
+ *  carries them). Section/clear specs have no paragraph options, so
  *  they're left untouched — `--tabs` with those locators is a no-op by design. */
 function injectTabsIntoSpec(spec: EditSpec, tabs: TabStop[]): void {
 	if (
 		spec.kind === "text" ||
 		spec.kind === "runs" ||
-		spec.kind === "code" ||
 		spec.kind === "markdown" ||
 		spec.kind === "paragraphProps"
 	) {
@@ -1507,15 +1284,8 @@ function injectTabsIntoSpec(spec: EditSpec, tabs: TabStop[]): void {
 	}
 }
 
-async function respondDryRun(opts: ValidatedOptions): Promise<number> {
-	await respond({
-		operation: "edit",
-		dryRun: true,
-		path: opts.filePath,
-		locator: opts.locator,
-		...(opts.outputPath ? { output: opts.outputPath } : {}),
-	});
-	return EXIT.OK;
+function respondDryRun(opts: ValidatedOptions): Promise<number> {
+	return respondEditDryRun(opts.filePath, opts.locator, opts.outputPath);
 }
 
 async function emitEditAck(opts: ValidatedOptions): Promise<number> {

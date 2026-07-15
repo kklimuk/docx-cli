@@ -30,7 +30,7 @@ When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:
 
 ## `flipCheckbox{Untracked,Tracked}` — authoring side
 
-`flipCheckboxUntracked(paragraph, checked)` updates the SDT in place (attribute + glyph). `flipCheckboxTracked(paragraph, checked, mintMeta)` writes Word's tracked-toggle shape: replaces `sdtContent`'s children with `<w:ins>new</w:ins><w:del>old</w:del>` and flips the attribute. Each side of the pair gets a fresh revision id from `mintMeta` (Word emits distinct ids — the meta-minter pattern is shared with `core/track-changes/replace.tsx`). Both return `false` on no-op (no SDT, or already in the target state) so callers can produce a clean ack.
+`flipCheckboxUntracked(paragraph, checked)` updates the SDT in place (attribute + glyph). `flipCheckboxTracked(paragraph, checked, mintMeta)` writes Word's tracked-toggle shape: replaces `sdtContent`'s children with `<w:ins>new</w:ins><w:del>old</w:del>` and flips the attribute. Each side of the pair gets a fresh revision id from `mintMeta` (Word emits distinct ids — the meta-minter pattern is shared with `core/track-changes/replace.tsx`). Both return `false` on no-op (no SDT, or already in the target state) so callers can produce a clean ack. The CLI reaches these through `Edit.taskToggle`, exposed as `docx tasks check` / `docx tasks uncheck` (authoring a NEW task item is `docx tasks add`); all three live in [src/cli/tasks](../../cli/tasks).
 
 ## Structural inserts/deletes — known gap
 

@@ -9,7 +9,7 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
 
 /**
  * Build tests/fixtures/images.docx — a doc that starts with no images and gets
- * three inserted through the public `insert --image` surface (a parity check
+ * three inserted through the public `docx images add` surface (a parity check
  * that every image source kind the resolver supports is reachable from the CLI):
  *   1. PNG via local file path (native pixel size)
  *   2. JPEG via a data: URI (native pixel size)
@@ -39,7 +39,8 @@ await cli("create", out, "--force", "--text", "Images fixture");
 
 await cli("insert", out, "--after", "p0", "--text", "PNG from a file path");
 await cli(
-	"insert",
+	"images",
+	"add",
 	out,
 	"--after",
 	"p1",
@@ -51,7 +52,8 @@ await cli(
 
 await cli("insert", out, "--after", "p2", "--text", "JPEG from a data: URI");
 await cli(
-	"insert",
+	"images",
+	"add",
 	out,
 	"--after",
 	"p3",
@@ -63,7 +65,8 @@ await cli(
 
 await cli("insert", out, "--after", "p4", "--text", "PNG scaled to 1.5 inches");
 await cli(
-	"insert",
+	"images",
+	"add",
 	out,
 	"--after",
 	"p5",

@@ -234,11 +234,12 @@ async function dataUri(path: string, mime: string): Promise<string> {
 	return `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
 }
 
-describe("docx insert --image", () => {
+describe("docx images add", () => {
 	test("embeds a PNG from a file path: media part, relationship, content-type", async () => {
 		const docPath = await newDoc("img-png");
 		const result = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -270,7 +271,8 @@ describe("docx insert --image", () => {
 	test("reads back native pixel dimensions and alt text", async () => {
 		const docPath = await newDoc("img-dims");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -289,7 +291,8 @@ describe("docx insert --image", () => {
 	test("embeds a JPEG from a data: URI", async () => {
 		const docPath = await newDoc("img-datauri");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -307,7 +310,8 @@ describe("docx insert --image", () => {
 	test("--width alone scales height to preserve aspect ratio", async () => {
 		const docPath = await newDoc("img-width");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -325,7 +329,8 @@ describe("docx insert --image", () => {
 	test("--width and --height together are both honored verbatim", async () => {
 		const docPath = await newDoc("img-wh");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -343,8 +348,24 @@ describe("docx insert --image", () => {
 
 	test("two inserts mint distinct part names and relationship ids", async () => {
 		const docPath = await newDoc("img-two");
-		await runCli("insert", docPath, "--after", "p0", "--image", PNG_PATH);
-		await runCli("insert", docPath, "--after", "p1", "--image", JPG_PATH);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p1",
+			"--image",
+			JPG_PATH,
+		);
 		const pkg = await Pkg.open(docPath);
 		const media = pkg
 			.listParts()
@@ -359,7 +380,8 @@ describe("docx insert --image", () => {
 	test("transcodes a HEIC file to JPEG before embedding", async () => {
 		const docPath = await newDoc("img-heic");
 		const result = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -385,7 +407,8 @@ describe("docx insert --image", () => {
 	test("transcodes HEIC supplied as a data: URI", async () => {
 		const docPath = await newDoc("img-heic-datauri");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -410,7 +433,8 @@ describe("docx insert --image", () => {
 		try {
 			const docPath = await newDoc("img-http-private");
 			const loopback = await runCli(
-				"insert",
+				"images",
+				"add",
 				docPath,
 				"--after",
 				"p0",
@@ -421,7 +445,8 @@ describe("docx insert --image", () => {
 			expect((loopback.parsed as { code: string }).code).toBe("IMAGE_SOURCE");
 
 			const metadata = await runCli(
-				"insert",
+				"images",
+				"add",
 				docPath,
 				"--after",
 				"p0",
@@ -438,7 +463,8 @@ describe("docx insert --image", () => {
 	test("a missing file is a clean IMAGE_SOURCE error", async () => {
 		const docPath = await newDoc("img-missing");
 		const result = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -456,7 +482,8 @@ describe("docx insert --image", () => {
 		const docPath = await newDoc("img-svg-selfsize");
 
 		const result = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -485,7 +512,8 @@ describe("docx insert --image", () => {
 		const docPath = await newDoc("img-svg-nodims");
 
 		const noDims = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -496,7 +524,8 @@ describe("docx insert --image", () => {
 		expect((noDims.parsed as { code: string }).code).toBe("USAGE");
 
 		const withDims = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -517,7 +546,8 @@ describe("docx insert --image", () => {
 		const docPath = await newDoc("img-dry");
 		const before = (await Pkg.open(docPath)).listParts().length;
 		const result = await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -534,7 +564,15 @@ describe("docx insert --image", () => {
 	test("inserting an image under track-changes marks the run as inserted", async () => {
 		const docPath = await newDoc("img-tracked");
 		await runCli("track-changes", docPath, "on");
-		await runCli("insert", docPath, "--after", "p0", "--image", PNG_PATH);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
 		const [image] = await imageRuns(docPath);
 		expect(image?.trackedChange?.kind).toBe("ins");
 	});
@@ -553,7 +591,8 @@ async function docWithImages(label: string, count: number): Promise<string> {
 	await runCli("create", docPath, "--text", "Before");
 	for (let index = 0; index < count; index++) {
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			`p${index}`,
@@ -697,7 +736,15 @@ describe("docx images delete", () => {
 describe("docx images replace — format/extension change (PNG → JPG)", () => {
 	test("renames the media part, rewrites the rel Target + [Content_Types], leaves no dangling rId", async () => {
 		const docPath = await newDoc("img-replace-ext");
-		await runCli("insert", docPath, "--after", "p0", "--image", PNG_PATH);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
 		expect(await mediaParts(docPath)).toEqual(["word/media/image1.png"]);
 
 		const result = await runCli(
@@ -741,7 +788,7 @@ describe("docx images replace — format/extension change (PNG → JPG)", () => 
 describe("docx images — -o parallel write", () => {
 	test("images delete -o writes to the output and leaves the source byte-unchanged", async () => {
 		const src = await newDoc("img-o");
-		await runCli("insert", src, "--after", "p0", "--image", PNG_PATH);
+		await runCli("images", "add", src, "--after", "p0", "--image", PNG_PATH);
 		const before = await Bun.file(src).bytes();
 		const out = join(tempWorkspace("img-o-out"), "out.docx");
 
@@ -771,7 +818,15 @@ describe("docx images — -o parallel write", () => {
 describe("docx images delete — --track forces tracking with the toggle off", () => {
 	test("--track records a tracked deletion and keeps the media part until accept", async () => {
 		const docPath = await newDoc("img-delete-track");
-		await runCli("insert", docPath, "--after", "p0", "--image", PNG_PATH);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
 
 		const result = await runCli(
 			"images",
@@ -839,7 +894,8 @@ describe("images surface size + placement as docx:image hints", () => {
 		const doc = join(workspace, "d.docx");
 		await runCli("create", doc, "--from", mdPath);
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			doc,
 			"--after",
 			"p1",
@@ -849,5 +905,167 @@ describe("images surface size + placement as docx:image hints", () => {
 			"10",
 		);
 		expect(await readMarkdown(doc)).toMatch(/docx:image[^>]*overflow="yes"/);
+	});
+});
+
+// ── Migrated from insert.test.ts when `insert --image` became `docx images add` ──
+// Captions, spacing-threading, and inline-escape decoding are properties of the
+// image-authoring verb now, plus a guard that the removed `insert --image` surface
+// redirects here. (The former `images add --caption` "alias" test folds in too —
+// the verb is native now, not an alias.)
+type AddedBlock = {
+	id: string;
+	type: string;
+	style?: string;
+	spacing?: Record<string, unknown>;
+	indent?: Record<string, unknown>;
+	runs?: Array<{ type: string; text?: string }>;
+};
+
+async function addedBlocks(path: string): Promise<AddedBlock[]> {
+	const result = await runCli("read", path, "--ast");
+	return (result.parsed as { blocks: AddedBlock[] }).blocks;
+}
+
+describe("docx images add — captions", () => {
+	test("--caption adds a Caption-styled paragraph below the figure", async () => {
+		const path = await newDoc("cap-add");
+		const result = await runCli(
+			"images",
+			"add",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			"--caption",
+			"Figure 1: Quarterly revenue",
+		);
+		expect(result.exitCode).toBe(0);
+		const caption = (await addedBlocks(path)).find(
+			(b) => b.style === "Caption",
+		);
+		expect(caption).toBeDefined();
+		expect((caption?.runs ?? []).map((run) => run.text).join("")).toBe(
+			"Figure 1: Quarterly revenue",
+		);
+	});
+
+	test("the Caption style is provisioned in styles.xml", async () => {
+		const path = await newDoc("cap-style");
+		await runCli(
+			"images",
+			"add",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			"--caption",
+			"Fig 1",
+		);
+		// styles.xml provisioning is exercised by the doc opening cleanly here.
+		expect((await runCli("read", path, "--ast")).exitCode).toBe(0);
+		const caption = (await addedBlocks(path)).find(
+			(b) => b.style === "Caption",
+		);
+		expect(caption).toBeDefined();
+	});
+
+	test("--caption places the caption label verbatim (Figure A)", async () => {
+		const path = await newDoc("cap-verbatim");
+		const result = await runCli(
+			"images",
+			"add",
+			path,
+			"--image",
+			PNG_PATH,
+			"--after",
+			"p0",
+			"--caption",
+			"Figure A",
+		);
+		expect(result.exitCode).toBe(0);
+		const caption = (await addedBlocks(path)).find(
+			(b) => b.style === "Caption",
+		);
+		expect((caption?.runs ?? []).map((run) => run.text).join("")).toBe(
+			"Figure A",
+		);
+	});
+
+	test("no --caption → no Caption paragraph", async () => {
+		const path = await newDoc("cap-none");
+		await runCli("images", "add", path, "--after", "p0", "--image", PNG_PATH);
+		const caption = (await addedBlocks(path)).find(
+			(b) => b.style === "Caption",
+		);
+		expect(caption).toBeUndefined();
+	});
+
+	test("--caption decodes \\n into a line break (it's a body paragraph)", async () => {
+		const path = await newDoc("cap-escape");
+		const result = await runCli(
+			"images",
+			"add",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			"--caption",
+			"Fig 1\\nSource: X",
+		);
+		expect(result.exitCode).toBe(0);
+		const caption = (await addedBlocks(path)).find(
+			(b) => b.style === "Caption",
+		);
+		expect((caption?.runs ?? []).some((run) => run.type === "break")).toBe(
+			true,
+		);
+	});
+});
+
+// Regression: spacing/indent flags used to be silently dropped on image inserts
+// (exit 0, no effect) — the weak-agent footgun. They must take effect on the
+// figure paragraph.
+describe("docx images add — spacing threads onto the figure paragraph", () => {
+	test("--space-after threads onto the figure paragraph (no silent drop)", async () => {
+		const path = await newDoc("img-spacing");
+		await runCli(
+			"images",
+			"add",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			"--width",
+			"1",
+			"--space-after",
+			"12",
+		);
+		const figure = (await addedBlocks(path)).find((b) => b.id === "p1");
+		expect(figure?.spacing).toEqual({ after: 240 });
+	});
+});
+
+// `insert` no longer builds images; the flag redirects to the noun-verb command.
+describe("docx insert — --image redirects to `docx images add`", () => {
+	test("insert --image is a USAGE error naming docx images add", async () => {
+		const path = await newDoc("insert-image-redirect");
+		const result = await runCli(
+			"insert",
+			path,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { error: string }).error).toContain(
+			"docx images add",
+		);
 	});
 });

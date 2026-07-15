@@ -11,8 +11,8 @@ Usage:
 Commands (each one-liner names capabilities you'd otherwise miss; see <command> --help):
   create    FILE  Create a new .docx (--from PATH.md | --from - builds from Markdown; --force to overwrite)
   read      FILE  Render as Markdown with pN locators; --from/--to to slice, --accepted (default)/--current/--baseline tracked views, --comments, --ast for JSON-AST
-  edit      FILE  Replace or strip text/formatting at pN, pN:S-E, pN-pM, sN, eqN, or table-cell locators (--clear to strip formatting, --track to redline, --batch for many edits in one read)
-  insert    FILE  Insert a paragraph, image, table, equation, code block, markdown, or page break (--after/--before LOCATOR; --track; --batch for many inserts in one read). For COLUMN layout use "docx sections", not insert.
+  edit      FILE  Replace or strip text/formatting at pN, pN:S-E, pN-pM, sN, or table-cell locators (--clear to strip formatting, --track to redline, --batch for many edits in one read)
+  insert    FILE  Insert a paragraph, markdown, or page break (--after/--before LOCATOR; --track; --batch for many inserts in one read). For a CODE block use "docx code", an EQUATION "docx equations", a TASK checkbox "docx tasks", an IMAGE "docx images", a TABLE "docx tables", COLUMN layout "docx sections".
   delete    FILE  Remove a paragraph, range, table, or section break (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
   find      FILE [QUERY]  Find spans by text, OR by formatting (--highlight/--color/--bold/--italic/--underline); returns locators for --at
   replace   FILE PATTERN REPL  Substitute text spans, sed-style — KEEPS the run's formatting (bold/font) and any tabs, so it fills bold/tabbed template lines without rebuilding runs (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern fill)
@@ -22,6 +22,9 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   sections  FILE  Multi-column layout, section breaks & PAGE SETUP — columns on a range (--at pN-pM --columns N); page margins/orientation/size for the WHOLE document ("--margins 0.5" with NO --at sets every section) or one section (--at sN). The ONLY way to do columns; insert does not.
   styles    FILE  List/describe styles (--used, --at ID); "styles set --at Heading1 --color 1F4E79 --bold" restyles every heading; "styles create" mints one; "set-default-font" sets the doc font — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
+  code      …     Author or replace a syntax-highlighted code block ("code add FILE --after pN --code-file snippet.py --language go" / "code edit --at pN")
+  equations …     Insert or edit a LaTeX equation ("equations add FILE --after pN --equation x^2" / "equations edit --at eqN")
+  tasks     …     Author or toggle a GFM task-list checkbox ("tasks add FILE --after pN --text '…' [--checked]" / "tasks check --at pN" / "tasks uncheck --at pN")
   comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
   footnotes …     Add (--at | --anchor PHRASE), edit, delete, list footnotes (--text/--runs/--markdown bodies)
   endnotes  …     Add (--at | --anchor PHRASE), edit, delete, list endnotes (--text/--runs/--markdown bodies)
@@ -29,7 +32,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   footers   …     Set/list/clear page footers — e.g. "footers set FILE --page-number --of-pages" for "Page X of Y"
   images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
-  tables    …     Restructure tables — insert/delete rows & columns, merge/unmerge, set widths, borders
+  tables    …     Create a table (create --after pN --rows N --cols M), then restructure — insert/delete rows & columns, merge/unmerge, set widths, borders, format
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"
   track-changes …  Toggle (on|off FILE); list / accept / reject revisions; "read" shows them as CriticMarkup
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)

@@ -41,8 +41,8 @@ export {
 /** Table emitters for `<w:tbl>` / `<w:tr>` / `<w:tc>`.
  *
  * `<BlankTable rows cols />` is the high-level entry point — it builds a
- * rows×cols grid of empty cells and is what `insert --table` (and the markdown
- * walker, for plain GFM tables) uses. For tables with cell content or merges,
+ * rows×cols grid of empty cells and is what `docx tables create` (and the
+ * markdown walker, for plain GFM tables) uses. For tables with cell content or merges,
  * compose the lower-level `<Table>` / `<TableRow>` / `<TableCell>` primitives
  * directly.
  *
@@ -57,7 +57,7 @@ export {
  *     or so merged cells align to the grid). */
 
 /** A rows×cols table of empty cells with even-width columns. The high-level
- * entry point — used by `insert --table` and as a starting point for the
+ * entry point — used by `docx tables create` and as a starting point for the
  * markdown walker's GFM tables. */
 export function BlankTable({
 	rows,

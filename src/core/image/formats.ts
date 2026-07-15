@@ -1,6 +1,6 @@
 // The image formats docx-cli treats as first-class — the SAME set we extract,
 // insert, and replace, so a file pulled out by `images extract` drops straight
-// back in via `insert --image` or `images replace`. Extension spellings are
+// back in via `docx images add` or `images replace`. Extension spellings are
 // Word-canonical (jpeg/tiff, the names Word writes into word/media), and the
 // HEIC/HEIF transcode lives in image-source.ts (insert-only input, never an
 // embedded format).

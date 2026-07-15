@@ -51,11 +51,12 @@ export class Insert {
 			allocator?: RevisionAllocator;
 		},
 	): Promise<XmlNode[]> {
-		// `--task` / `--list` paragraph: resolve the list numId (inherit from the
-		// anchor if it's already a list, else allocate fresh of the requested
-		// kind via `document.ensureNumbering().allocate(...)`). Done first because
-		// the allocator needs the package, and the anchor inherit needs the
-		// resolved blockRef.
+		// Task-item (`taskState`, from `docx tasks add`) or list (`--list`)
+		// paragraph: resolve the list numId (inherit from the anchor if it's
+		// already a list, else allocate fresh of the requested kind via
+		// `document.ensureNumbering().allocate(...)`). Done first because the
+		// allocator needs the package, and the anchor inherit needs the resolved
+		// blockRef.
 		const options2 = paragraphOptions as ParagraphOptions & {
 			listKind?: "bullet" | "ordered";
 			explicitLevel?: number;
@@ -418,10 +419,11 @@ function wrapFirstRunInHyperlink(
 	paragraph.children = newChildren;
 }
 
-/** Resolve the numId / level for a `--list` / `--task` insertion. Inherits
- * from the anchor paragraph when it's already in a list; otherwise allocates
- * a fresh numbering of the requested kind. Throws `InsertError` if the spec
- * isn't compatible with list-style content. */
+/** Resolve the numId / level for a list (`insert --list`) or task-item
+ * (`docx tasks add`, which sets `taskState`) insertion. Inherits from the
+ * anchor paragraph when it's already in a list; otherwise allocates a fresh
+ * numbering of the requested kind. Throws `InsertError` if the spec isn't
+ * compatible with list-style content. */
 function resolveListContext(
 	document: Document,
 	blockRef: BlockReference,
@@ -434,13 +436,13 @@ function resolveListContext(
 	if (spec.kind !== "text" && spec.kind !== "runs") {
 		throw new InsertError(
 			"USAGE",
-			"--task / --list requires --text or --runs (not --code, --image, --table, --section, or break flags)",
+			"a task/list item requires --text or --runs (not --code, --image, --table, --section, or break flags)",
 		);
 	}
 	const explicitLevel = paragraphOptions.explicitLevel;
 	const kind: "bullet" | "ordered" = paragraphOptions.listKind ?? "bullet";
 	// If --list was specified, the sentinel `numId: -1` means "resolve me";
-	// otherwise (--task only) the list field is absent at this point.
+	// otherwise (a task item — `taskState` only) the list field is absent here.
 	const needsResolve =
 		!paragraphOptions.list || paragraphOptions.list.numId === -1;
 	if (!needsResolve) {

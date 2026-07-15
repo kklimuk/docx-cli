@@ -26,7 +26,7 @@ Five files behind the `@core/equation` barrel ([index.ts](index.ts)):
 The canonical read fixture is [tests/fixtures/equations.docx](
 ../../../tests/fixtures/equations.docx), built by
 [tests/fixtures/setup/equations.ts](../../../tests/fixtures/setup/equations.ts).
-It's authored by the CLI itself (`insert --equation`), dogfooding the
+It's authored by the CLI itself (`docx equations add`), dogfooding the
 LaTeX→OMML pipeline. 72 equations cover atoms / Greek / accents / fractions
 / roots / big operators / decorations / spacing / labeled braces / norms /
 matrices, plus famous formulas across statistics (mean, variance, Bayes,
@@ -109,7 +109,7 @@ properly over the base letter. Same dual-encoding pattern applies to
 
 `latexToOmml(latex, display?)` and `<Equation latex display>` in
 [emit.tsx](emit.tsx) drive the LaTeX → OMML pipeline used by
-`insert --equation` and `edit --at eqN --equation`. Internally:
+`docx equations add` and `docx equations edit`. Internally:
 
 1. `temml.renderToString(latex, { displayMode })` parses LaTeX and emits a
    MathML string. temml is the well-maintained LaTeX-parsing library —
@@ -208,10 +208,10 @@ conversion; OMML siblings stay structurally intact inside the `<w:del>`
 wrapper (no `<m:delText>` equivalent — Word treats the whole OMML as the
 deleted unit).
 
-**Edit under tracking** — `edit --at eqN --equation NEW` (or `--display`/
+**Edit under tracking** — `docx equations edit --at eqN --equation NEW` (or `--display`/
 `--inline`) emits a paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to
-each other in the same parent. `commitEquationEdit` in
-[cli/edit/index.tsx](../../cli/edit/index.tsx) handles this. Our own
+each other in the same parent. The `equations edit` verb in
+[cli/equations/edit.ts](../../cli/equations/edit.ts) handles this. Our own
 `track-changes accept --all` / `reject --all` resolve cleanly (accept keeps
 NEW, reject restores OLD).
 

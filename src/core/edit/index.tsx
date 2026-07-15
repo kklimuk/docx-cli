@@ -97,7 +97,7 @@ export class Edit {
 		if (blockRef.node.tag !== "w:p") {
 			throw new EditError(
 				"USAGE",
-				"--task requires a paragraph locator; got a non-paragraph block",
+				"tasks check/uncheck requires a paragraph locator; got a non-paragraph block",
 			);
 		}
 		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
@@ -111,8 +111,8 @@ export class Edit {
 		if (!ok) {
 			throw new EditError(
 				"USAGE",
-				"--task requires a task-list paragraph (one with a leading <w:sdt><w14:checkbox/></w:sdt>)",
-				"Use `docx read FILE --ast` to inspect; convert a plain bullet to a task by replacing the paragraph via `--runs`.",
+				"tasks check/uncheck requires a task-list paragraph (one with a leading <w:sdt><w14:checkbox/></w:sdt>)",
+				"Use `docx read FILE` to spot task lines (- [ ] / - [x]); author a new task with `docx tasks add`.",
 			);
 		}
 	}

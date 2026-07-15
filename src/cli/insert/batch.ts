@@ -19,9 +19,9 @@ import {
 	chooseContentSpec,
 	MARKDOWN_INCOMPATIBLE_FLAGS,
 	parseParagraphOptions,
-	parseTargetPlacement,
 	type RawValues,
 } from "./index";
+import { parseTargetPlacement } from "./place";
 
 /** `docx insert --batch FILE.jsonl`: many inserts from one read. Each JSONL
  *  line mirrors the CLI flags as keys — `{ after | before, <content>, ...opts }`

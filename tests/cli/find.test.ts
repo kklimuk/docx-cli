@@ -417,10 +417,10 @@ describe("docx find — multi-line queries", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "intro");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--at-end",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -450,10 +450,10 @@ describe("docx find — multi-line queries", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "intro");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--at-end",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -493,10 +493,10 @@ describe("docx find — multi-line queries", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "before");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--at-end",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",

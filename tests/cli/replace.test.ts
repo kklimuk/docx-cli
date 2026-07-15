@@ -885,10 +885,10 @@ describe("docx replace — across paragraphs (editor-style)", () => {
 		const path = join(tempWorkspace("across-cell"), "out.docx");
 		await runCli("create", path, "--text", "intro");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			path,
 			"--at-end",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",

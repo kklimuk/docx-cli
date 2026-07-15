@@ -170,8 +170,9 @@ export function ListParagraph({
  * set; the SDT prefix is materialized inside `Paragraph` itself.
  *
  * @public Staged for the S8 markdown walker's `- [ ]` / `- [x]` task list
- * items; CLI authoring today goes through `insert --task` / `edit --task`
- * which build the paragraph via `Paragraph({ list, taskState })` directly. */
+ * items; CLI authoring today goes through `docx tasks add` / `docx tasks
+ * check`/`uncheck` which build the paragraph via `Paragraph({ list, taskState })`
+ * directly. */
 export function TaskListItem({
 	numId,
 	level,

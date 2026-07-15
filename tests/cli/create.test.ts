@@ -116,8 +116,17 @@ describe("Ergonomics", () => {
 	test("inserted image is clamped to the page content width", async () => {
 		const path = await blankDoc("img-clamp");
 		expect(
-			(await runCli("insert", path, "--after", "p0", "--image", WIDE_PNG))
-				.exitCode,
+			(
+				await runCli(
+					"images",
+					"add",
+					path,
+					"--after",
+					"p0",
+					"--image",
+					WIDE_PNG,
+				)
+			).exitCode,
 		).toBe(0);
 		const cx = await imageWidthEmu(path);
 		// US-Letter content width with 1" margins = 6.5in = 5,943,600 EMU.
@@ -130,7 +139,8 @@ describe("Ergonomics", () => {
 		expect(
 			(
 				await runCli(
-					"insert",
+					"images",
+					"add",
 					path,
 					"--after",
 					"p0",
@@ -144,7 +154,7 @@ describe("Ergonomics", () => {
 		expect(await imageWidthEmu(path)).toBe(8 * 914400);
 	});
 
-	test("images add is an alias for insert --image", async () => {
+	test("images add builds an image (native verb)", async () => {
 		const path = await blankDoc("img-add");
 		expect(
 			(

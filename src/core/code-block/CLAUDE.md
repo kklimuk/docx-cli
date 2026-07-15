@@ -27,4 +27,4 @@ The color palette in [syntax-highlight.ts](syntax-highlight.ts) is GitHub-light 
 
 ## What stays in cli/
 
-Flag parsing (`--code`/`--code-file`/`--language`), stdin reading for `--code-file -`, and the markdown-render side (fenced-block collapse, inline backticks for `runStyle: "Code"`) are render/CLI concerns and stay in `cli/insert/` and `cli/read/markdown.ts`.
+Flag parsing (`--code`/`--code-file`/`--language`), stdin reading for `--code-file -`, and the markdown-render side (fenced-block collapse, inline backticks for `runStyle: "Code"`) are render/CLI concerns and stay in `cli/code/` and `cli/read/markdown.ts`.

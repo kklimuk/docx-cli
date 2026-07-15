@@ -1499,11 +1499,11 @@ describe("locator grammar: pN-pM", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Outside.");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -1551,49 +1551,6 @@ describe("docx edit --at pN-pM (range replace, untracked)", () => {
 		);
 		const blocks = await blocksOf(docPath);
 		expect(blocks.filter((b) => b.type === "paragraph")).toHaveLength(3);
-	});
-
-	test("--code expands one anchor into N CodeBlock paragraphs", async () => {
-		const docPath = await fivePara("range-code-expand");
-		// Replace one paragraph with a three-line code block.
-		await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p1",
-			"--code",
-			"function foo() {\n  return 42;\n}",
-			"--language",
-			"typescript",
-		);
-		const blocks = await blocksOf(docPath);
-		const codeBlocks = blocks.filter((b) => b.style === "CodeBlock-typescript");
-		expect(codeBlocks).toHaveLength(3);
-		// And the CodeBlock-typescript style was provisioned.
-		const pkg = await Pkg.open(docPath);
-		const stylesXml = await pkg.readText("word/styles.xml");
-		expect(stylesXml).toContain('w:styleId="CodeBlock-typescript"');
-	});
-
-	test("--code-file PATH reads file content for the replacement", async () => {
-		const workspace = tempWorkspace("range-code-file");
-		const docPath = join(workspace, "out.docx");
-		const snippet = join(workspace, "snippet.py");
-		await Bun.write(snippet, "def hello():\n    return 42\n");
-		await runCli("create", docPath, "--text", "Old paragraph.");
-		await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--code-file",
-			snippet,
-			"--language",
-			"python",
-		);
-		const blocks = await blocksOf(docPath);
-		const codeBlocks = blocks.filter((b) => b.style === "CodeBlock-python");
-		expect(codeBlocks.length).toBeGreaterThanOrEqual(2);
 	});
 
 	test("dry-run prints the locator without mutating", async () => {
@@ -1670,22 +1627,6 @@ describe("docx edit --at pN-pM (range replace, tracked)", () => {
 			"Paragraph 4.",
 			"Paragraph 5.",
 		]);
-	});
-
-	test("expand 4 → 8 paragraphs under tracking; accept yields all 8", async () => {
-		const docPath = await fivePara("range-track-expand");
-		await runCli("track-changes", docPath, "on");
-		const newContent = Array.from({ length: 8 }, (_, i) => `NEW ${i + 1}`).join(
-			"\n",
-		);
-		await runCli("edit", docPath, "--at", "p0-p3", "--code", newContent);
-		await runCli("track-changes", "accept", docPath, "--all");
-		const blocks = await blocksOf(docPath);
-		const paragraphs = blocks.filter((b) => b.type === "paragraph");
-		// 8 new code paragraphs + Paragraph 5.
-		expect(paragraphs).toHaveLength(9);
-		expect(paragraphs[7]?.runs?.map((r) => r.text).join("")).toBe("NEW 8");
-		expect(paragraphs[8]?.runs?.[0]?.text).toBe("Paragraph 5.");
 	});
 });
 
@@ -1796,46 +1737,6 @@ describe("docx wc pN-pM", () => {
 });
 
 describe("docx edit --at pN-pM tracked XML parity (vs Word probe)", () => {
-	test("4 → 4: ins-marked paragraph-marks on transition + middle new paragraphs", async () => {
-		const docPath = await fivePara("range-track-4-4");
-		await runCli("track-changes", docPath, "on");
-		const newContent = ["NEW 1", "NEW 2", "NEW 3", "NEW 4"].join("\n");
-		await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0-p3",
-			"--code",
-			newContent,
-			"--author",
-			"Probe",
-		);
-		const pkg = await Pkg.open(docPath);
-		const documentXml = await pkg.readText("word/document.xml");
-		// Expect 4 dels on old marks (p0/p1/p2 marks + p3's content del),
-		// plus an ins on the transition's paragraph-mark (because N≥2 needs a
-		// new paragraph break) and ins-marked paragraph-marks on middle new
-		// paragraphs (NEW 2, NEW 3) but NOT the last (NEW 4).
-		const insMarkCount = (
-			documentXml.match(/<w:rPr>\s*<w:ins[^>]+\/>\s*<\/w:rPr>/g) ?? []
-		).length;
-		// Transition mark + NEW 2 mark + NEW 3 mark = 3 ins-marked pmarks.
-		expect(insMarkCount).toBe(3);
-		const delMarkCount = (
-			documentXml.match(/<w:rPr>\s*<w:del[^>]+\/>\s*<\/w:rPr>/g) ?? []
-		).length;
-		// p0, p1, p2 marks del'd. p3 (transition) mark is NOT del'd.
-		expect(delMarkCount).toBe(3);
-
-		await runCli("track-changes", "accept", docPath, "--all");
-		const blocks = await blocksOf(docPath);
-		const paragraphs = blocks.filter((b) => b.type === "paragraph");
-		const texts = paragraphs.map(
-			(p) => p.runs?.map((r) => r.text ?? "").join("") ?? "",
-		);
-		expect(texts).toEqual(["NEW 1", "NEW 2", "NEW 3", "NEW 4", "Paragraph 5."]);
-	});
-
 	test("range-replace does NOT trigger LCS formatting preservation", async () => {
 		// Single-paragraph --text preserves rPr on unchanged words. Range
 		// --text rewrites the span wholesale (no cross-paragraph LCS) — that
@@ -1875,62 +1776,53 @@ describe("docx edit --at pN-pM tracked XML parity (vs Word probe)", () => {
 	});
 });
 
-describe("docx edit --at pN-pM content-flag validation", () => {
-	test("--code and --text are mutually exclusive", async () => {
-		const docPath = await fivePara("edit-code-mutex-text");
+describe("edit --code is removed (redirects to `docx code add` / `docx code edit`)", () => {
+	test("edit --at pN --code returns USAGE pointing at both code verbs", async () => {
+		const docPath = await fivePara("edit-code-removed");
+		const result = await runCli("edit", docPath, "--at", "p0", "--code", "x");
+		expect(result.exitCode).toBe(2);
+		const error = (result.parsed as { error?: string }).error ?? "";
+		expect(error).toContain("docx code add");
+		expect(error).toContain("docx code edit");
+	});
+
+	test("edit --at sN --code also redirects (not a confusing section error)", async () => {
+		// The code redirect is hoisted alongside the equation/task ones so it fires
+		// for ANY locator; a section locator + --code used to fall through to
+		// "Section edit requires --columns" instead of pointing at `docx code edit`.
+		const docPath = await fivePara("edit-code-section-redirect");
+		const result = await runCli("edit", docPath, "--at", "s0", "--code", "x");
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"docx code edit",
+		);
+	});
+});
+
+describe("edit no longer edits equations (redirects to `docx equations edit`)", () => {
+	test("edit --at eqN --equation returns USAGE pointing at `docx equations edit`", async () => {
+		const docPath = await fivePara("edit-equation-removed");
 		const result = await runCli(
 			"edit",
 			docPath,
 			"--at",
-			"p0",
-			"--code",
-			"foo",
-			"--text",
-			"bar",
+			"eq0",
+			"--equation",
+			"x^2",
 		);
 		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { code: string }).code).toBe("USAGE");
-	});
-
-	test("--code and --code-file are mutually exclusive", async () => {
-		const docPath = await fivePara("edit-code-mutex-file");
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--code",
-			"foo",
-			"--code-file",
-			"some.py",
+		expect((result.parsed as { error?: string }).error).toContain(
+			"docx equations edit",
 		);
-		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { code: string }).code).toBe("USAGE");
 	});
 
-	test("--language without --code or --code-file is a USAGE error", async () => {
-		const docPath = await fivePara("edit-lang-orphan");
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--text",
-			"plain",
-			"--language",
-			"python",
+	test("edit --at pN --display (equation flag) also redirects", async () => {
+		const docPath = await fivePara("edit-equation-flag-redirect");
+		const result = await runCli("edit", docPath, "--at", "p0", "--display");
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"docx equations edit",
 		);
-		expect(result.exitCode).toBe(2);
-		expect((result.parsed as { code: string }).code).toBe("USAGE");
-	});
-
-	test("--code without --language degrades cleanly (no highlighting)", async () => {
-		const docPath = await fivePara("edit-code-no-lang");
-		await runCli("edit", docPath, "--at", "p0", "--code", "plain text");
-		const blocks = await blocksOf(docPath);
-		// Plain CodeBlock (no language suffix) since --language wasn't given.
-		const codeBlock = blocks.find((b) => b.style === "CodeBlock");
-		expect(codeBlock).toBeDefined();
 	});
 });
 
@@ -1947,11 +1839,11 @@ describe("tracked range edit/delete with a table in the range", () => {
 		await runCli("insert", docPath, "--after", "p0", "--text", "Middle.");
 		// Body: [p0, p1, s0].
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p1",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -2045,33 +1937,6 @@ describe("range edit preserves inline sectPr (section break) on the endpoint", (
 		const after = await blocksOf(docPath);
 		const sections = after.filter((b) => b.type === "sectionBreak");
 		expect(sections.length).toBeGreaterThanOrEqual(2);
-	});
-});
-
-describe("--code-file normalizes line endings", () => {
-	test("CRLF content lands as clean text (no stray \\r in runs)", async () => {
-		const workspace = tempWorkspace("crlf");
-		const docPath = join(workspace, "out.docx");
-		const snippetPath = join(workspace, "snippet.py");
-		await Bun.write(snippetPath, "def hello():\r\n    return 42\r\n");
-		await runCli("create", docPath, "--text", "Intro.");
-		await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--code-file",
-			snippetPath,
-		);
-		const blocks = await blocksOf(docPath);
-		const codeBlocks = blocks.filter((b) => b.style?.startsWith("CodeBlock"));
-		const allText = codeBlocks
-			.flatMap((b) => b.runs ?? [])
-			.map((r) => r.text ?? "")
-			.join("");
-		expect(allText).not.toContain("\r");
-		expect(allText).toContain("def hello():");
-		expect(allText).toContain("    return 42");
 	});
 });
 
@@ -3328,29 +3193,6 @@ describe("docx edit — paragraph spacing & indentation", () => {
 			);
 		});
 
-		test("--code threads spacing onto every code paragraph", async () => {
-			const docPath = await docFrom("code-spacing", "One.\n\nTwo.\n");
-			expect(
-				(
-					await runCli(
-						"edit",
-						docPath,
-						"--at",
-						"p0",
-						"--code",
-						"a = 1\nb = 2",
-						"--language",
-						"python",
-						"--space-after",
-						"12",
-					)
-				).exitCode,
-			).toBe(0);
-			for (const id of ["p0", "p1"]) {
-				expect((await readProps(docPath, id)).spacing).toEqual({ after: 240 });
-			}
-		});
-
 		describe("ride-along props under tracking record a pPrChange", () => {
 			async function trackedDoc(label: string): Promise<string> {
 				const docPath = await oneLine(label);
@@ -3542,25 +3384,6 @@ describe("docx edit — inline escape decoding (--text / --markdown)", () => {
 		expect(result.exitCode).not.toBe(0);
 		expect((result.parsed as { error?: string }).error).toContain("markdown");
 	});
-
-	test("--code is NOT decoded — literal backslash-n stays literal (channel boundary)", async () => {
-		// The decode is scoped to --text/--markdown ONLY. Code legitimately contains
-		// a literal `\n` (a string escape), so it must survive verbatim — this guards
-		// the two-channel boundary against a future blanket decode in the arg parser.
-		const docPath = await freshCopy("esc-code-literal");
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--code",
-			'print("a\\nb")',
-		);
-		expect(result.exitCode).toBe(0);
-		const xml = await readDocumentXml(docPath);
-		expect(xml).not.toContain("<w:br/>"); // not turned into a line break
-		expect(xml).toContain("a\\nb"); // literal backslash-n preserved verbatim
-	});
 });
 
 // A stale locator (held from an earlier read, invalidated by a later structural
@@ -3586,5 +3409,47 @@ describe("edit stale-locator hint (BLOCK_NOT_FOUND)", () => {
 		const parsed = result.parsed as { code: string; hint?: string };
 		expect(parsed.code).toBe("BLOCK_NOT_FOUND");
 		expect(parsed.hint).toContain("--batch");
+	});
+});
+
+// Contextual `--help`: a weak agent that reaches for `--text`/`--runs` and then
+// `--help` should get the slice relevant to what they typed. The motivating
+// failure was an agent cycling `edit --text "**Bold**"` without ever finding
+// `--text "X" --bold`. The routing shim lives in edit's `pickHelp`.
+describe("docx edit — contextual --help", () => {
+	test("--text --help focuses on formatting text (mentions --bold and --markdown)", async () => {
+		const def = (await runCli("edit", "--help")).stdout;
+		const result = await runCli("edit", "--text", "--help");
+		expect(result.exitCode).toBe(0);
+		// The fix the agent kept missing: format the literal text with run flags…
+		expect(result.stdout).toContain("--bold");
+		// …or switch to --markdown for inline syntax.
+		expect(result.stdout).toContain("--markdown");
+		// It's a distinct screen, not the default dump.
+		expect(result.stdout).not.toBe(def);
+	});
+
+	test("--runs --help exposes the Run[] JSON + the full run-formatting flag list", async () => {
+		const result = await runCli("edit", "--runs", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Run[]");
+		// The full set of run-formatting flags lives on this advanced screen.
+		expect(result.stdout).toContain("--smallcaps");
+	});
+
+	test("--json --help routes to the runs variant too", async () => {
+		const result = await runCli("edit", "--json", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Run[]");
+	});
+
+	test("default --help leads with --markdown and defers the run-formatting list to --runs --help", async () => {
+		const result = await runCli("edit", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("--markdown");
+		// The default must NOT dump the full run-formatting flag list…
+		expect(result.stdout).not.toContain("--smallcaps");
+		// …it points at the variant that does.
+		expect(result.stdout).toContain("--runs --help");
 	});
 });

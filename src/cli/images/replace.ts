@@ -130,7 +130,7 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	// Route the replacement through the shared resolver (same as `insert --image`)
+	// Route the replacement through the shared resolver (same as `docx images add`)
 	// so it gets the same safety: SVG sanitization (scripts/handlers/animation
 	// stripped), HEIC→JPEG transcode, and the SSRF guard on remote srcs. We keep
 	// the extension/MIME resolved above for part naming; only the bytes come back.

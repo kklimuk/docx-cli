@@ -9,8 +9,8 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
 
 /**
  * Build tests/fixtures/task-lists.docx via the public CLI — exercises the
- * full `insert --task` / `--list` / `--list-level` surface end-to-end. The
- * output is byte-equivalent (at the markdown-render level) to the canonical
+ * full `tasks add` (+ `--list-level`) and `insert --list` surface end-to-end.
+ * The output is byte-equivalent (at the markdown-render level) to the canonical
  * fixture and validates that an agent can author every shape our reader
  * recognizes for the SDT task-list family.
  *
@@ -43,32 +43,32 @@ await cli(
 	"Heading2",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p0",
-	"--task",
-	"unchecked",
+	"--unchecked",
 	"--text",
 	"buy groceries",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p1",
-	"--task",
-	"checked",
+	"--checked",
 	"--text",
 	"pay rent",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p2",
-	"--task",
-	"unchecked",
+	"--unchecked",
 	"--text",
 	"call dentist",
 );
@@ -83,12 +83,12 @@ await cli(
 	"regular reminder",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p4",
-	"--task",
-	"checked",
+	"--checked",
 	"--list-level",
 	"1",
 	"--text",

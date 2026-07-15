@@ -16,7 +16,7 @@ Usage:
   docx images <verb> FILE [options]
 
 Verbs:
-  add      Insert an image (alias for \`docx insert --image\`)
+  add      Insert an image (--after/--before/--at-start/--at-end; --image SRC)
   list     Print image manifest as JSON
   extract  Dump image bytes to a directory
   replace  Swap an image's bytes

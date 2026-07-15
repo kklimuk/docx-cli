@@ -39,7 +39,7 @@ async function tableFromDoc(docPath: string): Promise<TableBlock | undefined> {
 	);
 }
 
-describe("docx insert --table", () => {
+describe("docx tables create", () => {
 	let docPath: string;
 
 	beforeEach(async () => {
@@ -48,13 +48,13 @@ describe("docx insert --table", () => {
 		await runCli("create", docPath, "--text", "Before table");
 	});
 
-	test("basic --table --rows 2 --cols 3 produces 2×3 grid with even-width columns", async () => {
+	test("basic --rows 2 --cols 3 produces 2×3 grid with even-width columns", async () => {
 		const result = await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -79,11 +79,11 @@ describe("docx insert --table", () => {
 
 	test("--widths sets per-column grid widths", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -97,11 +97,11 @@ describe("docx insert --table", () => {
 
 	test("--table-width 50% writes pct units (2500)", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -115,11 +115,11 @@ describe("docx insert --table", () => {
 
 	test("--table-width as twips writes dxa units", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -133,11 +133,11 @@ describe("docx insert --table", () => {
 
 	test("default layout is autofit (no --widths, no --layout)", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -148,11 +148,11 @@ describe("docx insert --table", () => {
 
 	test("--widths implies fixed layout", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -165,11 +165,11 @@ describe("docx insert --table", () => {
 
 	test("--layout autofit overrides the widths-implies-fixed default", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -184,11 +184,11 @@ describe("docx insert --table", () => {
 
 	test("--layout fixed without --widths", async () => {
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -201,11 +201,11 @@ describe("docx insert --table", () => {
 
 	test("invalid --layout is rejected", async () => {
 		const result = await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -219,11 +219,11 @@ describe("docx insert --table", () => {
 
 	test("--widths length must equal --cols", async () => {
 		const result = await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -235,53 +235,20 @@ describe("docx insert --table", () => {
 		expect(result.stdout).toContain("--widths length");
 	});
 
-	test("--rows / --cols required when --table is set", async () => {
-		const result = await runCli("insert", docPath, "--after", "p0", "--table");
+	test("--rows / --cols are required", async () => {
+		const result = await runCli("tables", "create", docPath, "--after", "p0");
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout).toContain("--rows");
-	});
-
-	test("--rows without --table fails", async () => {
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--rows",
-			"2",
-			"--text",
-			"x",
-		);
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stdout).toContain("--rows requires --table");
-	});
-
-	test("--text and --table are mutually exclusive", async () => {
-		const result = await runCli(
-			"insert",
-			docPath,
-			"--after",
-			"p0",
-			"--table",
-			"--rows",
-			"1",
-			"--cols",
-			"1",
-			"--text",
-			"hello",
-		);
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stdout).toContain("Pass only one");
 	});
 
 	test("inserting a table while track-changes is on is rejected", async () => {
 		await runCli("track-changes", docPath, "on");
 		const result = await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -289,6 +256,32 @@ describe("docx insert --table", () => {
 		);
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout).toContain("track-changes");
+	});
+});
+
+// `insert` no longer builds tables; the flag (and its sub-flags) redirect to the
+// noun-verb command.
+describe("docx insert — --table redirects to `docx tables create`", () => {
+	test("insert --table is a USAGE error naming docx tables create", async () => {
+		const workspace = tempWorkspace("insert-table-redirect");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Body");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--table",
+			"--rows",
+			"2",
+			"--cols",
+			"2",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+		expect((result.parsed as { error: string }).error).toContain(
+			"docx tables create",
+		);
 	});
 });
 
@@ -300,11 +293,11 @@ describe("docx edit --at tN:rRcC:pK", () => {
 		docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Before table");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -379,11 +372,11 @@ async function newTableDoc(
 	const docPath = join(workspace, "out.docx");
 	await runCli("create", docPath, "--text", "Before");
 	await runCli(
-		"insert",
+		"tables",
+		"create",
 		docPath,
 		"--after",
 		"p0",
-		"--table",
 		"--rows",
 		String(rows),
 		"--cols",
@@ -1789,14 +1782,14 @@ describe("insert / edit with nested locators", () => {
 		expect(text).toBe("Rewritten");
 	});
 
-	test("insert --after a wrapper paragraph adds another nested table next to it", async () => {
+	test("tables create --after a wrapper paragraph adds another nested table next to it", async () => {
 		const docPath = await makeDoc();
 		const result = await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"t0:r0c0:p0",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",
@@ -1965,11 +1958,11 @@ describe("docx delete --at tN (whole table)", () => {
 		const docPath = join(tempWorkspace(label), "out.docx");
 		await runCli("create", docPath, "--text", "Before");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",
@@ -2075,11 +2068,11 @@ describe("table visual structure surfaces as docx:table / docx:cell hints", () =
 		const doc = join(workspace, "out.docx");
 		await runCli("create", doc, "--text", "intro");
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			doc,
 			"--after",
 			"p0",
-			"--table",
 			"--rows",
 			"2",
 			"--cols",

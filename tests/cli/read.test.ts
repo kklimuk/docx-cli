@@ -649,11 +649,11 @@ describe("docx outline", () => {
 			"Heading1",
 		);
 		await runCli(
-			"insert",
+			"tables",
+			"create",
 			docPath,
 			"--after",
 			"p1",
-			"--table",
 			"--rows",
 			"1",
 			"--cols",

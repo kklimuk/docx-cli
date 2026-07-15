@@ -109,20 +109,18 @@ export function decodeInlineEscapes(
 	);
 }
 
-/** Parse `--task` value into a boolean (checked) or null if unrecognized.
- *  Accepts `checked`/`unchecked` (canonical) plus a few short forms agents
- *  reach for naturally. Shared by `insert --task` and `edit --at pN --task`. */
-export function parseTaskFlag(value: string): boolean | null {
-	const normalized = value.toLowerCase();
-	if (normalized === "checked" || normalized === "true" || normalized === "1")
-		return true;
-	if (
-		normalized === "unchecked" ||
-		normalized === "false" ||
-		normalized === "0"
-	)
-		return false;
-	return null;
+/** Contextual `--help`: a weak agent that reaches for `--text` or `--runs` and
+ *  then `--help` gets the slice relevant to what they typed rather than the full
+ *  default screen. Runs BEFORE `tryParseArgs` (which short-circuits `--help`
+ *  centrally), so it scans raw argv — `--text`/`--runs` are declared options and
+ *  `--json` is only a routing hint (undeclared; steers to the runs variant). */
+export function pickContextualHelp(
+	args: string[],
+	variants: { default: string; text: string; runs: string },
+): string {
+	if (args.includes("--text")) return variants.text;
+	if (args.includes("--runs") || args.includes("--json")) return variants.runs;
+	return variants.default;
 }
 
 /** The tracked-change view selected by the `--accepted` / `--baseline` /

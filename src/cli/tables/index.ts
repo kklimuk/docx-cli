@@ -3,6 +3,7 @@ import { fail, writeStdout } from "../respond";
 type CommandFn = (args: string[]) => Promise<number>;
 
 const SUBCOMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
+	create: () => import("./create"),
 	"insert-row": () => import("./insert-row"),
 	"delete-row": () => import("./delete-row"),
 	"insert-column": () => import("./insert-column"),
@@ -20,6 +21,8 @@ Usage:
   docx tables <verb> FILE [options]
 
 Verbs:
+  create          Insert a new table (--after/--before/--at-start/--at-end
+                  --rows N --cols M [--widths] [--table-width] [--borders] [--layout])
   insert-row      Insert a row (--at tN [--position INDEX] [--cells "a,b,c"])
   delete-row      Delete a row (--at tN:rR)
   insert-column   Insert a column (--at tN [--position INDEX] [--width TWIPS])
@@ -32,9 +35,8 @@ Verbs:
                   (--at LOCATOR [--shade] [--valign] [--halign] [--cell-borders]
                    [--align] [--style] [--row-height] [--repeat-header])
 
-These verbs restructure an existing table. The rest of the table lifecycle uses
-the standard verbs:
-  create        docx insert FILE --after pN --table --rows N --cols M
+"create" mints a fresh table; the other verbs restructure an existing one. The
+rest of the table lifecycle uses the standard verbs:
   delete (all)  docx delete FILE --at tN
   edit a cell   docx edit FILE --at tN:rRcC:pK --text "..."
   inspect       docx read FILE --ast   (grid widths, gridSpan, vMerge per cell)

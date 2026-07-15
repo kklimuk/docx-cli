@@ -1,45 +1,31 @@
-import {
-	type BlockReference,
-	type Document,
-	describeForms,
-	Insert,
-	InsertError,
-	type InsertSpec,
-} from "@core";
+import { describeForms, type InsertSpec } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
-import type { XmlNode } from "@core/parser";
-import type { TableBorders, TableLayout } from "@core/table";
 import type { parseArgs } from "util";
 import {
 	decodeInlineEscapes,
 	parseRunsArg,
 	parseSpacingIndentFlags,
-	parseTaskFlag,
+	pickContextualHelp,
 	rejectMarkdownInText,
 	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
-	openOrFail,
-	renderVerifyHint,
-	resolveBlockOrFail,
-	resolveTracked,
-	respond,
-	respondMinted,
 	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
 import { runInsertBatch } from "./batch";
+import { parseTargetPlacement, placeSpec, type TargetPlacement } from "./place";
 
 const ANCHOR_FORMS = describeForms(
 	["paragraph", "table", "section", "cellParagraph"],
 	"                      ",
 );
 
-const HELP = `docx insert — insert a block (paragraph, table, image, …) at a locator
+const INSERT_HELP = `docx insert — insert a block (paragraph, list item, break, …) at a locator
 
 Usage:
   docx insert FILE (--after | --before) LOCATOR <content> [options]
@@ -52,118 +38,57 @@ Placement (exactly one required) — where to put the new block:
   --before LOCATOR  Insert before the block at LOCATOR
                     LOCATOR is one of:
 ${ANCHOR_FORMS}
-                    See \`docx info locators\`.
-  --at-start        Insert at the very top of the document (before the first
-                    paragraph/table) — no locator needed, works on a fresh doc.
-  --at-end          Insert at the very end (after the last paragraph/table, but
-                    before the trailing section properties). No locator needed.
+  --at-start        Insert at the very top (before the first block) — no locator.
+  --at-end          Insert at the very end (after the last block, before the
+                    trailing section properties) — no locator.
                     (--at-start/--at-end are single-shot only, not --batch.)
 
+Common inserts:
+  A formatted block    --after pN --markdown "## New heading"
+  A plain line         --after pN --text "New paragraph"
+  Verbatim prose       --after pN --text-file notes.txt   (parser-free, multi-para)
+  A page/column break  --after pN --page-break   ·   --after pN --column-break
+  For a TABLE / IMAGE / CODE / EQUATION / TASK, use its own command: \`docx tables
+  create\` · \`docx images add\` · \`docx code add\` · \`docx equations add\` · \`docx
+  tasks add\`.
+
 Content (one required):
-  --text TEXT       Insert a paragraph with this text
-  --text-file PATH  Insert literal multi-paragraph text from PATH (use "-" for
-                    stdin), NOT parsed as markdown — every character lands
-                    verbatim. Each newline starts a new paragraph (blank lines
-                    become empty paragraphs). Use this for prose that must stay
-                    untouched: "3. note" stays "3." (no list renumber), *x* /
-                    [t](u) / bare URLs / {++x++} are NOT interpreted. (--text /
-                    --markdown go through GFM and would corrupt such content.)
-  --runs JSON       Insert a paragraph with custom runs (Run[] JSON)
+  --markdown TEXT   Parse TEXT as GFM markdown → one or more blocks (headings,
+                    lists, tables, code fences, blockquotes, rules, links, inline
+                    + display math, images, footnotes, ~~strike~~, CriticMarkup).
+  --markdown-file PATH  Same as --markdown, but read from PATH ("-" = stdin).
+  --text TEXT       Insert a paragraph with this text (one run). Format it with
+                    --bold/--italic/--color/--url — see \`docx insert --text --help\`.
+  --text-file PATH  Insert literal multi-paragraph text from PATH ("-" = stdin),
+                    NOT parsed as markdown — every character verbatim, each newline
+                    a new paragraph. Use for prose that must stay untouched ("3.
+                    note" stays "3.", bare URLs / *x* / {++x++} not interpreted).
+  --runs JSON       Insert a paragraph with custom runs (Run[] JSON).
+                    See \`docx insert --runs --help\`.
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
-  --table           Insert an empty rows×cols table (requires --rows and --cols)
-  --image SRC       Insert an image (SRC is a file path, data: URI, or http(s) URL)
-  --code TEXT       Insert a multi-line code block. Newlines split into one
-                    CodeBlock-styled paragraph per source line.
-  --code-file PATH  Same as --code, but read content from PATH (use "-" for stdin).
-  --equation LATEX  Insert a math equation from LaTeX. Goes through temml
-                    (KaTeX/MathJax-compatible LaTeX dialect) → MathML → OMML.
-                    Pair with --display for block-mode equations; omit for
-                    inline. Round-trips as $LATEX$ / $$LATEX$$ in markdown.
-  --markdown TEXT   Parse TEXT as GFM markdown (remark + remark-gfm +
-                    remark-math + CriticMarkup) and emit the result as one or
-                    more blocks. Supports: headings, paragraphs, lists
-                    (bullet/ordered/task), tables, code fences, blockquotes,
-                    horizontal rules, links, inline + display math ($x^2$,
-                    $$x^2$$), inline images (path/URL/data:), footnote
-                    refs/defs ([^id]: body), GFM strikethrough (~~x~~), and
-                    CriticMarkup insertions/deletions ({++x++}/{--x--}; under
-                    tracking these wrap in <w:ins>/<w:del>, otherwise the
-                    insertion is plain text and the deletion is dropped).
-  --markdown-file PATH  Same as --markdown, but read content from PATH
-                    (use "-" for stdin).
-                    Footnote/endnote bodies keep bold/italic + hyperlinks
-                    (under track-changes they flatten to plain text; note-body
-                    images are dropped).
 
 Paragraph options (incompatible with --markdown / --markdown-file, which carry
 their own block styling):
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
-  --space-before PT  Space above the paragraph, in points (e.g. 12)
-  --space-after PT   Space below the paragraph, in points (e.g. 6)
-  --line-spacing N   Line spacing: a multiple (1, 1.5, 2), a name (single,
-                     double), or an exact point height (15pt, or "15pt atLeast")
-  --indent-left IN   Left indent, in inches (e.g. 0.5 or 0.5in; negative outdents)
-  --indent-right IN  Right indent, in inches (negative outdents into the margin)
-  --first-line IN    First-line indent, in inches (negative ok; mutex w/ --hanging)
-  --hanging IN       Hanging indent, in inches (mutex with --first-line)
-  --task STATE       Make the new paragraph a GFM task list item. STATE is
-                     "checked" (☒) or "unchecked" (☐). Requires --text or --runs.
-                     If the anchor is itself a list paragraph, inherits its numId
-                     (so consecutive --task inserts build a contiguous list);
-                     otherwise allocates a fresh bullet list. Mutex with --list.
-  --list KIND        Make the new paragraph a list item. KIND is "bullet" or
-                     "ordered". Requires --text or --runs. Mutex with --task.
-  --list-level N     List nesting level, integer 0-8 (default 0). Use with
-                     --list (or --task) to nest.
-
-Run options (only with --text):
-  --color HEX       Run color, hex (e.g., 800080 for purple)
-  --bold            Bold
-  --italic          Italic
-  --url URL         Wrap the inserted text in a hyperlink to URL
+  --space-before PT / --space-after PT   Space above / below, in points
+  --line-spacing N   A multiple (1, 1.5, 2), a name, or 15pt
+  --indent-left IN / --indent-right IN   Indent, in inches
+  --first-line IN / --hanging IN         First-line / hanging indent, in inches
+  --list KIND        Make the paragraph a list item: "bullet" or "ordered"
+                     (requires --text/--runs; task checkbox → \`docx tasks add\`).
+  --list-level N     List nesting level, integer 0-8 (use with --list to nest).
 
 Column / section layout: NOT here — use \`docx sections\`. Name the range and it
-inserts the bounding breaks correctly: \`docx sections --at p6-p16 --columns 2\`.
-(A raw section break formats the content ABOVE it, the off-by-one that made
+inserts the bounding breaks: \`docx sections --at p6-p16 --columns 2\`. (A raw
+section break formats the content ABOVE it, the off-by-one that made
 \`insert --section\` a footgun, so it was removed.)
 
-Agent tip: VERIFY LAYOUT VISUALLY: \`docx read\` shows text and structure as
-Markdown, but NOT how the page actually looks — page breaks, image sizing, and
-where content lands on the page do not appear there. After inserting
-layout-affecting content (--page-break, --image, --table), render the document to
-images and look at them:
+Agent tip — VERIFY LAYOUT VISUALLY: \`docx read\` shows text/structure as Markdown
+but NOT how the page looks (page breaks, image sizing, where content lands). After
+a layout-affecting insert (--page-break), render the document to images and look:
   docx render FILE --out pages/      # writes page-001.png, page-002.png, …
-Read the PNGs, check the layout reads the way you intended (no stray blank page,
-figure sized sensibly), and adjust placement + re-render until it looks right.
-Don't assume a layout-affecting insert looks good without seeing it.
-
-Table options (only with --table):
-  --rows N          Number of rows (required, >= 1)
-  --cols N          Number of columns (required, >= 1)
-  --widths "A,B,C"  Column widths in twips, comma-separated; length must equal --cols
-  --table-width V   Table total width, e.g. "100%" (default), "50%", or "4320" (twips)
-  --borders S       single (default) | none | double
-  --layout L        autofit (default; columns size to content) | fixed (honor
-                    --widths exactly). Passing --widths implies fixed.
-
-Image options (only with --image):
-  --alt TEXT        Alt text / description for the image
-  --width INCHES    Display width in inches (default: native pixel size at 96dpi)
-  --height INCHES   Display height in inches (default: scales to preserve aspect)
-  --caption TEXT    Add a caption paragraph below the figure in Word's built-in
-                    "Caption" style (kept with the image; shows in a Table of
-                    Figures). You supply the label, e.g. "Figure 1: Revenue".
-
-Code options (only with --code / --code-file):
-  --language LANG   Syntax-highlight using lowlight (highlight.js). One of the
-                    37 common languages: bash, c, cpp, csharp, css, diff, go,
-                    graphql, ini, java, javascript, json, kotlin, less, lua,
-                    makefile, markdown, objectivec, perl, php, php-template,
-                    plaintext, python, python-repl, r, ruby, rust, scss, shell,
-                    sql, swift, typescript, vbnet, wasm, xml, yaml. Unknown
-                    languages degrade to uncolored (block still inserts).
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
@@ -183,46 +108,103 @@ Output:
 Examples:
   docx insert doc.docx --after p3 --text "Section header" --style Heading2
   docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
-  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
   docx insert doc.docx --after p3 --text "click here" --url https://example.com
   docx insert doc.docx --after p3 --page-break
-  docx insert doc.docx --after p3 --table --rows 3 --cols 2
-  docx insert doc.docx --after p3 --table --rows 2 --cols 3 --widths 1440,2880,4320
-  docx insert doc.docx --after p3 --image ./diagram.png --alt "System diagram"
-  docx insert doc.docx --after p3 --image https://example.com/logo.png --width 2
-  docx insert doc.docx --after p3 --code $'function foo() {\\n  return 42;\\n}' --language typescript
-  docx insert doc.docx --after p3 --code-file snippet.go --language go
-  cat snippet.py | docx insert doc.docx --after p3 --code-file - --language python
-  docx insert doc.docx --after p3 --markdown $'# Heading\\n\\n- a\\n- b'
+  docx insert doc.docx --after p3 --markdown "## New section"
   docx insert doc.docx --after p3 --markdown-file README.md
-  cat draft.md | docx insert doc.docx --after p3 --markdown-file -
   docx insert doc.docx --at-start --text "Title" --style Title
   docx insert doc.docx --after p3 --text-file reviewer-notes.txt
-  cat notes.txt | docx insert doc.docx --at-end --text-file -
   docx insert doc.docx --batch additions.jsonl
 
 Batch JSONL example (keys mirror the flags; one insert per line):
   {"after": "p3", "text": "New clause.", "style": "Heading2"}
   {"before": "p0", "text": "ALERT", "color": "CC0000", "bold": true}
-  {"after": "p5", "markdown": "## Summary\\n\\n- point a\\n- point b"}
-Ordering guarantee: entries apply in file order, and several entries anchored
-after the SAME block stack in that order — so three lines all "after": "p0"
-land as p1, p2, p3 in the order written (not reversed).
+  {"after": "p5", "markdown": "## Summary"}
+Ordering: entries apply in file order; several entries anchored after the SAME
+block stack in that order (three "after": "p0" land as p1, p2, p3, not reversed).
+`;
+
+const INSERT_TEXT_HELP = `docx insert --text — insert a new paragraph and format it
+
+Usage:
+  docx insert FILE (--after | --before) LOCATOR --text "New paragraph" [options]
+  docx insert FILE --at-start --text "Title" --style Title
+
+--text builds a NEW paragraph from LITERAL characters (one run). A markdown-looking
+value (e.g. **bold**) is baked in verbatim and the guard rejects it — so to get
+formatting:
+
+  Ride-along run formatting (formats the whole new run):
+    --bold            Bold
+    --italic          Italic
+    --color HEX       Run color (e.g. CC0000 — no '#')
+    --url URL         Wrap the inserted text in a hyperlink to URL
+  e.g. \`--after pN --text "click here" --url https://example.com --bold\`.
+
+  For richer / MIXED formatting (**bold**, \`code\`, [links](url), lists, headings),
+  use --markdown instead of --text:
+    docx insert FILE --after pN --markdown "A **bold** word and a [link](url)."
+
+  For exact per-run control, use --runs (Run[] JSON) — see \`docx insert --runs --help\`.
+
+Paragraph options ride along too: --style, --alignment, --list bullet|ordered,
+--space-*/--line-spacing/--indent-*. (These do NOT combine with --markdown.)
+
+Literal bulk prose — use --text-file PATH ("-" = stdin): every character verbatim,
+each newline a new paragraph, no GFM parsing. The safe channel for prose with
+"3." lists, bare URLs, *x*, {++x++} that GFM would otherwise corrupt.
+
+Examples:
+  docx insert doc.docx --after p3 --text "Section header" --style Heading2
+  docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
+  docx insert doc.docx --after p3 --text "click here" --url https://example.com
+  docx insert doc.docx --after p3 --markdown "A **bold** intro line."
+`;
+
+const INSERT_RUNS_HELP = `docx insert --runs — insert a paragraph from explicit runs (Run[] JSON)
+
+--runs JSON builds a NEW paragraph from an array of runs. Each run object may carry:
+  { "type": "text", "text": "…",
+    "bold": true, "italic": true, "underline": true, "strike": true,
+    "color": "C00000",         // hex, no '#'
+    "highlight": "yellow",     // named highlighter
+    "shade": "EEEEEE",         // background fill, hex
+    "font": "Times New Roman", "size": 12,
+    "caps": true, "smallcaps": true,
+    "vertAlign": "superscript" | "subscript" }
+  e.g. --runs '[{"type":"text","text":"Note: ","bold":true},{"type":"text","text":"see clause 4."}]'
+
+Prefer --text (with --bold/--italic/--color/--url) or --markdown unless you need
+exact per-run control — --runs is the escape hatch when one line mixes fonts,
+sizes, super/subscript, or highlight/shade the simpler flags can't express.
+
+Paragraph options (--style/--alignment/--list/--space-*/…) ride along with --runs
+just like --text. To FORMAT text that already EXISTS (not insert new), use \`docx
+edit\` — see \`docx edit --runs --help\`.
+
+Examples:
+  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
+  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"H","size":12},{"type":"text","text":"2","vertAlign":"subscript"},{"type":"text","text":"O"}]'
 `;
 
 export async function run(args: string[]): Promise<number> {
-	const parsed = await tryParseArgs(args, OPTION_SPEC, HELP);
+	const help = pickContextualHelp(args, {
+		default: INSERT_HELP,
+		text: INSERT_TEXT_HELP,
+		runs: INSERT_RUNS_HELP,
+	});
+	const parsed = await tryParseArgs(args, OPTION_SPEC, help);
 	if (typeof parsed === "number") return parsed;
 
 	if (parsed.values.help) {
-		await writeStdout(HELP);
+		await writeStdout(help);
 		return EXIT.OK;
 	}
 
 	setVerboseAck(Boolean(parsed.values.verbose));
 
 	const filePath = parsed.positionals[0];
-	if (!filePath) return fail("USAGE", "Missing FILE argument", HELP);
+	if (!filePath) return fail("USAGE", "Missing FILE argument", INSERT_HELP);
 
 	const batchInput = parsed.values.batch as string | undefined;
 	if (batchInput !== undefined) {
@@ -232,113 +214,14 @@ export async function run(args: string[]): Promise<number> {
 	const opts = await buildSingleShotOptions(filePath, parsed.values);
 	if (typeof opts === "number") return opts;
 
-	const document = await openOrFail(opts.filePath);
-	if (typeof document === "number") return document;
-
-	const resolved = await resolvePlacement(document, opts.placement);
-	if (typeof resolved === "number") return resolved;
-	const { blockRef, mode, locator } = resolved;
-
-	let blocks: Awaited<ReturnType<Insert["paragraph"]>>;
-	try {
-		blocks = await new Insert(document).paragraph(
-			blockRef,
-			opts.spec,
-			opts.paragraphOptions,
-			{
-				placement: mode,
-				authorFlag: opts.authorFlag,
-				track: resolveTracked(document, opts.trackFlag),
-			},
-		);
-	} catch (error) {
-		if (error instanceof InsertError) {
-			return fail(error.code, error.message, error.hint);
-		}
-		throw error;
-	}
-
-	return commitInsert(document, blockRef, blocks, opts, mode, locator);
-}
-
-/** Splice the built blocks into the document and persist (unless `--dry-run`).
- * Kept as a small CLI helper so the response/output-path orchestration stays
- * next to `run()`. */
-async function commitInsert(
-	document: Document,
-	blockRef: BlockReference,
-	blocks: XmlNode[],
-	opts: ValidatedOptions,
-	mode: "after" | "before",
-	anchorLocator: string,
-): Promise<number> {
-	if (opts.dryRun) {
-		await respond({
-			operation: "insert",
-			dryRun: true,
-			path: opts.filePath,
-			anchor: anchorLocator,
-			placement: mode,
-			...(opts.outputPath ? { output: opts.outputPath } : {}),
-		});
-		return EXIT.OK;
-	}
-
-	const targetIndex = blockRef.parent.indexOf(blockRef.node);
-	if (targetIndex === -1) {
-		return fail(
-			"BLOCK_NOT_FOUND",
-			"Block reference is stale (parent does not contain it)",
-		);
-	}
-	const insertIndex = mode === "after" ? targetIndex + 1 : targetIndex;
-	blockRef.parent.splice(insertIndex, 0, ...blocks);
-	await document.save(opts.outputPath);
-
-	// Positional block ids shift after a structural edit, so the agent can't
-	// compute where the new block(s) landed. Re-derive ids from the mutated
-	// tree and report each inserted block's locator (one per line by default).
-	document.reread();
-	const insertedNodes = new Set(blocks);
-	const locators: string[] = [];
-	for (const [blockId, reference] of document.body.blockReferences) {
-		if (insertedNodes.has(reference.node)) locators.push(blockId);
-	}
-
-	const destination = opts.outputPath ?? opts.filePath;
-	await respondMinted(
-		locators,
-		{
-			ok: true,
-			operation: "insert",
-			path: destination,
-			locators,
-			anchor: anchorLocator,
-			placement: mode,
-		},
-		isLayoutAffecting(opts.spec) ? renderVerifyHint(destination) : undefined,
-	);
-	return EXIT.OK;
-}
-
-/** Inserts whose result depends on page layout — multi-column sections, page/
- * column breaks, sized images, fresh tables — need a render to confirm (`read`
- * shows their text/structure but not how they land on the page). Plain text,
- * runs, code, and markdown paragraphs reflow normally and don't. */
-function isLayoutAffecting(spec: InsertSpec): boolean {
-	return (
-		spec.kind === "section" ||
-		spec.kind === "image" ||
-		spec.kind === "table" ||
-		spec.kind === "break"
-	);
+	return placeSpec(opts);
 }
 
 async function buildSingleShotOptions(
 	filePath: string,
 	values: RawValues,
 ): Promise<ValidatedOptions | number> {
-	const placement = await parseTargetPlacement(values);
+	const placement = await parseTargetPlacement(values, INSERT_HELP);
 	if (typeof placement === "number") return placement;
 
 	const spec = await chooseContentSpec(values);
@@ -366,7 +249,7 @@ async function buildSingleShotOptions(
 			return fail(
 				"USAGE",
 				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
-				HELP,
+				INSERT_HELP,
 			);
 		}
 	}
@@ -451,114 +334,6 @@ type ValidatedOptions = {
 	dryRun: boolean;
 };
 
-/** Where a new block goes: relative to a user locator (`--after`/`--before`),
- *  or pinned to a document boundary (`--at-start`/`--at-end`) which needs no
- *  existing locator — the boundary resolves against the open document. */
-export type TargetPlacement =
-	| { mode: "after" | "before"; locator: string }
-	| { boundary: "start" | "end" };
-
-export async function parseTargetPlacement(
-	values: RawValues,
-): Promise<TargetPlacement | number> {
-	const after = values.after as string | undefined;
-	const before = values.before as string | undefined;
-	const atStart = Boolean(values["at-start"]);
-	const atEnd = Boolean(values["at-end"]);
-	const chosen = [
-		after !== undefined ? "--after" : null,
-		before !== undefined ? "--before" : null,
-		atStart ? "--at-start" : null,
-		atEnd ? "--at-end" : null,
-	].filter((flag): flag is string => flag !== null);
-	if (chosen.length === 0) {
-		return fail(
-			"USAGE",
-			"Missing placement: pass --after, --before, --at-start, or --at-end",
-			HELP,
-		);
-	}
-	if (chosen.length > 1) {
-		return fail(
-			"USAGE",
-			`Pass exactly one placement, got ${chosen.join(" + ")}`,
-			HELP,
-		);
-	}
-	if (atStart) return { boundary: "start" };
-	if (atEnd) return { boundary: "end" };
-	if (after !== undefined) return { mode: "after", locator: after };
-	return { mode: "before", locator: before as string };
-}
-
-/** Turn a parsed placement into the concrete anchor the splice needs: a live
- *  `BlockReference`, the side to insert on, and the locator to report. For a
- *  `--at-start`/`--at-end` boundary this resolves against the open document
- *  (first/last content block, or — for an otherwise-empty body — before the
- *  mandatory trailing `<w:sectPr>`). */
-async function resolvePlacement(
-	document: Document,
-	placement: TargetPlacement,
-): Promise<
-	| { blockRef: BlockReference; mode: "after" | "before"; locator: string }
-	| number
-> {
-	if ("boundary" in placement) {
-		return resolveBoundaryAnchor(document, placement.boundary);
-	}
-	const blockRef = await resolveBlockOrFail(document, placement.locator);
-	if (typeof blockRef === "number") return blockRef;
-	return { blockRef, mode: placement.mode, locator: placement.locator };
-}
-
-/** Resolve `--at-start` / `--at-end` against the document. Anchors only on
- *  TOP-LEVEL content blocks — `<w:p>` / `<w:tbl>` whose parent IS the body's
- *  child list. Filtering by tag alone is wrong: `blockReferences` also holds
- *  table-CELL paragraphs (tag `w:p`), and the reader registers a table's cell
- *  refs BEFORE the table's own `tN` ref, so a tag-only `refs[0]` on a table-first
- *  doc is the first cell paragraph — `--at-start` would splice INSIDE cell (0,0).
- *  Section sentinels (inline + trailing `<w:sectPr>`, which also enumerate as
- *  `sN`) are excluded too, so `--at-end` lands BEFORE the trailing sectPr. */
-async function resolveBoundaryAnchor(
-	document: Document,
-	boundary: "start" | "end",
-): Promise<
-	| { blockRef: BlockReference; mode: "after" | "before"; locator: string }
-	| number
-> {
-	const bodyChildren = document.body.body.children;
-	const refs = [...document.body.blockReferences.entries()].filter(
-		([, ref]) =>
-			ref.parent === bodyChildren &&
-			(ref.node.tag === "w:p" || ref.node.tag === "w:tbl"),
-	);
-	if (refs.length > 0) {
-		const entry = boundary === "start" ? refs[0] : refs[refs.length - 1];
-		if (entry) {
-			const [locator, blockRef] = entry;
-			return {
-				blockRef,
-				mode: boundary === "start" ? "before" : "after",
-				locator,
-			};
-		}
-	}
-	// Empty body — only the mandatory trailing <w:sectPr>. Anchor before it so
-	// the first inserted block becomes the document's sole content.
-	const sectPr = bodyChildren.find((child) => child.tag === "w:sectPr");
-	if (!sectPr) {
-		return fail(
-			"BLOCK_NOT_FOUND",
-			"Document body has no blocks to anchor against",
-		);
-	}
-	return {
-		blockRef: { node: sectPr, parent: bodyChildren },
-		mode: "before",
-		locator: "start",
-	};
-}
-
 export type RawValues = ReturnType<typeof parseArgs>["values"];
 
 /** The mutually-exclusive content flags, each with the sub-flags that only
@@ -573,7 +348,6 @@ export type RawValues = ReturnType<typeof parseArgs>["values"];
 export const MARKDOWN_INCOMPATIBLE_FLAGS = [
 	"style",
 	"alignment",
-	"task",
 	"list",
 	"list-level",
 	"space-before",
@@ -591,14 +365,6 @@ const CONTENT_KINDS = [
 	{ flag: "runs", subFlags: [] },
 	{ flag: "page-break", subFlags: [] },
 	{ flag: "column-break", subFlags: [] },
-	{
-		flag: "table",
-		subFlags: ["rows", "cols", "widths", "table-width", "borders", "layout"],
-	},
-	{ flag: "image", subFlags: ["alt", "width", "height", "caption"] },
-	{ flag: "code", subFlags: ["language"] },
-	{ flag: "code-file", subFlags: ["language"] },
-	{ flag: "equation", subFlags: ["display"] },
 	{ flag: "markdown", subFlags: [] },
 	{ flag: "markdown-file", subFlags: [] },
 ] as const;
@@ -625,15 +391,82 @@ export async function chooseContentSpec(
 			"To put paragraphs pN…pM in N columns: `docx sections --at pN-pM --columns N`. To recount an existing section: `docx sections --at sN --columns N`.",
 		);
 	}
+	// Code blocks moved to their own noun-verb command so insert stays lean.
+	if (
+		values.code !== undefined ||
+		values["code-file"] !== undefined ||
+		values.language !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"insert no longer builds code blocks — use `docx code add`",
+			"e.g. `docx code add FILE --after pN --code-file snippet.py --language python`. See `docx code add --help`.",
+		);
+	}
+	// Equations moved to their own noun-verb command too.
+	if (values.equation !== undefined || values.display !== undefined) {
+		return fail(
+			"USAGE",
+			"insert no longer builds equations — use `docx equations add`",
+			'e.g. `docx equations add FILE --after pN --equation "x^2 + y^2" --display`. See `docx equations add --help`.',
+		);
+	}
+	// Task-list checkboxes moved to their own noun-verb command too. (`--list`
+	// bullet/ordered still lives here — only the checkbox variant moved.)
+	if (values.task !== undefined) {
+		return fail(
+			"USAGE",
+			"insert no longer builds task-list items — use `docx tasks add`",
+			'e.g. `docx tasks add FILE --after pN --text "buy groceries" --checked` (or --unchecked). See `docx tasks add --help`.',
+		);
+	}
+	// Images moved to their own noun-verb command too. Redirect on --image or any
+	// of its sub-flags (none of which is shared by another content kind).
+	if (
+		values.image !== undefined ||
+		values.alt !== undefined ||
+		values.width !== undefined ||
+		values.height !== undefined ||
+		values.caption !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"insert no longer builds images — use `docx images add`",
+			'e.g. `docx images add FILE --after pN --image chart.png --alt "Figure 1"`. See `docx images add --help`.',
+		);
+	}
+	// Tables moved to their own noun-verb command too. Redirect on --table or any
+	// of its sub-flags (all table-exclusive — images use --width/--height, not
+	// --widths). Keep the flags in OPTION_SPEC so this fires instead of erroring
+	// on an unknown flag.
+	if (
+		values.table !== undefined ||
+		values.rows !== undefined ||
+		values.cols !== undefined ||
+		values.widths !== undefined ||
+		values["table-width"] !== undefined ||
+		values.borders !== undefined ||
+		values.layout !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"insert no longer builds tables — use `docx tables create`",
+			"e.g. `docx tables create FILE --after pN --rows 3 --cols 2`. See `docx tables create --help`.",
+		);
+	}
 	const present = CONTENT_KINDS.filter(
 		(kind) => values[kind.flag] !== undefined,
 	);
 	if (present.length > 1) {
-		return fail("USAGE", `Pass only one of ${CONTENT_FLAG_LIST}`, HELP);
+		return fail("USAGE", `Pass only one of ${CONTENT_FLAG_LIST}`, INSERT_HELP);
 	}
 	const chosen = present[0];
 	if (!chosen) {
-		return fail("USAGE", `Missing content: pass ${CONTENT_FLAG_LIST}`, HELP);
+		return fail(
+			"USAGE",
+			`Missing content: pass ${CONTENT_FLAG_LIST}`,
+			INSERT_HELP,
+		);
 	}
 
 	// Reject sub-flags belonging to a content kind other than the chosen one,
@@ -648,7 +481,7 @@ export async function chooseContentSpec(
 			(flag) => values[flag] !== undefined && !chosenSubFlags.has(flag),
 		);
 		if (orphan) {
-			return fail("USAGE", `--${orphan} requires --${kind.flag}`, HELP);
+			return fail("USAGE", `--${orphan} requires --${kind.flag}`, INSERT_HELP);
 		}
 	}
 
@@ -665,23 +498,6 @@ export async function chooseContentSpec(
 			return { kind: "break", breakKind: "page" };
 		case "column-break":
 			return { kind: "break", breakKind: "column" };
-		case "table": {
-			const flags = await parseTableFlags(values);
-			return typeof flags === "number" ? flags : { kind: "table", ...flags };
-		}
-		case "image": {
-			const flags = await parseImageFlags(values);
-			return typeof flags === "number" ? flags : { kind: "image", ...flags };
-		}
-		case "code":
-		case "code-file":
-			return resolveCodeSpec(values, chosen.flag);
-		case "equation":
-			return {
-				kind: "equation",
-				latex: values.equation as string,
-				display: Boolean(values.display),
-			};
 		case "markdown":
 		case "markdown-file":
 			return resolveMarkdownSpec(values, chosen.flag);
@@ -737,91 +553,6 @@ async function resolveLiteralSpec(
 	}
 }
 
-/** Resolve `--code TEXT` (inline) or `--code-file PATH` (file / stdin) into
- *  a uniform `code` spec. Stdin path: `--code-file -` reads from process
- *  stdin so `cat snippet.py | docx insert ... --code-file -` works. */
-async function resolveCodeSpec(
-	values: RawValues,
-	flag: "code" | "code-file",
-): Promise<Extract<InsertSpec, { kind: "code" }> | number> {
-	const language = values.language as string | undefined;
-	if (flag === "code") {
-		const content = values.code as string;
-		return { kind: "code", content, ...(language ? { language } : {}) };
-	}
-	const path = values["code-file"] as string;
-	try {
-		const content =
-			path === "-"
-				? await new Response(Bun.stdin.stream()).text()
-				: await Bun.file(path).text();
-		return { kind: "code", content, ...(language ? { language } : {}) };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return fail(
-			"FILE_NOT_FOUND",
-			`Failed to read --code-file ${path}: ${message}`,
-		);
-	}
-}
-
-async function parseImageFlags(values: RawValues): Promise<
-	| {
-			src: string;
-			alt?: string;
-			widthInches?: number;
-			heightInches?: number;
-			caption?: string;
-	  }
-	| number
-> {
-	const src = values.image as string | undefined;
-	if (!src) return fail("USAGE", "--image requires a SRC argument", HELP);
-
-	const out: {
-		src: string;
-		alt?: string;
-		widthInches?: number;
-		heightInches?: number;
-		caption?: string;
-	} = { src };
-
-	const alt = values.alt as string | undefined;
-	if (alt !== undefined) out.alt = alt;
-
-	// A caption is a body paragraph (emitted via <Paragraph>, which renders breaks),
-	// so decode inline escapes like the sibling --text flag. (--alt is single-line
-	// accessibility metadata where a newline is meaningless, so it stays literal.)
-	const caption = decodeInlineEscapes(values.caption as string | undefined);
-	if (caption !== undefined) out.caption = caption;
-
-	const widthRaw = values.width as string | undefined;
-	if (widthRaw !== undefined) {
-		const width = Number.parseFloat(widthRaw);
-		if (!Number.isFinite(width) || width <= 0) {
-			return fail(
-				"USAGE",
-				`--width must be a positive number of inches, got "${widthRaw}"`,
-			);
-		}
-		out.widthInches = width;
-	}
-
-	const heightRaw = values.height as string | undefined;
-	if (heightRaw !== undefined) {
-		const height = Number.parseFloat(heightRaw);
-		if (!Number.isFinite(height) || height <= 0) {
-			return fail(
-				"USAGE",
-				`--height must be a positive number of inches, got "${heightRaw}"`,
-			);
-		}
-		out.heightInches = height;
-	}
-
-	return out;
-}
-
 function buildTextSpec(
 	values: RawValues,
 ): Extract<InsertSpec, { kind: "text" }> {
@@ -836,121 +567,6 @@ function buildTextSpec(
 		},
 		...(url ? { hyperlinkUrl: url } : {}),
 	};
-}
-
-async function parseTableFlags(values: RawValues): Promise<
-	| {
-			rows: number;
-			cols: number;
-			widths?: number[];
-			tableWidth?: { value: number; unit: "dxa" | "pct" };
-			borders?: TableBorders;
-			layout?: TableLayout;
-	  }
-	| number
-> {
-	const rowsRaw = values.rows as string | undefined;
-	const colsRaw = values.cols as string | undefined;
-	if (rowsRaw === undefined || colsRaw === undefined) {
-		return fail("USAGE", "--table requires --rows and --cols", HELP);
-	}
-	const rows = Number.parseInt(rowsRaw, 10);
-	const cols = Number.parseInt(colsRaw, 10);
-	if (!Number.isFinite(rows) || rows < 1) {
-		return fail("USAGE", `--rows must be a positive integer, got "${rowsRaw}"`);
-	}
-	if (!Number.isFinite(cols) || cols < 1) {
-		return fail("USAGE", `--cols must be a positive integer, got "${colsRaw}"`);
-	}
-
-	const out: {
-		rows: number;
-		cols: number;
-		widths?: number[];
-		tableWidth?: { value: number; unit: "dxa" | "pct" };
-		borders?: TableBorders;
-		layout?: TableLayout;
-	} = { rows, cols };
-
-	const layoutRaw = values.layout as string | undefined;
-	const widthsRaw = values.widths as string | undefined;
-	if (widthsRaw !== undefined) {
-		const widths = widthsRaw.split(",").map((part) => part.trim());
-		const numeric: number[] = [];
-		for (const part of widths) {
-			const value = Number.parseInt(part, 10);
-			if (!Number.isFinite(value) || value <= 0) {
-				return fail(
-					"USAGE",
-					`--widths entries must be positive integers (twips), got "${part}"`,
-				);
-			}
-			numeric.push(value);
-		}
-		if (numeric.length !== cols) {
-			return fail(
-				"USAGE",
-				`--widths length (${numeric.length}) must equal --cols (${cols})`,
-			);
-		}
-		out.widths = numeric;
-	}
-
-	const tableWidthRaw = values["table-width"] as string | undefined;
-	if (tableWidthRaw !== undefined) {
-		if (tableWidthRaw.endsWith("%")) {
-			const pct = Number.parseFloat(tableWidthRaw.slice(0, -1));
-			if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-				return fail(
-					"USAGE",
-					`--table-width percentage must be in (0, 100], got "${tableWidthRaw}"`,
-				);
-			}
-			// OOXML pct units are fiftieths of a percent (5000 = 100%).
-			out.tableWidth = { value: Math.round(pct * 50), unit: "pct" };
-		} else {
-			const twips = Number.parseInt(tableWidthRaw, 10);
-			if (!Number.isFinite(twips) || twips <= 0) {
-				return fail(
-					"USAGE",
-					`--table-width must be a positive integer (twips) or a percentage like "100%", got "${tableWidthRaw}"`,
-				);
-			}
-			out.tableWidth = { value: twips, unit: "dxa" };
-		}
-	}
-
-	const bordersRaw = values.borders as string | undefined;
-	if (bordersRaw !== undefined) {
-		if (
-			bordersRaw !== "single" &&
-			bordersRaw !== "double" &&
-			bordersRaw !== "none"
-		) {
-			return fail(
-				"USAGE",
-				`--borders must be single, double, or none, got "${bordersRaw}"`,
-			);
-		}
-		out.borders = bordersRaw === "single" ? "default" : { style: bordersRaw };
-	}
-
-	if (layoutRaw !== undefined) {
-		if (layoutRaw !== "autofit" && layoutRaw !== "fixed") {
-			return fail(
-				"USAGE",
-				`--layout must be autofit or fixed, got "${layoutRaw}"`,
-			);
-		}
-		out.layout = layoutRaw;
-	} else if (out.widths) {
-		// Custom column widths are only honored under fixed layout — autofit
-		// recomputes them from content. Default to fixed when --widths is given
-		// so the widths actually take effect; an explicit --layout overrides.
-		out.layout = "fixed";
-	}
-
-	return out;
 }
 
 export async function parseParagraphOptions(
@@ -978,42 +594,22 @@ export async function parseParagraphOptions(
 		out.alignment = alignmentValue;
 	}
 
-	const taskValue = values.task as string | undefined;
 	const listValue = values.list as string | undefined;
 	const listLevelValue = values["list-level"] as string | undefined;
-
-	if (taskValue !== undefined && listValue !== undefined) {
-		return fail(
-			"USAGE",
-			"--task and --list are mutually exclusive (--task already implies a bullet list)",
-			HELP,
-		);
-	}
-
-	if (taskValue !== undefined) {
-		const checked = parseTaskFlag(taskValue);
-		if (checked === null) {
-			return fail(
-				"USAGE",
-				`--task must be "checked" or "unchecked", got "${taskValue}"`,
-				HELP,
-			);
-		}
-		out.taskState = checked ? "checked" : "unchecked";
-	}
 
 	if (listValue !== undefined) {
 		if (listValue !== "bullet" && listValue !== "ordered") {
 			return fail(
 				"USAGE",
 				`--list must be "bullet" or "ordered", got "${listValue}"`,
-				HELP,
+				INSERT_HELP,
 			);
 		}
 		// Mark the intent to allocate a list; the numId is resolved later in
 		// `resolveListContext` (post-document-open) using the same anchor-inherit
-		// logic as --task. We stash the kind on a side channel so the resolver
-		// knows which abstractNum to use.
+		// logic a task item uses (`tasks add` sets `taskState` and reuses this
+		// resolver). We stash the kind on a side channel so the resolver knows
+		// which abstractNum to use.
 		out.list = { level: 0, numId: -1 };
 		(out as ParagraphOptions & { listKind?: "bullet" | "ordered" }).listKind =
 			listValue;
@@ -1025,12 +621,12 @@ export async function parseParagraphOptions(
 			return fail(
 				"USAGE",
 				`--list-level must be an integer 0-8, got "${listLevelValue}"`,
-				HELP,
+				INSERT_HELP,
 			);
 		}
 		if (out.list) out.list.level = level;
-		// If neither --task nor --list is set, we still record the level — it
-		// applies once the resolver attaches a list (e.g., via inheritance).
+		// If --list isn't set (e.g. a `tasks add` item, or inheritance), we still
+		// record the level — it applies once the resolver attaches a list.
 		(out as ParagraphOptions & { explicitLevel?: number }).explicitLevel =
 			level;
 	}

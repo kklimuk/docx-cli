@@ -71,6 +71,25 @@ export async function respond(payload: unknown): Promise<void> {
 	await sinks.stdout(`${JSON.stringify(payload)}\n`);
 }
 
+/** The `--dry-run` preview shared by the in-place edit verbs (`edit`, `code
+ *  edit`, `equations edit`, `tasks check`/`uncheck`): an in-place edit shifts no
+ *  ids, so the preview just echoes the operation + locator (and `--output` when
+ *  set). Always prints regardless of `--verbose`. */
+export async function respondEditDryRun(
+	filePath: string,
+	locator: string,
+	outputPath: string | undefined,
+): Promise<number> {
+	await respond({
+		operation: "edit",
+		dryRun: true,
+		path: filePath,
+		locator,
+		...(outputPath ? { output: outputPath } : {}),
+	});
+	return EXIT.OK;
+}
+
 let verboseAck = false;
 
 /** Switch on full JSON acks for the current process. Mutating commands call

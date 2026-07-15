@@ -53,7 +53,7 @@ There is a single walk — the AST reader (`core/ast/read.ts`), during `Document
 
 - **Insert** under tracking: `applyTrackedInsertion` in [cli/insert/index.tsx](../insert/index.tsx) treats `m:oMath` / `m:oMathPara` as trackable run-level siblings via `TRACKABLE_PARAGRAPH_CHILDREN`. Whole-paragraph equations end up with the OMML inside `<w:ins>` and the paragraph mark also marked as inserted (reject removes the paragraph entirely).
 - **Delete** under tracking: `applyTrackedDeletion` in [cli/delete/index.tsx](../delete/index.tsx) mirrors with `TRACKABLE_DELETE_CHILDREN`. Text runs still get `<w:t>` → `<w:delText>` conversion via `convertTextToDelText`; OMML siblings sit inside `<w:del>` unchanged (no `<m:delText>` equivalent — Word treats the whole element as the deleted unit).
-- **Edit** under tracking: `commitEquationEdit` in [cli/edit/index.tsx](../edit/index.tsx) emits a paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same parent. Our own `accept`/`reject` resolves cleanly. Word's accept-all picks the semantically correct equation (NEW on accept, OLD on reject) but leaves a small empty `<m:sSup>` / `<m:f>` skeleton next to the kept one — Word's normalization quirk, cosmetic only.
+- **Edit** under tracking: the `equations edit` verb in [cli/equations/edit.ts](../equations/edit.ts) emits a paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same parent. Our own `accept`/`reject` resolves cleanly. Word's accept-all picks the semantically correct equation (NEW on accept, OLD on reject) but leaves a small empty `<m:sSup>` / `<m:f>` skeleton next to the kept one — Word's normalization quirk, cosmetic only.
 
 What's deferred: `<w:rPrChange>` inside math runs (font-property revisions on individual symbols).
 

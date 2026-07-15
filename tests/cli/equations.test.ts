@@ -5,7 +5,7 @@ import { runCli, tempWorkspace } from "./harness";
 import { readDocumentXml } from "./helpers";
 
 /** Canonical equations fixture — see `tests/fixtures/setup/equations.ts`.
- *  Authored by the CLI's `insert --equation` pipeline (LaTeX → temml MathML →
+ *  Authored by the CLI's `docx equations add` pipeline (LaTeX → temml MathML →
  *  our OMML adapter), so every test here exercises the round-trip path end
  *  to end. */
 const FIXTURE = join(import.meta.dir, "..", "fixtures", "equations.docx");
@@ -263,13 +263,14 @@ describe("markdown render", () => {
 // Write side: `insert --equation` and `edit --at eqN --equation`
 // ---------------------------------------------------------------------------
 
-describe("insert --equation", () => {
+describe("equations add", () => {
 	test("inline LaTeX round-trips: insert x^2, read back $x^2$", async () => {
 		const workspace = tempWorkspace("eq-insert-inline");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -285,7 +286,8 @@ describe("insert --equation", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -315,7 +317,8 @@ describe("insert --equation", () => {
 		];
 		for (let i = 0; i < inputs.length; i++) {
 			await runCli(
-				"insert",
+				"equations",
+				"add",
 				docPath,
 				"--after",
 				`p${i}`,
@@ -346,7 +349,8 @@ describe("insert --equation", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		const result = await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -357,32 +361,53 @@ describe("insert --equation", () => {
 		expect(result.stdout).toContain("Could not parse LaTeX");
 	});
 
-	test("--equation is mutex with --text/--code/--task etc.", async () => {
-		const workspace = tempWorkspace("eq-insert-mutex");
+	test("missing --equation is a USAGE error", async () => {
+		const workspace = tempWorkspace("eq-insert-missing-latex");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		const result = await runCli(
-			"insert",
+		const result = await runCli("equations", "add", docPath, "--after", "p0");
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("Missing --equation");
+	});
+
+	test("threads spacing/indent onto the equation paragraph", async () => {
+		const workspace = tempWorkspace("eq-insert-spacing");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Anchor.");
+		await runCli(
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
 			"--equation",
-			"x",
-			"--text",
-			"y",
+			"x = y",
+			"--space-before",
+			"12",
+			"--indent-left",
+			"0.5",
 		);
-		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toContain("only one of");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('<w:spacing w:before="240"/>');
+		expect(xml).toContain('<w:ind w:left="720"/>');
 	});
 });
 
-describe("edit --at eqN --equation", () => {
+describe("equations edit --at eqN", () => {
 	test("replaces an equation's content; locator addresses by document order", async () => {
 		const workspace = tempWorkspace("eq-edit-content");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		// eq0 in the fixture is `x^2`. Replace with `x^3`.
-		await runCli("edit", docPath, "--at", "eq0", "--equation", "x^3");
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			"x^3",
+		);
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("$x^3$");
 	});
@@ -391,9 +416,39 @@ describe("edit --at eqN --equation", () => {
 		const workspace = tempWorkspace("eq-edit-display");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
-		await runCli("edit", docPath, "--at", "eq0", "--display");
+		await runCli("equations", "edit", docPath, "--at", "eq0", "--display");
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("$$x^2$$");
+	});
+
+	test("--track forces a tracked del/ins even when the toggle is off", async () => {
+		// The HELP promises --track records even when tracking is off; the core
+		// Equations.edit must honor the resolved decision, not just the doc toggle.
+		const workspace = tempWorkspace("eq-edit-track-force");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Header", "--force");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			"y^3",
+			"--track", // toggle is OFF — this must still record the revision
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(/<w:del\b/);
+		expect(xml).toMatch(/<w:ins\b/);
 	});
 
 	test("--inline toggles existing display equation to inline mode", async () => {
@@ -401,7 +456,8 @@ describe("edit --at eqN --equation", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header", "--force");
 		await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -409,10 +465,36 @@ describe("edit --at eqN --equation", () => {
 			"x^2",
 			"--display",
 		);
-		await runCli("edit", docPath, "--at", "eq0", "--inline");
+		await runCli("equations", "edit", docPath, "--at", "eq0", "--inline");
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("$x^2$");
 		expect(result.stdout).not.toContain("$$");
+	});
+
+	test("requires --equation, --display, or --inline (no-op is USAGE)", async () => {
+		const workspace = tempWorkspace("eq-edit-noop");
+		const docPath = join(workspace, "out.docx");
+		copyFileSync(FIXTURE, docPath);
+		const result = await runCli("equations", "edit", docPath, "--at", "eq0");
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("--equation requires");
+	});
+
+	test("--display and --inline are mutually exclusive", async () => {
+		const workspace = tempWorkspace("eq-edit-mutex-mode");
+		const docPath = join(workspace, "out.docx");
+		copyFileSync(FIXTURE, docPath);
+		const result = await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--display",
+			"--inline",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("mutually exclusive");
 	});
 
 	test("--display works for equations inside table cells (regression)", async () => {
@@ -435,7 +517,8 @@ describe("edit --at eqN --equation", () => {
 		);
 		copyFileSync(tablesFixture, docPath);
 		await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"t2:r0c0:p0",
@@ -444,7 +527,14 @@ describe("edit --at eqN --equation", () => {
 		);
 		const insertedEqId = (await equationsOf(docPath))[0]?.id;
 		expect(insertedEqId).toBe("eq0");
-		const result = await runCli("edit", docPath, "--at", "eq0", "--display");
+		const result = await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--display",
+		);
 		expect(result.exitCode).toBe(0);
 		const after = await equationsOf(docPath);
 		expect(after[0]?.display).toBe(true);
@@ -456,6 +546,7 @@ describe("edit --at eqN --equation", () => {
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		const result = await runCli(
+			"equations",
 			"edit",
 			docPath,
 			"--at",
@@ -466,21 +557,39 @@ describe("edit --at eqN --equation", () => {
 		expect(result.exitCode).toBe(3); // BLOCK_NOT_FOUND
 		expect(result.stdout).toContain("Equation not found");
 	});
+});
 
-	test("--equation in a pN-pM range is rejected", async () => {
-		const workspace = tempWorkspace("eq-edit-range");
+describe("insert / edit no longer build equations (redirects)", () => {
+	test("insert --equation redirects to `docx equations add`", async () => {
+		const workspace = tempWorkspace("eq-insert-redirect");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Header");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("docx equations add");
+	});
+
+	test("edit --at eqN --equation redirects to `docx equations edit`", async () => {
+		const workspace = tempWorkspace("eq-edit-redirect");
 		const docPath = join(workspace, "out.docx");
 		copyFileSync(FIXTURE, docPath);
 		const result = await runCli(
 			"edit",
 			docPath,
 			"--at",
-			"p1-p3",
+			"eq0",
 			"--equation",
-			"x",
+			"x^3",
 		);
 		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toContain("takes a single equation locator");
+		expect(result.stdout).toContain("docx equations edit");
 	});
 });
 
@@ -498,7 +607,15 @@ describe("tracked equation insert/delete (Tier 1)", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli("track-changes", docPath, "on");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "E=mc^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"E=mc^2",
+		);
 
 		const xml = await readDocumentXml(docPath);
 		expect(xml).toMatch(/<w:ins\b[^>]*>\s*<m:oMath\b/);
@@ -521,7 +638,8 @@ describe("tracked equation insert/delete (Tier 1)", () => {
 		await runCli("create", docPath, "--text", "Header");
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"insert",
+			"equations",
+			"add",
 			docPath,
 			"--after",
 			"p0",
@@ -537,7 +655,15 @@ describe("tracked equation insert/delete (Tier 1)", () => {
 		const workspace = tempWorkspace("eq-tracked-delete");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Keep this.");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "E=mc^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"E=mc^2",
+		);
 		await runCli("track-changes", docPath, "on");
 		await runCli("delete", docPath, "--at", "p1");
 
@@ -561,7 +687,15 @@ describe("tracked equation insert/delete (Tier 1)", () => {
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
 		await runCli("track-changes", docPath, "on");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "x^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
 		const result = await runCli("track-changes", "list", docPath);
 		const list = result.parsed as Array<{ kind: string; blockId: string }>;
 		const inserts = list.filter((entry) => entry.kind === "ins");
@@ -585,9 +719,18 @@ describe("tracked equation edit (Tier 2)", () => {
 		const workspace = tempWorkspace("eq-tracked-edit-content");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "x^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
 		await runCli("track-changes", docPath, "on");
 		const result = await runCli(
+			"equations",
 			"edit",
 			docPath,
 			"--at",
@@ -610,9 +753,25 @@ describe("tracked equation edit (Tier 2)", () => {
 		const workspace = tempWorkspace("eq-tracked-edit-accept");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "x^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
 		await runCli("track-changes", docPath, "on");
-		await runCli("edit", docPath, "--at", "eq0", "--equation", "y^3");
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			"y^3",
+		);
 		await runCli("track-changes", "accept", docPath, "--all");
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("$y^3$");
@@ -623,9 +782,25 @@ describe("tracked equation edit (Tier 2)", () => {
 		const workspace = tempWorkspace("eq-tracked-edit-reject");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "x^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
 		await runCli("track-changes", docPath, "on");
-		await runCli("edit", docPath, "--at", "eq0", "--equation", "y^3");
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			"y^3",
+		);
 		await runCli("track-changes", "reject", docPath, "--all");
 		const result = await runCli("read", docPath);
 		expect(result.stdout).toContain("$x^2$");
@@ -636,9 +811,17 @@ describe("tracked equation edit (Tier 2)", () => {
 		const workspace = tempWorkspace("eq-tracked-mode-toggle");
 		const docPath = join(workspace, "out.docx");
 		await runCli("create", docPath, "--text", "Header");
-		await runCli("insert", docPath, "--after", "p0", "--equation", "x^2");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"x^2",
+		);
 		await runCli("track-changes", docPath, "on");
-		await runCli("edit", docPath, "--at", "eq0", "--display");
+		await runCli("equations", "edit", docPath, "--at", "eq0", "--display");
 		const xml = await readDocumentXml(docPath);
 		expect(xml).toMatch(/<w:del\b[^>]*>\s*<m:oMath\b/);
 		expect(xml).toMatch(/<w:ins\b[^>]*>\s*<m:oMathPara\b/);
@@ -650,6 +833,7 @@ describe("tracked equation edit (Tier 2)", () => {
 		copyFileSync(FIXTURE, docPath);
 		await runCli("track-changes", docPath, "on");
 		const result = await runCli(
+			"equations",
 			"edit",
 			docPath,
 			"--at",

@@ -817,7 +817,8 @@ describe("docx insert --markdown — image round-trip via SHA-256 hash", () => {
 		const docPath = join(workspace, "a.docx");
 		await runCli("create", docPath, "--text", "Doc A");
 		await runCli(
-			"insert",
+			"images",
+			"add",
 			docPath,
 			"--after",
 			"p0",

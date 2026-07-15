@@ -9,7 +9,7 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
 
 /**
  * Build tests/fixtures/task-lists-tracked.docx via the public CLI — tracked
- * checkbox toggles emitted by `edit --task` under track-changes. The shape
+ * checkbox toggles emitted by `tasks check`/`uncheck` under track-changes. The shape
  * was validated empirically against Microsoft Word for Mac (probe in
  * /tmp/checkbox-track-probe/): an `<w:ins>` (new glyph) + `<w:del>` (old
  * glyph) pair INSIDE `<w:sdtContent>`, plus an in-place flip of the
@@ -20,8 +20,8 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   - p3 "call dentist": tracked ☒ → ☐ (author un-marks)
  *
  * Two test invariants this exercises end-to-end:
- *   1. The CLI can emit the canonical Word toggle shape (insert + track on +
- *      edit --task).
+ *   1. The CLI can emit the canonical Word toggle shape (tasks add + track on +
+ *      tasks check/uncheck).
  *   2. The reader detects the result as a single checkboxToggle entry per
  *      paragraph (not two stray ins/del entries).
  */
@@ -49,32 +49,32 @@ await cli(
 	"Heading2",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p0",
-	"--task",
-	"unchecked",
+	"--unchecked",
 	"--text",
 	"buy groceries",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p1",
-	"--task",
-	"unchecked",
+	"--unchecked",
 	"--text",
 	"pay rent",
 );
 await cli(
-	"insert",
+	"tasks",
+	"add",
 	out,
 	"--after",
 	"p2",
-	"--task",
-	"checked",
+	"--checked",
 	"--text",
 	"call dentist",
 );
@@ -83,26 +83,8 @@ await cli(
 // surfaced as `checkboxToggle` tcN entries.
 await cli("track-changes", out, "on");
 process.env.DOCX_CLI_NOW ??= "2026-05-22T23:01:00Z";
-await cli(
-	"edit",
-	out,
-	"--at",
-	"p2",
-	"--task",
-	"checked",
-	"--author",
-	"Kirill Klimuk",
-);
-await cli(
-	"edit",
-	out,
-	"--at",
-	"p3",
-	"--task",
-	"unchecked",
-	"--author",
-	"Kirill Klimuk",
-);
+await cli("tasks", "check", out, "--at", "p2", "--author", "Kirill Klimuk");
+await cli("tasks", "uncheck", out, "--at", "p3", "--author", "Kirill Klimuk");
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);
