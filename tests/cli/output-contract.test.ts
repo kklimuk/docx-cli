@@ -349,3 +349,75 @@ describe("stdin '-' ingress (process boundary)", () => {
 		expect(markdown).toContain("print(1)");
 	});
 });
+
+// Parser-surface ergonomics (weak-agent fixes): `--help` beats a parse error,
+// and dash-led positionals (money/negatives) stop being read as options. Both go
+// through the shared `tryParseArgs`, so a few representative commands suffice.
+describe("parser ergonomics (tryParseArgs)", () => {
+	test("--help wins even when a value-taking flag is left without a value", async () => {
+		// `replace --batch --help` used to die "argument is ambiguous".
+		const result = await runCli("replace", "missing.docx", "--batch", "--help");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Usage:");
+	});
+
+	test("--help placed after other flags still shows help", async () => {
+		const result = await runCli(
+			"edit",
+			"missing.docx",
+			"--at",
+			"p0",
+			"--text",
+			"--help",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Usage:");
+	});
+
+	test("a literal '--help' text still travels via the --flag=value form", async () => {
+		const docPath = join(tempWorkspace("literal-help"), "doc.docx");
+		await runCli("create", docPath, "--text", "seed");
+		const result = await runCli("edit", docPath, "--at", "p0", "--text=--help");
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain("--help");
+	});
+
+	test("a dash-led numeric positional is a query, not an option (find)", async () => {
+		const docPath = join(tempWorkspace("dash-find"), "doc.docx");
+		await runCli("create", docPath, "--text", "a -5.00 discount");
+		const result = await runCli("find", docPath, "-5.00");
+		expect(result.exitCode).toBe(0); // not USAGE(2)
+		expect(
+			(result.parsed as { totalMatches: number }).totalMatches,
+		).toBeGreaterThan(0);
+	});
+
+	test("dash-led positionals fill replace's pattern AND replacement", async () => {
+		const docPath = join(tempWorkspace("dash-replace"), "doc.docx");
+		await runCli("create", docPath, "--text", "owed -5.00 total");
+		const result = await runCli("replace", docPath, "-5.00", "-9.99");
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain("-9.99");
+	});
+
+	test("a positional that looks like the internal sentinel is not clobbered", async () => {
+		// A dash value is shielded behind a NUL-delimited sentinel; a literal
+		// positional resembling the old guessable sentinel must survive untouched.
+		const docPath = join(tempWorkspace("sentinel-collision"), "doc.docx");
+		await runCli("create", docPath, "--text", "token docx-dash-pos-0 here");
+		const result = await runCli("replace", docPath, "docx-dash-pos-0", "-5");
+		expect(result.exitCode).toBe(0); // pattern matched; not clobbered to "-5"
+		expect((await runCli("read", docPath)).stdout).toContain("token -5 here");
+	});
+
+	test("a real trailing flag after dash positionals is still a flag", async () => {
+		const docPath = join(tempWorkspace("dash-flag"), "doc.docx");
+		await runCli("create", docPath, "--text", "owed -5 then -5 again");
+		// --all must stay a flag, not get swallowed into positionals.
+		const result = await runCli("replace", docPath, "-5", "-9", "--all");
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("-9 then -9 again");
+		expect(markdown).not.toContain("-5");
+	});
+});

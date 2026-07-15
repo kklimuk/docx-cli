@@ -374,10 +374,7 @@ export function normalizeAndDedupCommentIds(rawIds: string[]): string[] {
 export async function readJsonlObjects(
 	source: string,
 ): Promise<Record<string, unknown>[]> {
-	const raw =
-		source === "-"
-			? await new Response(Bun.stdin.stream()).text()
-			: await Bun.file(source).text();
+	const raw = await readBatchSource(source);
 	const objects: Record<string, unknown>[] = [];
 	const lines = raw.split("\n");
 	for (let index = 0; index < lines.length; index++) {
@@ -402,6 +399,30 @@ export async function readJsonlObjects(
 		objects.push(parsed as Record<string, unknown>);
 	}
 	return objects;
+}
+
+/** Resolve a `--batch` source to its raw JSONL text. Three forms, so a weak agent
+ *  can't trip on the on-ramp: `-` reads stdin; a value that LOOKS like inline JSONL
+ *  (starts with `{`/`[` after trimming, or contains a newline — a real path does
+ *  neither) is used verbatim; otherwise it's a file path. A path that can't be read
+ *  fails with a plain message, not the raw ENOENT/ENAMETOOLONG errno an inline value
+ *  used to hit (the exact trap that made agents abandon `--batch`). */
+async function readBatchSource(source: string): Promise<string> {
+	if (source === "-") return await new Response(Bun.stdin.stream()).text();
+	if (looksLikeInlineJsonl(source)) return source;
+	try {
+		return await Bun.file(source).text();
+	} catch {
+		throw new Error(
+			`could not read batch file: ${source} (pass a file path, inline JSONL, or "-" for stdin)`,
+		);
+	}
+}
+
+function looksLikeInlineJsonl(source: string): boolean {
+	if (source.includes("\n")) return true;
+	const trimmed = source.trimStart();
+	return trimmed.startsWith("{") || trimmed.startsWith("[");
 }
 
 /** Read a JSONL file (or stdin via `-`) and return the `id` field of each

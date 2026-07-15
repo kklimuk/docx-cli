@@ -294,12 +294,35 @@ export async function tryParseArgs(
 	options: ParseArgsOptions,
 	help: string,
 ): Promise<ReturnType<typeof parseArgs> | number> {
+	// `--help`/`-h` anywhere in flag position (before a bare `--`) wins over
+	// everything — an agent reaching for help must never hit a parse error first
+	// (`replace --batch --help` used to die "ambiguous"). parseArgs never consumes a
+	// bare `--help` as a flag value, so this can't steal an intended value; a literal
+	// "--help" value still travels via `--flag=--help`, `--text-file`, or `--batch`.
+	// Help is handled here for every command — a command's own `if (values.help)`
+	// check is now redundant (harmless; it just never fires).
+	if (hasHelpFlag(args)) {
+		await writeStdout(help);
+		return EXIT.OK;
+	}
+	const { args: normalized, placeholders } = normalizeDashLeading(
+		args,
+		options,
+	);
 	try {
-		return parseArgs({
-			args: mergeDashLeadingValues(args, options),
+		const parsed = parseArgs({
+			args: normalized,
 			allowPositionals: true,
 			options,
 		});
+		if (placeholders.size === 0) return parsed;
+		// Restore the dash-led positionals we shielded from parseArgs (below).
+		return {
+			...parsed,
+			positionals: parsed.positionals.map(
+				(value) => placeholders.get(value) ?? value,
+			),
+		};
 	} catch (parseError) {
 		const message =
 			parseError instanceof Error ? parseError.message : String(parseError);
@@ -307,43 +330,101 @@ export async function tryParseArgs(
 	}
 }
 
-/** `parseArgs` rejects `--text -$500.00` as "ambiguous" because the value starts
- *  with `-` (it can't tell a negative/`-$` value from a flag). Agents hit this on
- *  money, negative numbers, etc. Pre-merge `--flag value` → `--flag=value` when
- *  `flag` is a declared string option and `value` is dash-LED but not flag-shaped
- *  (a real flag has a letter right after the dashes; `-$`, `-5`, `-.5` do not). */
-function mergeDashLeadingValues(
+/** `--help`/`-h` present as a standalone token before any bare `--` separator? */
+function hasHelpFlag(args: string[]): boolean {
+	const doubleDash = args.indexOf("--");
+	const scan = doubleDash === -1 ? args : args.slice(0, doubleDash);
+	return scan.includes("--help") || scan.includes("-h");
+}
+
+/** One pre-parse pass that makes dash-led values survivable. `parseArgs` rejects
+ *  any `-`-leading token it can't map to a flag, which bites two ways: a flag's
+ *  VALUE (`--text -$500.00`) and a bare POSITIONAL (`find FILE -$500.00`,
+ *  `replace FILE -old -new`). Agents hit both on money/negatives, and quoting can't
+ *  fix it (it's arg parsing, not the shell). We:
+ *   1. merge a long string flag with a dash-led value → `--flag=value`;
+ *   2. shield a dash-led POSITIONAL (a token that's neither a flag nor a flag's
+ *      value) behind an internal sentinel, restored in `tryParseArgs` after the
+ *      parse.
+ *  A token is "flag-shaped" (a real flag, left untouched) only when a LETTER follows
+ *  the dashes — `-$`, `-5`, `-.5`, `-00.00` are not, so a real flag typo like `-all`
+ *  still errors. Prepending a bare `--` would be simpler but would also swallow any
+ *  TRAILING flags (`replace … -old -new --all`) into positionals; placeholders don't. */
+function normalizeDashLeading(
 	args: string[],
 	options: ParseArgsOptions,
-): string[] {
-	const stringFlags = new Set(
-		Object.entries(options ?? {})
-			.filter(([, spec]) => spec?.type === "string")
-			.map(([name]) => name),
+): { args: string[]; placeholders: Map<string, string> } {
+	const entries = Object.entries(options ?? {});
+	const stringLong = new Set(
+		entries.filter(([, spec]) => spec?.type === "string").map(([name]) => name),
 	);
-	const flagShaped = (token: string): boolean => {
-		const match = token.match(/^-+(.)/);
-		return match ? /[a-zA-Z]/.test(match[1] ?? "") : false;
+	const stringShort = new Set(
+		entries
+			.filter(([, spec]) => spec?.type === "string" && spec?.short)
+			.map(([, spec]) => spec?.short as string),
+	);
+	const flagShaped = (token: string): boolean => /^-+[a-zA-Z]/.test(token);
+	const consumesNext = (token: string): boolean => {
+		if (token.startsWith("--") && !token.includes("="))
+			return stringLong.has(token.slice(2));
+		if (/^-[a-zA-Z]$/.test(token)) return stringShort.has(token[1] ?? "");
+		return false;
 	};
+
+	// A NUL byte can never appear in an argv token (the OS null-terminates them),
+	// so wrapping the sentinel in NUL makes it impossible for a real argument to
+	// collide with a placeholder. Built at runtime to keep NUL out of the source.
+	const nul = String.fromCharCode(0);
 	const out: string[] = [];
+	const placeholders = new Map<string, string>();
+	let afterDoubleDash = false;
+	let placeholderCount = 0;
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
 		if (arg === undefined) continue;
-		const next = args[index + 1];
-		if (
-			arg.startsWith("--") &&
-			!arg.includes("=") &&
-			stringFlags.has(arg.slice(2)) &&
-			next?.startsWith("-") &&
-			!flagShaped(next)
-		) {
-			out.push(`${arg}=${next}`);
-			index++;
+		if (afterDoubleDash) {
+			out.push(arg);
+			continue;
+		}
+		if (arg === "--") {
+			afterDoubleDash = true;
+			out.push(arg);
+			continue;
+		}
+		if (consumesNext(arg)) {
+			const next = args[index + 1];
+			// Long `--flag -$value` → `--flag=-$value` so parseArgs keeps the value.
+			if (
+				next !== undefined &&
+				arg.startsWith("--") &&
+				next.startsWith("-") &&
+				!flagShaped(next)
+			) {
+				out.push(`${arg}=${next}`);
+				index++;
+				continue;
+			}
+			// Otherwise push the flag and its value verbatim — the value is consumed
+			// here so it can't be re-read as a dash-led positional below.
+			out.push(arg);
+			if (next !== undefined) {
+				out.push(next);
+				index++;
+			}
+			continue;
+		}
+		if (arg.startsWith("-") && arg !== "-" && !flagShaped(arg)) {
+			// A dash-led positional (`-$500`, `-5`, `-00.00`): shield it behind a
+			// NUL-delimited sentinel so parseArgs keeps it a positional, then restore
+			// the real text after the parse (see `nul` above — can't collide).
+			const placeholder = `${nul}dashpos${placeholderCount++}${nul}`;
+			placeholders.set(placeholder, arg);
+			out.push(placeholder);
 			continue;
 		}
 		out.push(arg);
 	}
-	return out;
+	return { args: out, placeholders };
 }
 
 export async function resolveBlockRangeOrFail(

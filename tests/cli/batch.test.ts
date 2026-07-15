@@ -456,3 +456,43 @@ describe("--batch atomicity — one bad entry writes nothing", () => {
 		expect(await Bun.file(path).bytes()).toEqual(before);
 	});
 });
+
+// `--batch` accepts three source forms so a weak agent can't trip on the on-ramp:
+// a file path, inline JSONL content, or `-` (stdin, covered in output-contract).
+// Passing inline content used to hit a raw ENAMETOOLONG/ENOENT errno; now it's
+// parsed directly. All three funnel through `readJsonlObjects`, so `edit`
+// exercises the shared reader for every batch command.
+describe("--batch source resolution", () => {
+	test("multi-line inline JSONL is parsed directly, not read as a path", async () => {
+		const path = await docWithParagraphs("batch-inline-multi", ["one", "two"]);
+		const inline = `${JSON.stringify({ at: "p0", text: "ONE" })}\n${JSON.stringify(
+			{ at: "p1", text: "TWO" },
+		)}`;
+		const result = await runCli("edit", path, "--batch", inline);
+		expect(result.exitCode).toBe(0);
+		expect(await blockText(path, "p0")).toBe("ONE");
+		expect(await blockText(path, "p1")).toBe("TWO");
+	});
+
+	test("a single inline JSONL object works", async () => {
+		const path = await docWithParagraphs("batch-inline-one", ["a"]);
+		const result = await runCli(
+			"edit",
+			path,
+			"--batch",
+			JSON.stringify({ at: "p0", text: "Z" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await blockText(path, "p0")).toBe("Z");
+	});
+
+	test("a missing batch file path fails with a clear message, not a raw errno", async () => {
+		const path = await docWithParagraphs("batch-missing", ["a"]);
+		const result = await runCli("edit", path, "--batch", "/no/such/file.jsonl");
+		expect(result.exitCode).not.toBe(0);
+		expect(JSON.stringify(result.parsed)).toContain(
+			"could not read batch file",
+		);
+		expect(JSON.stringify(result.parsed)).not.toContain("ENOENT");
+	});
+});
