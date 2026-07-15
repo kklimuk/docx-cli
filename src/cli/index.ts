@@ -7,6 +7,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	comments: () => import("./comments"),
 	create: () => import("./create"),
 	delete: () => import("./delete"),
+	diff: () => import("./diff"),
 	edit: () => import("./edit"),
 	endnotes: () => import("./endnotes"),
 	find: () => import("./find"),

@@ -36,6 +36,7 @@ src/
     replace/                  # docx replace FILE PATTERN REPLACEMENT (replace-span.tsx: run-splitting)
     wc/                       # docx wc FILE [LOCATOR] (count.ts)
     outline/                  # docx outline FILE (build.ts: heading-tree builder)
+    diff/                     # docx diff FILE --against SRC (markers.ts: locator normalization; renders read view, diffs via @core/diff)
     comments/                 # add | reply | resolve | delete | list (helpers.tsx: paraId, run-splitting)
     images/                   # list | extract | replace | delete
     hyperlinks/               # add | list | replace | delete (wrap.tsx: run-splitting)
@@ -43,6 +44,7 @@ src/
     track-changes/            # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
     info/                     # schema | locators | skill (reference output; skill.ts emits the canonical SKILL.md)
   core/
+    diff/                     # pure text→text unified-diff engine (jsdiff wrapper + HTML-aware word refinement); backs docx diff
     package/                  # JSZip wrapper: open, read/write XML parts, save
     parser/                   # XmlNode class + parse/serialize; run-ops.ts (run text/offsets + RUN_BEARING_WRAPPER_TAGS)
     jsx/                      # Fragment, namespace() + tag namespaces (w, a, wp, pic, cp, dc, …), auto-runtime

@@ -58,7 +58,19 @@ export class Document {
 	}
 
 	static async open(path: string): Promise<Document> {
-		const pkg = await Pkg.open(path);
+		return Document.fromPkg(await Pkg.open(path));
+	}
+
+	/** Open a document from raw `.docx` bytes rather than a path — the `docx
+	 * diff` stdin / catted-file ingress. `path` is a cosmetic label. */
+	static async openFromBytes(
+		bytes: ArrayBuffer | Uint8Array,
+		path: string,
+	): Promise<Document> {
+		return Document.fromPkg(await Pkg.fromBytes(bytes, path));
+	}
+
+	private static async fromPkg(pkg: Pkg): Promise<Document> {
 		const view = new Document({
 			pkg,
 			documentTree: await pkg.ensurePart("word/document.xml"),

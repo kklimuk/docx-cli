@@ -8,7 +8,8 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
-import { MarkdownLocatorError, renderMarkdown } from "./markdown";
+import { MarkdownLocatorError } from "./markdown";
+import { renderReadMarkdown } from "./render";
 
 const HELP = `docx read — render document body as Markdown, or print AST as JSON
 
@@ -111,27 +112,22 @@ export async function run(args: string[]): Promise<number> {
 	const docView = await openOrFail(path);
 	if (typeof docView === "number") return docView;
 
-	// Hashes are content-addressed image identifiers — read --ast surfaces
-	// them on each ImageRun, and read --markdown uses them as the URL in
-	// `![alt](<sha256>.<ext>)` so a round-trip through `insert --markdown`
-	// can reuse existing media parts instead of re-fetching. Both paths
-	// need the hashes populated, so enrich up front for either output mode.
-	await new Images(docView).enrichHashes();
-
 	if (ast) {
+		// Hashes are content-addressed image identifiers — read --ast surfaces
+		// them on each ImageRun so a round-trip through `insert --markdown` can
+		// reuse existing media parts. (The markdown path enriches inside
+		// renderReadMarkdown.)
+		await new Images(docView).enrichHashes();
 		await respond(docView.body);
 		return EXIT.OK;
 	}
 
 	try {
-		const rendered = renderMarkdown(docView.body, {
+		const rendered = await renderReadMarkdown(docView, {
 			from,
 			to,
 			view,
 			showComments,
-			defaultSizeHalfPoints: docView.styles?.defaultSizeHalfPoints(),
-			defaultFont: docView.styles?.defaultFont(),
-			trackChangesOn: docView.isTrackChangesEnabled(),
 		});
 		await writeStdout(rendered);
 		return EXIT.OK;

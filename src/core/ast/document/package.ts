@@ -13,10 +13,20 @@ export class Pkg {
 		if (!(await file.exists())) {
 			throw new PkgError("FILE_NOT_FOUND", `File not found: ${path}`);
 		}
-		const buf = await file.arrayBuffer();
+		return Pkg.fromBytes(await file.arrayBuffer(), path);
+	}
+
+	/** Load a package from raw bytes rather than a path — the `docx diff`
+	 * `--against -` / catted-`.docx` ingress (a .docx is a zip, so the bytes
+	 * come straight off stdin). `path` is a cosmetic label (flows to messages);
+	 * media parts are read from the loaded zip, not disk. */
+	static async fromBytes(
+		bytes: ArrayBuffer | Uint8Array,
+		path: string,
+	): Promise<Pkg> {
 		let zip: JSZip;
 		try {
-			zip = await JSZip.loadAsync(buf);
+			zip = await JSZip.loadAsync(bytes);
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
 			throw new PkgError("NOT_A_ZIP", `Not a valid .docx (zip): ${reason}`);

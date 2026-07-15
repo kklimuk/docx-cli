@@ -142,6 +142,7 @@ docx read FILE            # Markdown (default; tracked changes shown accepted-cl
 docx read FILE --ast      # lossless JSON AST
 docx wc FILE              # word count (whole doc or a slice)
 docx outline FILE         # headings as a locator tree
+docx diff FILE --against OLD.docx   # what changed vs another version (snapshot OLD first)
 \`\`\`
 
 ### Build from scratch / verify layout

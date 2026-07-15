@@ -146,6 +146,7 @@ docx find    FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current |
 docx find    FILE (--highlight COLOR|any | --color HEX | --bold | --italic | --underline) [--all] [--json]   # find by formatting (no QUERY)
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
+docx diff    FILE --against SRC [--from LOC] [--to LOC] [--comments] [--json]   # what changed vs another version
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
 docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
@@ -164,6 +165,25 @@ docx track-changes list FILE
 docx info schema   [--ts]
 docx info locators [--json]
 ```
+
+`docx diff` shows **what you changed** as a git-style unified diff — it renders both
+the current file and a baseline to their `read` markdown and diffs them, so `+` lines
+are what you added and `-` lines what you removed (a one-line edit shows inline as
+`[-removed-]{+added+}`). There's no undo/history, so **snapshot before editing** and
+diff against the snapshot:
+
+```sh
+cp report.docx report.orig.docx          # keep the original
+docx edit report.docx --at p3 --text "…" # make changes
+docx diff report.docx --against report.orig.docx
+```
+
+`--against` also takes a saved `docx read` output (a text file), or `-` to read the
+baseline from stdin — so you can diff against a git branch without any git integration:
+`git show main:report.docx | docx diff report.docx --against -`. Positional locators
+(`<!-- p3 -->`, cell/row ids) are normalized out so a structural edit doesn't renumber
+every following line; formatting/structure changes (shading, borders, tracked-changes
+state) still show. It's a read-only report, not a patch to apply.
 
 `docx read` surfaces structural facts the Markdown body can't show as HTML-comment
 annotations (`<!-- docx:TYPE … -->`). These are **read-time visibility hints** — the
@@ -516,6 +536,7 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 - **Runtime**: Bun (`node:util` parseArgs, JSX with custom factory, native zlib)
 - **Parser**: [`jszip`](https://www.npmjs.com/package/jszip) + [`fast-xml-parser`](https://www.npmjs.com/package/fast-xml-parser) + [`fast-xml-builder`](https://www.npmjs.com/package/fast-xml-builder)
 - **Markdown**: [`unified`](https://www.npmjs.com/package/unified) + [`remark-parse`](https://www.npmjs.com/package/remark-parse) + [`remark-gfm`](https://www.npmjs.com/package/remark-gfm) + [`remark-math`](https://www.npmjs.com/package/remark-math)
+- **Diff**: [`diff`](https://www.npmjs.com/package/diff) (jsdiff, BSD-3) backs `docx diff` — unified line hunks + HTML-aware word-level refinement of the read view
 - **Math**: [`temml`](https://www.npmjs.com/package/temml) (MIT) compiles LaTeX → MathML; an in-house MathML → OMML adapter handles the OOXML side bidirectionally
 - **Render**: [`@hyzyla/pdfium`](https://www.npmjs.com/package/@hyzyla/pdfium) (MIT wrapper + Apache-2.0 PDFium-as-WASM) for the PDF → PNG/JPG step, plus [`pngjs`](https://www.npmjs.com/package/pngjs) / [`jpeg-js`](https://www.npmjs.com/package/jpeg-js) for image encoding
 - **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif) transcodes HEIC/HEIF input to JPEG on insert

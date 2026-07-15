@@ -18,6 +18,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   replace   FILE PATTERN REPL  Substitute text spans, sed-style — KEEPS the run's formatting (bold/font) and any tabs, so it fills bold/tabbed template lines without rebuilding runs (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern fill)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
+  diff      FILE  Show what you changed vs another version — a git-style unified diff of the read view. Snapshot BEFORE editing ("cp doc.docx doc.orig.docx"), then "diff doc.docx --against doc.orig.docx" (--against also takes a saved read output, or - for stdin / a git branch)
   sections  FILE  Multi-column layout, section breaks & PAGE SETUP — columns on a range (--at pN-pM --columns N); page margins/orientation/size for the WHOLE document ("--margins 0.5" with NO --at sets every section) or one section (--at sN). The ONLY way to do columns; insert does not.
   styles    FILE  List/describe styles (--used, --at ID); "styles set --at Heading1 --color 1F4E79 --bold" restyles every heading; "styles create" mints one; "set-default-font" sets the doc font — the catalog isn't in the body
   render    FILE  Visual page verification — render each page as PNG/JPG via Word or LibreOffice
@@ -36,7 +37,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
 It is highly recommended to run "docx info locators" and "docx info schema" (neither needs a FILE) to understand the addressing model and AST.
 Run "docx <command> --help" for command-specific help.
 
-BATCH MANY CHANGES IN ONE READ: locator ids are positional and shift after structural
+BATCH MANY CHANGES AFTER ONE READ: locator ids are positional and shift after structural
 edits (insert/delete/section changes), so going one-at-a-time forces a re-read to refresh
 ids after each. Miss the change and the next command lands on the wrong block or errors
 BLOCK_NOT_FOUND. Skip all that: edit / insert / replace / delete and comments
@@ -51,7 +52,7 @@ the TEXT and the formatting + tabs are kept automatically: "docx replace OLD NEW
 preserve the run's bold/font and the surrounding tabs. Do NOT hand-build "--runs" JSON
 to re-create a line you're just refilling — that's slow and drops formatting.
 
-VERIFY LAYOUT VISUALLY — ONLY WHEN LAYOUT IS THE QUESTION: "docx read" is the source of
+VERIFY LAYOUT VISUALLY, ONLY WHEN LAYOUT IS THE QUESTION: "docx read" is the source of
 truth for CONTENT, so if you filled text, replaced placeholders, edited cells, or added
 comments / tracked changes, "read" plus the write→read loop already prove it — do NOT
 render (each render spins up Word and is slow). Render only for what Markdown can't show:
