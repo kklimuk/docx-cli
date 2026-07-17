@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { LocatorParseError, parseLocator } from "@core/locators";
+import {
+	isMarginalLocator,
+	LocatorParseError,
+	parseLocator,
+} from "@core/locators";
 
 describe("parseLocator", () => {
 	test("parses block ids", () => {
@@ -46,6 +50,21 @@ describe("parseLocator", () => {
 		});
 		expect(parseLocator("en0")).toEqual({ kind: "endnote", endnoteId: "en0" });
 		expect(parseLocator("en3")).toEqual({ kind: "endnote", endnoteId: "en3" });
+	});
+
+	test("parses hdrN / ftrN marginal ids", () => {
+		expect(parseLocator("hdr0")).toEqual({
+			kind: "marginal",
+			marginalId: "hdr0",
+		});
+		expect(parseLocator("ftr12")).toEqual({
+			kind: "marginal",
+			marginalId: "ftr12",
+		});
+		expect(isMarginalLocator("ftr0")).toBe(true);
+		expect(isMarginalLocator("hdr3")).toBe(true);
+		expect(isMarginalLocator("p0")).toBe(false);
+		expect(isMarginalLocator("header")).toBe(false);
 	});
 
 	test("parses span within a paragraph", () => {

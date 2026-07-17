@@ -215,10 +215,12 @@ function collectRuns(node: XmlNode): XmlNode[] {
 
 function extractRunFormatFromR(run: XmlNode): SharedFormat | undefined {
 	const rPr = run.findChild("m:rPr");
-	if (!rPr) return undefined;
-	const sty = rPr.findChild("m:sty")?.getAttribute("m:val");
+	const sty = rPr?.findChild("m:sty")?.getAttribute("m:val");
 	const bold = sty === "b" || sty === "bi";
-	const wRPr = rPr.findChild("w:rPr");
+	// CT_R puts `<w:rPr>` as m:rPr's SIBLING; docs we wrote before the emitter
+	// fix nested it INSIDE m:rPr — read both shapes so old files keep reading.
+	const wRPr = run.findChild("w:rPr") ?? rPr?.findChild("w:rPr");
+	if (!rPr && !wRPr) return undefined;
 	const color = wRPr?.findChild("w:color")?.getAttribute("w:val");
 	const sizeRaw = wRPr?.findChild("w:sz")?.getAttribute("w:val");
 	const sizeHalfPoints =

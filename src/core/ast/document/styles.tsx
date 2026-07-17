@@ -52,7 +52,7 @@ export function baselineCatalog(): XmlNode[] {
 	);
 }
 
-const STYLES_PART_NAME = "word/styles.xml";
+export const STYLES_PART_NAME = "word/styles.xml";
 const STYLES_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const STYLES_CONTENT_TYPE =

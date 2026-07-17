@@ -35,6 +35,8 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   tables    …     Create a table (create --after pN --rows N --cols M), then restructure — insert/delete rows & columns, merge/unmerge, set widths, borders, format
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"
   track-changes …  Toggle (on|off FILE); list / accept / reject revisions; "read" shows them as CriticMarkup
+  raw       …     LAST-RESORT escape hatch for OOXML no verb above covers. DO NOT USE THIS unless you've tried everything else.
+  validate  FILE  Schema-check the document against the bundled ECMA-376 transitional XSDs (per-part errors; exit 0 = clean)
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
 
 It is highly recommended to run "docx info locators" and "docx info schema" (neither needs a FILE) to understand the addressing model and AST.

@@ -1,5 +1,4 @@
-import { resolveAuthor, resolveDate } from "@core";
-import { Comments, findContainingParagraph } from "@core/comments";
+import { findContainingParagraph } from "@core/comments";
 import {
 	ImageSourceError,
 	Images,
@@ -7,6 +6,7 @@ import {
 	loadImageSource,
 	SUPPORTED_IMAGE_FORMATS,
 } from "@core/image";
+import { addAuditComment } from "../audit-comment";
 import {
 	EXIT,
 	fail,
@@ -171,9 +171,8 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	if (document.isTrackChangesEnabled()) {
-		const author = resolveAuthor(parsed.values.author as string | undefined);
-		const date = resolveDate();
-		const body = `[docx-cli] image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
+		const authorFlag = parsed.values.author as string | undefined;
+		const message = `image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
 		const drawingRuns = new Images(document)
 			.list()
 			.filter((hit) => hit.relationshipId === reference.relationshipId)
@@ -184,9 +183,11 @@ export async function run(args: string[]): Promise<number> {
 				drawingRun,
 			);
 			if (!paragraph) continue;
-			new Comments(document).addAudit(
+			addAuditComment(
+				document,
 				{ kind: "run", paragraph, run: drawingRun },
-				{ body, author, date },
+				message,
+				authorFlag,
 			);
 		}
 	}

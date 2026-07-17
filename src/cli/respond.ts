@@ -7,6 +7,7 @@ import {
 	PkgError,
 	parseLocator,
 } from "@core";
+import { Pkg } from "@core/ast/document/package";
 import { parseArgs } from "util";
 
 export const EXIT = {
@@ -27,10 +28,13 @@ export type ErrorCode =
 	| "IMAGE_NOT_FOUND"
 	| "IMAGE_SOURCE"
 	| "HYPERLINK_NOT_FOUND"
+	| "RELATIONSHIP_NOT_FOUND"
 	| "TRACKED_CHANGE_NOT_FOUND"
 	| "MATCH_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT"
 	| "TABLE_STRUCTURE"
+	| "INVALID_XML"
+	| "VALIDATION_FAILED"
 	| "RENDER_ENGINE"
 	| "RENDER_FAILED"
 	| "UNHANDLED";
@@ -219,6 +223,7 @@ function exitCodeFor(code: ErrorCode): number {
 	switch (code) {
 		case "USAGE":
 		case "INVALID_LOCATOR":
+		case "INVALID_XML":
 			return EXIT.USAGE_ERROR;
 		case "FILE_NOT_FOUND":
 		case "PART_NOT_FOUND":
@@ -226,12 +231,14 @@ function exitCodeFor(code: ErrorCode): number {
 		case "COMMENT_NOT_FOUND":
 		case "IMAGE_NOT_FOUND":
 		case "HYPERLINK_NOT_FOUND":
+		case "RELATIONSHIP_NOT_FOUND":
 		case "TRACKED_CHANGE_NOT_FOUND":
 		case "MATCH_NOT_FOUND":
 			return EXIT.NOT_FOUND;
 		case "NOT_A_ZIP":
 		case "TRACKED_CHANGE_CONFLICT":
 		case "TABLE_STRUCTURE":
+		case "VALIDATION_FAILED":
 		case "IMAGE_SOURCE":
 		case "RENDER_ENGINE":
 		case "RENDER_FAILED":
@@ -244,14 +251,30 @@ export async function openOrFail(path: string): Promise<Document | number> {
 	try {
 		return await Document.open(path);
 	} catch (err) {
-		if (err instanceof PkgError) {
-			if (err.code === "FILE_NOT_FOUND") {
-				return await fail("FILE_NOT_FOUND", err.message);
-			}
-			if (err.code === "NOT_A_ZIP") return await fail("NOT_A_ZIP", err.message);
-		}
-		throw err;
+		return pkgOpenError(err);
 	}
+}
+
+/** Open just the OPC package — no `Document`, so no body-AST build. For verbs
+ *  that only touch parts (`docx validate`, `raw part list`/`get`); building the
+ *  body would be pure waste. Maps `PkgError` to the CLI error shape exactly as
+ *  {@link openOrFail} does. */
+export async function openPkgOrFail(path: string): Promise<Pkg | number> {
+	try {
+		return await Pkg.open(path);
+	} catch (err) {
+		return pkgOpenError(err);
+	}
+}
+
+function pkgOpenError(err: unknown): Promise<number> {
+	if (err instanceof PkgError) {
+		if (err.code === "FILE_NOT_FOUND") {
+			return fail("FILE_NOT_FOUND", err.message);
+		}
+		if (err.code === "NOT_A_ZIP") return fail("NOT_A_ZIP", err.message);
+	}
+	throw err;
 }
 
 /** Resolve whether one mutating command should emit tracked changes. The

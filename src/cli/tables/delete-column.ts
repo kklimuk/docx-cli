@@ -135,6 +135,9 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const author = parsed.values.author as string | undefined;
+	// One allocator for the whole command so every cell's marker gets a
+	// distinct revision id.
+	const allocator = new TrackChanges(document).createAllocator();
 	for (const row of grid.rows) {
 		const cell = cellAt(row, target.col);
 		if (!cell) continue;
@@ -142,7 +145,7 @@ export async function run(args: string[]): Promise<number> {
 			markCellTracked(
 				cell.node,
 				"del",
-				new TrackChanges(document).mintMeta(author),
+				new TrackChanges(document).mintMeta(author, allocator),
 			);
 		} else {
 			const index = row.node.children.indexOf(cell.node);

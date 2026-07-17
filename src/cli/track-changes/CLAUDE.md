@@ -1,6 +1,6 @@
 # src/cli/track-changes
 
-`docx track-changes on|off FILE` toggles `<w:trackChanges/>` in settings.xml (the legacy `FILE on|off` order is still accepted). `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them; `apply FILE --accept H … --reject H …` does BOTH in one atomic call. The unwrap/delete logic lives in [run-apply.ts](run-apply.ts) (the shared accept/reject engine `runApply`) and [apply.ts](apply.ts) (the `apply` finalize verb); the lower-level state machine is in `@core/track-changes`.
+`docx track-changes on|off FILE` toggles `<w:trackRevisions/>` in settings.xml (the legacy `FILE on|off` order is still accepted). `list` enumerates revision wrappers; `accept`/`reject FILE (--at tcN | --all)` apply them; `apply FILE --accept H … --reject H …` does BOTH in one atomic call. The unwrap/delete logic lives in [run-apply.ts](run-apply.ts) (the shared accept/reject engine `runApply`) and [apply.ts](apply.ts) (the `apply` finalize verb); the lower-level state machine is in `@core/track-changes`.
 
 ## `list` is text-first; `apply` is the finalize verb
 
@@ -12,7 +12,7 @@ Two ergonomics fixes for the contract-finalize death spiral (a weak agent doing 
 
 ## Track-changes is doc-level, not per-command
 
-When `<w:trackChanges/>` is set, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` — there is no per-command override flag. For a one-off untracked edit: `track-changes off`, edit, `track-changes on`.
+When `<w:trackRevisions/>` is set, every mutating command (`insert`/`edit`/`delete`/`replace`) automatically emits `<w:ins>`/`<w:del>` — there is no per-command override flag. For a one-off untracked edit: `track-changes off`, edit, `track-changes on`.
 
 ## Accept/reject mechanics
 
@@ -62,3 +62,5 @@ What's deferred: `<w:rPrChange>` inside math runs (font-property revisions on in
 Extend `TrackedChange["kind"]` (and `TrackedChangeKind`) in `core/ast/types.ts`, widen the JSON schema enum in `cli/info/schema.ts`, register it in `walkRunContainer` (`core/ast/read.ts`) so it lands in `document.trackedChangeReferences`, update `paragraphTextAccepted`/`paragraphTextBaseline` in `core/ast/text.ts` and `isRunVisible`/`criticMarkerFor`/`trackedChangeLabelFor` in `cli/read/markdown.ts`. If the kind takes part in accept/reject, handle it in `actionFor`/`applyAccept`/`applyReject` in [apply.ts](apply.ts); if its wrapper tag is ambiguous, add it to `trackedChangeKindForTag` (apply.ts) or carry an explicit `kind` on the reference. Because there's only the one reader walk, you register in exactly one place — no second walker to keep in sync.
 
 Table-structural kinds (rowIns/rowDel/cellIns/cellDel/tblGridChange) live outside the run/paragraph machinery: register them in `readTable` (`core/ast/read.ts`), give the `TrackedChangeReference` an explicit `kind` (their tags are ambiguous) plus any row/cell scope (`tableRow`/`tableCell` + parents) that accept/reject needs, handle them in `applyTableChange` (apply.ts), and filter whole tracked rows by view in `renderTable` (`cli/read/markdown.ts`) — they don't touch `text.ts` (no run text). GFM tables can't express cell-level changes, so only whole-row insert/delete are view-filtered.
+
+If the new kind's element carries a revision `w:id`, ALSO add its tag to `REVISION_ID_TAGS` in `core/track-changes/index.tsx` — that set feeds `computeMaxRevisionId`, and a tag it doesn't know silently reintroduces duplicate revision ids (the tables bug the validator audit found). Multi-revision commands share one `createAllocator()` per invocation and pass it to every `mintMeta` call.

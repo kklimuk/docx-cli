@@ -18,13 +18,13 @@ We measured it — a controlled A/B bake-off: **six real document tasks** (fill 
 | :------------------------ | ------------------: | --------------------: | --------------: | --------------------: |
 |                           |        **docx-cli** |         default skill |    **docx-cli** |         default skill |
 | Tasks solved (of 6)       |       **4.3** (4–5) |             0.7 (0–1) |   **6.0** (6–6) |             4.0 (4–4) |
-| Rendered correctly (of 6) |                 6 |                   3.7 |             6.0 |                   4.7 |
+| Rendered correctly (of 6) |                   6 |                   3.7 |             6.0 |                   4.7 |
 | Outright-broken documents |               **0** |      ~1/run (up to 2) |           **0** |                     0 |
 | Input tokens              |            **2.4M** |           6.1M (2.6×) |        **1.6M** |           3.6M (2.2×) |
 | Wall-clock                |           **924 s** | 1,882 s (2.0× slower) |     **1,175 s** | 2,029 s (1.7× slower) |
 
 - **The correctness gap is widest on the cheap Haiku tier (~6×)**, and a frontier model never closes it — the default skill caps at 4/6, losing the contract redline and the résumé every Sonnet run.
-- **The cost and speed penalties are model-independent** — ~2.2–2.6× more tokens and ~1.7–2× slower at *both* tiers, with token/time ranges that never overlap.
+- **The cost and speed penalties are model-independent** — ~2.2–2.6× more tokens and ~1.7–2× slower at _both_ tiers, with token/time ranges that never overlap.
 - **Word couldn't reliably open the default skill's work** — it failed to open 5 of 36 of its outputs; all 36 of docx-cli's opened on the first try.
 
 Full methodology, per-task rubrics, and the harness that produced these numbers: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).
@@ -147,6 +147,8 @@ docx find    FILE (--highlight COLOR|any | --color HEX | --bold | --italic | --u
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
 docx diff    FILE --against SRC [--from LOC] [--to LOC] [--comments] [--json]   # what changed vs another version
+docx validate FILE [--json]              # ECMA-376 schema check, per WML part (exit 0 = clean)
+docx raw get FILE --at LOCATOR [--json]  # a block's exact XML — the read half of the raw patch loop
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
 docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
@@ -234,8 +236,10 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds
   image shows just its size). `overflow` flags an image wider than the usable text
   column (`ImageRun.floating`/`wrap`/`align` + EMU extents in `read --ast`).
-- **Headers / footers** surface as `<!-- docx:header text="Quarterly Report" -->`
-  / `<!-- docx:footer text="Page {page} of {pages}" -->` notes (the `type` attr
+- **Headers / footers** surface as `<!-- docx:header hdr0 text="Quarterly Report" -->`
+  / `<!-- docx:footer ftr0 text="Page {page} of {pages}" -->` notes — led by the
+  marginal's `hdrN`/`ftrN` id, the handle `raw get --at` and `headers`/`footers
+  set/clear --at` accept (the `type` attr
   appears only for `first`/`even`). Fields read as tokens — `{page}` `{pages}`
   `{date}` `{time}` `{styleref:NAME}` `{filename}` `{title}` `{author}` (`{time}`
   read-only). A marginal that's
@@ -405,6 +409,25 @@ docx track-changes apply  FILE [--accept H ...] [--reject H ...]
 # re-lists what remains with its renumbered handles.
 ```
 
+#### Raw OOXML escape hatch (last resort)
+
+```sh
+docx raw get FILE --at LOCATOR                     # a block/section/relationship's exact XML
+docx raw edit FILE --at LOCATOR --find S --with S  # patch it in place, one gated call
+docx raw replace FILE --at LOCATOR --xml '…'       # swap it wholesale (also --batch)
+docx raw insert FILE --after pN --xml '…'          # splice new block XML (or a <Relationship/>)
+docx raw part list|get|add|replace|edit FILE …     # OPC parts, addressed by --name
+docx validate FILE [--json]                        # schema-check against ECMA-376 (transitional)
+```
+
+For constructs no modeled verb covers — drop caps, TOC field codes, embedded
+objects. Every mutation runs a gate pipeline (well-formedness, addressable
+roots, ECMA-376 child order, reference/id integrity, and a schema check
+against the bundled transitional XSDs — a change may not ADD errors) and
+**nothing is written when any gate fails**. Inline `--xml`/`--find`/`--with`
+are verbatim; raw changes are never tracked. Details and examples:
+`docx raw --help`.
+
 > **One rule to memorize: addressing an existing thing is always `--at`.**
 > `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to _confine_ the substitution to one paragraph). `images extract --to DIR` is an _output directory_, not a locator.
 
@@ -415,9 +438,9 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 | Exit | Meaning                   | Error codes                                                                                                                                                         |
 | ---- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                   | —                                                                                                                                                                   |
-| `2`  | usage / bad locator       | `USAGE`, `INVALID_LOCATOR`                                                                                                                                          |
+| `2`  | usage / bad locator       | `USAGE`, `INVALID_LOCATOR`, `INVALID_XML`                                                                                                                           |
 | `3`  | addressed thing not found | `FILE_NOT_FOUND`, `PART_NOT_FOUND`, `BLOCK_NOT_FOUND`, `COMMENT_NOT_FOUND`, `IMAGE_NOT_FOUND`, `HYPERLINK_NOT_FOUND`, `TRACKED_CHANGE_NOT_FOUND`, `MATCH_NOT_FOUND` |
-| `1`  | general failure           | `NOT_A_ZIP`, `TRACKED_CHANGE_CONFLICT`, `TABLE_STRUCTURE`, `IMAGE_SOURCE`, `RENDER_ENGINE`, `RENDER_FAILED`, `UNHANDLED`                                            |
+| `1`  | general failure           | `NOT_A_ZIP`, `TRACKED_CHANGE_CONFLICT`, `TABLE_STRUCTURE`, `VALIDATION_FAILED`, `IMAGE_SOURCE`, `RENDER_ENGINE`, `RENDER_FAILED`, `UNHANDLED`                       |
 
 **Errors** print `{code, error, hint?}` JSON to stdout with a nonzero exit — note there is **no `ok` field**; the exit code plus `code` are the unambiguous signal.
 
@@ -438,18 +461,18 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 
 ## Discovering ids
 
-Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are derived from document order and **shift after structural edits** — re-read between non-trivial mutations. **Entity ids** (`cN`, `imgN`, `linkN`, `fnN`, `enN`, `tcN`, `eqN`) are surfaced by a `list` verb (or `read --ast`) and are what you pass to `--at`:
+Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are derived from document order and **shift after structural edits** — re-read between non-trivial mutations. **Entity ids** (`cN`, `imgN`, `linkN`, `fnN`, `enN`, `tcN`, `eqN`, `hdrN`, `ftrN`) are surfaced by a `list` verb (or `read --ast`) and are what you pass to `--at`:
 
 | Id                              | Discover with                                                                                                                            | Used by                                                                       |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `pN` / `tN` / `sN` (block ids)  | `docx read FILE` (the `<!-- pN -->` trailers), `docx read FILE --ast`, `docx outline FILE` (heading `pN`s), or `docx render` page images | `read`, `edit`, `insert`, `delete`, `wc`, `find` results                      |
 | `cN` (comment)                  | `docx comments list FILE`                                                                                                                | `comments reply/resolve/delete --at`                                          |
 | `fnN` / `enN` (foot/endnote)    | `docx footnotes list FILE` / `docx endnotes list FILE`                                                                                   | `footnotes/endnotes edit/delete --at`                                         |
-| `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast`)                                                                    | addressed by section+type, not the id: `headers/footers set --at sN --type T` |
+| `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast` / the `docx:header`/`docx:footer` note)                              | `raw get --at`, `headers/footers set/clear --at` (or scope by section: `--at sN --type T`) |
 | `imgN` (image)                  | `docx images list FILE`                                                                                                                  | `images extract/replace/delete --at`                                          |
 | `linkN` (hyperlink)             | `docx hyperlinks list FILE`                                                                                                              | `hyperlinks replace/delete --at`                                              |
 | `tcN` (tracked change)          | `docx track-changes list FILE`                                                                                                           | `track-changes accept/reject --at`                                            |
-| `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `equations edit --at eqN`                                                    |
+| `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `equations edit --at eqN`                                                     |
 
 Each `list` verb prints a bare JSON array where every item's `id` is exactly the handle you feed back to `--at` — pipe through `jq` to filter (`docx comments list doc.docx | jq '.[] | select(.author=="Jane")'`).
 
@@ -524,7 +547,7 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 
 **Span-aware comments & hyperlinks.** `comments add --at p3:5-20` (and `hyperlinks add`) find the runs containing offsets 5 and 20, split them at the boundaries (preserving `<w:rPr>` on both halves), and insert markers between the slices. Comments authored by older tools that lack `w14:paraId` (required by `commentsExtended.xml`) get a fresh paraId injected automatically on resolve/reply.
 
-**Tracked changes.** With `<w:trackChanges/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `Reviewer`); pass `--track` to one of those commands (or the `tables` verbs / `images delete`) to track just that invocation even when the doc toggle is off. `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image _deletion_ is honest removal — it wraps a real `<w:del>`).
+**Tracked changes.** With `<w:trackRevisions/>` set, `insert`/`edit`/`delete`/`replace` emit native `<w:ins>`/`<w:del>` (attributed via `--author`, `$DOCX_AUTHOR`, or `Reviewer`); pass `--track` to one of those commands (or the `tables` verbs / `images delete`) to track just that invocation even when the doc toggle is off. `edit --at pN --text` runs a word-level diff so unchanged words keep their formatting and only changed words are wrapped — the same shape Word produces mid-tracking. `accept`/`reject` handle run-level ins/del/moveFrom/moveTo, `sectPrChange`, paragraph-mark ins/del, and the table-structural revisions (rowIns/rowDel, cellIns/cellDel, tblGridChange, tcPrChange). OOXML has no tracked-change construct for hyperlink edits or image swaps, so under tracking those emit a `[docx-cli]` audit comment instead of a fake revision (image _deletion_ is honest removal — it wraps a real `<w:del>`).
 
 **Rich content.** Images insert from a path, `data:` URI, or `http(s)` URL (bounded fetch; HEIC→JPEG transcode; SVG sanitized; non-public/metadata addresses refused at every redirect hop). Equations round-trip OOXML `<m:oMath>` ↔ LaTeX (reconstructed, not legacy plaintext) — authored via temml (LaTeX→MathML) plus an in-house MathML→OMML adapter, no LGPL deps. Code blocks emit one `CodeBlock`-styled paragraph per line with optional lowlight syntax highlighting (37 bundled languages); they collapse back to a GFM fenced block on read. GFM task lists round-trip Word's checkbox content control (and the Word-for-Web Wingdings-glyph variant), surfacing as `taskState` in the AST. Tables operate on a merge-aware logical grid so `gridSpan`/`vMerge` cells map onto physical `<w:tc>`, and structural edits refuse to bisect an existing merge.
 
@@ -551,6 +574,7 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 - **Math**: [`temml`](https://www.npmjs.com/package/temml) (MIT) compiles LaTeX → MathML; an in-house MathML → OMML adapter handles the OOXML side bidirectionally
 - **Render**: [`@hyzyla/pdfium`](https://www.npmjs.com/package/@hyzyla/pdfium) (MIT wrapper + Apache-2.0 PDFium-as-WASM) for the PDF → PNG/JPG step, plus [`pngjs`](https://www.npmjs.com/package/pngjs) / [`jpeg-js`](https://www.npmjs.com/package/jpeg-js) for image encoding
 - **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif) transcodes HEIC/HEIF input to JPEG on insert
+- **Validation**: [`libxml2-wasm`](https://www.npmjs.com/package/libxml2-wasm) (MIT, libxml2 compiled to WASM) + the bundled ECMA-376 5th-edition transitional XSDs power `docx validate` and the `docx raw` schema gate — in-process, ~55 ms one-time schema compile, single-digit ms per document
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile
 

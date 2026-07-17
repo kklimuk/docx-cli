@@ -16,23 +16,28 @@ Examples:
 `;
 
 // One source of truth: the form groups below name keys in @core's LOCATOR_FORMS
-// registry, and both the text REFERENCE and the JSON_REFERENCE are rendered from
-// it — so this doc can't drift from the parser or from each command's help.
-const GROUPS: { title: string; keys: LocatorFormKey[] }[] = [
+// registry, and BOTH the text reference (renderReference) and the JSON reference
+// (renderJson, keyed by `jsonKey`) are rendered from it — so this doc can't drift
+// from the parser, from each command's help, or between its own two projections.
+const GROUPS: { title: string; jsonKey: string; keys: LocatorFormKey[] }[] = [
 	{
 		title: "Block locators",
+		jsonKey: "blockLocators",
 		keys: ["paragraph", "table", "section", "cellParagraph"],
 	},
 	{
 		title: "Span locators (characters within a single paragraph)",
+		jsonKey: "spanLocators",
 		keys: ["span", "cellSpan"],
 	},
 	{
 		title: "Range locators (across blocks)",
+		jsonKey: "rangeLocators",
 		keys: ["blockRange", "crossSpan"],
 	},
 	{
 		title: "Entity locators",
+		jsonKey: "entityLocators",
 		keys: [
 			"comment",
 			"image",
@@ -41,11 +46,14 @@ const GROUPS: { title: string; keys: LocatorFormKey[] }[] = [
 			"trackedChange",
 			"footnote",
 			"endnote",
+			"header",
+			"footer",
 			"cell",
 		],
 	},
 	{
 		title: 'Table-structure locators (for the "docx tables" verbs)',
+		jsonKey: "tableStructureLocators",
 		keys: ["tableRow", "tableColumn", "cellRange"],
 	},
 ];
@@ -119,6 +127,7 @@ Discovering ids:
   imgN             docx images list FILE
   linkN            docx hyperlinks list FILE
   fnN / enN        docx footnotes list FILE / docx endnotes list FILE
+  hdrN / ftrN      docx headers list FILE / docx footers list FILE
   tcN              docx track-changes list FILE
   eqN              docx read FILE --ast   (EquationRun.id)
 
@@ -143,20 +152,11 @@ function renderJson(): unknown {
 		);
 
 	return {
-		blockLocators: group(["paragraph", "table", "section", "cellParagraph"]),
-		spanLocators: group(["span", "cellSpan"]),
-		rangeLocators: group(["blockRange", "crossSpan"]),
-		entityLocators: group([
-			"comment",
-			"image",
-			"hyperlink",
-			"equation",
-			"trackedChange",
-			"footnote",
-			"endnote",
-			"cell",
-		]),
-		tableStructureLocators: group(["tableRow", "tableColumn", "cellRange"]),
+		// Derived from GROUPS (same list the text reference renders), so a new
+		// LOCATOR_FORMS entry lands in both projections from one edit.
+		...Object.fromEntries(
+			GROUPS.map((formGroup) => [formGroup.jsonKey, group(formGroup.keys)]),
+		),
 		notation: {
 			placeholders: "Uppercase letters are numeric indices (N, R, C, S, E, K).",
 			offsets: "Character offsets are 0-based, start inclusive, end exclusive.",
@@ -174,6 +174,7 @@ function renderJson(): unknown {
 			imgN: "docx images list FILE",
 			linkN: "docx hyperlinks list FILE",
 			"fnN/enN": "docx footnotes list FILE / docx endnotes list FILE",
+			"hdrN/ftrN": "docx headers list FILE / docx footers list FILE",
 			tcN: "docx track-changes list FILE",
 			eqN: "docx read FILE --ast (EquationRun.id)",
 		},

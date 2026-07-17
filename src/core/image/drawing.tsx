@@ -151,12 +151,19 @@ export function Image({
 	);
 }
 
+/** The two tags that carry a document-unique drawing-object id. Shared with
+ *  the raw reference audit so both mint against the same tag set — a third
+ *  id-carrying tag added here can't drift the two scanners apart. */
+export function isDrawingIdCarrier(tag: string): boolean {
+	return tag === "wp:docPr" || tag === "pic:cNvPr";
+}
+
 /** Drawing object ids (`wp:docPr`/`pic:cNvPr` @id) must be unique per document
  * or Word flags corruption. Scan existing ids and return max + 1. */
 export function nextDrawingId(documentTree: XmlNode[]): number {
 	let highest = 0;
 	function walk(node: XmlNode): void {
-		if (node.tag === "wp:docPr" || node.tag === "pic:cNvPr") {
+		if (isDrawingIdCarrier(node.tag)) {
 			const id = Number(node.getAttribute("id") ?? "0");
 			if (Number.isFinite(id) && id > highest) highest = id;
 		}

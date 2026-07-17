@@ -4,7 +4,14 @@ export {
 	type LocatorForm,
 	type LocatorFormKey,
 } from "./forms";
-export { type Locator, LocatorParseError, parseLocator } from "./parse";
+export {
+	isCellScopedLocator,
+	isMarginalLocator,
+	isRelationshipLocator,
+	type Locator,
+	LocatorParseError,
+	parseLocator,
+} from "./parse";
 export {
 	type BlockRangeReference,
 	type BlockTarget,

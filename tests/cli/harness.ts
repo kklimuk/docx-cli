@@ -43,6 +43,7 @@ const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	images: new Set(["replace", "delete"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
 	lists: new Set(["set"]),
+	raw: new Set(["insert", "replace", "edit", "part"]),
 	styles: new Set(["set-default-font", "set", "create"]),
 	tables: new Set([
 		"insert-row",

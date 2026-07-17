@@ -17,6 +17,11 @@ export type {
 	MarginalKind,
 	MarginalType,
 } from "./config";
+export {
+	enumerateMarginalRefs,
+	findMarginalRef,
+	type MarginalRef,
+} from "./resolve";
 
 /** A header/footer field: rides one `<w:fldSimple>` (or a small run sequence for
  *  "Page X of Y"). `page` → PAGE; `date` → DATE (optional `\@` format); `styleRef`

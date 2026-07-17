@@ -21,8 +21,8 @@ import {
 import {
 	isTypeError,
 	marginalNoun,
+	resolveMarginalScope,
 	resolveMarginalType,
-	resolveTargetSectPrs,
 } from "./shared";
 
 const OPTION_SPEC = {
@@ -50,11 +50,14 @@ function helpFor(kind: MarginalKind): string {
 	return `docx ${noun} set — set (create or replace) a ${kind}
 
 Usage:
-  docx ${noun} set FILE [--at sN] [placement] (content) [options]
+  docx ${noun} set FILE [--at sN | --at ${noun === "headers" ? "hdrN" : "ftrN"}] [placement] (content) [options]
 
 Placement (default = every page, all sections):
   --at sN            Target one section (default: the whole document — every
                      section, sharing one ${kind} part)
+  --at ${noun === "headers" ? "hdrN" : "ftrN"}         Target ONE existing ${kind} by its id (from ${noun} list /
+                     read); its placement is fixed by the id, so don't also pass
+                     a --type/--first-page/--even flag
   --type T           default | first | even  (default: default)
   --first-page       ≡ --type first  (a different/blank first page)
   --even             ≡ --type even   (even pages; toggles evenAndOddHeaders)
@@ -111,8 +114,9 @@ export async function runSetMarginal(
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", helpFor(kind));
 
-	const type = resolveMarginalType(parsed.values);
-	if (isTypeError(type)) return fail("USAGE", type.error, type.hint);
+	const placement = resolveMarginalType(parsed.values);
+	if (isTypeError(placement))
+		return fail("USAGE", placement.error, placement.hint);
 
 	const field = resolveField(parsed.values);
 	if (isFieldError(field)) return fail("USAGE", field.error, field.hint);
@@ -139,8 +143,15 @@ export async function runSetMarginal(
 	if (typeof document === "number") return document;
 
 	const atLocator = parsed.values.at as string | undefined;
-	const targets = await resolveTargetSectPrs(document, atLocator);
-	if (typeof targets === "number") return targets;
+	const scope = await resolveMarginalScope(
+		document,
+		atLocator,
+		kind,
+		placement.type,
+		placement.explicit,
+	);
+	if (typeof scope === "number") return scope;
+	const { sectPrs: targets, type } = scope;
 
 	const spec: MarginalSpec = { text, align, field };
 	const tracked = resolveTracked(document, parsed.values.track);

@@ -4,7 +4,7 @@ import type { ContentTypesView } from "./content-types";
 import type { Pkg } from "./package";
 import type { RelationshipsView } from "./relationships";
 
-const SETTINGS_PART_NAME = "word/settings.xml";
+export const SETTINGS_PART_NAME = "word/settings.xml";
 const SETTINGS_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
 const SETTINGS_CONTENT_TYPE =
@@ -13,46 +13,142 @@ const SETTINGS_CONTENT_TYPE =
 const W_NAMESPACE =
 	"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-/** CT_Settings elements that follow `<w:footnotePr>`/`<w:endnotePr>` in the
- *  ECMA-376 §17.15.1.78 sequence — note-pr inserts before the first one present
- *  to stay schema-valid. Covers the tail elements that actually occur in real
- *  settings parts (Word always writes `<w:compat>`; the rest appear variably).
- *  Namespaced docId variants (`w14:`/`w15:`) are the common round-trip cases. */
-const NOTE_PR_SUCCESSORS = new Set<string>([
-	"w:compat",
-	"w:rsids",
-	"m:mathPr",
-	"w:themeFontLang",
-	"w:clrSchemeMapping",
-	"w:shapeDefaults",
-	"w:decimalSymbol",
-	"w:listSeparator",
-	"w:docId",
-	"w14:docId",
-	"w15:docId",
-	"w:chartTrackingRefBased",
+/** The document-level track-changes toggle: `<w:trackRevisions/>` is the real
+ *  CT_Settings element (§17.15.1.90 — what Word writes); `w:trackChanges` is
+ *  the misnamed element earlier docx-cli versions emitted (Word ignores it).
+ *  Read both so those documents still report tracking-on; write only the real
+ *  one and drop the legacy on toggle. */
+const TRACK_TOGGLE_TAGS = new Set<string>([
+	"w:trackRevisions",
+	"w:trackChanges",
 ]);
 
-/** CT_Settings elements that follow `<w:evenAndOddHeaders/>` (§17.15.1.78 pos 43)
- *  but PRECEDE `<w:footnotePr>`/`<w:endnotePr>` and the note-pr tail. The toggle
- *  must insert before the first of THESE too — otherwise on the canonical Word
- *  template (`…defaultTabStop, characterSpacingControl, compat…`) it would skip
- *  past `characterSpacingControl` (pos 57) and land out of order. Covers the
- *  mid-tail elements that realistically occur; Word/LibreOffice tolerate the rest. */
-const EVEN_AND_ODD_SUCCESSORS = new Set<string>([
-	"w:footnotePr",
-	"w:endnotePr",
-	"w:characterSpacingControl",
+/** The full CT_Settings child sequence (ECMA-376 §17.15.1.78), extracted from
+ *  the bundled transitional `wml.xsd` — the settings analog of
+ *  `PPR_CHILD_ORDER`/`SECTPR_CHILD_ORDER`. Every settings toggle splices via
+ *  `insertSettingsChildInOrder`, so adding a new one is one call, not a new
+ *  hand-maintained successor set. Extension elements Word appends after the
+ *  schema sequence (`w14:docId`, `w15:docId`, …) are deliberately absent —
+ *  unknown tags rank last, which is exactly where they live. */
+const SETTINGS_CHILD_ORDER = [
+	"w:writeProtection",
+	"w:view",
+	"w:zoom",
+	"w:removePersonalInformation",
+	"w:removeDateAndTime",
+	"w:doNotDisplayPageBoundaries",
+	"w:displayBackgroundShape",
+	"w:printPostScriptOverText",
+	"w:printFractionalCharacterWidth",
+	"w:printFormsData",
+	"w:embedTrueTypeFonts",
+	"w:embedSystemFonts",
+	"w:saveSubsetFonts",
+	"w:saveFormsData",
+	"w:mirrorMargins",
+	"w:alignBordersAndEdges",
+	"w:bordersDoNotSurroundHeader",
+	"w:bordersDoNotSurroundFooter",
+	"w:gutterAtTop",
+	"w:hideSpellingErrors",
+	"w:hideGrammaticalErrors",
+	"w:activeWritingStyle",
+	"w:proofState",
+	"w:formsDesign",
+	"w:attachedTemplate",
+	"w:linkStyles",
+	"w:stylePaneFormatFilter",
+	"w:stylePaneSortMethod",
+	"w:documentType",
+	"w:mailMerge",
+	"w:revisionView",
+	"w:trackRevisions",
+	"w:doNotTrackMoves",
+	"w:doNotTrackFormatting",
+	"w:documentProtection",
+	"w:autoFormatOverride",
+	"w:styleLockTheme",
+	"w:styleLockQFSet",
+	"w:defaultTabStop",
+	"w:autoHyphenation",
+	"w:consecutiveHyphenLimit",
+	"w:hyphenationZone",
+	"w:doNotHyphenateCaps",
+	"w:showEnvelope",
+	"w:summaryLength",
+	"w:clickAndTypeStyle",
+	"w:defaultTableStyle",
+	"w:evenAndOddHeaders",
+	"w:bookFoldRevPrinting",
+	"w:bookFoldPrinting",
+	"w:bookFoldPrintingSheets",
+	"w:drawingGridHorizontalSpacing",
+	"w:drawingGridVerticalSpacing",
+	"w:displayHorizontalDrawingGridEvery",
+	"w:displayVerticalDrawingGridEvery",
 	"w:doNotUseMarginsForDrawingGridOrigin",
-	"w:displayHangulFixedWidth",
+	"w:drawingGridHorizontalOrigin",
+	"w:drawingGridVerticalOrigin",
+	"w:doNotShadeFormData",
 	"w:noPunctuationKerning",
+	"w:characterSpacingControl",
 	"w:printTwoOnOne",
 	"w:strictFirstAndLastChars",
+	"w:noLineBreaksAfter",
+	"w:noLineBreaksBefore",
 	"w:savePreviewPicture",
+	"w:doNotValidateAgainstSchema",
+	"w:saveInvalidXml",
+	"w:ignoreMixedContent",
+	"w:alwaysShowPlaceholderText",
+	"w:doNotDemarcateInvalidXml",
+	"w:saveXmlDataOnly",
+	"w:useXSLTWhenSaving",
+	"w:saveThroughXslt",
+	"w:showXMLTags",
+	"w:alwaysMergeEmptyNamespace",
 	"w:updateFields",
 	"w:hdrShapeDefaults",
-	...NOTE_PR_SUCCESSORS,
-]);
+	"w:footnotePr",
+	"w:endnotePr",
+	"w:compat",
+	"w:docVars",
+	"w:rsids",
+	"m:mathPr",
+	"w:attachedSchema",
+	"w:themeFontLang",
+	"w:clrSchemeMapping",
+	"w:doNotIncludeSubdocsInStats",
+	"w:doNotAutoCompressPictures",
+	"w:forceUpgrade",
+	"w:captions",
+	"w:readModeInkLockDown",
+	"w:smartTagType",
+	"sl:schemaLibrary",
+	"w:shapeDefaults",
+	"w:doNotEmbedSmartTags",
+	"w:decimalSymbol",
+	"w:listSeparator",
+] as const;
+
+function settingsChildRank(tag: string): number {
+	const index = SETTINGS_CHILD_ORDER.indexOf(
+		tag as (typeof SETTINGS_CHILD_ORDER)[number],
+	);
+	return index >= 0 ? index : SETTINGS_CHILD_ORDER.length;
+}
+
+/** Splice a child into `<w:settings>` at its CT_Settings slot: before the
+ *  first element that ranks after it. Unknown tags (extension elements like
+ *  `w14:docId`) rank last, matching where Word writes them. */
+function insertSettingsChildInOrder(root: XmlNode, child: XmlNode): void {
+	const rank = settingsChildRank(child.tag);
+	const at = root.children.findIndex(
+		(existing) => !existing.isText && settingsChildRank(existing.tag) > rank,
+	);
+	if (at < 0) root.children.push(child);
+	else root.children.splice(at, 0, child);
+}
 
 export class SettingsView {
 	tree: XmlNode[];
@@ -94,74 +190,64 @@ export class SettingsView {
 	isTrackChangesEnabled(): boolean {
 		const root = XmlNode.findRoot(this.tree, "w:settings");
 		if (!root) return false;
-		return root.children.some((child) => child.tag === "w:trackChanges");
+		return root.children.some((child) => TRACK_TOGGLE_TAGS.has(child.tag));
 	}
 
+	/** Toggle the document-level track-changes setting. The real CT_Settings
+	 *  element is `<w:trackRevisions/>` (§17.15.1.90 — what Word itself writes;
+	 *  `w:trackChanges` does not exist in the schema). Earlier docx-cli versions
+	 *  emitted the misnamed `<w:trackChanges/>`, which Word ignores — so we READ
+	 *  both (a doc we toggled still reads as tracking-on) and MIGRATE the legacy
+	 *  element to the real one whenever the toggle runs. */
 	setTrackChangesEnabled(on: boolean): void {
 		const root = this.ensureSettingsRoot();
-		const hasTrackChanges = root.children.some(
-			(child) => child.tag === "w:trackChanges",
-		);
-		if (on && !hasTrackChanges) {
-			root.children.unshift(<w.trackChanges />);
-		} else if (!on && hasTrackChanges) {
+		if (!on) {
 			root.children = root.children.filter(
-				(child) => child.tag !== "w:trackChanges",
+				(child) => !TRACK_TOGGLE_TAGS.has(child.tag),
 			);
+			return;
 		}
+		root.children = root.children.filter(
+			(child) => child.tag !== "w:trackChanges",
+		);
+		if (root.children.some((child) => child.tag === "w:trackRevisions")) {
+			return;
+		}
+		insertSettingsChildInOrder(root, <w.trackRevisions />);
 	}
 
 	/** Ensure `<w:footnotePr>` / `<w:endnotePr>` is present, declaring the
 	 *  reserved separator (id -1) + continuationSeparator (id 0) notes that live
 	 *  in `footnotes.xml` / `endnotes.xml`. Word REQUIRES this settings-level
 	 *  pointer to render a notes part — without it Word reports the document as
-	 *  unreadable and "repairs" it by adding exactly this. Idempotent; inserted
-	 *  before the first CT_Settings element that must follow note-pr so the child
-	 *  order stays valid even when `<w:compat>` is absent (an imported settings
-	 *  part may have none). Word/LibreOffice are lenient about settings order, so
-	 *  the append fallback is a safe best-effort if no successor is present. */
+	 *  unreadable and "repairs" it by adding exactly this. Idempotent; spliced
+	 *  at its CT_Settings slot so the child order stays valid regardless of
+	 *  which neighbors the part already carries. */
 	ensureNotePr(kind: "footnote" | "endnote"): void {
 		const tag = kind === "footnote" ? "w:footnotePr" : "w:endnotePr";
 		const root = this.ensureSettingsRoot();
 		if (root.children.some((child) => child.tag === tag)) return;
 		const NotePr = kind === "footnote" ? w.footnotePr : w.endnotePr;
 		const Note = kind === "footnote" ? w.footnote : w.endnote;
-		const node = (
+		insertSettingsChildInOrder(
+			root,
 			<NotePr>
 				<Note w-id="-1" />
 				<Note w-id="0" />
-			</NotePr>
+			</NotePr>,
 		);
-		// `<w:footnotePr>` then `<w:endnotePr>` sit near the END of CT_Settings
-		// (§17.15.1.78), just before this tail. Insert before the first tail
-		// element present; when called for both kinds, footnotePr goes in first
-		// and endnotePr then lands right after it (still before the tail), so
-		// their required relative order is preserved.
-		const successorIndex = root.children.findIndex((child) =>
-			NOTE_PR_SUCCESSORS.has(child.tag),
-		);
-		if (successorIndex === -1) root.children.push(node);
-		else root.children.splice(successorIndex, 0, node);
 	}
 
 	/** Ensure `<w:evenAndOddHeaders/>` is present — the DOCUMENT-level toggle that
 	 *  makes Word honor `even`-type header/footer references (without it, an even
-	 *  marginal is ignored and the default applies to every page). Idempotent.
-	 *  In CT_Settings (§17.15.1.78) it sits before `<w:footnotePr>`/`<w:endnotePr>`
-	 *  and the `<w:compat>` tail, so we insert before the first of those present
-	 *  (Word/LibreOffice are lenient about settings order; append is a safe
-	 *  fallback when none is present). */
+	 *  marginal is ignored and the default applies to every page). Idempotent;
+	 *  spliced at its CT_Settings slot. */
 	ensureEvenAndOddHeaders(): void {
 		const root = this.ensureSettingsRoot();
 		if (root.children.some((child) => child.tag === "w:evenAndOddHeaders")) {
 			return;
 		}
-		const node = <w.evenAndOddHeaders />;
-		const successorIndex = root.children.findIndex((child) =>
-			EVEN_AND_ODD_SUCCESSORS.has(child.tag),
-		);
-		if (successorIndex === -1) root.children.push(node);
-		else root.children.splice(successorIndex, 0, node);
+		insertSettingsChildInOrder(root, <w.evenAndOddHeaders />);
 	}
 
 	/** Remove `<w:evenAndOddHeaders/>` — the counterpart to `ensureEvenAndOddHeaders`,

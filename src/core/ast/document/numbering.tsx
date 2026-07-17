@@ -38,7 +38,7 @@ export function numFmtToFormat(numFmt: string): string {
 	return NUMFMT_TO_FORMAT[numFmt] ?? numFmt;
 }
 
-const NUMBERING_PART_NAME = "word/numbering.xml";
+export const NUMBERING_PART_NAME = "word/numbering.xml";
 const NUMBERING_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
 const NUMBERING_CONTENT_TYPE =
@@ -263,6 +263,12 @@ export class NumberingView {
 		root.children.push(num);
 		this.setStart(String(numId), 0, start);
 		return numId;
+	}
+
+	/** Whether a `<w:num>` with this numId exists — the reference check `raw`
+	 * runs before letting a fragment point at a list definition. */
+	hasNum(numId: string): boolean {
+		return this.findNum(numId) !== undefined;
 	}
 
 	private findNum(numId: string): XmlNode | undefined {

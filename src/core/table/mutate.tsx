@@ -264,7 +264,8 @@ function pruneEmptyTrPr(row: XmlNode, trPr: XmlNode): void {
  * `<w:tblGrid>` whose `<w:gridCol>` set has just been mutated — the tracked
  * record of a column-width/count revision (ECMA-376 §17.4.49). `priorCols`
  * are clones of the gridCol elements as they were *before* the mutation.
- * Mirrors `wrapSectPrChange`. */
+ * Mirrors `wrapSectPrChange`. CT_TblGridChange extends CT_Markup, which
+ * carries ONLY `w:id` — no author/date (the per-cell markers carry those). */
 export function appendTblGridChange(
 	tblGrid: XmlNode,
 	priorCols: XmlNode[],
@@ -274,11 +275,7 @@ export function appendTblGridChange(
 		(child) => child.tag !== "w:tblGridChange",
 	);
 	tblGrid.children.push(
-		<w.tblGridChange
-			w-id={String(meta.revisionId)}
-			w-author={meta.author}
-			w-date={meta.date}
-		>
+		<w.tblGridChange w-id={String(meta.revisionId)}>
 			<w.tblGrid>{priorCols.map((col) => col.clone())}</w.tblGrid>
 		</w.tblGridChange>,
 	);

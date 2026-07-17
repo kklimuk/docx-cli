@@ -157,20 +157,25 @@ function MathRun({
 			</m.r>
 		);
 	}
+	// CT_R is a sequence: `<m:rPr>` first, then the WORD run properties
+	// (`<w:rPr>`) as its SIBLING — nesting w:rPr inside m:rPr is schema-invalid
+	// (m:rPr only takes m:lit/m:nor/m:scr/m:sty/m:brk/m:aln).
 	return (
 		<m.r>
-			<m.rPr>
-				{styVal && <m.sty m-val={styVal} />}
-				{hasWRPr && (
-					<w.rPr>
-						{color !== undefined && <w.color w-val={color} />}
-						{sizeHalfPoints !== undefined && (
-							<w.sz w-val={String(sizeHalfPoints)} />
-						)}
-						{strike && <w.strike />}
-					</w.rPr>
-				)}
-			</m.rPr>
+			{styVal && (
+				<m.rPr>
+					<m.sty m-val={styVal} />
+				</m.rPr>
+			)}
+			{hasWRPr && (
+				<w.rPr>
+					{color !== undefined && <w.color w-val={color} />}
+					{sizeHalfPoints !== undefined && (
+						<w.sz w-val={String(sizeHalfPoints)} />
+					)}
+					{strike && <w.strike />}
+				</w.rPr>
+			)}
 			<m.t>{text}</m.t>
 		</m.r>
 	);
