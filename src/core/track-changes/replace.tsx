@@ -7,9 +7,9 @@ import {
 	wrapPprChange,
 } from "../blocks";
 import { partitionParagraphRuns, XmlNode } from "../parser";
-import { Del, Ins, markParagraphMarkAs } from "./emit";
+import { Ins, markParagraphMarkAs } from "./emit";
 import {
-	convertTextToDelText,
+	deleteParagraphContent,
 	resolveAuthor,
 	resolveDate,
 	TrackChanges,
@@ -113,7 +113,7 @@ export function applyTrackedRangeReplace(
 	for (let index = startIndex; index < endIndex; index++) {
 		const para = parent[index];
 		if (!para) continue;
-		convertParagraphContentToDeleted(para, mintMeta);
+		deleteParagraphContent(para, mintMeta);
 		markParagraphMarkAs(para, "del", mintMeta());
 	}
 
@@ -124,7 +124,7 @@ export function applyTrackedRangeReplace(
 	const firstNew = newParagraphs[0];
 	if (!transition || !firstNew) return;
 	const firstNewPPr = firstNew.findChild("w:pPr");
-	convertParagraphContentToDeleted(transition, mintMeta);
+	deleteParagraphContent(transition, mintMeta);
 	if (firstNewPPr) {
 		replacePPr(transition, firstNewPPr);
 	}
@@ -217,7 +217,7 @@ export function applyTrackedRangeDelete(
 	for (let index = startIndex; index <= endIndex; index++) {
 		const para = parent[index];
 		if (!para) continue;
-		convertParagraphContentToDeleted(para, mintMeta);
+		deleteParagraphContent(para, mintMeta);
 		if (index < endIndex) {
 			markParagraphMarkAs(para, "del", mintMeta());
 		}
@@ -321,33 +321,13 @@ function blankParagraphInPlace(paragraph: XmlNode): void {
 	paragraph.children = pPr ? [pPr] : [];
 }
 
-function convertParagraphContentToDeleted(
-	paragraph: XmlNode,
-	mintMeta: () => TrackedMeta,
-): void {
-	// Wrap each contiguous span of trackable run-level children
-	// (`<w:r>`, `<m:oMath>`, `<m:oMathPara>`) in its own `<w:del>`, leaving
-	// pre-existing wrappers (`<w:ins>`, `<w:del>`, `<w:hyperlink>`,
-	// `<w:moveFrom>`, `<w:moveTo>`, `<w:fldSimple>`, `<w:smartTag>`) in
-	// place. Mirrors the `applyDeletion` shape in `index.tsx` so a tracked
-	// range-delete preserves walker-emitted CriticMarkup (or any other
-	// inner-wrapper-carrying input) instead of nesting it under an outer
-	// del that clobbers its metadata. See [CLAUDE.md "Tracked range edit /
-	// delete — Word-canonical shapes"](./CLAUDE.md).
-	paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => {
-		const converted = runs.map((run) =>
-			run.tag === "w:r" ? convertTextToDelText(run) : run,
-		);
-		return <Del meta={mintMeta()}>{converted}</Del>;
-	});
-}
-
 function wrapNewParagraphContentAsInserted(
 	paragraph: XmlNode,
 	mintMeta: () => TrackedMeta,
 ): void {
-	// See `convertParagraphContentToDeleted` for the rationale — same
-	// contiguous-wrap pattern, just emitting `<w:ins>`. This is the path
+	// See `deleteParagraphContent` for the rationale — same contiguous-wrap
+	// pattern, just emitting `<w:ins>` (and no `dropOwnInsertions`, since new
+	// content has no prior insertions to drop). This is the path
 	// that was previously losing CriticMarkup `<w:ins>`/`<w:del>` metadata
 	// from `edit --markdown` source — the walker's inner wrapper would get
 	// flattened into the outer one carrying the editor's author, dropping

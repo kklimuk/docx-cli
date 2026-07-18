@@ -1190,6 +1190,33 @@ describe("--track forces tracked emission with the global toggle off", () => {
 		expect((await changes(docPath)).some((c) => c.kind === "del")).toBe(true);
 	});
 
+	test("delete --track before a numbered list: accept keeps the list numbering", async () => {
+		// Regression: deleting a plain paragraph immediately before a numbered list,
+		// under tracking, used to CORRUPT the list on accept — the deleted paragraph's
+		// mark-del merged it into the first list item, and the merge kept the DELETED
+		// paragraph's (plain) pPr, so the list item lost its `<w:numPr>` and read as
+		// plain text while the whole list renumbered. Accepting a paragraph-mark
+		// deletion must adopt the NEXT paragraph's pPr (ECMA-376 §17.13.5.4).
+		const docPath = await docFrom(
+			"track-delete-before-list",
+			"Intro paragraph to delete.\n\n1. Clause A\n2. Clause B\n3. Clause C\n",
+		);
+		expect(
+			(await runCli("delete", docPath, "--at", "p0", "--track")).exitCode,
+		).toBe(0);
+		expect(
+			(await runCli("track-changes", "accept", docPath, "--all")).exitCode,
+		).toBe(0);
+
+		// The list survives with its numbering intact, and nothing is left tracked.
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toMatch(/^1\. Clause A/m);
+		expect(md).toMatch(/^2\. Clause B/m);
+		expect(md).toMatch(/^3\. Clause C/m);
+		expect(md).not.toContain("Intro paragraph");
+		expect(await changes(docPath)).toHaveLength(0);
+	});
+
 	test("tables delete-row --track emits a rowDel revision", async () => {
 		const docPath = await docFrom(
 			"track-table",

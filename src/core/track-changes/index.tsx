@@ -143,12 +143,7 @@ export class TrackChanges {
 	 * (merging forward); reject restores it. */
 	applyDeletion(paragraph: XmlNode, authorFlag?: string): void {
 		const mintMeta = this.metaMinter(authorFlag);
-		paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => {
-			const converted = runs.map((child) =>
-				child.tag === "w:r" ? convertTextToDelText(child) : child,
-			);
-			return <Del meta={mintMeta()}>{converted}</Del>;
-		});
+		deleteParagraphContent(paragraph, mintMeta);
 		markParagraphMarkAs(paragraph, "del", mintMeta());
 	}
 
@@ -159,13 +154,7 @@ export class TrackChanges {
 	 * least one `<w:p>`), so accept-all leaves a valid empty paragraph rather
 	 * than an empty `<w:tc/>`. See `removeParagraphLine` in [replace.tsx](./replace.tsx). */
 	applyContentDeletion(paragraph: XmlNode, authorFlag?: string): void {
-		const mintMeta = this.metaMinter(authorFlag);
-		paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => {
-			const converted = runs.map((child) =>
-				child.tag === "w:r" ? convertTextToDelText(child) : child,
-			);
-			return <Del meta={mintMeta()}>{converted}</Del>;
-		});
+		deleteParagraphContent(paragraph, this.metaMinter(authorFlag));
 	}
 
 	/** A revision-meta minter backed by one allocator + a fixed author/date —
@@ -212,6 +201,49 @@ export function wrapContiguousTrackable(
 	}
 	flush();
 	return out;
+}
+
+/** Drop the paragraph's OWN unaccepted insertions (top-level `<w:ins>`) before a
+ * tracked delete/replace re-wraps its content. A `<w:ins>` sitting directly in the
+ * paragraph is content this same tracking pass inserted but that hasn't been
+ * accepted; re-deleting or replacing it must UN-insert it — remove the wrapper and
+ * its runs — NOT leave it visible. Leaving it produced duplicate text that survived
+ * Accept All: a paragraph edited twice under tracking (a single-block `--markdown`
+ * then a multi-block split, or an `edit` then a `delete`) kept the FIRST edit's
+ * `<w:ins>` AND the second's, so accept-all showed the sentence twice. Dropping is
+ * correct on BOTH sides of the review — accept and reject each make an unaccepted-
+ * then-replaced insertion vanish (reject restores the true baseline, which lives in
+ * the sibling `<w:del>`). Already-deleted content (`<w:del>`) and baseline runs are
+ * left untouched for the caller's del-wrapping; the paragraph-mark ins/del inside
+ * `<w:pPr><w:rPr>` is nested, not a top-level child, so it's never affected. Assumes
+ * the single-author (doc-level "Reviewer") model track-changes uses — a genuine
+ * cross-author prior insertion would need Word's nested del-of-ins shape instead,
+ * which we don't model. */
+export function dropOwnInsertions(children: XmlNode[]): XmlNode[] {
+	return children.filter((child) => child.tag !== "w:ins");
+}
+
+/** Convert a paragraph's live content to tracked-DELETED, in place: first
+ * `dropOwnInsertions` (un-insert the paragraph's own unaccepted `<w:ins>`), then
+ * wrap each contiguous trackable run-span in `<w:del>` (renaming `<w:t>`→
+ * `<w:delText>`), leaving existing `<w:del>`/`<w:hyperlink>`/… wrappers in place.
+ * Does NOT touch the paragraph mark — a caller that also deletes the break adds
+ * `markParagraphMarkAs(paragraph, "del", …)` after. The single del-content shape,
+ * shared by `applyDeletion` / `applyContentDeletion` here and the range-replace
+ * transition + interior paragraphs in [replace.tsx](./replace.tsx). */
+export function deleteParagraphContent(
+	paragraph: XmlNode,
+	mintMeta: () => TrackedMeta,
+): void {
+	paragraph.children = wrapContiguousTrackable(
+		dropOwnInsertions(paragraph.children),
+		(runs) => {
+			const converted = runs.map((child) =>
+				child.tag === "w:r" ? convertTextToDelText(child) : child,
+			);
+			return <Del meta={mintMeta()}>{converted}</Del>;
+		},
+	);
 }
 
 export function resolveAuthor(authorFlag?: string): string {

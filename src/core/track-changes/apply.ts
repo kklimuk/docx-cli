@@ -324,8 +324,25 @@ function applyReject(target: ChangeFound): void {
 	}
 	if (target.paragraph && target.paragraphParent) {
 		if (target.kind === "ins") {
-			const idx = target.paragraphParent.indexOf(target.paragraph);
-			if (idx !== -1) target.paragraphParent.splice(idx, 1);
+			// Reject an inserted paragraph break. A freshly-inserted paragraph
+			// vanishes wholesale — even one that carries a passed-through
+			// `<w:hyperlink>`/`<w:bookmarkStart>` (which `applyInsertion` leaves
+			// UNwrapped, so they're not `<w:ins>` but ARE part of the insertion).
+			// The exception is a paragraph that holds reject-RESTORABLE baseline —
+			// a `<w:del>`/`<w:moveFrom>` whose text reject brings back (the
+			// transition paragraph of a 1→N range replace, whose del carries the
+			// original): splicing the whole `<w:p>` out would destroy that restore
+			// (the reject-all-loses-the-original bug that hit every N≥2 multi-block
+			// edit). Only then strip the break marker and keep the paragraph; the
+			// following purely-inserted paragraphs splice themselves out, so it
+			// simply re-absorbs its restored content. Keying on "any non-ins child"
+			// instead would wrongly KEEP a fresh insert's hyperlink as an orphan.
+			if (paragraphHasRestorableContent(target.paragraph)) {
+				deleteNode(target.node, target.parent);
+			} else {
+				const idx = target.paragraphParent.indexOf(target.paragraph);
+				if (idx !== -1) target.paragraphParent.splice(idx, 1);
+			}
 			return;
 		}
 		if (target.kind === "del") {
@@ -488,15 +505,18 @@ function cellGridSpan(cell: XmlNode): number {
 	return Number.isFinite(value) && value > 1 ? value : 1;
 }
 
-/** Accept-del-paragraph-mark: the paragraph break is being deleted, so this
- * paragraph absorbs the next paragraph's runs and the next paragraph
- * vanishes. Per ECMA-376 §17.13.5.4. The current paragraph's pPr is
- * preserved; the next paragraph's pPr is dropped — EXCEPT for `<w:sectPr>`,
- * which represents the section ending at that paragraph break. The merged
- * paragraph is the new end of that section, so its sectPr is lifted onto
- * the current paragraph's pPr (creating one if needed). Without this,
- * range edits that span a section boundary would silently lose the section
- * break on accept. */
+/** Accept-del-paragraph-mark: the paragraph break at the end of THIS paragraph is
+ * being deleted, so it joins with the next paragraph. Per ECMA-376 §17.13.5.4 the
+ * combined paragraph is terminated by the NEXT paragraph's mark, so it takes the
+ * NEXT paragraph's `<w:pPr>` — its numbering, style, AND the `<w:sectPr>` for the
+ * section ending there. The current paragraph is the one being removed, so keeping
+ * ITS pPr instead (the old behavior) silently stripped the surviving content's
+ * identity: deleting a plain paragraph immediately before a numbered clause (or a
+ * heading) dropped that clause's number/style on accept, collapsing a run of
+ * clauses into one un-numbered paragraph and renumbering the rest. Current's own
+ * pPr — including its (now-deleted-boundary) sectPr and the spent paragraph-mark
+ * `<w:del>` marker — is correctly discarded. Content order is preserved: current's
+ * runs stay ahead of next's. */
 function mergeParagraphWithNext(
 	paragraph: XmlNode,
 	paragraphParent: XmlNode[],
@@ -505,28 +525,30 @@ function mergeParagraphWithNext(
 	if (idx === -1) return;
 	const next = paragraphParent[idx + 1];
 	if (!next || next.tag !== "w:p") return;
-	const nextSectPr = next.findChild("w:pPr")?.findChild("w:sectPr");
-	const toMove: XmlNode[] = [];
-	for (const child of next.children) {
-		if (child.tag === "w:pPr") continue;
-		toMove.push(child);
+	const nextPpr = next.findChild("w:pPr");
+	const nextContent = next.children.filter((child) => child.tag !== "w:pPr");
+	const currentPpr = paragraph.findChild("w:pPr");
+	if (currentPpr) {
+		paragraph.children.splice(paragraph.children.indexOf(currentPpr), 1);
 	}
-	paragraph.children.push(...toMove);
-	if (nextSectPr) {
-		let pPr = paragraph.findChild("w:pPr");
-		if (!pPr) {
-			pPr = new XmlNode("w:pPr");
-			paragraph.children.unshift(pPr);
-		}
-		const existing = pPr.findChild("w:sectPr");
-		if (existing) {
-			const existingIdx = pPr.children.indexOf(existing);
-			pPr.children.splice(existingIdx, 1, nextSectPr);
-		} else {
-			pPr.children.push(nextSectPr);
-		}
-	}
+	paragraph.children.push(...nextContent);
+	// pPr must be the first child (CT_P order) — adopt next's ahead of the runs.
+	if (nextPpr) paragraph.children.unshift(nextPpr);
 	paragraphParent.splice(idx + 1, 1);
+}
+
+/** A paragraph holds reject-RESTORABLE baseline content when it has a subtractive
+ * `<w:del>` or `<w:moveFrom>` wrapper — text a reject brings back (unwraps
+ * `<w:delText>`→`<w:t>`). Drives the reject-ins-paragraph-mark choice: a paragraph
+ * with such content keeps its `<w:p>` (only the break marker is stripped) so the
+ * restore isn't collateral damage; a purely-inserted paragraph (only `<w:ins>`
+ * plus any passed-through insertion companions like an UNwrapped `<w:hyperlink>`)
+ * has none, so it splices out wholesale. Keying on "any non-ins child" instead
+ * would wrongly keep a fresh insert's hyperlink/bookmark as an orphan on reject. */
+function paragraphHasRestorableContent(paragraph: XmlNode): boolean {
+	return paragraph.children.some(
+		(child) => child.tag === "w:del" || child.tag === "w:moveFrom",
+	);
 }
 
 /** Restore section properties from a <w:sectPrChange> snapshot. The snapshot
