@@ -39,7 +39,8 @@ export const wordMacEngine: RenderEngine = {
 	async convertToPdf(inputDocx: string, outputPdf: string): Promise<void> {
 		const stageDir = containerDocumentsDir();
 		const tag = `${process.pid}-${stamp()}`;
-		const stagedDocx = join(stageDir, `.docx-cli-render-${tag}.docx`);
+		const stagedName = `.docx-cli-render-${tag}.docx`;
+		const stagedDocx = join(stageDir, stagedName);
 		const stagedPdf = join(stageDir, `.docx-cli-render-${tag}.pdf`);
 		try {
 			await Bun.write(stagedDocx, Bun.file(inputDocx));
@@ -47,14 +48,48 @@ export const wordMacEngine: RenderEngine = {
 			// way to export a PDF from Word for Mac. `close ... saving no`
 			// suppresses the "Save changes?" prompt (we already wrote the
 			// PDF; the docx itself isn't being modified).
-			const script = [
-				'tell application "Microsoft Word"',
-				`	open "${stagedDocx}"`,
-				"	set d to active document",
-				`	save as d file name "${stagedPdf}" file format format PDF`,
-				"	close d saving no",
-				"end tell",
-			].join("\n");
+			//
+			// `set display alerts to none` makes Word AUTO-DECLINE the modal
+			// "Word found unreadable content — recover?" dialog a corrupt .docx
+			// pops on open. Without it that dialog is MODAL and blocks the
+			// AppleScript until the AppleEvent times out (-1712), wedging every
+			// later render in a batch behind one bad file; and a human clicking
+			// "Yes" to clear it makes Word REPAIR the file, so the exported PDF
+			// then reflects recovered content, not the artifact under test
+			// (silently inflating a render-fidelity comparison). With alerts off,
+			// a corrupt file instead fails to open — no PDF — an honest
+			// RENDER_FAILED, the correct outcome for "this .docx doesn't open in
+			// Word." Verified empirically against a namespace-corrupted docx:
+			// good files still render, the bad file fails without leaving a
+			// modal, Word stays responsive for the next render. We apply it ONLY
+			// to a Word we cold-launched ourselves (reaped after, so it can't
+			// leak) and skip it when sharing the user's instance -- see the
+			// `suppressAlerts` decision inside the lock below. `with timeout`
+			// bounds any unexpected modal so a wedge can never outlast one render.
+			//
+			// The document is bound BY STAGED FILENAME, never `active document`.
+			// This is a safety invariant, empirically earned: when the render
+			// shares an instance with an already-open user document and the
+			// staged open FAILS (corrupt file), `active document` falls through
+			// to the USER'S document — `save as` then exports THEIR doc as our
+			// "render" and `close saving no` closes THEIR work. Binding by name
+			// can only ever resolve to our staged copy; a failed open makes the
+			// `document "name"` lookup throw instead, surfacing RENDER_FAILED.
+			// Timeouts are split: a corrupt file blocks the `open` AE on its
+			// (auto-declined but still displayed) error dialog until the timeout
+			// fires — measured at the full window, unattended — so open+bind get
+			// a bounded leash to fail fast, while save-as/close keep 90s. The open
+			// leash is 60s, not tighter: a corrupt file wedges for the WHOLE leash,
+			// so a short one is tempting, but a legitimately large/complex .docx on
+			// a cold Word launch can genuinely need most of a minute to open, and
+			// false-failing a valid document (RENDER_FAILED) is worse than a slower
+			// corrupt-file failure.
+			//
+			// Paths are escaped for the AppleScript string literals (backslash and
+			// double-quote) — the staged filename is generated (safe), but the
+			// container path descends from `homedir()`, so a home directory
+			// containing either character would otherwise break the osascript
+			// source or (worse) truncate the string onto a different path.
 			// Serialize the Word automation across processes. Word for Mac drives a
 			// SINGLE app instance and the script grabs `active document`, so two
 			// concurrent renders race on which document is active — one silently
@@ -63,28 +98,55 @@ export const wordMacEngine: RenderEngine = {
 			// of corrupt. Only the open→save→close window needs it; staging the docx
 			// and moving the PDF out use per-pid-unique paths and are race-free.
 			await withRenderLock(async () => {
-				const proc = Bun.spawn(["osascript", "-e", script], {
-					stdout: "pipe",
-					stderr: "pipe",
-				});
-				const exit = await proc.exited;
-				if (exit !== 0) {
-					const stderr = await new Response(proc.stderr).text();
-					throw new RenderEngineError(
-						"RENDER_FAILED",
-						`Word for Mac failed (exit ${exit}): ${stderr.trim() || "(no stderr)"}`,
-						"If this is the first run, macOS may have prompted for Automation permission. Grant it under System Settings → Privacy & Security → Automation, then retry.",
-					);
+				// Snapshot the Word PIDs that predate this render; the reap in
+				// `finally` kills only what appeared during it. Why this is the one
+				// safe isolation mechanism: see reapRenderWord.
+				const preexistingWord = wordPids();
+				// Suppress alerts ONLY when we cold-launch our own instance (no
+				// pre-existing Word, snapshot known-empty). If we share the user's
+				// instance, or the snapshot is uncertain (null), leave their alerts
+				// alone (see the alerts note above) -- nothing here would reset them.
+				const suppressAlerts =
+					preexistingWord !== null && preexistingWord.size === 0;
+				const script = [
+					'tell application "Microsoft Word"',
+					...(suppressAlerts ? ["\tset display alerts to none"] : []),
+					"\twith timeout of 60 seconds",
+					`\t\topen "${escapeAppleScriptString(stagedDocx)}"`,
+					`\t\tset d to document "${escapeAppleScriptString(stagedName)}"`,
+					"\tend timeout",
+					"\twith timeout of 90 seconds",
+					`\t\tsave as d file name "${escapeAppleScriptString(stagedPdf)}" file format format PDF`,
+					"\t\tclose d saving no",
+					"\tend timeout",
+					"end tell",
+				].join("\n");
+				try {
+					const proc = Bun.spawn(["osascript", "-e", script], {
+						stdout: "pipe",
+						stderr: "pipe",
+					});
+					const exit = await proc.exited;
+					if (exit !== 0) {
+						const stderr = await new Response(proc.stderr).text();
+						throw new RenderEngineError(
+							"RENDER_FAILED",
+							`Word for Mac failed (exit ${exit}): ${stderr.trim() || "(no stderr)"}`,
+							"If this is the first run, macOS may have prompted for Automation permission. Grant it under System Settings → Privacy & Security → Automation, then retry.",
+						);
+					}
+					const stagedFile = Bun.file(stagedPdf);
+					if (!(await stagedFile.exists())) {
+						throw new RenderEngineError(
+							"RENDER_FAILED",
+							"Word reported success but produced no PDF at the staged path",
+							`Expected: ${stagedPdf}`,
+						);
+					}
+					await Bun.write(outputPdf, stagedFile);
+				} finally {
+					reapRenderWord(preexistingWord);
 				}
-				const stagedFile = Bun.file(stagedPdf);
-				if (!(await stagedFile.exists())) {
-					throw new RenderEngineError(
-						"RENDER_FAILED",
-						"Word reported success but produced no PDF at the staged path",
-						`Expected: ${stagedPdf}`,
-					);
-				}
-				await Bun.write(outputPdf, stagedFile);
 			});
 		} finally {
 			rmSync(stagedDocx, { force: true });
@@ -92,6 +154,68 @@ export const wordMacEngine: RenderEngine = {
 		}
 	},
 };
+
+/** Escape a string for embedding inside an AppleScript double-quoted literal:
+ * backslash first, then the double-quote. Applied to every path we interpolate
+ * into the render script — the paths descend from `homedir()`, so a `"` or `\`
+ * in the home directory would otherwise break or hijack the string. */
+function escapeAppleScriptString(value: string): string {
+	return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** All currently-running Microsoft Word process ids, or `null` if pgrep itself
+ * ERRORED (exit ≥ 2 — a usage/internal failure, distinct from exit 1 "no match").
+ * The distinction is load-bearing for the reap: a transient pgrep failure must
+ * not read as "no Word running," which would leave `preexisting` empty and let
+ * the reap SIGKILL the user's own instance. When we can't be sure, we return
+ * null and the caller reaps nothing. */
+function wordPids(): Set<number> | null {
+	const out = Bun.spawnSync(["pgrep", "-x", "Microsoft Word"]);
+	if (out.exitCode === 1) return new Set(); // pgrep: matched no process
+	if (out.exitCode !== 0) return null; // pgrep errored — can't determine
+	return new Set(
+		out.stdout.toString().trim().split("\n").filter(Boolean).map(Number),
+	);
+}
+
+/** Terminate ONLY the Word process(es) that appeared DURING this render — the
+ * instance our own `tell` cold-launched, or a wedged one a corrupt file left —
+ * leaving every pre-existing Word untouched. A Word the user already had open
+ * predates `preexisting`, so it can never be in the kill set, and its documents
+ * are safe. Renders are serialized by withRenderLock, so the only Word that
+ * should appear between the snapshot and here is ours (a user launching Word in
+ * that few-second window is the one accepted race — their just-launched, still
+ * empty instance would be reaped once).
+ *
+ * We kill by PID, NOT `killall` (which would also take out the user's Word),
+ * and we NEVER quit via AppleScript. Both halves are empirically earned:
+ * spawning extra instances with `open -n` works, but with two same-bundle-id
+ * instances running, Apple Event routing is NONDETERMINISTIC — AppleScript
+ * `tell`, JXA `Application(pid)`, and frontmost-first all delivered events to
+ * the WRONG instance in testing (a `quit saving no` could discard the user's
+ * unsaved work; an `open` landed in the user's Word). So a dedicated
+ * second-instance-per-render cannot be driven safely, renders stay serialized
+ * on the single addressable instance, and kill(2) — the one interface macOS
+ * makes truly PID-precise — is the only cleanup mechanism we allow ourselves.
+ * SIGKILL is safe here: our instance's staged doc is already closed (or never
+ * opened, for a corrupt file), so no recovery state is left behind. */
+function reapRenderWord(preexisting: Set<number> | null): void {
+	// Fail closed: if EITHER snapshot is unavailable (pgrep errored), we can't
+	// tell our instance from the user's, so reap nothing rather than risk their
+	// Word. Leaving our own instance running is harmless (the next render reaps
+	// it, or it's an idle empty Word).
+	if (!preexisting) return;
+	const current = wordPids();
+	if (!current) return;
+	for (const pid of current) {
+		if (preexisting.has(pid)) continue;
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// Already gone — nothing to do.
+		}
+	}
+}
 
 /** The sandboxed Documents dir Word for Mac can access without an explicit
  * file-access prompt. First-launch of Word on a clean install creates this;

@@ -44,6 +44,11 @@ export const wordWindowsEngine: RenderEngine = {
 				"$ErrorActionPreference = 'Stop'",
 				"$word = New-Object -ComObject Word.Application",
 				"$word.Visible = $false",
+				// wdAlertsNone (0): auto-decline the modal "unreadable content —
+				// recover?" dialog a corrupt .docx pops on open, which would
+				// otherwise block the COM call with no UI to dismiss it. The
+				// macOS engine's `set display alerts to none` counterpart.
+				"$word.DisplayAlerts = 0",
 				"try {",
 				`	$doc = $word.Documents.Open('${quote(stagedDocx)}', $false, $true)`,
 				// 17 = wdExportFormatPDF (Word's enum constant).
@@ -58,7 +63,17 @@ export const wordWindowsEngine: RenderEngine = {
 				stdout: "pipe",
 				stderr: "pipe",
 			});
-			const exit = await proc.exited;
+			// Hard-cap the render: if Word wedges on a modal `DisplayAlerts` can't
+			// suppress (or any other hang), kill PowerShell so `docx render` fails
+			// instead of blocking forever — the analog of the mac engine's
+			// `with timeout`. 150s covers a legitimately large open + export.
+			const killTimer = setTimeout(() => proc.kill(), 150_000);
+			let exit: number;
+			try {
+				exit = await proc.exited;
+			} finally {
+				clearTimeout(killTimer);
+			}
 			if (exit !== 0) {
 				const stderr = await new Response(proc.stderr).text();
 				throw new RenderEngineError(

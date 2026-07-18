@@ -8,7 +8,14 @@ import {
 	type RenderEngineName,
 	renderDocxPages,
 } from "@core";
-import { EXIT, fail, respond, tryParseArgs, writeStdout } from "../respond";
+import {
+	EXIT,
+	fail,
+	RENDER_VERIFY_EXAMPLE,
+	respond,
+	tryParseArgs,
+	writeStdout,
+} from "../respond";
 import { parsePagesSpec } from "./parse-pages";
 
 const HELP = `docx render — render each page of a .docx as a PNG/JPG image
@@ -16,9 +23,16 @@ const HELP = `docx render — render each page of a .docx as a PNG/JPG image
 Usage:
   docx render FILE [options]
 
-Why: ground-truth visual verification. The CLI is primarily consumed by AI
-agents that can read the produced images and reason about what the document
-actually looks like (heading sizes, list indentation, page breaks, etc.).
+Examples:
+  # AGENT VERIFICATION: read the produced images to see the real layout
+${RENDER_VERIFY_EXAMPLE}
+  docx render report.docx --pages 1-3 --format jpg
+  docx render report.docx --out ./snapshots --engine libreoffice --dpi 200
+
+Why: ground-truth visual verification. Markdown can't show page geometry —
+columns, margins, wrapping, header/footer placement, table widths, fonts.
+Render the pages and READ the images to reason about what the document
+actually looks like.
 
 Options:
   --out DIR         Directory to write images into (default: ./{basename}-pages/).
@@ -50,19 +64,11 @@ Output:
   files). --verbose: the full JSON ack (adds engine + output dir). Errors
   print {code, error, hint?} with a nonzero exit.
 
-Examples:
-  docx render report.docx
-  docx render report.docx --out ./snapshots --engine libreoffice --dpi 200
-  docx render report.docx --pages 1-3 --format jpg
-
 Runtime dependencies:
   - Word engine: Microsoft Word installed locally (macOS or Windows).
     First run on macOS triggers a one-time Automation permission prompt.
   - LibreOffice engine: soffice on PATH (or installed at the default location).
   - PDF rasterization is built in via the bundled @hyzyla/pdfium WASM package
-    — no extra system tools (poppler / pdftoppm / ImageMagick) required.
-
-Run "docx render --help" or "docx --help" for the full command list.
 `;
 
 const OPTION_SPEC = {
