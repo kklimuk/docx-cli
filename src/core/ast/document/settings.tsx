@@ -94,17 +94,27 @@ export class SettingsView {
 	isTrackChangesEnabled(): boolean {
 		const root = XmlNode.findRoot(this.tree, "w:settings");
 		if (!root) return false;
-		return root.children.some((child) => child.tag === "w:trackChanges");
+		// `<w:trackChanges>` is a CT_OnOff toggle: a bare element is on, but
+		// `<w:trackChanges w:val="false"/>` (some producers write this to disable)
+		// is OFF. Reading mere presence as on would silently track every edit on a
+		// doc whose author turned tracking off — a high-cost wrong guess.
+		return root.children.some(
+			(child) => child.tag === "w:trackChanges" && child.isToggleOn(),
+		);
 	}
 
 	setTrackChangesEnabled(on: boolean): void {
 		const root = this.ensureSettingsRoot();
-		const hasTrackChanges = root.children.some(
+		const existing = root.children.find(
 			(child) => child.tag === "w:trackChanges",
 		);
-		if (on && !hasTrackChanges) {
-			root.children.unshift(<w.trackChanges />);
-		} else if (!on && hasTrackChanges) {
+		if (on) {
+			// Force an ON toggle. A present-but-off `<w:trackChanges w:val="false"/>`
+			// (some producers write this to disable) would otherwise keep tracking
+			// off — `track-changes on` must flip its `w:val`, not no-op on presence.
+			if (!existing) root.children.unshift(<w.trackChanges />);
+			else if (!existing.isToggleOn()) existing.setToggleOn();
+		} else if (existing) {
 			root.children = root.children.filter(
 				(child) => child.tag !== "w:trackChanges",
 			);
@@ -153,7 +163,13 @@ export class SettingsView {
 	 *  fallback when none is present). */
 	ensureEvenAndOddHeaders(): void {
 		const root = this.ensureSettingsRoot();
-		if (root.children.some((child) => child.tag === "w:evenAndOddHeaders")) {
+		const existing = root.children.find(
+			(child) => child.tag === "w:evenAndOddHeaders",
+		);
+		if (existing) {
+			// A present-but-off `<w:evenAndOddHeaders w:val="false"/>` would keep Word
+			// ignoring the even marginal we're provisioning — flip it on, not skip.
+			if (!existing.isToggleOn()) existing.setToggleOn();
 			return;
 		}
 		const node = <w.evenAndOddHeaders />;

@@ -113,7 +113,7 @@ function extractRunFormat(node: XmlNode): RunFormat | undefined {
 	const sizeRaw = wRPr?.findChild("w:sz")?.getAttribute("w:val");
 	const sizeHalfPoints =
 		sizeRaw && Number.isFinite(Number(sizeRaw)) ? Number(sizeRaw) : undefined;
-	const strike = wRPr?.findChild("w:strike") !== undefined;
+	const strike = wRPr?.findChild("w:strike")?.isToggleOn() ?? false;
 	if (!bold && !color && sizeHalfPoints === undefined && !strike) {
 		return undefined;
 	}

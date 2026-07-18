@@ -110,6 +110,26 @@ export class XmlNode {
 		this.attributes[key] = value;
 	}
 
+	/** Whether this element — a CT_OnOff toggle like `<w:b>`, `<w:i>`,
+	 *  `<w:trackChanges>`, `<w:titlePg>` — is in the ON state (ECMA-376
+	 *  §17.17.4). A bare element (no `w:val`) or `w:val` "true"/"1"/"on" is on;
+	 *  `w:val` "false"/"0"/"off" is OFF. Reading mere presence as on (ignoring
+	 *  `w:val="false"`) mis-read a non-bold `<w:b w:val="false"/>` run as bold and
+	 *  a tracking-OFF `<w:trackChanges w:val="false"/>` doc as tracking-on. Call on
+	 *  a `findChild(...)` result: `node?.isToggleOn() ?? false` (absent = off). */
+	isToggleOn(): boolean {
+		const val = this.attributes["w:val"];
+		return val !== "false" && val !== "0" && val !== "off";
+	}
+
+	/** Force this CT_OnOff toggle ON by dropping any explicit `w:val` — a bare
+	 *  element is on. The inverse of `isToggleOn`, for turning a present-but-off
+	 *  `<w:trackChanges w:val="false"/>` / `<w:titlePg w:val="0"/>` back on without
+	 *  a no-op-on-presence bug (see `setTrackChangesEnabled`, `ensureTitlePg`). */
+	setToggleOn(): void {
+		delete this.attributes["w:val"];
+	}
+
 	findChild(tag: string): XmlNode | undefined {
 		for (const child of this.children) {
 			if (child.tag === tag) return child;

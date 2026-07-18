@@ -960,8 +960,8 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		if (fill && fill !== "auto") run.shade = fill;
 	}
 
-	if (runProperties.findChild("w:b")) run.bold = true;
-	if (runProperties.findChild("w:i")) run.italic = true;
+	if (runProperties.findChild("w:b")?.isToggleOn()) run.bold = true;
+	if (runProperties.findChild("w:i")?.isToggleOn()) run.italic = true;
 
 	const underlineNode = runProperties.findChild("w:u");
 	if (underlineNode) {
@@ -977,15 +977,16 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		}
 	}
 
-	if (runProperties.findChild("w:strike")) run.strike = true;
+	if (runProperties.findChild("w:strike")?.isToggleOn()) run.strike = true;
 
 	const vertAlignNode = runProperties.findChild("w:vertAlign");
 	if (vertAlignNode) {
 		const value = vertAlignNode.getAttribute("w:val");
 		if (value && value !== "baseline") run.vertAlign = value;
 	}
-	if (runProperties.findChild("w:smallCaps")) run.smallCaps = true;
-	if (runProperties.findChild("w:caps")) run.allCaps = true;
+	if (runProperties.findChild("w:smallCaps")?.isToggleOn())
+		run.smallCaps = true;
+	if (runProperties.findChild("w:caps")?.isToggleOn()) run.allCaps = true;
 
 	const fontNode = runProperties.findChild("w:rFonts");
 	if (fontNode) {
@@ -1188,13 +1189,13 @@ function readRowHeight(
 	};
 }
 
-/** Whether the row is a repeating header from `<w:trPr><w:tblHeader/>`. A bare
- * marker (or `w:val` "true"/"1"/"on") is set; `w:val` "false"/"0"/"off" is not. */
+/** Whether the row is a repeating header from `<w:trPr><w:tblHeader/>`. The
+ * `w:val` matters (`<w:tblHeader w:val="false"/>` is NOT a header) — see
+ * `XmlNode.isToggleOn`. */
 function readRepeatHeader(row: XmlNode): boolean {
-	const marker = row.findChild("w:trPr")?.findChild("w:tblHeader");
-	if (!marker) return false;
-	const val = marker.getAttribute("w:val");
-	return val !== "false" && val !== "0" && val !== "off";
+	return (
+		row.findChild("w:trPr")?.findChild("w:tblHeader")?.isToggleOn() ?? false
+	);
 }
 
 /** The table's applied style id from `<w:tblPr><w:tblStyle w:val="…"/>`, or

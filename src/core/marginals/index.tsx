@@ -380,7 +380,13 @@ function findReference(
 }
 
 function ensureTitlePg(sectPr: XmlNode): void {
-	if (sectPr.findChild("w:titlePg")) return;
+	const existing = sectPr.findChild("w:titlePg");
+	if (existing) {
+		// A present-but-OFF `<w:titlePg w:val="false"/>` makes Word ignore the
+		// first-page marginal we're setting — flip it on rather than skip.
+		if (!existing.isToggleOn()) existing.setToggleOn();
+		return;
+	}
 	insertSectPrChildInOrder(sectPr, <w.titlePg />);
 }
 

@@ -117,14 +117,12 @@ export function findCheckboxToggle(sdt: XmlNode): {
 }
 
 function isParagraphMarkStruck(node: XmlNode): boolean {
-	const pPr = node.findChild("w:pPr");
-	const rPr = pPr?.findChild("w:rPr");
-	const strike = rPr?.findChild("w:strike");
-	if (!strike) return false;
-	// `<w:strike/>` (no val) defaults to true per ECMA-376; explicit "0" / "false" is off.
-	const value = strike.getAttribute("w:val");
-	if (value === undefined) return true;
-	return value !== "0" && value !== "false";
+	// `<w:strike/>` (no val) is on per ECMA-376; explicit "0"/"false"/"off" is off.
+	const strike = node
+		.findChild("w:pPr")
+		?.findChild("w:rPr")
+		?.findChild("w:strike");
+	return strike?.isToggleOn() ?? false;
 }
 
 function nextNonPPrSibling(
