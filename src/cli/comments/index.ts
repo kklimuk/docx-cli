@@ -22,6 +22,8 @@ Verbs:
   resolve  Mark a comment resolved
   delete   Remove a comment
 
+See comments in context: \`docx read FILE --comments\` (bodies as footnotes).
+
 Run "docx comments <verb> --help" for verb-specific help.
 `;
 

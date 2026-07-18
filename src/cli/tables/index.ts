@@ -40,6 +40,7 @@ rest of the table lifecycle uses the standard verbs:
   delete (all)  docx delete FILE --at tN
   edit a cell   docx edit FILE --at tN:rRcC:pK --text "..."
   inspect       docx read FILE --ast   (grid widths, gridSpan, vMerge per cell)
+  verify        docx render FILE --out pages/   (see how it lands on the page)
 
 Run "docx tables <verb> --help" for verb-specific help.
 `;

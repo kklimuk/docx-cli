@@ -25,6 +25,7 @@ Output:
   \`docx ${verb} edit\` / \`delete\`. Empty array if the doc has no ${kind}s part.
 
 Examples:
+  docx ${verb} list doc.docx
   docx ${verb} list doc.docx | jq '.[] | select(.text | test("citation"))'
 `;
 }

@@ -90,9 +90,9 @@ describe("sections via the sections verb / edit / delete", () => {
 		);
 	});
 
-	test("edit --at sN updates columns + type on the trailing section", async () => {
+	test("sections --at sN updates columns + type on the trailing section", async () => {
 		await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -113,8 +113,8 @@ describe("sections via the sections verb / edit / delete", () => {
 		});
 	});
 
-	test("edit --at sN supports updating only one property at a time", async () => {
-		await runCli("edit", docPath, "--at", "s0", "--columns", "2");
+	test("sections --at sN supports updating only one property at a time", async () => {
+		await runCli("sections", docPath, "--at", "s0", "--columns", "2");
 		const firstRead = await runCli("read", docPath, "--ast");
 		const after1 = (firstRead.parsed as { blocks: Block[] }).blocks.find(
 			(block): block is SectionBlock => block.type === "sectionBreak",
@@ -122,7 +122,7 @@ describe("sections via the sections verb / edit / delete", () => {
 		expect(after1?.columns).toBe(2);
 		expect(after1?.sectionType).toBeUndefined();
 
-		await runCli("edit", docPath, "--at", "s0", "--type", "nextPage");
+		await runCli("sections", docPath, "--at", "s0", "--type", "nextPage");
 		const secondRead = await runCli("read", docPath, "--ast");
 		const after2 = (secondRead.parsed as { blocks: Block[] }).blocks.find(
 			(block): block is SectionBlock => block.type === "sectionBreak",
@@ -131,9 +131,9 @@ describe("sections via the sections verb / edit / delete", () => {
 		expect(after2?.sectionType).toBe("nextPage");
 	});
 
-	test("edit --at sN rejects --text/--runs", async () => {
+	test("sections --at sN rejects --text/--runs", async () => {
 		const result = await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -144,7 +144,7 @@ describe("sections via the sections verb / edit / delete", () => {
 		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
-	test("edit --at pN rejects --columns/--type", async () => {
+	test("edit --at pN with --columns redirects to `docx sections`", async () => {
 		const result = await runCli(
 			"edit",
 			docPath,
@@ -159,9 +159,9 @@ describe("sections via the sections verb / edit / delete", () => {
 		expect(result.parsed).toMatchObject({ code: "USAGE" });
 	});
 
-	test("edit --at sN rejects invalid --type", async () => {
+	test("sections --at sN rejects invalid --type", async () => {
 		const result = await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -275,11 +275,11 @@ describe("sections under track-changes", () => {
 		expect(text).toBe("Second");
 	});
 
-	test("edit --at sN under tracking emits a sectPrChange snapshot", async () => {
-		await runCli("edit", docPath, "--at", "s0", "--columns", "1");
+	test("sections --at sN under tracking emits a sectPrChange snapshot", async () => {
+		await runCli("sections", docPath, "--at", "s0", "--columns", "1");
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -311,10 +311,10 @@ describe("sections under track-changes", () => {
 	});
 
 	test("track-changes accept removes the sectPrChange but keeps the new properties", async () => {
-		await runCli("edit", docPath, "--at", "s0", "--columns", "1");
+		await runCli("sections", docPath, "--at", "s0", "--columns", "1");
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -338,10 +338,10 @@ describe("sections under track-changes", () => {
 	});
 
 	test("track-changes reject restores prior section properties from snapshot", async () => {
-		await runCli("edit", docPath, "--at", "s0", "--columns", "1");
+		await runCli("sections", docPath, "--at", "s0", "--columns", "1");
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -363,10 +363,10 @@ describe("sections under track-changes", () => {
 	// <w:sectPr>. When tracking is on and we add a NEW property to a sectPr
 	// that started empty, applyColumns / applySectionType must insert ahead
 	// of the freshly-pushed sectPrChange, not after it.
-	test("edit --at sN under tracking keeps sectPrChange as the last child", async () => {
+	test("sections --at sN under tracking keeps sectPrChange as the last child", async () => {
 		await runCli("track-changes", docPath, "on");
 		await runCli(
-			"edit",
+			"sections",
 			docPath,
 			"--at",
 			"s0",
@@ -543,11 +543,11 @@ describe("sections.docx fixture", () => {
 		const docPath = join(workspace, "sections.docx");
 		copyFileSync(SECTIONS_FIXTURE, docPath);
 
-		// edit --at sN succeeds for every enumerated section; if any sN
+		// sections --at sN succeeds for every enumerated section; if any sN
 		// resolved to a paragraph instead, this would error with USAGE.
 		for (let index = 0; index < 8; index += 1) {
 			const result = await runCli(
-				"edit",
+				"sections",
 				docPath,
 				"--at",
 				`s${index}`,

@@ -12,38 +12,6 @@ import {
 } from "@core/run-formatting";
 import { fail } from "./respond";
 
-/** Detect markdown-looking syntax in a value meant for `--text`, which writes
- *  LITERAL text. Weak agents conflate `--text` with `--markdown`, bake literal
- *  `**`/`#`/`[](…)` into runs, then try to scrub them with `replace` — the cascade
- *  that produced the résumé blocker. Returns a short description of the construct
- *  found, or null. HIGH-CONFIDENCE patterns only (paired emphasis, a leading ATX
- *  heading, a link), so literal prose with a stray asterisk doesn't trip it.
- *  Shared by `insert --text` and `edit --text`. */
-export function detectMarkdownInPlainText(text: string): string | null {
-	if (/\*\*[^*\n]+\*\*/.test(text)) return "bold (**…**)";
-	if (/__[^_\n]+__/.test(text)) return "bold (__…__)";
-	if (/(^|\n) {0,3}#{1,6}\s/.test(text)) return "a heading (#…)";
-	if (/\[[^\]\n]+\]\([^)\n]+\)/.test(text)) return "a link ([text](url))";
-	return null;
-}
-
-/** Reject a `--text` value that looks like markdown, pointing at the right verb.
- *  Returns a fail() exit code to short-circuit, or null to proceed. The hint is
- *  self-sufficient (it names the exact verbs to switch to), so it does NOT append
- *  the full `--help` — a weak agent keys its retry off the actionable line, and
- *  burying it under 200 lines of command reference (14 KB) hurts more than helps. */
-export async function rejectMarkdownInText(
-	text: string,
-): Promise<number | null> {
-	const found = detectMarkdownInPlainText(text);
-	if (!found) return null;
-	return await fail(
-		"USAGE",
-		`--text writes literal characters, but this value looks like markdown: ${found}. It would be baked in verbatim (e.g. literal ** around the word), not rendered.`,
-		`Use --markdown to parse it (handles ${found}, headings, lists, links), --bold/--italic for a uniformly-emphasized run, or --runs for literal text that really contains these characters.`,
-	);
-}
-
 /** Detect the signature of a currency amount whose leading digits were eaten by
  *  the shell. A weak agent double-quotes a `$`-bearing value in bash, and the
  *  shell expands the `$NN` sequence (a positional-param reference) to nothing
@@ -151,7 +119,7 @@ export function resolveView(values: {
 export async function parseRunsArg(json: string): Promise<Run[] | number> {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(json);
+		parsed = parseJsonLenient(json);
 	} catch (jsonError) {
 		const message =
 			jsonError instanceof Error ? jsonError.message : String(jsonError);
@@ -190,8 +158,8 @@ type RawValues = Record<
 >;
 
 /** Parse the section flags from a parseArgs result — columns/type PLUS page
- *  geometry (`--orientation`/`--size`/`--margins`). Shared by `docx sections`,
- *  `edit --at sN`, and (the geometry slice) `docx create`. Returns a fail() exit
+ *  geometry (`--orientation`/`--size`/`--margins`). Shared by `docx sections`
+ *  and (the geometry slice) `docx create`. Returns a fail() exit
  *  code on invalid values. Page geometry is normalized for `applyPageGeometry`:
  *  `pageSize` is portrait (width ≤ height), and a `WxH` size with `W > H` implies
  *  `orientation: "landscape"` unless `--orientation` says otherwise. */
@@ -364,6 +332,16 @@ export function normalizeAndDedupCommentIds(rawIds: string[]): string[] {
 	return ordered;
 }
 
+/** The shared two-line "--batch is the preferred path" help-example intro. The
+ *  locator-addressed batch verbs (`edit`, `insert`, `delete`, `comments add`)
+ *  state it identically so a weak agent recognizes the same pattern on every
+ *  command; only the verb phrase varies. (`replace --batch` words its own —
+ *  it's a sed-script whose pitch isn't locator stability.) */
+export function batchExampleIntro(what: string): string {
+	return `  # ${what} in ONE call — the preferred path (ids never shift
+  # mid-batch). Write one JSON object per line to a file, then apply it:`;
+}
+
 /** Read a JSONL file (or stdin via `-`) into one parsed object per non-empty
  *  line. Each line must be a JSON object (not an array/scalar); empty lines are
  *  skipped, malformed lines throw with line context so the caller can surface
@@ -382,7 +360,7 @@ export async function readJsonlObjects(
 		if (line.length === 0) continue;
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(line);
+			parsed = parseJsonLenient(line);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			throw new Error(`line ${index + 1}: invalid JSON (${message})`);
@@ -397,6 +375,71 @@ export async function readJsonlObjects(
 		objects.push(parsed as Record<string, unknown>);
 	}
 	return objects;
+}
+
+/** `JSON.parse` with one weak-agent recovery. Agents heredoc real TAB (and other
+ *  control) characters into string values; JSON forbids raw control chars in
+ *  strings, so the text hard-fails — and the observed agent recovery is
+ *  substituting spaces, which silently drops a `<w:tab/>` from the document. A
+ *  raw control char inside a string can only mean its escaped form, so escape
+ *  and retry before rethrowing the ORIGINAL parse error. The shared mechanism
+ *  behind every agent-typed JSON ingress: `readJsonlObjects` (`--batch` lines)
+ *  and `parseRunsArg` (`--runs`). NOTE the batch path splits its source on `\n`
+ *  BEFORE calling this, so a raw NEWLINE inside a string only recovers on the
+ *  single-argv `--runs` path — on `--batch` it has already broken into two
+ *  malformed lines; every other control char (TAB included) recovers on both. */
+function parseJsonLenient(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch (error) {
+		try {
+			return JSON.parse(escapeControlCharsInStrings(text));
+		} catch {
+			throw error;
+		}
+	}
+}
+
+/** Escape raw control characters that appear INSIDE JSON string literals
+ *  (a literal TAB in a heredoc'd value is the common case) so the line parses.
+ *  Characters outside strings are left untouched — structural whitespace is
+ *  already legal JSON, and anything else should keep failing loudly. */
+function escapeControlCharsInStrings(line: string): string {
+	let out = "";
+	let inString = false;
+	let escaped = false;
+	for (const char of line) {
+		if (!inString) {
+			if (char === '"') inString = true;
+			out += char;
+			continue;
+		}
+		if (escaped) {
+			out += char;
+			escaped = false;
+			continue;
+		}
+		if (char === "\\") {
+			out += char;
+			escaped = true;
+			continue;
+		}
+		if (char === '"') {
+			inString = false;
+			out += char;
+			continue;
+		}
+		const code = char.charCodeAt(0);
+		if (code < 0x20) {
+			// One generic escape covers every control char: JSON.parse reads
+			// u-escapes and short escapes identically, and the output is only
+			// ever re-parsed, never shown.
+			out += `\\u${code.toString(16).padStart(4, "0")}`;
+			continue;
+		}
+		out += char;
+	}
+	return out;
 }
 
 /** Resolve a `--batch` source to its raw JSONL text. Three forms, so a weak agent

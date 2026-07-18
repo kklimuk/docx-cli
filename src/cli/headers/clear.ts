@@ -37,24 +37,27 @@ function helpFor(kind: MarginalKind): string {
 Usage:
   docx ${noun} clear FILE [--at sN] [--type T | --first-page | --even | --odd] [options]
 
-Removes the ${kind} reference of the given type from one section (--at sN) or every
-section (default). The ${kind} part itself is left in the file as a harmless orphan
-(re-setting mints a fresh part). Idempotent — clearing an absent ${kind} is a no-op.
+Examples:
+  docx ${noun} clear doc.docx
+  docx ${noun} clear doc.docx --at s0 --first-page
+
+Removes the ${kind} of the given type from one section (--at sN) or every
+section (default). Idempotent — clearing an absent ${kind} is a no-op.
 
 Options:
   --at sN            Target one section (default: the whole document)
   --type T           default | first | even (default: default)
   --first-page       ≡ --type first    --even ≡ --type even    --odd ≡ --type default
-  --track            Record the removal as a tracked <w:sectPrChange>
+  --track            Record the removal as a tracked change
   --author NAME      Tracked-change author
   -o, --output PATH  Write to PATH instead of editing FILE in place
   --dry-run          Preview; write nothing
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Examples:
-  docx ${noun} clear doc.docx
-  docx ${noun} clear doc.docx --at s0 --first-page
+Output:
+  Prints a one-line confirmation (exit 0). --verbose prints the full ack JSON.
+  Errors print {code, error, hint?} with a nonzero exit.
 `;
 }
 

@@ -10,18 +10,13 @@ Usage:
   docx track-changes apply  FILE (--accept H ... | --reject H ...) [options]
 
 Verbs:
-  on        Set <w:trackChanges/> in word/settings.xml
-  off       Remove <w:trackChanges/>
-  list      Inventory every revision wrapper (run-level ins/del/move,
-            <w:sectPrChange>, paragraph-mark <w:ins>/<w:del>) with stable
-            tcN ids
-  accept    Accept tracked changes — ins/moveTo unwrap; del/moveFrom are
-            removed; sectPrChange drops its snapshot (live state stays);
-            paragraph-mark del merges with the next paragraph
-  reject    Reject tracked changes — ins/moveTo are removed (and for a
-            paragraph-mark ins the entire paragraph is removed); del/moveFrom
-            unwrap (with <w:delText> → <w:t> rename); sectPrChange restores
-            its snapshot
+  on / off  Toggle the document's track-changes mode (existing changes keep)
+  list      Inventory every tracked change (insertions, deletions, moves,
+            property revisions) with stable tcN / revN handles
+  accept    Accept tracked changes — like Word: insertions stay, deleted
+            text disappears for real
+  reject    Reject tracked changes — insertions are removed, deleted text
+            comes back
   apply     Finalize: accept AND reject in ONE atomic call, every handle
             resolved against the original tree — the safe way to apply a
             review, since separate accept/reject calls renumber ids between
@@ -29,14 +24,12 @@ Verbs:
 
 Exact-change addressing is always --at tcN (repeatable); --all targets every
 change; \`apply\` takes --accept/--reject handle lists. Discover ids with
-"docx track-changes list FILE".
+"docx track-changes list FILE"; see them in context with "docx read --current".
 
-When tracking is on, the SUBSEQUENT insert/edit/delete/replace commands emit
-<w:ins>/<w:del> markers (attributed via --author or $DOCX_AUTHOR on those
-commands, not on the on/off toggle); edit --at sN under tracking emits
-<w:sectPrChange>. moveFrom/moveTo are read, listed, and accept/reject
-independently — we don't emit them ourselves (Word does that interactively).
-Accept/reject themselves bypass tracking — they're doc surgery, not edits.
+When tracking is on, the SUBSEQUENT insert/edit/delete/replace commands record
+their edits as tracked changes (attributed via --author or $DOCX_AUTHOR on
+those commands, not on the on/off toggle). Accept/reject themselves bypass
+tracking — they're review decisions, not edits.
 
 Run "docx track-changes <verb> --help" for verb-specific help.
 `;

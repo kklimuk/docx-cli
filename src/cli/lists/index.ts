@@ -17,7 +17,8 @@ Verbs:
         (--at pN [--start N] [--format FMT] [--restart] [--continue])
 
 Lists are otherwise handled by the standard verbs:
-  create a list   docx insert FILE --after pN --list "first,second"  (or markdown "1. …")
+  create a list   docx insert FILE --after pN --markdown $'1. first\\n2. second'
+                  (or one item: docx insert FILE --after pN --text "first" --list ordered)
   edit an item    docx edit FILE --at pN --text "..."
   inspect         docx read FILE --ast   (list.numId / level / ordered / start / format)
 

@@ -30,6 +30,10 @@ const HELP = `docx tables merge — merge a rectangular cell region
 Usage:
   docx tables merge FILE --at tN:rR1cC1-rR2cC2 [options]
 
+Examples:
+  docx tables merge doc.docx --at t0:r0c0-r0c2     # merge 3 cells across
+  docx tables merge doc.docx --at t0:r0c0-r2c0     # merge 3 cells down
+
 Required:
   --at LOCATOR       Cell region to merge. Supports:
 ${AT_FORMS}
@@ -42,22 +46,18 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Horizontal extent collapses into the leftmost cell via <w:gridSpan>; vertical
-extent uses <w:vMerge> ("restart" on the top row, "continue" below). The
-top-left cell keeps its content; the rest are emptied. OOXML has no
-tracked-change construct for merges, so under track-changes the merge applies
-immediately with a [docx-cli] audit comment.
+The top-left cell keeps its content; the other cells in the region are
+emptied (exactly like merging in Word). Merges can't be recorded as tracked
+changes, so under track-changes the merge applies immediately with a
+[docx-cli] audit comment.
 
 Rejected if the region edges bisect an existing merge — unmerge first.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  region}. --dry-run prints the preview object (no ok field). Errors print
-  {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables merge doc.docx --at t0:r0c0-r0c2     # merge 3 cells across
-  docx tables merge doc.docx --at t0:r0c0-r2c0     # merge 3 cells down
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, region}. --dry-run prints the preview
+  object (no ok field). Errors print {code, error, hint?} with a nonzero
+  exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

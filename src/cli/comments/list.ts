@@ -14,25 +14,33 @@ Usage:
   docx comments list FILE [options]
 
 Options:
-  --include-resolved   Include resolved comments (default excludes them)
+  --open               Only open comments (the default includes resolved ones,
+                       each flagged "resolved": true)
   --thread cN          Print only the thread rooted at the given comment id
   -h, --help           Show this help
 
 Output:
   A bare JSON array of comment objects: { id, author, date, text, anchor,
   parentId?, resolved? }. Each item's "id" (e.g. c0) is its addressable handle —
-  pass it to \`comments reply/resolve/delete --at\`. Errors print
-  {code, error, hint?} with a nonzero exit.
+  pass it to \`comments reply/resolve/delete --at\`. Resolved comments stay in
+  the list (with "resolved": true) so you can verify a resolve landed; use
+  --open for just the actionable ones. Errors print {code, error, hint?} with
+  a nonzero exit.
 
 Examples:
   docx comments list doc.docx
-  docx comments list doc.docx --include-resolved | jq '.[] | select(.author == "Jane")'
+  docx comments list doc.docx --open
+  docx comments list doc.docx | jq '.[] | select(.author == "Jane")'
 `;
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		args,
 		{
+			open: { type: "boolean" },
+			// Accepted for compatibility: resolved comments are now listed by
+			// default, so this legacy flag is a no-op that still yields exactly
+			// what its name asks for.
 			"include-resolved": { type: "boolean" },
 			thread: { type: "string" },
 			help: { type: "boolean", short: "h" },
@@ -53,7 +61,7 @@ export async function run(args: string[]): Promise<number> {
 	if (typeof document === "number") return document;
 
 	const comments = new Comments(document).list({
-		includeResolved: Boolean(parsed.values["include-resolved"]),
+		openOnly: Boolean(parsed.values.open),
 		thread: parsed.values.thread as string | undefined,
 	});
 

@@ -19,6 +19,11 @@ Usage:
                                   [--name "Display Name"] [--based-on STYLEID]
                                   [--next STYLEID] [options]
 
+Examples:
+  docx styles create report.docx Callout --name "Callout" --color C00000 --bold --size 12
+  docx styles create report.docx Lead --based-on Normal --italic --space-after 12
+  docx styles create report.docx KbdKey --type character --font "Consolas" --shade EEEEEE
+
 Mints a brand-new style in word/styles.xml that \`insert --style STYLEID\` /
 \`edit --style STYLEID\` can then apply. STYLEID is the internal id (no spaces —
 use --name for the human label). Paragraph styles default to --based-on Normal
@@ -49,10 +54,9 @@ Options:
   -v, --verbose      Print the full success ack JSON
   -h, --help         Show this help
 
-Examples:
-  docx styles create report.docx Callout --name "Callout" --color C00000 --bold --size 12
-  docx styles create report.docx Lead --based-on Normal --italic --space-after 12
-  docx styles create report.docx KbdKey --type character --font "Consolas" --shade EEEEEE
+Output:
+  Prints a one-line confirmation on success (exit 0). --verbose prints the
+  full ack JSON. Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 export async function runStylesCreate(args: string[]): Promise<number> {

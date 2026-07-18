@@ -520,6 +520,55 @@ describe("docx tables insert-row", () => {
 		expect(rightAligned).toBe(2);
 	});
 
+	test("inserted row inherits the sibling cells' borders and run size (invoice look footgun)", async () => {
+		// Two judge runs flagged the same defect: the new row copied structure and
+		// alignment but not the sibling row's <w:tcBorders> (no rule lines) or run
+		// size (text falls back to docDefaults, visibly off-weight).
+		const doc = await newTableDoc("ins-row-look", 2, 2);
+		await runCli(
+			"tables",
+			"format",
+			doc,
+			"--at",
+			"t0:r1",
+			"--cell-borders",
+			"top,bottom",
+		);
+		await runCli(
+			"edit",
+			doc,
+			"--at",
+			"t0:r1c0:p0",
+			"--text",
+			"Amount",
+			"--size",
+			"12",
+		);
+		const result = await runCli(
+			"tables",
+			"insert-row",
+			doc,
+			"--at",
+			"t0",
+			"--position",
+			"2",
+			"--cells",
+			"Kit,10",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await (await Pkg.open(doc)).readText("word/document.xml");
+		const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map(
+			(match) => match[0],
+		);
+		const inserted = rows[2];
+		if (!inserted) throw new Error("expected an inserted third row");
+		// Borders cloned from the reference row's cells.
+		expect(inserted.match(/<w:tcBorders>/g)?.length).toBe(2);
+		expect(inserted).toContain('<w:top w:val="single"');
+		// Run size cloned from the reference cell's run (12pt = w:sz 24).
+		expect(inserted).toContain('<w:sz w:val="24"');
+	});
+
 	test("inherited alignment also applies under a gridSpan'd cell", async () => {
 		// 3 grid columns; merge cols 1+2 of the data row into one spanned cell and
 		// right-align it. The inserted row mirrors the span AND the alignment.
@@ -821,6 +870,46 @@ describe("docx tables set-widths", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		expect((await table(docPath)).grid).toEqual([8986, 187, 187]);
+	});
+
+	test("a column too narrow for its longest value applies but WARNS (wrap prediction)", async () => {
+		// The invoice batch defect: a 0.78in Amount column "accepted" $10,100.00,
+		// exited 0, and every dollar value wrapped mid-number in the Word render.
+		// Wide enough to pass the one-char guard, too narrow for the content — so
+		// the widths apply (they're what the caller named) but the ack carries a
+		// WARNING naming the column and the value.
+		await runCli("edit", docPath, "--at", "t0:r0c2:p0", "--text", "$10,100.00");
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"5760,2340,1123",
+		);
+		expect(result.exitCode).toBe(0);
+		const ack = result.parsed as { warnings?: string[] };
+		expect(ack.warnings?.length).toBe(1);
+		expect(ack.warnings?.[0]).toContain("$10,100.00");
+		expect(ack.warnings?.[0]).toContain("wrap");
+		// The widths the caller named are still applied.
+		expect((await table(docPath)).grid).toEqual([5760, 2340, 1123]);
+	});
+
+	test("a column wide enough for its longest value warns nothing", async () => {
+		await runCli("edit", docPath, "--at", "t0:r0c2:p0", "--text", "$10,100.00");
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"5203,2340,1817",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { warnings?: string[] }).warnings).toBeUndefined();
 	});
 
 	test("count mismatch on a merged-cell table explains grid-vs-visible columns", async () => {

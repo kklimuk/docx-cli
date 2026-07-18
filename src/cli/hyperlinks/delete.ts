@@ -19,6 +19,9 @@ const HELP = `docx hyperlinks delete — unwrap a hyperlink (keep the text)
 Usage:
   docx hyperlinks delete FILE --at linkN [options]
 
+Examples:
+  docx hyperlinks delete doc.docx --at link0
+
 Required:
   --at linkN        Existing hyperlink to remove. Supports:
 ${AT_FORMS}
@@ -32,21 +35,17 @@ Optional:
   -v, --verbose     Print the success ack JSON
   -h, --help        Show this help
 
-The display text stays in place; only the <w:hyperlink> wrapper is removed.
-If the underlying relationship is no longer referenced, it is pruned from the
-rels file too.
+The display text stays in place; only the link itself is removed.
 
-When track-changes is on, an audit comment is anchored to the surviving text
-since OOXML has no native tracked-change form for hyperlink removal.
+Hyperlink removal can't be recorded as a tracked change, so when
+track-changes is on an audit comment is anchored to the surviving text
+instead.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — delete mints no new id. --verbose prints
-  {ok:true, operation, path, hyperlinkId, from}. A --dry-run prints a bare
-  preview object. Errors print {code, error, hint?} with a nonzero exit.
-  Discover ids with \`docx hyperlinks list FILE\`.
-
-Examples:
-  docx hyperlinks delete doc.docx --at link0
+  Prints a one-line confirmation on success (exit 0) — delete mints no new
+  id. --verbose prints {ok:true, operation, path, hyperlinkId, from}. A
+  --dry-run prints a bare preview object. Errors print {code, error, hint?}
+  with a nonzero exit. Discover ids with \`docx hyperlinks list FILE\`.
 `;
 
 export async function run(args: string[]): Promise<number> {

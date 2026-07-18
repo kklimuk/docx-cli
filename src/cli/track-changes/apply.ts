@@ -22,6 +22,11 @@ const HELP = `docx track-changes apply — finalize: accept AND reject in one at
 Usage:
   docx track-changes apply FILE (--accept H ... | --reject H ...) [options]
 
+Examples:
+  docx track-changes apply doc.docx --accept rev0 --accept rev1 --accept tc4 \\
+                                    --reject rev2 --reject tc7
+  docx track-changes apply doc.docx --reject rev0 --dry-run
+
 A document review ends in a finalize: accept the changes you want, reject the
 rest. Doing that as separate \`accept\` and \`reject\` calls is a trap — tcN/revN
 ids renumber after every accept/reject, so the SECOND command addresses a
@@ -54,11 +59,6 @@ Output:
   {ok:true, operation, path, applied}. --dry-run previews. Errors print
   {code, error, hint?} with a nonzero exit. Discover handles with
   \`docx track-changes list FILE\`.
-
-Examples:
-  docx track-changes apply doc.docx --accept rev0 --accept rev1 --accept tc4 \\
-                                    --reject rev2 --reject tc7
-  docx track-changes apply doc.docx --reject rev0 --dry-run
 `;
 
 export async function run(args: string[]): Promise<number> {

@@ -22,6 +22,11 @@ Usage:
   docx styles set FILE --at STYLEID [formatting] [--name "Display Name"]
                                     [--based-on STYLEID] [--next STYLEID] [options]
 
+Examples:
+  docx styles set report.docx --at Heading1 --color 1F4E79 --size 16 --bold
+  docx styles set report.docx --at Normal --font "Times New Roman" --size 12
+  docx styles set report.docx --at Quote --italic --indent-left 0.5 --space-after 6
+
 Edits the style DEFINITION in word/styles.xml — every paragraph/run that uses
 the style (and doesn't override the property locally) picks up the change. "Make
 all Heading 1s green," "bump the body size to 12pt." For a one-off span, use
@@ -57,10 +62,9 @@ Options:
   -v, --verbose      Print the full success ack JSON
   -h, --help         Show this help
 
-Examples:
-  docx styles set report.docx --at Heading1 --color 1F4E79 --size 16 --bold
-  docx styles set report.docx --at Normal --font "Times New Roman" --size 12
-  docx styles set report.docx --at Quote --italic --indent-left 0.5 --space-after 6
+Output:
+  Prints a one-line confirmation on success (exit 0). --verbose prints the
+  full ack JSON. Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 export async function runStylesSet(args: string[]): Promise<number> {

@@ -4,6 +4,7 @@ import { parseTargetPlacement, placeSpec } from "../insert/place";
 import {
 	EXIT,
 	fail,
+	RENDER_VERIFY_EXAMPLE,
 	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
@@ -16,6 +17,14 @@ Usage:
   docx tables create FILE --after LOCATOR --rows N --cols M [options]
   docx tables create FILE --before LOCATOR --rows N --cols M [options]
   docx tables create FILE (--at-start | --at-end) --rows N --cols M [options]
+
+Examples:
+  docx tables create doc.docx --after p3 --rows 3 --cols 2
+  docx tables create doc.docx --after p3 --rows 2 --cols 3 --widths 1440,2880,4320
+  docx tables create doc.docx --after p3 --rows 2 --cols 2 --table-width 50%
+  docx tables create doc.docx --at-end --rows 4 --cols 3 --borders double
+  # then fill cells from one read (batchable):
+  docx edit doc.docx --at t0:r0c0:p0 --text "Item"
 
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
@@ -53,16 +62,10 @@ The new table starts empty; fill cells with \`docx edit --at tN:rRcC:pK --text "
 (batchable), and reshape it with the other \`docx tables\` verbs (insert-row,
 merge, set-widths, format, …).
 
-Agent tip: VERIFY LAYOUT VISUALLY. \`docx read\` shows the grid and its widths,
-but NOT how it lands on the page. After adding a table, render and look:
-  docx render FILE --out pages/      # writes page-001.png, page-002.png, …
+AGENT VERIFICATION: \`docx read\` shows the grid but NOT how it lands on the
+page. After adding a table, render and READ the images:
+${RENDER_VERIFY_EXAMPLE}
 Check the columns are sized sensibly (no content wrapping one char per line).
-
-Examples:
-  docx tables create doc.docx --after p3 --rows 3 --cols 2
-  docx tables create doc.docx --after p3 --rows 2 --cols 3 --widths 1440,2880,4320
-  docx tables create doc.docx --after p3 --rows 2 --cols 2 --table-width 50%
-  docx tables create doc.docx --at-end --rows 4 --cols 3 --borders double
 
 Output:
   Prints the new table's locator (tN). --verbose prints {ok:true, operation:

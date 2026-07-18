@@ -17,6 +17,11 @@ Usage:
   docx equations add FILE --before LOCATOR --equation LATEX [options]
   docx equations add FILE (--at-start | --at-end) --equation LATEX [options]
 
+Examples:
+  docx equations add doc.docx --after p4 --equation "x^2 + y^2 = r^2"
+  docx equations add doc.docx --after p4 --equation "\\frac{-b}{2a}" --display
+  docx equations add doc.docx --at-end --equation "E=mc^2"
+
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
   --before LOCATOR  Insert before the block at LOCATOR
@@ -43,11 +48,6 @@ Options:
   --dry-run         Report what would change without writing the file
   -v, --verbose     Print the success ack JSON (default: the minted locator)
   -h, --help        Show this help
-
-Examples:
-  docx equations add doc.docx --after p4 --equation "x^2 + y^2 = r^2"
-  docx equations add doc.docx --after p4 --equation "\\frac{-b}{2a}" --display
-  docx equations add doc.docx --at-end --equation "E=mc^2"
 
 Output:
   Prints the inserted block's locator (pN), one per line. --verbose prints

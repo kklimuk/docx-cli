@@ -22,6 +22,11 @@ Usage:
   docx code edit FILE --at LOCATOR --code TEXT [--language LANG] [options]
   docx code edit FILE --at LOCATOR --code-file PATH [--language LANG] [options]
 
+Examples:
+  docx code edit doc.docx --at p4 --code-file snippet.go --language go
+  docx code edit doc.docx --at p4-p8 --code "print('hi')" --language python
+  cat main.py | docx code edit doc.docx --at p4 --code-file - --language python
+
 Locator (required):
   --at LOCATOR      What to replace. One of:
                       pN       a single paragraph
@@ -49,11 +54,6 @@ Options:
   --dry-run         Report what would change without writing the file
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
-
-Examples:
-  docx code edit doc.docx --at p4 --code-file snippet.go --language go
-  docx code edit doc.docx --at p4-p8 --code "print('hi')" --language python
-  cat main.py | docx code edit doc.docx --at p4 --code-file - --language python
 
 Output:
   Prints a one-line confirmation on success (exit 0). --verbose prints

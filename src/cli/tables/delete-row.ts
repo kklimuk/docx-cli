@@ -26,6 +26,9 @@ const HELP = `docx tables delete-row — delete a table row
 Usage:
   docx tables delete-row FILE --at tN:rR [options]
 
+Examples:
+  docx tables delete-row doc.docx --at t0:r2
+
 Required:
   --at LOCATOR       Row to delete. Supports:
 ${AT_FORMS}
@@ -38,19 +41,17 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-When track-changes is on, the row is marked as a tracked deletion
-(<w:trPr><w:del/>) rather than removed — accept removes it, reject keeps it.
+When track-changes is on, the row is marked as a tracked deletion rather than
+removed — accept removes it, reject keeps it.
 
-Rejected if the row holds the "restart" half of a vertical merge whose
-continuation rows would be orphaned; unmerge first.
+Rejected if the row holds the top half of a vertical merge whose continuation
+rows would be orphaned; unmerge first.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  row, tracked}. --dry-run prints the preview object (no ok field). Errors print
-  {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables delete-row doc.docx --at t0:r2
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, row, tracked}. --dry-run prints the
+  preview object (no ok field). Errors print {code, error, hint?} with a
+  nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

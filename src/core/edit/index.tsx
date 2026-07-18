@@ -7,6 +7,8 @@ import {
 	hasParagraphProperties,
 	injectPprChange,
 	insertPprChildInOrder,
+	insertRprChildInOrder,
+	isInheritableRunProperty,
 	Paragraph,
 	type ParagraphOptions,
 	wrapPprChange,
@@ -29,7 +31,9 @@ import {
 	reanchorCommentMarkers,
 } from "../comments/markers";
 import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
-import type { XmlNode } from "../parser";
+import { readListContext } from "../insert";
+import { w } from "../jsx";
+import { partitionParagraphRuns, XmlNode } from "../parser";
 import {
 	applyColumns,
 	applyPageGeometry,
@@ -167,6 +171,14 @@ export class Edit {
 			newParagraphs,
 			spec.paragraphOptions.style,
 		);
+		// `runs` is the explicit, byte-precise surface — the caller states each
+		// run's rPr, so inheriting the old paragraph's would silently override
+		// their choices (a `{"bold": false}` run can't opt out, since the emitter
+		// drops the falsy child and the inherited `<w:b/>` fills the gap).
+		if (!opts.noFormatting && spec.kind !== "code" && spec.kind !== "runs") {
+			inheritCommonRunFormatting(blockRef.node, newParagraphs);
+		}
+		continueHostList(this.document, blockRef.node, newParagraphs);
 		const anchorTarget = newParagraphs[0];
 		if (anchorTarget?.tag === "w:p") {
 			this.reanchorComments(anchorTarget, commentMarkers);
@@ -567,33 +579,65 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
 }
 
+/** A replacement paragraph that brings its OWN block structure — a markdown `#`
+ *  heading (`<w:pStyle>`) or a list item (`<w:numPr>`) — owns its look and must
+ *  NOT inherit the replaced paragraph's pPr/rPr. The single "is this plain?" cut
+ *  both inheritance passes below share, so they can't disagree on what "plain"
+ *  means. */
+function paragraphOwnsBlockStructure(paragraph: XmlNode): boolean {
+	const ownPpr = paragraph.findChild("w:pPr");
+	return Boolean(ownPpr?.findChild("w:pStyle") || ownPpr?.findChild("w:numPr"));
+}
+
 /** Decision 2 (style preservation): when a whole-paragraph edit replaces a
- *  paragraph with a single PLAIN paragraph (no explicit `--style`, and the new
- *  content didn't set its own `<w:pStyle>` — e.g. `--markdown "Q3 Title"` on a
- *  Heading, or `--runs`/`--text --bold`), inherit the old paragraph's style so
- *  re-titling a heading keeps it a heading. `--text` without overrides already
- *  preserves style via the formatting-preserving path; this covers the other
- *  paths. Markdown that carries its own block style (a `#` heading, a list) sets
- *  `<w:pStyle>` itself, so the guard below leaves it alone. */
+ *  paragraph with PLAIN paragraphs (no explicit `--style`, and the new content
+ *  didn't set its own `<w:pStyle>`/`<w:numPr>` — e.g. `--markdown "Q3 Title"`
+ *  on a Heading, or `--runs`/`--text --bold`), inherit the old paragraph's
+ *  properties so re-titling a heading keeps it a heading. Applies to EVERY
+ *  plain paragraph of a multi-paragraph markdown split — a split used to leave
+ *  paragraphs 2..N flush-left with no spacing (the §9 "make it legible" trap),
+ *  which reads as corruption and sends weak agents into destructive undo
+ *  spirals. `--text` without overrides already preserves style via the
+ *  formatting-preserving path; this covers the other paths. Markdown that
+ *  carries its own block structure (a `#` heading, a list item) owns its
+ *  `<w:pPr>` and is left alone. */
 function inheritParagraphFormattingIfPlain(
 	oldParagraph: XmlNode,
 	newParagraphs: XmlNode[],
 	explicitStyle: string | undefined,
 ): void {
-	if (newParagraphs.length !== 1) return;
-	const newParagraph = newParagraphs[0];
-	if (!newParagraph || newParagraph.tag !== "w:p") return;
-	// Content that brings its own block style (a markdown `#` heading, a list)
-	// owns its <w:pPr> — don't overwrite it with the old paragraph's.
-	if (newParagraph.findChild("w:pPr")?.findChild("w:pStyle")) return;
 	const oldPpr = oldParagraph.findChild("w:pPr");
 	if (!oldPpr) return;
+	for (const newParagraph of newParagraphs) {
+		if (newParagraph.tag !== "w:p") continue;
+		// Content that brings its own block structure (a markdown `#` heading, a
+		// list item) owns its <w:pPr> — don't overwrite it with the old paragraph's.
+		if (paragraphOwnsBlockStructure(newParagraph)) continue;
+		mergeInheritedPpr(oldPpr, newParagraph, explicitStyle);
+	}
+}
 
+/** Clone the old `<w:pPr>` onto one replacement paragraph, letting anything the
+ *  new paragraph already set win over the inherited values. */
+function mergeInheritedPpr(
+	oldPpr: XmlNode,
+	newParagraph: XmlNode,
+	explicitStyle: string | undefined,
+): void {
 	// Base the replacement's paragraph properties on the OLD <w:pPr> (a clone, in
 	// its valid child order) so DIRECT formatting survives a fresh-run replace —
 	// alignment (w:jc), spacing, indent, keepNext, list membership, etc. Only the
 	// style was carried before, which silently dropped centering on `edit --text`.
 	const merged = oldPpr.clone();
+	// Never propagate section structure or a tracked-revision marker across a
+	// split: an inline `<w:sectPr>` cloned onto each new paragraph mints a
+	// phantom section break per paragraph (verified: a 2-paragraph markdown
+	// replace of a section-ending paragraph took the doc from 3 sectPrs to 4),
+	// and a `<w:pPrChange>` would duplicate one revision id N times. The tracked
+	// path filters the same two tags from its pPrChange snapshot.
+	merged.children = merged.children.filter(
+		(child) => child.tag !== "w:sectPr" && child.tag !== "w:pPrChange",
+	);
 	// If the caller passed an explicit --style, applyParagraphOptions will set it;
 	// drop the inherited one so it doesn't fight.
 	if (explicitStyle) {
@@ -618,6 +662,127 @@ function inheritParagraphFormattingIfPlain(
 		newParagraph.children[newParagraph.children.indexOf(newPpr)] = merged;
 	} else {
 		newParagraph.children.unshift(merged);
+	}
+}
+
+/** Replacement runs inherit the run formatting COMMON to every visible run of
+ *  the replaced paragraph — the intersection of their `<w:rPr>` children (an
+ *  8pt Arial form cell whose fill-in span is also underlined contributes the
+ *  font/size/color, not the underline). Without this, a whole-paragraph
+ *  `--markdown` (or `--text` + run flags) replacement emits bare runs that
+ *  fall back to docDefaults — the filled MNDA term cells rendered 11pt Calibri
+ *  inside an 8pt Arial form. `<w:highlight>` is never inherited: highlight
+ *  marks a placeholder-to-fill, and re-stamping it on the filled value would
+ *  recreate the todo marker the edit just resolved. Runs that carry their OWN
+ *  rPr (markdown `**bold**`, `--bold`) keep every child they set and gain only
+ *  the inherited ones they don't. */
+function inheritCommonRunFormatting(
+	oldParagraph: XmlNode,
+	newParagraphs: XmlNode[],
+): void {
+	// Enumerate visible runs via the wrapper-aware partition — text lives inside
+	// `<w:hyperlink>`/`<w:ins>`/… on redlined or linked paragraphs, and a flat
+	// `findChildren("w:r")` would see none of it, silently skipping inheritance
+	// (the MNDA font-drift defect resurfacing on exactly those paragraphs).
+	const textRuns = partitionParagraphRuns(oldParagraph).runs.filter((run) =>
+		run.findChild("w:t"),
+	);
+	const firstRpr = textRuns[0]?.findChild("w:rPr");
+	if (!firstRpr) return;
+	const otherSignatureSets = textRuns
+		.slice(1)
+		.map(
+			(run) =>
+				new Set(
+					(run.findChild("w:rPr")?.children ?? []).map((child) =>
+						XmlNode.serialize([child]),
+					),
+				),
+		);
+	const template = firstRpr.clone();
+	template.children = template.children.filter((child) => {
+		// Never inherit a placeholder-fill (`<w:highlight>`) or tracked-revision
+		// (`<w:rPrChange>`) marker — the shared `isInheritableRunProperty` policy.
+		if (!isInheritableRunProperty(child)) return false;
+		const signature = XmlNode.serialize([child]);
+		return otherSignatureSets.every((set) => set.has(signature));
+	});
+	if (template.children.length === 0) return;
+	for (const paragraph of newParagraphs) {
+		if (paragraph.tag !== "w:p") continue;
+		// A paragraph that brought its OWN block structure (a markdown `#` heading,
+		// a list item) owns its look through its style — stamping the replaced
+		// paragraph's direct rPr onto its runs would defeat that style (an 8pt
+		// Arial form cell replaced with `## Heading` would render the heading at
+		// 8pt Arial). Skip it via the shared `paragraphOwnsBlockStructure` guard so
+		// the two inheritance passes agree on what "plain" means.
+		if (paragraphOwnsBlockStructure(paragraph)) continue;
+		// Apply through the same wrapper-aware partition, so a run minted inside a
+		// markdown link's `<w:hyperlink>` inherits the font like its siblings.
+		for (const run of partitionParagraphRuns(paragraph).runs) {
+			const own = run.findChild("w:rPr");
+			if (!own) {
+				run.children.unshift(template.clone());
+				continue;
+			}
+			for (const child of template.children) {
+				if (own.findChild(child.tag)) continue;
+				insertRprChildInOrder(own, child.clone());
+			}
+		}
+	}
+}
+
+/** When a whole-paragraph edit replaces a LIST ITEM with markdown that brings
+ *  its own list, the markdown walker has already minted a FRESH numId — a
+ *  brand-new list. Dropped mid-list, that restarts numbering at the split
+ *  point and desynchronizes everything after it in Word. An agent rewriting
+ *  one clause with `--markdown "1. …"` means "replace this item's content,"
+ *  not "start a new list" — so re-point the new items at the HOST paragraph's
+ *  numId (same list kind only), nesting their levels under the host's. The
+ *  minted numId goes unreferenced, which is harmless (see the relationship
+ *  invariant: orphans are safe, dangling references are not). */
+function continueHostList(
+	document: Document,
+	oldParagraph: XmlNode,
+	newParagraphs: XmlNode[],
+): void {
+	const host = readListContext(oldParagraph);
+	if (!host) return;
+	const numbering = document.numbering;
+	if (!numbering) return;
+	const hostFormat = numbering.getFormat(String(host.numId), host.level);
+	// `numFmt="none"` is an unnumbered list — not something a fresh ordered/bullet
+	// list should silently continue into (matches `Lists.isOrdered`, which also
+	// excludes "none"). Only a real bullet or ordered host is continuable.
+	if (!hostFormat || hostFormat === "none") return;
+	const hostKind = hostFormat === "bullet" ? "bullet" : "ordered";
+	for (const paragraph of newParagraphs) {
+		if (paragraph.tag !== "w:p") continue;
+		const numPr = paragraph.findChild("w:pPr")?.findChild("w:numPr");
+		const numIdNode = numPr?.findChild("w:numId");
+		if (!numPr || !numIdNode) continue;
+		const fresh = Number(numIdNode.getAttribute("w:val") ?? "0");
+		if (!Number.isFinite(fresh) || fresh <= 0 || fresh === host.numId) {
+			continue;
+		}
+		const freshFormat = numbering.getFormat(String(fresh), 0);
+		const freshKind = freshFormat === "bullet" ? "bullet" : "ordered";
+		// A bullet list replacing an ordered item (or vice versa) is a deliberate
+		// kind change — keep the fresh list.
+		if (freshKind !== hostKind) continue;
+		numIdNode.setAttribute("w:val", String(host.numId));
+		const ilvlNode = numPr.findChild("w:ilvl");
+		const freshLevel = Number(ilvlNode?.getAttribute("w:val") ?? "0");
+		const shifted = Math.min(
+			(Number.isFinite(freshLevel) ? freshLevel : 0) + host.level,
+			8,
+		);
+		if (ilvlNode) ilvlNode.setAttribute("w:val", String(shifted));
+		else if (shifted > 0) {
+			// CT_NumPr order: <w:ilvl> precedes <w:numId>.
+			numPr.children.unshift(<w.ilvl w-val={String(shifted)} />);
+		}
 	}
 }
 

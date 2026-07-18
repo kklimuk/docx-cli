@@ -16,15 +16,18 @@ const HELP = `docx track-changes — toggle the document's tracked-changes mode
 Usage:
   docx track-changes on|off FILE [options]
 
-The verb comes first (like list/accept/reject); the legacy "FILE on|off" order
-still works. Toggle only sets (on) or clears (off) the <w:trackChanges/> flag in
-word/settings.xml — nothing else. It does not author any <w:ins>/<w:del>
-markers, and existing markers are unaffected by the toggle itself.
+Examples:
+  docx track-changes on doc.docx
+  docx track-changes off doc.docx
 
-When on, the SUBSEQUENT insert/edit/delete/replace commands emit
-<w:ins>/<w:del> markers so changes remain reviewable. The --author
-attribution (--author NAME, else $DOCX_AUTHOR) is read by those mutating
-commands, NOT by toggle — toggle takes no --author.
+The verb comes first (like list/accept/reject); the legacy "FILE on|off"
+order still works. Toggle only flips the document's track-changes mode —
+nothing else. Existing tracked changes are unaffected.
+
+When on, SUBSEQUENT insert/edit/delete/replace commands record their edits as
+tracked changes so they remain reviewable. The --author attribution
+(--author NAME, else $DOCX_AUTHOR) is read by those mutating commands, NOT by
+toggle — toggle takes no --author.
 
 Options:
   -o, --output PATH Write to PATH instead of overwriting FILE
@@ -33,13 +36,10 @@ Options:
   -h, --help        Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
-  mode, previouslyOn}. --dry-run prints the preview {operation, dryRun, path,
-  mode, previouslyOn}. Errors print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx track-changes on doc.docx
-  docx track-changes off doc.docx
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, mode, previouslyOn}. --dry-run prints the
+  preview {operation, dryRun, path, mode, previouslyOn}. Errors print
+  {code, error, hint?} with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

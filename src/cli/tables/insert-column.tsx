@@ -31,6 +31,10 @@ const HELP = `docx tables insert-column — insert a table column
 Usage:
   docx tables insert-column FILE --at tN [options]
 
+Examples:
+  docx tables insert-column doc.docx --at t0                       # append at right
+  docx tables insert-column doc.docx --at t0 --position 1 --width 1440
+
 Required:
   --at LOCATOR       Target table. Supports:
 ${AT_FORMS}
@@ -46,18 +50,15 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-When track-changes is on, each new cell is wrapped as a tracked insertion
-(<w:tcPr><w:cellIns/>). Rejected if the insertion point bisects a horizontal
-merge — unmerge first.
+When track-changes is on, each new cell is recorded as a tracked insertion —
+accept keeps the column, reject removes it. Rejected if the insertion point
+bisects a horizontal merge — unmerge first.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  position, width, tracked}. --dry-run prints the preview object (no ok field).
-  Errors print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables insert-column doc.docx --at t0
-  docx tables insert-column doc.docx --at t0 --position 1 --width 1440
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, position, width, tracked}. --dry-run
+  prints the preview object (no ok field). Errors print {code, error, hint?}
+  with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

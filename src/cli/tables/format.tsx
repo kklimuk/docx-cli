@@ -47,6 +47,13 @@ const HELP = `docx tables format — shade, align, border, and size table cells/
 Usage:
   docx tables format FILE --at LOCATOR [formatting options]
 
+Examples:
+  docx tables format invoice.docx --at t0:r0 --shade D9D9D9 --valign center
+  docx tables format invoice.docx --at t0:c2 --halign right
+  docx tables format invoice.docx --at t0:r1c0-r3c2 --cell-borders bottom
+  docx tables format invoice.docx --at t0 --align center --style LightGrid
+  docx tables format invoice.docx --at t0:r0 --repeat-header --row-height 0.4in
+
 The --at locator picks WHAT to format; its granularity picks which options apply.
   --at t0            whole table
   --at t0:r2         a row          --at t0:c1   a column
@@ -79,17 +86,15 @@ Common:
   --track         Record as a tracked change even if the doc toggle is off
   -o, --output PATH / --dry-run / -v, --verbose / -h, --help
 
-Tracking: cell shading/vAlign/borders record as a real <w:tcPrChange> and --halign
-as a <w:pPrChange> (both round-trip in Word). Table align/style and row height/
-repeat-header have no tracked-change construct Word will revert, so under tracking
-they apply in place with a [docx-cli] audit comment (same policy as tables borders).
+Tracking: cell shading/valign/borders and --halign record as real tracked
+changes (Word can accept/reject them). Table align/style and row height/
+repeat-header can't be tracked, so under tracking they apply in place with a
+[docx-cli] audit comment (same policy as tables borders).
 
-Examples:
-  docx tables format invoice.docx --at t0:r0 --shade D9D9D9 --valign center
-  docx tables format invoice.docx --at t0:c2 --halign right
-  docx tables format invoice.docx --at t0:r1c0-r3c2 --cell-borders bottom
-  docx tables format invoice.docx --at t0 --align center --style LightGrid
-  docx tables format invoice.docx --at t0:r0 --repeat-header --row-height 0.4in
+Output:
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, …}. --dry-run prints the preview object (no ok
+  field). Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

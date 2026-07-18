@@ -19,6 +19,9 @@ const HELP = `docx hyperlinks replace — change a hyperlink's URL
 Usage:
   docx hyperlinks replace FILE --at linkN --with URL [options]
 
+Examples:
+  docx hyperlinks replace doc.docx --at link0 --with https://example.com
+
 Required:
   --at linkN        Existing hyperlink to update. Supports:
 ${AT_FORMS}
@@ -33,22 +36,17 @@ Optional:
   -v, --verbose     Print the success ack JSON
   -h, --help        Show this help
 
-Replaces only the targeted hyperlink. If multiple hyperlinks shared the same
-underlying relationship, a new relationship is allocated so the others are
+Replaces only the targeted hyperlink — other links sharing the same URL are
 unaffected.
 
-When track-changes is on, an audit comment is anchored to the affected
-hyperlink span since OOXML has no native tracked-change form for hyperlink
-target edits.
+Hyperlink edits can't be recorded as tracked changes, so when track-changes
+is on an audit comment is anchored to the affected span instead.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — replace mints no new id. --verbose prints
-  {ok:true, operation, path, hyperlinkId, from, to}. A --dry-run prints a bare
-  preview object. Errors print {code, error, hint?} with a nonzero exit.
-  Discover ids with \`docx hyperlinks list FILE\`.
-
-Examples:
-  docx hyperlinks replace doc.docx --at link0 --with https://example.com
+  Prints a one-line confirmation on success (exit 0) — replace mints no new
+  id. --verbose prints {ok:true, operation, path, hyperlinkId, from, to}. A
+  --dry-run prints a bare preview object. Errors print {code, error, hint?}
+  with a nonzero exit. Discover ids with \`docx hyperlinks list FILE\`.
 `;
 
 export async function run(args: string[]): Promise<number> {

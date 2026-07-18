@@ -13,6 +13,11 @@ const HELP = `docx outline — list headings as a hierarchical tree
 Usage:
   docx outline FILE [options]
 
+Examples:
+  docx outline doc.docx                        # jump straight to a chapter's pN
+  docx outline doc.docx --style-prefix "Section"
+  docx outline doc.docx --json | jq '.[].text'
+
 Options:
   --style-prefix S  paragraph-style prefix that marks a heading (default: "Heading")
   --json            emit the nested JSON tree instead of the indented text tree
@@ -30,11 +35,6 @@ Output:
   other commands' --at / read --from. --json: the nested JSON array of
   { id, locator, level, style, text, children } (no envelope). Errors print
   {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx outline doc.docx
-  docx outline doc.docx --style-prefix "Section"
-  docx outline doc.docx --json | jq '.[].text'
 `;
 
 export async function run(args: string[]): Promise<number> {

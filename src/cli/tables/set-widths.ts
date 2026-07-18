@@ -16,6 +16,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	RENDER_VERIFY_EXAMPLE,
 	renderVerifyHint,
 	resolveTracked,
 	respond,
@@ -33,6 +34,13 @@ const HELP = `docx tables set-widths — set column widths
 Usage:
   docx tables set-widths FILE --at tN --widths SPEC [options]
 
+Examples:
+  docx tables set-widths doc.docx --at t0 --widths "25%,25%,50%"
+  docx tables set-widths doc.docx --at t0 --widths "1440,1440,2880"
+  docx tables set-widths doc.docx --at t0 --widths auto
+  # AGENT VERIFICATION: widths don't show in \`docx read\` — look at the pages
+${RENDER_VERIFY_EXAMPLE}
+
 Required:
   --at LOCATOR       Target table. Supports:
 ${AT_FORMS}
@@ -49,29 +57,23 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Percentages and twips set a fixed layout and rewrite <w:tblGrid> plus each
-cell's <w:tcW>. Under track-changes the resize is recorded as a real revision
-(<w:tblGridChange> for the grid plus a per-cell <w:tcPrChange>), so it can be
-accepted or rejected — matching what Word emits for a width change.
+Percentages and twips set a fixed layout. Under track-changes the resize is
+recorded as a real revision, so Word can accept or reject it.
 
 Widths map one value per GRID column, not per visible column. On a table with
-merged cells (gridSpan), the grid has MORE columns than a single row shows, so
-the count you pass must match the grid (run \`docx read --ast\` to see it). A
-cell that HOLDS TEXT but lands narrower than ~0.2in is refused — after ~0.15in
-of cell margin it fits under one character, so Word wraps it one char per line
-(empty/spacer columns that thin are fine, nothing to wrap). The success line
-echoes the resulting per-column widths; since layout changes don't show in
-\`read\`, render to verify.
+merged cells, the grid has MORE columns than a single row shows, so the count
+you pass must match the grid (run \`docx read --ast\` to see it). A cell that
+HOLDS TEXT but lands narrower than ~0.2in is refused — that's under one
+character wide, so Word would wrap it one char per line (empty/spacer columns
+that thin are fine). A wider cell whose longest value still won't fit (e.g. a
+0.78in column holding "$10,100.00") is applied but prints a WARNING naming the
+column and the value — heed it: the value wraps mid-number in Word.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  layout, widths}. --dry-run prints the preview object (no ok field). Errors
-  print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables set-widths doc.docx --at t0 --widths "25%,25%,50%"
-  docx tables set-widths doc.docx --at t0 --widths "1440,1440,2880"
-  docx tables set-widths doc.docx --at t0 --widths auto
+  Prints a one-line confirmation echoing the resulting per-column widths
+  (exit 0). --verbose prints {ok:true, operation, path, table, layout,
+  widths}. --dry-run prints the preview object (no ok field). Errors print
+  {code, error, hint?} with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -125,14 +127,24 @@ export async function run(args: string[]): Promise<number> {
 	const auto = widthsSpec.trim() === "auto";
 	const cols = grid.tblGrid.findChildren("w:gridCol");
 	let twips: number[] = [];
+	let wrapWarnings: string[] = [];
 	if (!auto) {
 		const resolved = resolveWidths(widthsSpec, cols, grid);
 		if (typeof resolved === "string") return fail("USAGE", resolved);
 		twips = resolved;
-		// Guard against a width that collapses a cell so narrow Word wraps its
-		// content one character per line — a render-only break `read` won't show.
-		const tooNarrow = findTooNarrowCell(grid, twips);
+		// One walk over the table's text-bearing cells feeds BOTH checks, computed
+		// here (before the dry-run branch) so `--dry-run` previews the same
+		// warnings a real run prints, and so each cell's text is collected once,
+		// not twice. Refusal: a cell too narrow to fit one character (Word wraps
+		// it one char per line — a render-only break `read` won't show). Warning:
+		// a cell whose longest token still overflows the assigned width.
+		const textCells = [...textBearingCells(grid, twips)];
+		const tooNarrow = findTooNarrowCell(textCells);
 		if (tooNarrow) return fail("USAGE", tooNarrow);
+		wrapWarnings = findWrapRiskCells(
+			textCells,
+			baselineSizeHalfPoints(document),
+		);
 	}
 
 	const outputPath = parsed.values.output as string | undefined;
@@ -145,6 +157,7 @@ export async function run(args: string[]): Promise<number> {
 			table: tableId,
 			layout: auto ? "autofit" : "fixed",
 			widths: auto ? "auto" : twips,
+			...(wrapWarnings.length ? { warnings: wrapWarnings } : {}),
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
@@ -183,6 +196,9 @@ export async function run(args: string[]): Promise<number> {
 	await document.save(outputPath);
 
 	const destination = outputPath ?? path;
+	const warningText = wrapWarnings.length
+		? `${wrapWarnings.map((warning) => `WARNING: ${warning}`).join("\n")}\n`
+		: "";
 	const echo = auto ? "" : `${describeColumnWidths(twips)}\n`;
 	await respondAck(
 		{
@@ -192,8 +208,9 @@ export async function run(args: string[]): Promise<number> {
 			table: tableId,
 			layout: auto ? "autofit" : "fixed",
 			widths: auto ? "auto" : twips,
+			...(wrapWarnings.length ? { warnings: wrapWarnings } : {}),
 		},
-		`${echo}${renderVerifyHint(destination)}`,
+		`${echo}${warningText}${renderVerifyHint(destination)}`,
 	);
 	return EXIT.OK;
 }
@@ -300,28 +317,121 @@ function cellWidth(cell: GridCell, twips: number[]): number {
  * there's nothing to wrap). So we only refuse a narrow cell that holds text. */
 const MIN_COL_TWIPS = 288;
 
-function findTooNarrowCell(grid: Grid, twips: number[]): string | null {
-	for (const row of grid.rows) {
-		for (const cell of row.cells) {
-			const width = cellWidth(cell, twips);
-			if (width >= MIN_COL_TWIPS) continue;
-			const text = cell.node.collectText().trim();
-			if (text.length === 0) continue; // empty/spacer cell never wraps
-			const where =
-				cell.colSpan > 1
-					? `grid columns ${cell.colStart}–${cell.colStart + cell.colSpan - 1}`
-					: `grid column ${cell.colStart}`;
-			const sample = text.length > 24 ? `${text.slice(0, 24)}…` : text;
-			return `--widths collapses ${where} to ${twipsToInches(width)}in (${width} twips); that cell holds "${sample}" but ~0.15in goes to cell margins, leaving under one character — Word wraps it one char per line. Widen it and lower a wider column to compensate.`;
-		}
+function findTooNarrowCell(cells: readonly TextBearingCell[]): string | null {
+	for (const { cell, widthTwips, text } of cells) {
+		if (widthTwips >= MIN_COL_TWIPS) continue;
+		const where =
+			cell.colSpan > 1
+				? `grid columns ${cell.colStart}–${cell.colStart + cell.colSpan - 1}`
+				: `grid column ${cell.colStart}`;
+		return `--widths collapses ${where} to ${twipsToInches(widthTwips)}in (${widthTwips} twips); that cell holds "${truncateSample(text)}" but ~0.15in goes to cell margins, leaving under one character — Word wraps it one char per line. Widen it and lower a wider column to compensate.`;
 	}
 	return null;
+}
+
+type TextBearingCell = { cell: GridCell; widthTwips: number; text: string };
+
+/** One walk over the grid's text-bearing cells: each with its resolved width
+ * (merge-aware — a spanning cell sums its grid columns) and trimmed text.
+ * Materialized once and shared by the refusal (`findTooNarrowCell`) and warning
+ * (`findWrapRiskCells`) passes so the merge/empty-spacer knowledge lives once
+ * and each cell's text is collected once, not per pass. */
+function* textBearingCells(
+	grid: Grid,
+	twips: number[],
+): Generator<TextBearingCell> {
+	for (const row of grid.rows) {
+		for (const cell of row.cells) {
+			const text = cell.node.collectText().trim();
+			if (text.length === 0) continue; // empty/spacer cell never wraps
+			yield { cell, widthTwips: cellWidth(cell, twips), text };
+		}
+	}
+}
+
+/** The document's docDefaults font size in half-points, guarded against a
+ * malformed `w:sz` (which `defaultSizeHalfPoints` returns as NaN): fall back to
+ * the 11pt (22 half-point) template baseline. A NaN would slip through `?? 22`
+ * and poison the wrap-risk estimate (`neededTwips` NaN → every column flagged,
+ * "~NaNin" in the ack). */
+function baselineSizeHalfPoints(document: Document): number {
+	const size = document.styles?.defaultSizeHalfPoints();
+	return typeof size === "number" && Number.isFinite(size) && size > 0
+		? size
+		: 22;
+}
+
+function truncateSample(text: string): string {
+	return text.length > 24 ? `${text.slice(0, 24)}…` : text;
 }
 
 /** True if any cell spans more than one grid column — the table where "visible
  * columns" and "grid columns" diverge and `--widths` becomes a footgun. */
 function hasMergedColumns(grid: Grid): boolean {
 	return grid.rows.some((row) => row.cells.some((cell) => cell.colSpan > 1));
+}
+
+/** Predict cells whose longest unbreakable token won't fit the new width, so
+ * the wrap is flagged AT MUTATION TIME instead of surfacing only in a Word
+ * render nobody runs (the invoice batch defect: a 0.78in Amount column
+ * "accepted" $10,100.00 and wrapped every dollar value mid-number). Word wraps
+ * at spaces; a space-free token wider than the usable cell width breaks
+ * mid-token. Width is estimated at ~0.5em per character (the proportional-face
+ * average; digits in Calibri are ≈0.507em) from the cell's own run size, so
+ * this is a heuristic — hence a WARNING on the ack, not a refusal: the widths
+ * the caller named are still applied. One warning per grid column (worst cell
+ * wins), capped at 3 so the ack stays readable. */
+function findWrapRiskCells(
+	cells: readonly TextBearingCell[],
+	baselineSizeHalfPoints: number,
+): string[] {
+	const CELL_MARGIN_TWIPS = 216; // 108/side Word default
+	const worstByColumn = new Map<
+		number,
+		{ token: string; neededTwips: number; widthTwips: number }
+	>();
+	for (const { cell, widthTwips, text } of cells) {
+		if (widthTwips < MIN_COL_TWIPS) continue; // already refused above
+		const longest = text
+			.split(/\s+/)
+			.reduce((best, token) => (token.length > best.length ? token : best), "");
+		if (!longest) continue;
+		// Average char width ≈ 0.5em = (sz/2 half-points → pt)/2 = sz/4 pt;
+		// in twips (×20): sz × 5 per character.
+		const sizeHalfPoints = cellRunSize(cell.node, baselineSizeHalfPoints);
+		const neededTwips = longest.length * sizeHalfPoints * 5 + CELL_MARGIN_TWIPS;
+		if (neededTwips <= widthTwips) continue;
+		const existing = worstByColumn.get(cell.colStart);
+		if (!existing || neededTwips > existing.neededTwips) {
+			worstByColumn.set(cell.colStart, {
+				token: longest,
+				neededTwips,
+				widthTwips,
+			});
+		}
+	}
+	return [...worstByColumn.entries()]
+		.sort(([, a], [, b]) => b.neededTwips - a.neededTwips)
+		.slice(0, 3)
+		.map(
+			([colStart, { token, neededTwips, widthTwips }]) =>
+				`grid column ${colStart} is ${twipsToInches(widthTwips)}in but holds "${truncateSample(token)}" (~${twipsToInches(neededTwips)}in incl. margins) — it will wrap mid-value in Word. Widen it and shrink a roomier column.`,
+		);
+}
+
+/** The cell's first run's font size in half-points (Word's `w:sz` unit),
+ * falling back to the document's docDefaults size when no run states one. */
+function cellRunSize(cell: XmlNode, baselineSizeHalfPoints: number): number {
+	const size = cell
+		.findChild("w:p")
+		?.findChild("w:r")
+		?.findChild("w:rPr")
+		?.findChild("w:sz")
+		?.getAttribute("w:val");
+	const parsed = Number(size);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: baselineSizeHalfPoints;
 }
 
 /** Echo the resulting per-grid-column widths in inches so the agent can sanity-

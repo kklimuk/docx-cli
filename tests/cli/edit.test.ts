@@ -832,9 +832,9 @@ describe("edit --text preserves the format boundary at a tab (no bold-bleed)", (
 	});
 });
 
-describe("edit --text rejects markdown-looking values (use --markdown)", () => {
-	test("paired **bold** is refused with a redirect to --markdown", async () => {
-		const docPath = await docFrom("md-guard-bold", "Plain.\n");
+describe("edit --text inserts markdown-looking values literally (no guard)", () => {
+	test("paired **bold** lands verbatim (not parsed, not rejected)", async () => {
+		const docPath = await docFrom("md-literal-bold", "Plain.\n");
 		const result = await runCli(
 			"edit",
 			docPath,
@@ -843,17 +843,24 @@ describe("edit --text rejects markdown-looking values (use --markdown)", () => {
 			"--text",
 			"Skills **and** Interests",
 		);
-		expect(result.exitCode).toBe(2);
-		expect(result.parsed).toMatchObject({ code: "USAGE" });
-		expect((result.parsed as { hint: string }).hint).toContain("--markdown");
+		expect(result.exitCode).toBe(0);
+		const ast = await runCli("read", docPath, "--ast");
+		const para = (
+			ast.parsed as {
+				blocks: Array<{ id: string; runs?: Array<{ text: string }> }>;
+			}
+		).blocks.find((block) => block.id === "p0");
+		expect((para?.runs ?? []).map((run) => run.text).join("")).toBe(
+			"Skills **and** Interests",
+		);
 	});
 
-	test("a leading heading and a link are refused", async () => {
-		const docPath = await docFrom("md-guard-more", "Plain.\n");
+	test("a leading heading and a link land verbatim too", async () => {
+		const docPath = await docFrom("md-literal-more", "Plain.\n");
 		expect(
 			(await runCli("edit", docPath, "--at", "p0", "--text", "# Title"))
 				.exitCode,
-		).toBe(2);
+		).toBe(0);
 		expect(
 			(
 				await runCli(
@@ -865,11 +872,11 @@ describe("edit --text rejects markdown-looking values (use --markdown)", () => {
 					"see [docs](http://x.io)",
 				)
 			).exitCode,
-		).toBe(2);
+		).toBe(0);
 	});
 
-	test("literal text with stray *, %, $, parens is NOT a false positive", async () => {
-		const docPath = await docFrom("md-guard-ok", "Plain.\n");
+	test("literal text with stray *, %, $, parens works", async () => {
+		const docPath = await docFrom("md-literal-ok", "Plain.\n");
 		const result = await runCli(
 			"edit",
 			docPath,
@@ -881,8 +888,8 @@ describe("edit --text rejects markdown-looking values (use --markdown)", () => {
 		expect(result.exitCode).toBe(0);
 	});
 
-	test("--markdown accepts the same bold value (the right verb)", async () => {
-		const docPath = await docFrom("md-guard-redirect", "Plain.\n");
+	test("--markdown still parses the same bold value (the render path)", async () => {
+		const docPath = await docFrom("md-literal-redirect", "Plain.\n");
 		expect(
 			(
 				await runCli(
@@ -1029,6 +1036,170 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 			}
 		).blocks[0];
 		expect(block?.style).toBe("Heading1");
+	});
+
+	test("a multi-paragraph --markdown split inherits the host's direct formatting on EVERY paragraph", async () => {
+		// The contract §9 trap: splitting one indented clause into three markdown
+		// paragraphs left paragraphs flush-left with no spacing — which reads as
+		// corruption and sends weak agents into destructive undo spirals.
+		const docPath = await docFrom("md-split", "Dense clause text.\n");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"0.25",
+			"--space-after",
+			"4",
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--markdown",
+					"First part.\n\nSecond part.\n\nThird part.",
+				)
+			).exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		// All three replacement paragraphs carry the host's 0.25in indent.
+		expect(xml.match(/<w:ind w:left="360"/g)?.length).toBe(3);
+		expect(xml.match(/<w:spacing w:after="80"/g)?.length).toBe(3);
+	});
+
+	test("--markdown that brings a list CONTINUES the host's list instead of minting a new one", async () => {
+		// Rewriting one list item with `--markdown "1. …"` means "replace this
+		// item's content," not "start a new list" — a fresh numId dropped mid-list
+		// restarts numbering at the split point in Word.
+		const docPath = await docFrom(
+			"md-list-cont",
+			"1. alpha\n2. beta\n3. gamma\n",
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p1",
+					"--markdown",
+					"1. beta one\n2. beta two",
+				)
+			).exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		const numIds = [...xml.matchAll(/<w:numId w:val="(\d+)"\/>/g)].map(
+			(match) => match[1],
+		);
+		expect(numIds).toHaveLength(4);
+		expect(new Set(numIds).size).toBe(1);
+		// The read view shows one continuous list, ordinals 1..4.
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("2. beta one");
+		expect(markdown).toContain("4. gamma");
+	});
+
+	test("--markdown replacing an ordered item with a BULLET list keeps the fresh list (kind change is deliberate)", async () => {
+		const docPath = await docFrom("md-list-kind", "1. alpha\n2. beta\n");
+		expect(
+			(await runCli("edit", docPath, "--at", "p1", "--markdown", "- a bullet"))
+				.exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		const numIds = [...xml.matchAll(/<w:numId w:val="(\d+)"\/>/g)].map(
+			(match) => match[1],
+		);
+		expect(new Set(numIds).size).toBe(2);
+	});
+
+	test("--markdown replacement inherits the run formatting common to the old runs", async () => {
+		// The mnda font-drift partial: replacing a small-print form cell via
+		// --markdown emitted bare runs that fell back to docDefaults (11pt
+		// Calibri inside an 8pt Arial form). The replacement inherits the
+		// intersection of the old runs' rPr — but never w:highlight (that marks
+		// the placeholder being filled).
+		const docPath = await docFrom("md-rpr", "placeholder value\n");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"placeholder value",
+			"--size",
+			"8",
+			"--font",
+			"Arial",
+			"--highlight",
+			"yellow",
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--markdown",
+					"June 8, 2026",
+				)
+			).exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		const paragraph = xml.match(
+			/<w:p\b[\s\S]*?June 8, 2026[\s\S]*?<\/w:p>/,
+		)?.[0];
+		if (!paragraph) throw new Error("expected the replaced paragraph");
+		expect(paragraph).toContain('<w:sz w:val="16"');
+		expect(paragraph).toContain('w:ascii="Arial"');
+		expect(paragraph).not.toContain("<w:highlight");
+	});
+
+	test("--markdown that brings its own style does NOT inherit the old run formatting", async () => {
+		// The counterpart to the run-inheritance above: replacing a direct-
+		// formatted paragraph (8pt Arial form cell) with a markdown HEADING must
+		// keep the heading's style, not stamp the old 8pt Arial onto its run as
+		// hard direct formatting (which would render the heading at form-cell
+		// size). The run-inheritance pass skips styled/listed paragraphs, same as
+		// the paragraph-property pass.
+		const docPath = await docFrom("md-styled-noinherit", "placeholder\n");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"placeholder",
+			"--size",
+			"8",
+			"--font",
+			"Arial",
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--markdown",
+					"## New Section Heading",
+				)
+			).exitCode,
+		).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		const paragraph = xml.match(
+			/<w:p\b[\s\S]*?New Section Heading[\s\S]*?<\/w:p>/,
+		)?.[0];
+		if (!paragraph) throw new Error("expected the replaced heading paragraph");
+		expect(paragraph).toContain('<w:pStyle w:val="Heading2"');
+		// No inherited 8pt (sz=16) Arial direct formatting defeating the style.
+		expect(paragraph).not.toContain('<w:sz w:val="16"');
+		expect(paragraph).not.toContain('w:ascii="Arial"');
 	});
 
 	test("--markdown that sets its own block style wins (## → Heading2)", async () => {
@@ -1627,6 +1798,159 @@ describe("docx edit --at pN-pM (range replace, tracked)", () => {
 			"Paragraph 4.",
 			"Paragraph 5.",
 		]);
+	});
+});
+
+// The harness-verified "Accept All corruption" family: a weak agent editing an
+// already-tracked paragraph a second time, and multi-block splits whose reject
+// must round-trip. Both broke before the deletion-drops-own-<w:ins> fix
+// (`dropOwnInsertions`) and the reject-keeps-surviving-content fix
+// (`paragraphHasSurvivingContent`). See src/core/track-changes.
+describe("edit --markdown under tracking: re-edits + multi-block splits survive accept/reject", () => {
+	// Non-empty paragraph texts (the tracked-range shapes leave a hidden empty
+	// residue paragraph, exactly like a tracked range delete — markdown render
+	// hides it, so grade on visible content).
+	const visibleTexts = (blocks: Block[]): string[] =>
+		blocks
+			.filter((b) => b.type === "paragraph")
+			.map((p) => p.runs?.map((r) => r.text ?? "").join("") ?? "")
+			.filter((text) => text.length > 0);
+
+	test("single-block THEN multi-block --markdown on the same paragraph: accept shows the text ONCE", async () => {
+		// The exact contract-markup A-r1 shape: the agent replaced p24 once (single
+		// paragraph), then re-split the now-tracked p24 into three. The first edit's
+		// `<w:ins>` used to survive alongside the second's, so Accept All showed the
+		// first sentence twice and merged the following headings into a run-on.
+		const docPath = await docFrom(
+			"double-edit-accept",
+			"The Company total liability clause here.\n\nTail clause.\n",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Each party liability. Neither party indirect. This limitation applies.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Each party liability.\n\nNeither party indirect.\n\nThis limitation applies.",
+		);
+		await runCli("track-changes", "accept", docPath, "--all");
+		const texts = visibleTexts(await blocksOf(docPath));
+		expect(texts.filter((t) => t === "Each party liability.")).toHaveLength(1);
+		expect(texts).toEqual([
+			"Each party liability.",
+			"Neither party indirect.",
+			"This limitation applies.",
+			"Tail clause.",
+		]);
+	});
+
+	test("single-block THEN multi-block --markdown on the same paragraph: reject restores the ORIGINAL", async () => {
+		const docPath = await docFrom(
+			"double-edit-reject",
+			"The Company total liability clause here.\n\nTail clause.\n",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Each party liability. Neither party indirect. This limitation applies.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Each party liability.\n\nNeither party indirect.\n\nThis limitation applies.",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect(visibleTexts(await blocksOf(docPath))).toEqual([
+			"The Company total liability clause here.",
+			"Tail clause.",
+		]);
+	});
+
+	test("multi-block split (N≥2): reject-all restores the single original paragraph", async () => {
+		// Previously the transition paragraph's inserted paragraph-mark rejected via
+		// deleteParagraph, nuking the <w:del> that carried the original text — so
+		// reject-all LOST the original entirely (an empty <w:p/> where it had been).
+		const docPath = await docFrom(
+			"multiblock-reject",
+			"Original single paragraph.\n\nKeep second.\n",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"First new.\n\nSecond new.\n\nThird new.",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect(visibleTexts(await blocksOf(docPath))).toEqual([
+			"Original single paragraph.",
+			"Keep second.",
+		]);
+	});
+
+	test("delete --track of a paragraph holding an unaccepted insertion: accept-all removes it (no leak)", async () => {
+		// Symmetric single-paragraph case: edit p0 under tracking (leaving a `<w:ins>`),
+		// then delete p0. The insertion used to leak forward and merge into the next
+		// paragraph on accept.
+		const docPath = await docFrom(
+			"delete-own-ins",
+			"Original first.\n\nSecond stays.\n",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Rewritten first.",
+		);
+		await runCli("delete", docPath, "--at", "p0", "--track");
+		await runCli("track-changes", "accept", docPath, "--all");
+		expect(visibleTexts(await blocksOf(docPath))).toEqual(["Second stays."]);
+	});
+
+	test("reject of an inserted paragraph with a hyperlink removes it wholesale (no orphan)", async () => {
+		// The reject-ins-paragraph-mark discriminator must SPLICE a purely-inserted
+		// paragraph even when it carries a passed-through `<w:hyperlink>` (which
+		// `applyInsertion` leaves unwrapped, so it isn't `<w:ins>`). Keying on "any
+		// non-ins child" kept the paragraph and orphaned the hyperlink on reject.
+		const docPath = await docFrom(
+			"insert-hyperlink-reject",
+			"Keep this paragraph.\n",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"See [our site](https://example.com) here.",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect(visibleTexts(await blocksOf(docPath))).toEqual([
+			"Keep this paragraph.",
+		]);
+		expect(await readDocumentXml(docPath)).not.toContain("<w:hyperlink");
 	});
 });
 
@@ -2883,13 +3207,31 @@ describe("docx edit — set run formatting (the inverse of --clear)", () => {
 		expect(the?.underline).toBeUndefined();
 	});
 
-	test("section locators reject run-formatting flags (a section has no runs)", async () => {
+	test("a section locator (sN) redirects to `docx sections`", async () => {
+		// Section editing moved out of edit — any sN locator (with or without
+		// run-formatting flags) points at the dedicated command.
 		const docPath = await freshCopy("set-on-section");
-		// p0 isn't a section, but the guard fires in validateSectionEdit before any
-		// resolve — use an sN-shaped locator to hit it.
 		const result = await runCli("edit", docPath, "--at", "s0", "--bold");
 		expect(result.exitCode).not.toBe(0);
-		expect((result.parsed as { error?: string }).error).toContain("Section");
+		expect((result.parsed as { error?: string }).error).toContain(
+			"docx sections",
+		);
+	});
+
+	test("--columns / --type redirect to `docx sections`", async () => {
+		const docPath = await freshCopy("columns-redirect");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--columns",
+			"2",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error?: string }).error).toContain(
+			"docx sections",
+		);
 	});
 });
 
@@ -3369,10 +3711,10 @@ describe("docx edit — inline escape decoding (--text / --markdown)", () => {
 		expect(body.map((run) => run.text ?? "").join("")).toBe("Body para");
 	});
 
-	test("a decoded newline still trips the markdown-in-text guard", async () => {
-		const docPath = await freshCopy("esc-text-guard");
-		// `--text "intro\n# Heading"` decodes to a real newline, so the leading-ATX
-		// heading now sits at a line start — the guard should catch it and redirect.
+	test("a decoded newline + a markdown-looking heading insert literally", async () => {
+		const docPath = await freshCopy("esc-text-literal");
+		// `--text "intro\n# Heading"` decodes the \n to a real line break; the
+		// leading-ATX `# Heading` is kept verbatim (no markdown guard).
 		const result = await runCli(
 			"edit",
 			docPath,
@@ -3381,8 +3723,7 @@ describe("docx edit — inline escape decoding (--text / --markdown)", () => {
 			"--text",
 			"intro\\n# Heading",
 		);
-		expect(result.exitCode).not.toBe(0);
-		expect((result.parsed as { error?: string }).error).toContain("markdown");
+		expect(result.exitCode).toBe(0);
 	});
 });
 

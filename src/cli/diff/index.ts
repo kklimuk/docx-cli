@@ -16,40 +16,44 @@ import { normalizeReadMarkers } from "./markers";
 
 const HELP = `docx diff — show what changed between this document and another version
 
-This is a read-only REPORT of what changed (not a patch to apply). It renders
-both documents to their \`docx read\` markdown and prints a git-style unified diff.
-Lines starting with + are in FILE (current); - are in the baseline. A one-line
-change shows inline as [-removed-]{+added+}.
-
-There is no undo/history — edits overwrite FILE in place — so SNAPSHOT before you
-start editing, then diff against the snapshot:
-  cp doc.docx doc.orig.docx      # keep the original
-  docx edit doc.docx ...         # make your changes
-  docx diff doc.docx --against doc.orig.docx
-
 Usage:
   docx diff FILE --against SRC [options]
 
+Examples:
+  # There is no undo/history (edits overwrite FILE in place), so SNAPSHOT
+  # before editing, then diff against the snapshot:
+  cp doc.docx doc.orig.docx        # keep the original
+  docx edit doc.docx ...           # make your changes
+  docx diff doc.docx --against doc.orig.docx
+  # …other baselines:
+  git show main:report.docx | docx diff report.docx --against -
+  docx read old.docx > old.md && docx diff new.docx --against old.md
+
+Options:
   FILE               the current document (the + / "current" side)
-  --against SRC      REQUIRED. the baseline to compare against (the - side):
+  --against SRC      REQUIRED. The baseline to compare against (the - side):
                        • a .docx file        (rendered and compared)
                        • a saved \`docx read\` text file (compared as-is)
-                       • -                   (read from stdin; a piped .docx or text)
+                       • -                   (stdin: a piped .docx or text)
   --from LOC         compare only a block slice (both sides); .docx --against only
   --to LOC           end of the block slice
   --comments         include comment footnotes in the compared markdown
   --json             emit structured hunks + stats as JSON
   -h, --help         show this help
 
-Locators (\`<!-- p3 -->\`, cell/row ids) are normalized out of the diff so a
-structural edit doesn't renumber every following line; formatting/structure
-changes (shading, borders, tracked-changes state) still show. To get a locator
-to edit at, run \`docx read\`.
+This is a read-only REPORT of what changed (not a patch to apply): both sides
+render to their \`docx read\` markdown and compare as a git-style unified diff.
+Locators (\`<!-- p3 -->\`, cell/row ids) are normalized out so a structural
+edit doesn't renumber every following line; formatting/structure changes
+(shading, borders, tracked-changes state) still show. To get a locator to
+edit at, run \`docx read\`.
 
-Examples:
-  docx diff report.docx --against report.orig.docx
-  git show main:report.docx | docx diff report.docx --against -
-  docx read old.docx > old.md && docx diff new.docx --against old.md
+Output:
+  A unified diff: a summary line (hunk / +− counts + legend), then hunks —
+  "-" lines are the baseline, "+" lines are FILE (current), and a small
+  one-line change shows inline as [-removed-]{+added+}. Identical documents
+  print "No differences …"; exit 0 either way. --json: structured hunks +
+  stats (no envelope). Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

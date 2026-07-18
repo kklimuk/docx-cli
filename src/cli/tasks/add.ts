@@ -4,7 +4,6 @@ import { parseTargetPlacement, placeSpec } from "../insert/place";
 import {
 	decodeInlineEscapes,
 	parseRunsArg,
-	rejectMarkdownInText,
 	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
@@ -23,6 +22,12 @@ Usage:
   docx tasks add FILE --before LOCATOR --runs JSON [--unchecked] [options]
   docx tasks add FILE (--at-start | --at-end) --text LABEL [options]
 
+Examples:
+  docx tasks add doc.docx --after p0 --text "buy groceries"
+  docx tasks add doc.docx --after p1 --text "pay rent" --checked
+  docx tasks add doc.docx --after p2 --text "nested item" --checked --list-level 1
+  docx tasks add doc.docx --at-end --runs '[{"type":"text","text":"ship it"}]'
+
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
   --before LOCATOR  Insert before the block at LOCATOR
@@ -31,8 +36,8 @@ Placement (exactly one required):
 
 Content (exactly one of):
   --text LABEL      The task label (literal prose — a \\n becomes a line break,
-                    a \\t a tab; a markdown-looking value is rejected, use --runs
-                    for text that really contains ** / [](…)).
+                    a \\t a tab; a markdown-looking value lands verbatim, so ** /
+                    [](…) go in literally).
   --runs JSON       Custom runs for the label (Run[] JSON).
 
 State:
@@ -56,12 +61,6 @@ Options:
   --dry-run         Report what would change without writing the file
   -v, --verbose     Print the success ack JSON (default: the minted locator)
   -h, --help        Show this help
-
-Examples:
-  docx tasks add doc.docx --after p0 --text "buy groceries"
-  docx tasks add doc.docx --after p1 --text "pay rent" --checked
-  docx tasks add doc.docx --after p2 --text "nested item" --checked --list-level 1
-  docx tasks add doc.docx --at-end --runs '[{"type":"text","text":"ship it"}]'
 
 Toggle an existing task with \`docx tasks check\` / \`docx tasks uncheck\`.
 
@@ -165,12 +164,10 @@ async function resolveTaskSpec(
 		return fail("USAGE", "Pass exactly one of --text or --runs", HELP);
 	}
 	if (text !== undefined) {
-		// Task labels are prose, not markdown — decode inline whitespace escapes
-		// and reject a markdown-looking / shell-gutted value, exactly like
-		// `insert --text` does (see cli/insert buildSingleShotOptions).
+		// Task labels decode inline whitespace escapes and land verbatim (a
+		// markdown-looking label is kept literally). We still refuse a shell-gutted
+		// currency value, exactly like `insert --text`.
 		const decoded = decodeInlineEscapes(text);
-		const rejected = await rejectMarkdownInText(decoded);
-		if (typeof rejected === "number") return rejected;
 		const mangled = await rejectShellMangledValue(decoded, "--text");
 		if (typeof mangled === "number") return mangled;
 		return { kind: "text", text: decoded, format: {} };

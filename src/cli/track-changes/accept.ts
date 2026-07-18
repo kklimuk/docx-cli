@@ -9,24 +9,21 @@ Usage:
   docx track-changes accept FILE --at tcN [options]
   docx track-changes accept FILE --all [options]
 
-Accepting an insertion (<w:ins>) or move destination (<w:moveTo>) unwraps the
-wrapper — the content becomes plain runs at this location. Accepting a
-deletion (<w:del>) or move source (<w:moveFrom>) removes the element and its
-<w:delText> entirely (the text disappears for real).
+Examples:
+  docx track-changes list doc.docx                 # get the tcN / revN handles
+  docx track-changes accept doc.docx --at rev0     # one del+ins pair, one call
+  docx track-changes accept doc.docx --at tc1 --at tc3 --at tc5
+  docx track-changes accept doc.docx --all
+  docx track-changes accept doc.docx --all --dry-run
 
-Section-property revisions (<w:sectPrChange>) and paragraph-property revisions
-(<w:pPrChange>): accept drops the prior-state snapshot, leaving the live
-section / paragraph properties in place.
+Accepting works exactly like Word: an accepted insertion stays as plain
+text; an accepted deletion disappears for real; an accepted section/
+paragraph-property change keeps the new properties; an accepted
+paragraph-mark deletion merges the paragraph with the next one. To accept
+some and reject the rest in ONE call, use \`docx track-changes apply\`.
 
-Paragraph-mark trackings (<w:ins>/<w:del> inside <w:pPr><w:rPr>): accepting
-a paragraph-mark insertion just removes the marker (the inserted paragraph
-stays as a regular paragraph). Accepting a paragraph-mark deletion merges
-the owning paragraph with the next paragraph — the next paragraph's runs
-are appended to this one and the next paragraph is removed (per ECMA-376
-§17.13.5.4).
-
-Out of scope: run-formatting changes (<w:rPrChange>). These aren't modeled in
-the AST today and --all silently skips them.
+Out of scope: run-formatting changes Word tracked (bold/color tweaks) aren't
+modeled; --all silently skips them.
 
 Target (one required, mutually exclusive):
   --at tcN          Accept a tracked change by id. Repeat for multiple ids
@@ -48,16 +45,10 @@ Options:
   -h, --help        Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
-  applied}. --dry-run prints the preview {operation, dryRun, path, applied}.
-  Errors print {code, error, hint?} with a nonzero exit. Discover ids with
-  \`docx track-changes list FILE\`.
-
-Examples:
-  docx track-changes accept doc.docx --at tc0
-  docx track-changes accept doc.docx --at tc1 --at tc3 --at tc5
-  docx track-changes accept doc.docx --all
-  docx track-changes accept doc.docx --all --dry-run
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, applied}. --dry-run prints the preview
+  {operation, dryRun, path, applied}. Errors print {code, error, hint?} with
+  a nonzero exit. Discover ids with \`docx track-changes list FILE\`.
 `;
 
 export async function run(args: string[]): Promise<number> {

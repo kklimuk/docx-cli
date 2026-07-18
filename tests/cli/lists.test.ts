@@ -70,8 +70,12 @@ describe("docx lists set", () => {
 		expect(result.exitCode).toBe(0);
 
 		const markdown = await readMarkdown(path);
-		// GFM can't render roman, so the body stays decimal-looking; the hint carries it.
-		expect(markdown).toMatch(/docx:list p8 format="upper-roman"/);
+		// GFM can't render roman, so the body stays decimal-looking; the hint carries
+		// the format AND a rendered-glyph preview so a weak agent can see how it
+		// renders (I, II, III) instead of distrusting the decimal body.
+		expect(markdown).toMatch(
+			/docx:list p8 format="upper-roman" renders="I, II, III, …"/,
+		);
 
 		const ast = await runCli("read", path, "--ast");
 		const block = (

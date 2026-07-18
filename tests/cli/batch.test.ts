@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
+import { readDocumentXml } from "./helpers";
 
 /**
  * Per-command `--batch` for edit / replace / insert — apply many changes from
@@ -72,6 +73,21 @@ async function writeJsonl(label: string, lines: unknown[]): Promise<string> {
 }
 
 describe("edit --batch", () => {
+	test("a literal TAB inside a JSONL string value parses and lands as a real tab", async () => {
+		// Weak agents heredoc real tab characters into batch values; JSON forbids
+		// raw control chars in strings, and the observed recovery for the hard
+		// failure was substituting spaces — silently dropping the <w:tab/> and
+		// misaligning the form row. A raw tab can only mean \t, so it's escaped
+		// and retried instead of rejected.
+		const docPath = await docWithParagraphs("batch-tab", ["placeholder"]);
+		const batchPath = join(tempWorkspace("batch-tab-jsonl"), "batch.jsonl");
+		// Hand-built line (NOT JSON.stringify) so the tab is a raw control char.
+		await Bun.write(batchPath, '{"at":"p0","text":"[ x ]\t2 year(s)"}');
+		const result = await runCli("edit", docPath, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain("<w:tab/>");
+	});
+
 	test("applies span edits across several paragraphs in one read", async () => {
 		const path = await docWithParagraphs("edit-multi", [
 			"Name: ____",

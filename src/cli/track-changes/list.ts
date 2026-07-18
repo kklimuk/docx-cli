@@ -16,17 +16,19 @@ const HELP = `docx track-changes list — inventory every revision wrapper
 Usage:
   docx track-changes list FILE [options]
 
+Examples:
+  docx track-changes list doc.docx
+  docx track-changes accept doc.docx --at rev0 --at tc4
+  docx track-changes list doc.docx --json | jq '.[] | select(.kind == "del")'
+
 Options:
   --json        Emit the full revision objects as a JSON array (default: a
                 text table, one LOGICAL change per line)
   -h, --help    Show this help
 
-Lists every revision wrapper with stable tcN ids — run-level <w:ins>, <w:del>,
-<w:moveFrom>, <w:moveTo>; section-property revisions <w:sectPrChange>; and
-paragraph-mark <w:ins>/<w:del> markers (a self-closing element inside
-<w:pPr><w:rPr> that tracks a paragraph break itself). moveFrom/moveTo halves
-of the same logical move appear as separate entries; their kind tells them
-apart.
+Lists every tracked change with a stable tcN id — insertions, deletions,
+moves (each half its own entry), tracked paragraph breaks, and
+formatting/section/table property revisions.
 
 Output: a text table, ONE LOGICAL CHANGE per line —
 
@@ -50,26 +52,16 @@ handle; paired halves additionally carry "group": "revN". kind is one of: "ins",
 "checkboxToggle". Paragraph-mark entries have kind "ins"/"del" with text "" —
 their blockId is the owning paragraph's pN. Table-structural entries
 (rowIns/rowDel/cellIns/cellDel and the property revisions
-tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to the owning
-table's tN. checkboxToggle entries surface a Word checkbox content control's
-tracked toggle (☐↔☒): metadata comes from the inner <w:ins> (the new glyph);
-reject restores the prior glyph and flips the w14:checked attribute back.
-Structural inserts/deletes of a checkbox (Word emits
-<w:customXmlDel/InsRangeStart/End> around the SDT) round-trip through the
-XmlNode tree but aren't yet enumerated as a dedicated kind.
+tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to the
+owning table's tN. checkboxToggle entries surface a tracked checkbox toggle
+(☐↔☒); reject restores the prior state. (Structural inserts/deletes of a
+whole checkbox aren't yet enumerated as their own kind.)
 
 Property revisions (kind="sectPrChange" or "pPrChange") additionally include
 { prior, current } objects from before and after the tracked edit, so agents
 can see the diff without re-reading XML: sectPrChange carries the section's
 columns/sectionType; pPrChange carries the paragraph's
 style/alignment/spacing/indent.
-
-Examples:
-  docx track-changes list doc.docx
-  docx track-changes accept doc.docx --at rev0 --at tc4
-  docx track-changes list doc.docx --json | jq '.[] | select(.kind == "del")'
-  docx track-changes list doc.docx --json | jq '.[] | select(.kind | test("move"))'
-  docx track-changes list doc.docx --json | jq '.[] | select(.kind == "pPrChange") | .prior, .current'
 `;
 
 export async function run(args: string[]): Promise<number> {

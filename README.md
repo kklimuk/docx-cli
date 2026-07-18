@@ -12,20 +12,21 @@
 
 The default way agents edit Word docs is to unzip the `.docx` and hand-write the OOXML inside. That takes a strong model to get right, burns tokens, and routinely produces a file Word won't open. `docx-cli` hands the agent plain commands plus an annotated-Markdown read view, so it never has to reason about the XML.
 
-We measured it — a controlled A/B bake-off: **six real document tasks** (fill an NDA, fill an invoice, restyle a résumé, redline a contract, finalize a contract, author a journal), the same starting files, and one independent judge grading every result from the **Word-rendered pages**. Three runs per arm at each of two model tiers:
+We measured it — a controlled A/B bake-off: **six real document tasks** (fill an NDA, fill an invoice, restyle a résumé, redline a contract, finalize a contract, author a journal), the same starting files, and one independent judge grading every result from the **Word-rendered pages**. Three runs per arm at each of two model tiers. Haiku columns: July 2026 rerun on v0.20.4; Sonnet columns: June 2026 bake-off (**not** Sonnet 5):
 
-|                           | Haiku (weak, cheap) |                       | Sonnet (strong) |                       |
-| :------------------------ | ------------------: | --------------------: | --------------: | --------------------: |
-|                           |        **docx-cli** |         default skill |    **docx-cli** |         default skill |
-| Tasks solved (of 6)       |       **4.3** (4–5) |             0.7 (0–1) |   **6.0** (6–6) |             4.0 (4–4) |
-| Rendered correctly (of 6) |                 6 |                   3.7 |             6.0 |                   4.7 |
-| Outright-broken documents |               **0** |      ~1/run (up to 2) |           **0** |                     0 |
-| Input tokens              |            **2.4M** |           6.1M (2.6×) |        **1.6M** |           3.6M (2.2×) |
-| Wall-clock                |           **924 s** | 1,882 s (2.0× slower) |     **1,175 s** | 2,029 s (1.7× slower) |
+|                            | Haiku (weak, cheap) |                       | Sonnet (strong, June run — not Sonnet 5) |                       |
+| :------------------------- | ------------------: | --------------------: | ---------------------------------------: | --------------------: |
+|                            |        **docx-cli** |         default skill |                             **docx-cli** |         default skill |
+| Tasks solved (of 6)        |       **5.0** (5–5) |             0.7 (0–2) |                             **6.0** (6–6) |             4.0 (4–4) |
+| Rendered correctly (of 6)  |             **6.0** |                   4.3 |                                      6.0 |                   4.7 |
+| Outright-broken documents  |               **0** |    ~1.3/run (up to 2) |                                    **0** |                     0 |
+| Effective input tokens     |            **3.2M** |           7.9M (2.5×) |                                 **1.6M** |           3.6M (2.2×) |
+| Output tokens              |             **78k** |           155k (2.0×) |                                        — |                     — |
+| Wall-clock                 |         **1,186 s** | 2,438 s (2.1× slower) |                              **1,175 s** | 2,029 s (1.7× slower) |
 
-- **The correctness gap is widest on the cheap Haiku tier (~6×)**, and a frontier model never closes it — the default skill caps at 4/6, losing the contract redline and the résumé every Sonnet run.
-- **The cost and speed penalties are model-independent** — ~2.2–2.6× more tokens and ~1.7–2× slower at *both* tiers, with token/time ranges that never overlap.
-- **Word couldn't reliably open the default skill's work** — it failed to open 5 of 36 of its outputs; all 36 of docx-cli's opened on the first try.
+- **The correctness gap is widest on the cheap Haiku tier (~7×)**, and a frontier model never closes it — the default skill caps at 4/6, losing the contract redline and the résumé every Sonnet run.
+- **The cost and speed penalties are model-independent** — ~2.2–2.5× more input tokens and ~1.7–2.1× slower at *both* tiers, with token/time ranges that never overlap. (Output tokens, measured in the July rerun: 2× more for the default skill. The June Sonnet run measured input only.)
+- **Word couldn't reliably open the default skill's work** — in the July Haiku runs it failed to open 4 of the skill's 18 outputs (both legal-redline deliverables in 2 of 3 runs); all 18 of docx-cli's opened on the first try.
 
 Full methodology, per-task rubrics, and the harness that produced these numbers: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).
 
@@ -86,7 +87,7 @@ Open `mnda-filled.docx` in Word: tracked changes and comments appear in the revi
 
 docx-cli ships as an [Agent Skill](https://agentskills.io) — one `SKILL.md` that works across Claude Code, Codex, Pi, and the other harnesses that read the open skill format. The skill teaches the locator model and the redline / comment / fill workflows, then defers to `docx <command> --help` at runtime, so it can't go stale.
 
-**Why a skill?** docx-cli is built for the _weakest, cheapest_ agents. In our weak-agent benchmark — 6 real document tasks (fill a contract, redline, comment, restyle, author from scratch), graded against Word renders, 3 runs each — Haiku driving docx-cli completed **4.3/6** tasks versus **0.7/6** for the default Claude skill, at roughly **2.5× fewer tokens**; with Sonnet it's **6/6 vs 4/6**, with roughly 2x fewer tokens. And every docx-cli output opened cleanly in Word on the first try — it never emits a file the renderer rejects. (Methodology and harness: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).)
+**Why a skill?** docx-cli is built for the _weakest, cheapest_ agents. In our weak-agent benchmark — 6 real document tasks (fill a contract, redline, comment, restyle, author from scratch), graded against Word renders, 3 runs each — Haiku driving docx-cli completed **5.0/6** tasks versus **0.7/6** for the default Claude skill (~7×), at roughly **2.5× fewer input tokens and 2× fewer output tokens**; with Sonnet (June run — not Sonnet 5) it's **6/6 vs 4/6**, with roughly 2x fewer tokens. And every docx-cli output opened cleanly in Word on the first try — it never emits a file the renderer rejects. (Methodology and harness: [`.claude/skills/weak-agent-test`](.claude/skills/weak-agent-test).)
 
 ### Install
 
@@ -153,7 +154,7 @@ docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME 
 docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [--next STYLEID] [formatting]   # define a new custom style
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
 
-docx comments      list FILE [--include-resolved] [--thread cN]
+docx comments      list FILE [--open] [--thread cN]
 docx footnotes     list FILE
 docx endnotes      list FILE
 docx headers       list FILE
@@ -259,7 +260,7 @@ headers`/`docx footers`.
 docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--orientation O] [--size SIZE] [--margins M] [--header "..."] [--footer "..." | --page-numbers] [--force]
 docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
-docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | sN | eqN | tN:rRcC:pK[:S-E]
+docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | tN:rRcC:pK[:S-E]  (sections → docx sections, equations → docx equations edit)
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN | tN:rRcC:pK (cell paragraph)
 docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
@@ -476,7 +477,7 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
 | Form                                                                 | Accepted by                                                                         |
 | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks)                              | `read --from/--to`, `insert --after/--before`, `wc`, `comments add`                 |
-| `pN`, `pN:S-E`, `pN-pM`, `sN`, `eqN`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range)                      |
+| `pN`, `pN:S-E`, `pN-pM`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range; sections → `docx sections`, equations → `docx equations edit`) |
 | `pN`, `pN-pM`, `tN`, `sN`, `tN:rRcC:pK`                              | `delete --at`                                                                       |
 | `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans)                      | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results  |
 | `pN[:offset]` (point)                                                | `footnotes/endnotes add --at`                                                       |

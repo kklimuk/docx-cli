@@ -19,6 +19,11 @@ Usage:
   docx comments resolve FILE --batch FILE.jsonl [options]
   docx comments resolve FILE --batch -    [options]   # JSONL from stdin
 
+Examples:
+  docx comments resolve doc.docx --at c2
+  docx comments resolve doc.docx --at c1 --at c3 --unset
+  docx comments resolve doc.docx --batch resolutions.jsonl
+
 Target (one required, mutually exclusive):
   --at cN             Comment id (e.g., c0). Repeat for multiple ids:
                       --at c1 --at c3 --at c5. All ids are validated against
@@ -35,14 +40,10 @@ Optional:
   -h, --help          Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
-  resolved, batch:[{commentId, resolved}]}. Errors print {code, error, hint?}
-  with a nonzero exit. Discover comment ids with \`docx comments list FILE\`.
-
-Examples:
-  docx comments resolve doc.docx --at c2
-  docx comments resolve doc.docx --at c1 --at c3 --unset
-  docx comments resolve doc.docx --batch resolutions.jsonl
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, resolved, batch:[{commentId, resolved}]}. Errors
+  print {code, error, hint?} with a nonzero exit. Discover comment ids with
+  \`docx comments list FILE\`.
 `;
 
 export async function run(args: string[]): Promise<number> {

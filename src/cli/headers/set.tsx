@@ -52,6 +52,16 @@ function helpFor(kind: MarginalKind): string {
 Usage:
   docx ${noun} set FILE [--at sN] [placement] (content) [options]
 
+Examples:
+  docx ${noun} set doc.docx --text "Q3 Report"
+  docx ${noun} set doc.docx --page-number --of-pages          # "Page 3 of 12", centered
+  docx ${noun} set doc.docx --text "Q3 Report" --page-number  # title left, page right
+  docx ${noun} set doc.docx --first-page --text ""            # blank first page
+  docx ${noun} set doc.docx --at s1 --style-ref "Heading 1"   # running head on one section
+  docx ${noun} set doc.docx --date --date-format "MMMM yyyy"
+  # AGENT VERIFICATION: see the ${kind} placed on the page
+  docx render doc.docx --out pages/ --pages 1
+
 Placement (default = every page, all sections):
   --at sN            Target one section (default: the whole document — every
                      section, sharing one ${kind} part)
@@ -72,29 +82,26 @@ Content (pick ONE primary source; --text + one field = two-zone):
   --field F          A document field: filename | title | author
 
 Tracking:
-  --track            Record the reference change as a tracked <w:sectPrChange>
+  --track            Record the change as tracked. Only ATTACHING a new ${kind}
+                     is trackable; replacing an existing ${kind}'s text applies
+                     directly (the ack notes when that happens).
   --author NAME      Tracked-change author (NOT the --field author doc property)
 
 ${SAVE_FLAGS_HELP}
-
-Examples:
-  docx ${noun} set doc.docx --text "Q3 Report"
-  docx ${noun} set doc.docx --page-number --of-pages          # "Page 3 of 12", centered
-  docx ${noun} set doc.docx --text "Q3 Report" --page-number  # title left, page right
-  docx ${noun} set doc.docx --first-page --text ""            # blank first page
-  docx ${noun} set doc.docx --at s1 --style-ref "Heading 1"   # running head on one section
-  docx ${noun} set doc.docx --date --date-format "MMMM yyyy"
 
 See also: docx ${noun} list / clear, docx ${otherNoun} set.
 `;
 }
 
-const SAVE_FLAGS_HELP = `Output:
-  Prints a one-line confirmation (exit 0). --verbose prints the full ack JSON.
+const SAVE_FLAGS_HELP = `General options:
   -o, --output PATH  Write to PATH instead of editing FILE in place
   --dry-run          Preview; write nothing
   -v, --verbose      Print the success ack JSON
-  -h, --help         Show this help`;
+  -h, --help         Show this help
+
+Output:
+  Prints a one-line confirmation (exit 0). --verbose prints the full ack JSON.
+  Errors print {code, error, hint?} with a nonzero exit.`;
 
 export async function runSetMarginal(
 	args: string[],

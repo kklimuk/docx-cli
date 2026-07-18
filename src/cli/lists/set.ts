@@ -23,6 +23,12 @@ const HELP = `docx lists set — renumber a numbered list (start value, glyph fo
 Usage:
   docx lists set FILE --at pN [options]
 
+Examples:
+  docx lists set report.docx --at p12 --start 5
+  docx lists set report.docx --at p12 --format upper-roman
+  docx lists set report.docx --at p20 --restart --start 1
+  docx lists set report.docx --at p20 --continue
+
 --at names any item of a NUMBERED (ordered) list. --start/--format change the whole
 list (every paragraph sharing its numbering); --restart/--continue act from the
 addressed item onward. Bulleted lists aren't numbered, so they're rejected.
@@ -40,11 +46,9 @@ Options:
 --start/--format (it adopts the previous list's numbering). List numbering edits
 are applied directly (untracked) — Word records no revision for them.
 
-Examples:
-  docx lists set report.docx --at p12 --start 5
-  docx lists set report.docx --at p12 --format upper-roman
-  docx lists set report.docx --at p20 --restart --start 1
-  docx lists set report.docx --at p20 --continue
+Output:
+  Prints a one-line confirmation on success (exit 0). --verbose prints the
+  full ack JSON. Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 type Plan = {

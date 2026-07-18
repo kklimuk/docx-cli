@@ -21,6 +21,7 @@ import {
 	EXIT,
 	fail,
 	openOrFail,
+	RENDER_VERIFY_EXAMPLE,
 	renderVerifyHint,
 	resolveBlockOrFail,
 	resolveBlockRangeOrFail,
@@ -49,33 +50,45 @@ function hasPageGeometry(flags: SectionFlags): boolean {
 	);
 }
 
-const HELP = `docx sections — multi-column layout, section breaks & page setup
+const HELP = `docx sections — set up multi-column layout, section breaks, and page setup
 
 Usage:
   docx sections FILE --at LOCATOR (--columns N | page setup) [options]
 
-The verb for everything that lives in a \`<w:sectPr>\` — multi-column flow,
-section breaks, AND page geometry (margins / orientation / size) — so you don't
-have to hand-build them with the right OOXML semantics. This is the ONLY way to
-add/change column layout; \`insert\` no longer takes --section (a raw section
-break formats the content ABOVE it, which is the classic off-by-one).
+Set up multi-column flow, section breaks, AND page geometry (margins /
+orientation / size). This is the ONLY way to add/change column layout.
+
+Examples:
+  # Put a range of text in columns — the "how do I make columns?" answer:
+  docx sections doc.docx --at p4-p9 --columns 2
+  docx sections doc.docx --at p4-p9 --columns 3 --type continuous
+  # Change / collapse an existing section:
+  docx sections doc.docx --at s2 --columns 1            # collapse section s2 to one column
+  docx sections doc.docx --at s2 --margins 0.5          # just section s2's margins
+  # Page setup for the WHOLE document (no --at):
+  docx sections doc.docx --margins 0.5                  # 0.5in margins, every section
+  docx sections doc.docx --orientation landscape        # whole-doc landscape
+  docx sections doc.docx --margins 0.75,1,0.75,1        # top,right,bottom,left
+  # Remove a section break (a separate verb):
+  docx delete doc.docx --at s2                          # strip section break s2
+  # AGENT VERIFICATION: markdown can't show columns/margins — look at the pages
+${RENDER_VERIFY_EXAMPLE}
 
 Addressing:
   (no --at)    PAGE SETUP for the WHOLE document: pass only --margins/
                --orientation/--size with no locator and EVERY section gets it.
-               This is the "set it once for the whole document" path — each
-               section has its own geometry, so on a multi-section doc this sets
-               them all (incl. the trailing governing section that a per-section
-               sweep tends to miss). Columns/type still need --at (which section?).
+               (--columns/--type still need --at — columns apply to a range or
+               one section, not the whole document.)
+  --at pN-pM   Wrap the paragraph range pN…pM in its own N-column section
+               (inserts the bounding continuous breaks). Also accepts a single
+               paragraph (--at pN). THIS is how you put text in columns — name
+               the range. Takes ONLY --columns and --type; --orientation/
+               --size/--margins belong to \`--at sN\` or the whole document.
   --at sN      Edit an EXISTING section break sN in place — its columns, type,
                and/or page geometry. Use this to target ONE section's geometry;
                omit --at (above) to set the whole document. \`docx read FILE\`
                prints the section's id on the \`<!-- docx:page sN … -->\` note when
                geometry deviates from default.
-  --at pN-pM   Wrap the paragraph range pN…pM in its own N-column section
-               (inserts the bounding continuous breaks). Also accepts a single
-               paragraph (--at pN). THIS is how you put text in columns — name the
-               range. (Column wrap only; set page geometry on the resulting sN.)
 
 Column / break options:
   --columns N       Number of columns (>= 1; use 1 to collapse back to single column)
@@ -90,15 +103,11 @@ Page-setup options (no --at = whole document; --at sN = that one section):
   --margins M       One inch value (uniform, e.g. 1 or 1in) OR four comma-separated
                     values in CSS order top,right,bottom,left (e.g. 1,1,1,1.5).
                     Negative values are allowed (content into the margin).
+                    Doc-wide margin/size changes (and single-section docs) also
+                    auto-repair right-edge tab lines that would wrap at the new
+                    width; a per-section --at sN on a multi-section doc does not.
 
-  Changing margins/size auto-fixes tab columns: a template's right-edge LEFT tab
-  (résumé dates/locations) calibrated to the old margins would overflow and WRAP
-  at the new width, so page setup converts each to a RIGHT tab flush at the new
-  margin (the \`--tabs right\` cure, applied for you). The ack reports how many were
-  realigned. (Doc-wide, or a single-section doc; per-section edits on a
-  multi-section doc don't reflow — \`read\`'s docx:layout hint flags those.)
-
-General:
+General options:
   --at LOCATOR      Section (sN), paragraph range (pN-pM), or single paragraph (pN)
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   --track           Record as a tracked change even when the doc toggle is off
@@ -108,25 +117,11 @@ General:
   -v, --verbose     Print the full success ack JSON
   -h, --help        Show this help
 
-Agent tip: VERIFY LAYOUT VISUALLY. \`docx read\` shows columns as a
-\`<!-- docx:section … cols="N" -->\` annotation and page geometry as a leading
-\`<!-- docx:page sN orientation=… margins=… -->\` note, but NOT how content flows
-on the page. After a layout change, render and look:
-  docx render FILE --out pages/
-
 Output:
-  Prints a one-line confirmation on success (exit 0); --verbose prints {ok:true, …}. Positional ids shift
-  after a range wrap (two section breaks are inserted), so re-read before further
-  edits. Errors print {code, error, hint?} + nonzero exit.
-
-Examples:
-  docx sections doc.docx --margins 0.5                  # 0.5in margins, WHOLE document (every section)
-  docx sections doc.docx --orientation landscape        # whole-doc landscape (every section)
-  docx sections doc.docx --margins 0.75,1,0.75,1        # top,right,bottom,left, whole document
-  docx sections doc.docx --at p4-p9 --columns 2
-  docx sections doc.docx --at p4-p9 --columns 3 --type continuous
-  docx sections doc.docx --at s2 --columns 1            # collapse section s2 to one column
-  docx sections doc.docx --at s2 --margins 0.5          # just section s2's margins
+  Prints a one-line confirmation on success (exit 0); --verbose prints
+  {ok:true, …}. Positional ids shift after a range wrap (two section breaks
+  are inserted), so re-read before further edits. Errors print {code, error,
+  hint?} + nonzero exit.
 `;
 
 const OPTION_SPEC = {
@@ -279,8 +274,7 @@ export async function run(args: string[]): Promise<number> {
 }
 
 /** Edit an existing section break in place — columns, type, and/or page geometry
- * (margins/orientation/size). The thin-wrapper path, identical to
- * `edit --at sN …` for columns/type; page geometry rides the same Edit.section. */
+ * (margins/orientation/size) — via `Edit.section`. */
 async function editSection(
 	document: Document,
 	blockRef: BlockReference,

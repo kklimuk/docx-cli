@@ -35,6 +35,11 @@ Usage:
   docx ${verb} edit FILE --at ${idPrefix}N --runs JSON [options]
   docx ${verb} edit FILE --at ${idPrefix}N --markdown TEXT [options]
 
+Examples:
+  docx ${verb} edit doc.docx --at ${idPrefix}2 --text "Updated citation."
+  docx ${verb} edit doc.docx --at ${idPrefix}2 --runs '[{"type":"text","text":"X","italic":true}]'
+  docx ${verb} edit doc.docx --at ${idPrefix}2 --markdown $'First.\\n\\nSecond.'
+
 Target:
   --at ${idPrefix}N              ${capitalize(kind)} id (e.g. ${idPrefix}0); the ${idPrefix} prefix is optional.
                        See \`docx info locators\`.
@@ -54,14 +59,9 @@ Optional:
   -h, --help           Show this help.
 
 Output:
-  Prints a one-line confirmation on success; --verbose prints {ok:true, operation, path, id}. Errors
-  print {code, error, hint?} with a nonzero exit. Discover ids with
-  \`docx ${verb} list FILE\`.
-
-Examples:
-  docx ${verb} edit doc.docx --at ${idPrefix}2 --text "Updated citation."
-  docx ${verb} edit doc.docx --at ${idPrefix}2 --runs '[{"type":"text","text":"X","italic":true}]'
-  docx ${verb} edit doc.docx --at ${idPrefix}2 --markdown $'First.\\n\\nSecond.'
+  Prints a one-line confirmation on success; --verbose prints
+  {ok:true, operation, path, id}. Errors print {code, error, hint?} with a
+  nonzero exit. Discover ids with \`docx ${verb} list FILE\`.
 
 Notes:
   In a --markdown body, links are preserved (their relationship is written into

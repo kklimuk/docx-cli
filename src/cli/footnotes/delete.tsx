@@ -32,6 +32,9 @@ function helpFor(kind: NoteKind): string {
 Usage:
   docx ${verb} delete FILE --at ${idPrefix}N [options]
 
+Examples:
+  docx ${verb} delete doc.docx --at ${idPrefix}3
+
 Target:
   --at ${idPrefix}N              ${capitalize(kind)} id (e.g. ${idPrefix}0); the ${idPrefix} prefix is optional.
                        See \`docx info locators\`.
@@ -45,12 +48,9 @@ Optional:
   -h, --help           Show this help.
 
 Output:
-  Prints a one-line confirmation on success; --verbose prints {ok:true, operation, path, id}. Errors
-  print {code, error, hint?} with a nonzero exit. Discover ids with
-  \`docx ${verb} list FILE\`.
-
-Examples:
-  docx ${verb} delete doc.docx --at ${idPrefix}3
+  Prints a one-line confirmation on success; --verbose prints
+  {ok:true, operation, path, id}. Errors print {code, error, hint?} with a
+  nonzero exit. Discover ids with \`docx ${verb} list FILE\`.
 `;
 }
 

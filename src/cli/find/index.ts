@@ -19,11 +19,20 @@ import {
 	writeStdout,
 } from "../respond";
 
-const HELP = `docx find — locate text spans and return their locators
+const HELP = `docx find — locate content and return its locator
 
 Usage:
   docx find FILE QUERY [options]
   docx find FILE --highlight [COLOR]             # find by formatting (no QUERY)
+
+Examples:
+  docx find doc.docx "fox"                         # every match, one per line
+  docx find doc.docx "TODO|FIXME" --regex --ignore-case
+  docx find doc.docx --highlight yellow            # every yellow-highlighted span
+  # remove every highlight:
+  docx find doc.docx --highlight any | while read span; do
+    docx edit doc.docx --at "$span" --clear highlight; done
+  docx comments add doc.docx --at "$(docx find doc.docx fox | head -1)" --text "..."
 
 Positional:
   QUERY             literal substring (or regex if --regex). Omit it when using
@@ -31,16 +40,15 @@ Positional:
 
 Formatting filters (alternative to QUERY — locate runs by formatting, the
 inverse of \`edit --clear\`; pair with \`edit --at <span> --clear\`):
-  --highlight [C]   runs highlighted color C (a name like "yellow", or "any").
-                    Bare --highlight (no value) means any color. Returns each
-                    highlighted placeholder's FULL span — paste it straight into
-                    \`edit --at\` instead of hand-counting offsets from a text match.
+  --highlight [C]   runs highlighted with color C (a name like "yellow", or
+                    "any"). Bare --highlight (no value) means any color.
+                    Returns each highlighted stretch's FULL span.
   --color HEX       runs with text color HEX (e.g. FF0000)
   --bold            bold runs
   --italic          italic runs
   --underline       underlined runs
 
-Options:
+General options:
   --regex           treat QUERY as a JavaScript regular expression
   --ignore-case     case-insensitive match
   --nth N           return only the Nth match (0-indexed). By default EVERY
@@ -56,22 +64,6 @@ Options:
   --json            emit the full match objects as JSON (default: bare locators)
   -h, --help        show this help
 
-Searches the concatenated text of each paragraph in document order, including
-paragraphs nested in table cells (locators look like tT:rRcC:pK:S-E for those).
-A TAB in the document matches as one character, and an in-paragraph line break
-matches "\\n". A QUERY containing "\\n" may span lines: each "\\n" matches a
-line break OR a paragraph boundary (consecutive paragraphs in the body or
-within ONE table cell — never across a table, section break, or cell wall). A spanning
-match prints as pA:S-pB:E — the cross-paragraph range form \`comments add
---at\` accepts, so a spanning find pipes straight into a spanning comment.
-
-By default the query is normalized: balanced markdown emphasis around
-non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
-straight quotes; em-dash and en-dash match the hyphen; a TAB or non-breaking/
-typographic space matches a plain space; bullet glyph variants (·•‣∙▪◦) match
-each other. Pass --exact to match the raw query verbatim. --regex is always
-verbatim. \\n and \\t in the QUERY are decoded to real characters first.
-
 Output:
   Default: EVERY matched span locator (e.g. p3:5-8), one per line — feed them
   straight into another command's --at (or a --batch). No matches prints
@@ -80,14 +72,6 @@ Output:
   --json: { totalMatches, query, view, matches:[{locator, blockId, start, end,
   text, …}], normalizedQuery? } (no envelope). Errors print {code, error,
   hint?} with a nonzero exit. Notation: offsets are 0-based, end-exclusive.
-
-Examples:
-  docx find doc.docx "fox"                         # every match, one per line
-  docx find doc.docx "TODO|FIXME" --regex --ignore-case
-  docx find doc.docx --highlight yellow            # every yellow-highlighted span
-  docx find doc.docx --highlight any | while read s; do \\
-    docx edit doc.docx --at "$s" --clear highlight; done
-  docx comments add doc.docx --at "$(docx find doc.docx fox | head -1)" --text "..."
 `;
 
 /** `--highlight` with no value means "any color" — the common cleanup intent

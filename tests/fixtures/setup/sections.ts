@@ -255,13 +255,22 @@ await appendText(
 );
 
 // Initialize the trailing sectPr to columns=1 (untracked baseline state).
-await cli("edit", out, "--at", "s7", "--columns", "1", "--type", "continuous");
+await cli(
+	"sections",
+	out,
+	"--at",
+	"s7",
+	"--columns",
+	"1",
+	"--type",
+	"continuous",
+);
 // Turn tracking on, edit to columns=2 — this leaves a w:sectPrChange capturing
 // the prior 1-column state inside the live sectPr.
 await cli("track-changes", out, "on");
 await cliEnv(
 	{ DOCX_AUTHOR: "Reviewer", DOCX_CLI_NOW: "2026-05-06T10:00:00Z" },
-	"edit",
+	"sections",
 	out,
 	"--at",
 	"s7",

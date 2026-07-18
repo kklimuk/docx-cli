@@ -28,6 +28,9 @@ const HELP = `docx tables delete-column — delete a table column
 Usage:
   docx tables delete-column FILE --at tN:cC [options]
 
+Examples:
+  docx tables delete-column doc.docx --at t0:c1
+
 Required:
   --at LOCATOR       Column to delete. Supports:
 ${AT_FORMS}
@@ -41,17 +44,15 @@ Optional:
   -h, --help         Show this help
 
 When track-changes is on, each cell of the column is marked as a tracked
-deletion (<w:tcPr><w:cellDel/>); the grid column is trimmed on accept.
-Rejected if the column passes through a horizontal merge (unmerge first) or
-is the table's only column (delete the table instead).
+deletion — accept removes the column, reject restores it. Rejected if the
+column passes through a horizontal merge (unmerge first) or is the table's
+only column (delete the table instead).
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  column, tracked}. --dry-run prints the preview object (no ok field). Errors
-  print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables delete-column doc.docx --at t0:c1
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, column, tracked}. --dry-run prints the
+  preview object (no ok field). Errors print {code, error, hint?} with a
+  nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

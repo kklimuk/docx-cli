@@ -465,7 +465,10 @@ function resolveListContext(
 	};
 }
 
-function readListContext(
+/** The (numId, level) list membership of a paragraph, or null when it isn't a
+ * (valid) list item. Shared with `Edit.paragraph`, which uses it to continue
+ * the host paragraph's list when replacement markdown brings its own. */
+export function readListContext(
 	anchor: XmlNode,
 ): { level: number; numId: number } | null {
 	if (anchor.tag !== "w:p") return null;
@@ -478,6 +481,11 @@ function readListContext(
 	if (!numIdRaw) return null;
 	const numId = Number(numIdRaw);
 	if (!Number.isFinite(numId) || numId <= 0) return null;
-	const level = Number(numPr.findChild("w:ilvl")?.getAttribute("w:val") ?? "0");
+	// A garbage `w:ilvl` (malformed doc) must not propagate NaN into a computed
+	// level that a caller writes back as `w:ilvl="NaN"` — fall back to level 0.
+	const levelRaw = Number(
+		numPr.findChild("w:ilvl")?.getAttribute("w:val") ?? "0",
+	);
+	const level = Number.isFinite(levelRaw) && levelRaw >= 0 ? levelRaw : 0;
 	return { level, numId };
 }

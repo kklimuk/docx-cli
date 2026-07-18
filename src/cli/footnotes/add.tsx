@@ -50,6 +50,14 @@ Usage:
   docx ${verb} add FILE --at LOCATOR --runs JSON [options]
   docx ${verb} add FILE --at LOCATOR --markdown TEXT [options]
 
+Examples:
+  docx ${verb} add doc.docx --at p3 --text "See p.42 for the long form."
+  docx ${verb} add doc.docx --anchor "$4.2M in Q3 revenue" --text "Source: audited close."
+  docx ${verb} add doc.docx --at p0:12 --text "Citation needed."
+  docx ${verb} add doc.docx --at t0:r1c2:p0 --text "Cell-anchored note."
+  docx ${verb} add doc.docx --at p3 --runs '[{"type":"text","text":"Bold","bold":true}]'
+  docx ${verb} add doc.docx --at p3 --markdown $'First para.\\n\\nSecond para.'
+
 Anchor (one required):
   --at LOCATOR         Where to anchor the reference. One of:
 ${ANCHOR_FORMS}
@@ -81,14 +89,6 @@ Output:
   \`--at ${idPrefix}N\` on \`${verb} edit\` / \`delete\`. --verbose prints the full ack
   {ok:true, operation, path, id, at}. Errors print {code, error, hint?} with a
   nonzero exit. Discover ids with \`docx ${verb} list FILE\`.
-
-Examples:
-  docx ${verb} add doc.docx --at p3 --text "See p.42 for the long form."
-  docx ${verb} add doc.docx --anchor "$4.2M in Q3 revenue" --text "Source: audited close."
-  docx ${verb} add doc.docx --at p0:12 --text "Citation needed."
-  docx ${verb} add doc.docx --at t0:r1c2:p0 --text "Cell-anchored note."
-  docx ${verb} add doc.docx --at p3 --runs '[{"type":"text","text":"Bold","bold":true}]'
-  docx ${verb} add doc.docx --at p3 --markdown $'First para.\\n\\nSecond para.'
 
 Notes:
   The ${kind} body's id appears in the AST as "${idPrefix}N" (used by

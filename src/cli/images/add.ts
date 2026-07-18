@@ -4,6 +4,7 @@ import { decodeInlineEscapes } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
+	RENDER_VERIFY_EXAMPLE,
 	SAVE_FLAGS,
 	setVerboseAck,
 	tryParseArgs,
@@ -16,6 +17,12 @@ Usage:
   docx images add FILE --after LOCATOR --image SRC [options]
   docx images add FILE --before LOCATOR --image SRC [options]
   docx images add FILE (--at-start | --at-end) --image SRC [options]
+
+Examples:
+  docx images add report.docx --after p4 --image chart.png --alt "Figure 1"
+  docx images add report.docx --before p0 --image logo.png --width 1.5
+  docx images add report.docx --after p4 --image fig.png --caption "Figure 1: Revenue by quarter"
+  docx images add report.docx --at-end --image https://example.com/logo.png --width 2
 
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
@@ -48,16 +55,10 @@ Options:
   -v, --verbose     Print the success ack JSON (default: the minted locator)
   -h, --help        Show this help
 
-Agent tip: VERIFY LAYOUT VISUALLY. \`docx read\` shows the figure and its size
-hint, but NOT how it lands on the page. After adding an image, render and look:
-  docx render FILE --out pages/      # writes page-001.png, page-002.png, …
+AGENT VERIFICATION: \`docx read\` shows the figure and its size hint, but NOT
+how it lands on the page. After adding an image, render and READ the images:
+${RENDER_VERIFY_EXAMPLE}
 Check the figure is sized sensibly (no margin overflow) and re-render if needed.
-
-Examples:
-  docx images add report.docx --after p4 --image chart.png --alt "Figure 1"
-  docx images add report.docx --before p0 --image logo.png --width 1.5
-  docx images add report.docx --after p4 --image fig.png --caption "Figure 1: Revenue by quarter"
-  docx images add report.docx --at-end --image https://example.com/logo.png --width 2
 
 Output:
   Prints the inserted block's locator (pN), one per line. --verbose prints

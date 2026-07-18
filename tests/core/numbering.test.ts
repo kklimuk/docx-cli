@@ -171,15 +171,15 @@ describe("numbering control (start / format / clone)", () => {
 		expect(view.getFormat(numId, 0)).toBe("decimal");
 		expect(view.setFormat(numId, 0, "upperRoman")).toBe(true);
 		expect(view.getFormat(numId, 0)).toBe("upperRoman");
-		// The override is a well-formed CT_Lvl that keeps its lvlText.
+		// The override is a well-formed CT_Lvl that keeps its lvlText AND its
+		// <w:start> — Word starts a start-less override level at 0, and a
+		// roman/alpha glyph of 0 renders as an empty marker.
 		const lvl = overrideLvl(view.tree, numId, 0);
 		expect(lvl?.findChild("w:lvlText")?.getAttribute("w:val")).toBe("%1.");
-		// …but it must NOT carry its own <w:start> — the sibling <w:startOverride>
-		// is the sole source of the start, so the two can't disagree.
-		expect(lvl?.findChild("w:start")).toBeUndefined();
+		expect(lvl?.findChild("w:start")?.getAttribute("w:val")).toBe("1");
 	});
 
-	test("setStart + setFormat agree: startOverride is authoritative, no stale inner start", async () => {
+	test("setStart + setFormat agree: the inner <w:start> stays in lockstep with startOverride", async () => {
 		const target = await stageFixture("start-and-format.docx");
 		const document = await Document.open(target);
 		const view = document.ensureNumbering();
@@ -190,11 +190,74 @@ describe("numbering control (start / format / clone)", () => {
 
 		expect(view.getStart(numId, 0)).toBe(5);
 		expect(view.getFormat(numId, 0)).toBe("upperRoman");
-		// The override <w:lvl> defines format only; start lives in <w:startOverride>.
+		// setFormat found the existing startOverride and synced the clone's start.
 		expect(
-			overrideLvl(view.tree, numId, 0)?.findChild("w:start"),
-		).toBeUndefined();
+			overrideLvl(view.tree, numId, 0)
+				?.findChild("w:start")
+				?.getAttribute("w:val"),
+		).toBe("5");
 		expect(overrideChildTags(view.tree, numId, 0)).toEqual([
+			"w:startOverride",
+			"w:lvl",
+		]);
+
+		// And the reverse order: a later setStart re-syncs the inner start too.
+		view.setStart(numId, 0, 9);
+		expect(
+			overrideLvl(view.tree, numId, 0)
+				?.findChild("w:start")
+				?.getAttribute("w:val"),
+		).toBe("9");
+	});
+
+	test("a format override on one level upgrades bare startOverride siblings (Word drops mixed overrides)", async () => {
+		// Mirrors the contract fixture that surfaced the bug: num 2 has a
+		// pre-existing startOverride-only override on ilvl 0 (the 15 section
+		// numbers) and the agent reformats ilvl 1 to lower-roman. Word blanks
+		// every startOverride-only level as soon as a sibling override carries a
+		// full <w:lvl>, so setFormat must upgrade the bare sibling with a cloned
+		// level of its own — keeping ITS format and start.
+		const target = await stageFixture("mixed-overrides.docx");
+		const document = await Document.open(target);
+		const view = document.ensureNumbering();
+		view.tree = XmlNode.parse(
+			`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+<w:abstractNum w:abstractNumId="2">
+<w:lvl w:ilvl="0" w15:tentative="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+<w:lvl w:ilvl="1" w15:tentative="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="(%2)"/></w:lvl>
+</w:abstractNum>
+<w:num w:numId="2"><w:abstractNumId w:val="2"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>
+</w:numbering>`,
+		);
+
+		expect(view.setFormat("2", 1, "lowerRoman")).toBe(true);
+
+		const numberingRoot = view.tree
+			? XmlNode.findRoot(view.tree, "w:numbering")
+			: undefined;
+		const num = numberingRoot
+			?.findChildren("w:num")
+			.find((node) => node.getAttribute("w:numId") === "2");
+		const overrides = num?.findChildren("w:lvlOverride") ?? [];
+		// Ascending ilvl order — the new ilvl-1 override lands AFTER ilvl 0.
+		expect(overrides.map((node) => node.getAttribute("w:ilvl"))).toEqual([
+			"0",
+			"1",
+		]);
+		// Homogeneous: every override now carries a full <w:lvl>.
+		for (const override of overrides) {
+			const lvl = override.findChild("w:lvl");
+			if (!lvl) throw new Error("expected an override <w:lvl>");
+			expect(lvl.findChild("w:start")?.getAttribute("w:val")).toBe("1");
+			// The clone never carries w15:tentative — the level is in use.
+			expect(lvl.getAttribute("w15:tentative")).toBeUndefined();
+		}
+		// The upgraded ilvl-0 sibling keeps ITS OWN format; ilvl 1 got the new one.
+		expect(view.getFormat("2", 0)).toBe("decimal");
+		expect(view.getFormat("2", 1)).toBe("lowerRoman");
+		// The bare override kept its startOverride (CT_LvlOverride order intact).
+		expect(overrideChildTags(view.tree, "2", 0)).toEqual([
 			"w:startOverride",
 			"w:lvl",
 		]);

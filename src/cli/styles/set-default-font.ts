@@ -16,6 +16,11 @@ export const FONT_HELP = `docx styles set-default-font — set the document-wide
 Usage:
   docx styles set-default-font FILE "Font Name" [--size N] [--all] [options]
 
+Examples:
+  docx styles set-default-font report.docx "Times New Roman"
+  docx styles set-default-font report.docx "Calibri" --size 11
+  docx styles set-default-font report.docx "Georgia" --all
+
 A document font lives in TWO places at once — word/styles.xml (<w:docDefaults>)
 and the theme font scheme (word/theme/theme1.xml, major + minor) — and setting
 only one silently loses to the other. This sets both, so body text AND
@@ -38,10 +43,10 @@ Options:
   -v, --verbose      Print the full success ack JSON
   -h, --help         Show this help
 
-Examples:
-  docx styles set-default-font report.docx "Times New Roman"
-  docx styles set-default-font report.docx "Calibri" --size 11
-  docx styles set-default-font report.docx "Georgia" --all
+Output:
+  Prints a one-line confirmation on success (exit 0). --verbose prints the
+  full ack JSON (including themeUpdated). Errors print {code, error, hint?}
+  with a nonzero exit.
 `;
 
 export async function runSetDefaultFont(args: string[]): Promise<number> {

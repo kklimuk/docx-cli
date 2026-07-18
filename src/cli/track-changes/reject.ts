@@ -9,32 +9,24 @@ Usage:
   docx track-changes reject FILE --at tcN [options]
   docx track-changes reject FILE --all [options]
 
-Rejecting an insertion (<w:ins>) or move destination (<w:moveTo>) removes the
-element and its content (it shouldn't have arrived at this location).
-Rejecting a deletion (<w:del>) or move source (<w:moveFrom>) unwraps the
-wrapper and converts <w:delText> back to <w:t>, so the text reappears as
-plain runs.
+Examples:
+  docx track-changes list doc.docx                 # get the tcN / revN handles
+  docx track-changes reject doc.docx --at rev0     # one del+ins pair, one call
+  docx track-changes reject doc.docx --at tc1 --at tc3 --at tc5
+  docx track-changes reject doc.docx --all
+  docx track-changes reject doc.docx --all --dry-run
 
-Section-property revisions (<w:sectPrChange>): reject restores the prior-state
-snapshot — the live section's columns/type are replaced with the values that
-were in effect before the tracked edit.
+Rejecting works exactly like Word: a rejected insertion is removed; a
+rejected deletion's text reappears; a rejected section/paragraph-property
+change restores the properties from before the edit; rejecting an inserted
+paragraph break removes the inserted paragraph. To accept some and reject
+the rest in ONE call, use \`docx track-changes apply\`.
 
-Paragraph-property revisions (<w:pPrChange>): reject restores the prior-state
-snapshot — the live paragraph's style/alignment/spacing/indent are replaced
-with the values that were in effect before the tracked edit.
+The two halves of a move (moveFrom/moveTo) are processed independently — to
+fully undo a move, target both halves (or use --all).
 
-Paragraph-mark trackings (<w:ins>/<w:del> inside <w:pPr><w:rPr>): rejecting
-a paragraph-mark insertion removes the entire owning paragraph (the inserted
-break disappears — for sentinels created by "docx sections" this also
-removes the section break the sentinel was carrying). Rejecting a
-paragraph-mark deletion just removes the marker (the paragraph stays).
-
-moveFrom and moveTo are processed independently. To fully undo a move, target
-both halves (or use --all). The runtime treats them as paired only by their
-shared revision id, not by atomic accept/reject.
-
-Out of scope: run-formatting changes (<w:rPrChange>). These aren't modeled in
-the AST today and --all silently skips them.
+Out of scope: run-formatting changes Word tracked (bold/color tweaks) aren't
+modeled; --all silently skips them.
 
 Target (one required, mutually exclusive):
   --at tcN          Reject a tracked change by id. Repeat for multiple ids
@@ -56,16 +48,11 @@ Options:
   -h, --help        Show this help
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
-  applied}. --dry-run prints the preview {operation, dryRun, path, applied}.
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, applied}. --dry-run prints the preview
+  {operation, dryRun, path, applied}.
   Errors print {code, error, hint?} with a nonzero exit. Discover ids with
   \`docx track-changes list FILE\`.
-
-Examples:
-  docx track-changes reject doc.docx --at tc0
-  docx track-changes reject doc.docx --at tc1 --at tc3 --at tc5
-  docx track-changes reject doc.docx --all
-  docx track-changes reject doc.docx --all --dry-run
 `;
 
 export async function run(args: string[]): Promise<number> {

@@ -131,6 +131,12 @@ export function renderVerifyHint(path: string): string {
 	return `↳ layout changed — verify it renders right: docx render ${path} --out pages/ (read shows text/structure, NOT page layout: columns, wraps, image sizing)`;
 }
 
+/** The canonical render-and-look example line the layout-affecting HELPs embed
+ * (each above its own command-specific lead-in). One wording everywhere, so a
+ * weak agent recognizes the identical nudge across commands. The ack-side twin
+ * is `renderVerifyHint` above. */
+export const RENDER_VERIFY_EXAMPLE = `  docx render doc.docx --out pages/     # writes pages/page-001.png, … — read them`;
+
 /** A one-line, text-first summary of a mutator ack: `<operation> <target>`,
  *  where target is the most salient identifier the payload carries (a locator,
  *  a count, an id, a table cell, …). Falls back to the operation alone. */

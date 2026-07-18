@@ -63,7 +63,7 @@ await cli("create", out, "--force", "--text", "Equation coverage fixture.");
 // it to `cols=2` makes the whole doc 2-column. Title + equations all flow
 // through the 2-column layout; column breaks below give 5 equations per
 // column = 10 per page.
-await cli("edit", out, "--at", "s0", "--columns", "2");
+await cli("sections", out, "--at", "s0", "--columns", "2");
 
 // Each entry is [header, latex, display?]. The walker inserts the header at
 // `pN`, then the equation at `pN+1`, so headers and equations interleave —

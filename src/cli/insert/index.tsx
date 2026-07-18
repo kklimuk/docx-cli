@@ -2,11 +2,11 @@ import { describeForms, type InsertSpec } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import type { parseArgs } from "util";
 import {
+	batchExampleIntro,
 	decodeInlineEscapes,
 	parseRunsArg,
 	parseSpacingIndentFlags,
 	pickContextualHelp,
-	rejectMarkdownInText,
 	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
@@ -25,13 +25,31 @@ const ANCHOR_FORMS = describeForms(
 	"                      ",
 );
 
-const INSERT_HELP = `docx insert — insert a block (paragraph, list item, break, …) at a locator
+const INSERT_HELP = `docx insert — insert content at a locator
 
 Usage:
   docx insert FILE (--after | --before) LOCATOR <content> [options]
   docx insert FILE (--at-start | --at-end) <content> [options]
   docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read
   docx insert FILE --batch -          [options]   # read JSONL from stdin
+
+Examples:
+${batchExampleIntro("Insert several blocks")}
+  #   adds.jsonl:
+  #     {"after":"p3","text":"New clause.","style":"Heading2"}
+  #     {"before":"p0","text":"ALERT","color":"CC0000","bold":true}
+  #     {"after":"p5","markdown":"## Summary"}
+  docx insert doc.docx --batch adds.jsonl
+  # …or one at a time:
+  docx insert doc.docx --after p3 --text "Section header" --style Heading2
+  docx insert doc.docx --after p3 --text "click here" --url https://example.com
+  docx insert doc.docx --after p3 --page-break
+  docx insert doc.docx --after p3 --markdown "## New section"
+  docx insert doc.docx --at-start --text "Title" --style Title
+  docx insert doc.docx --after p3 --text-file reviewer-notes.txt
+
+Ordering: batch entries apply in file order; several anchored after the SAME
+block stack in that order (three "after":"p0" land as p1, p2, p3, not reversed).
 
 Placement (exactly one required) — where to put the new block:
   --after LOCATOR   Insert after the block at LOCATOR
@@ -42,15 +60,6 @@ ${ANCHOR_FORMS}
   --at-end          Insert at the very end (after the last block, before the
                     trailing section properties) — no locator.
                     (--at-start/--at-end are single-shot only, not --batch.)
-
-Common inserts:
-  A formatted block    --after pN --markdown "## New heading"
-  A plain line         --after pN --text "New paragraph"
-  Verbatim prose       --after pN --text-file notes.txt   (parser-free, multi-para)
-  A page/column break  --after pN --page-break   ·   --after pN --column-break
-  For a TABLE / IMAGE / CODE / EQUATION / TASK, use its own command: \`docx tables
-  create\` · \`docx images add\` · \`docx code add\` · \`docx equations add\` · \`docx
-  tasks add\`.
 
 Content (one required):
   --markdown TEXT   Parse TEXT as GFM markdown → one or more blocks (headings,
@@ -68,8 +77,7 @@ Content (one required):
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
 
-Paragraph options (incompatible with --markdown / --markdown-file, which carry
-their own block styling):
+Formatting options (incompatible with --markdown / --markdown-file):
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
   --space-before PT / --space-after PT   Space above / below, in points
@@ -80,15 +88,13 @@ their own block styling):
                      (requires --text/--runs; task checkbox → \`docx tasks add\`).
   --list-level N     List nesting level, integer 0-8 (use with --list to nest).
 
-Column / section layout: NOT here — use \`docx sections\`. Name the range and it
-inserts the bounding breaks: \`docx sections --at p6-p16 --columns 2\`. (A raw
-section break formats the content ABOVE it, the off-by-one that made
-\`insert --section\` a footgun, so it was removed.)
-
-Agent tip — VERIFY LAYOUT VISUALLY: \`docx read\` shows text/structure as Markdown
-but NOT how the page looks (page breaks, image sizing, where content lands). After
-a layout-affecting insert (--page-break), render the document to images and look:
-  docx render FILE --out pages/      # writes page-001.png, page-002.png, …
+Batch (--batch PATH | -):
+  Apply many inserts from one read — the preferred way to add several blocks
+  (locators do not shift between entries). Each JSONL line is one insert whose
+  keys mirror the flags: {"after" or "before": LOCATOR, one content field,
+  ...options}, e.g. {"after":"p3","text":"Hi","style":"Heading2"}.
+  (--at-start/--at-end don't work in a batch.) Don't pass --after/--text/…
+  alongside --batch.
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
@@ -104,35 +110,22 @@ Output:
   --markdown insert prints several). Positional ids shift after an insert, so
   re-read before further edits. --verbose prints {ok:true, operation, path,
   locators, anchor, placement}. Errors print {code, error, hint?} + nonzero exit.
-
-Examples:
-  docx insert doc.docx --after p3 --text "Section header" --style Heading2
-  docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
-  docx insert doc.docx --after p3 --text "click here" --url https://example.com
-  docx insert doc.docx --after p3 --page-break
-  docx insert doc.docx --after p3 --markdown "## New section"
-  docx insert doc.docx --after p3 --markdown-file README.md
-  docx insert doc.docx --at-start --text "Title" --style Title
-  docx insert doc.docx --after p3 --text-file reviewer-notes.txt
-  docx insert doc.docx --batch additions.jsonl
-
-Batch JSONL example (keys mirror the flags; one insert per line):
-  {"after": "p3", "text": "New clause.", "style": "Heading2"}
-  {"before": "p0", "text": "ALERT", "color": "CC0000", "bold": true}
-  {"after": "p5", "markdown": "## Summary"}
-Ordering: entries apply in file order; several entries anchored after the SAME
-block stack in that order (three "after": "p0" land as p1, p2, p3, not reversed).
 `;
 
-const INSERT_TEXT_HELP = `docx insert --text — insert a new paragraph and format it
+const INSERT_TEXT_HELP = `docx insert --text — insert new text content and format it
 
 Usage:
   docx insert FILE (--after | --before) LOCATOR --text "New paragraph" [options]
   docx insert FILE --at-start --text "Title" --style Title
 
---text builds a NEW paragraph from LITERAL characters (one run). A markdown-looking
-value (e.g. **bold**) is baked in verbatim and the guard rejects it — so to get
-formatting:
+Examples:
+  docx insert doc.docx --after p3 --text "Section header" --style Heading2
+  docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
+  docx insert doc.docx --after p3 --text "click here" --url https://example.com
+  docx insert doc.docx --after p3 --markdown "A **bold** intro line."
+
+--text builds a NEW paragraph from LITERAL characters. A markdown-looking
+value (e.g. **bold**) will insert the literal **bold** characters. To get formatting:
 
   Ride-along run formatting (formats the whole new run):
     --bold            Bold
@@ -153,15 +146,13 @@ Paragraph options ride along too: --style, --alignment, --list bullet|ordered,
 Literal bulk prose — use --text-file PATH ("-" = stdin): every character verbatim,
 each newline a new paragraph, no GFM parsing. The safe channel for prose with
 "3." lists, bare URLs, *x*, {++x++} that GFM would otherwise corrupt.
-
-Examples:
-  docx insert doc.docx --after p3 --text "Section header" --style Heading2
-  docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
-  docx insert doc.docx --after p3 --text "click here" --url https://example.com
-  docx insert doc.docx --after p3 --markdown "A **bold** intro line."
 `;
 
 const INSERT_RUNS_HELP = `docx insert --runs — insert a paragraph from explicit runs (Run[] JSON)
+
+Examples:
+  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
+  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"H","size":12},{"type":"text","text":"2","vertAlign":"subscript"},{"type":"text","text":"O"}]'
 
 --runs JSON builds a NEW paragraph from an array of runs. Each run object may carry:
   { "type": "text", "text": "…",
@@ -181,10 +172,6 @@ sizes, super/subscript, or highlight/shade the simpler flags can't express.
 Paragraph options (--style/--alignment/--list/--space-*/…) ride along with --runs
 just like --text. To FORMAT text that already EXISTS (not insert new), use \`docx
 edit\` — see \`docx edit --runs --help\`.
-
-Examples:
-  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"X","bold":true}]'
-  docx insert doc.docx --after p2 --runs '[{"type":"text","text":"H","size":12},{"type":"text","text":"2","vertAlign":"subscript"},{"type":"text","text":"O"}]'
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -227,13 +214,10 @@ async function buildSingleShotOptions(
 	const spec = await chooseContentSpec(values);
 	if (typeof spec === "number") return spec;
 
-	// `--text` writes literal characters; a markdown-looking value (e.g. **bold**)
-	// would be baked in verbatim. Redirect to --markdown/--bold/--runs before it
-	// becomes literal `**` an agent then tries to scrub. (Single-shot only — the
-	// batch path is the verbatim-data channel and stays unguarded.)
+	// `--text` writes literal characters — a markdown-looking value (e.g. **bold**)
+	// lands verbatim, by design (use --markdown to parse it). We still refuse a
+	// shell-gutted currency value ("$300" → ".00"), which is never intentional.
 	if (spec.kind === "text") {
-		const rejected = await rejectMarkdownInText(spec.text);
-		if (typeof rejected === "number") return rejected;
 		const mangled = await rejectShellMangledValue(spec.text, "--text");
 		if (typeof mangled === "number") return mangled;
 	}

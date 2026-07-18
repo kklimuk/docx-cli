@@ -18,6 +18,11 @@ Usage:
   docx code add FILE --before LOCATOR --code-file PATH [--language LANG] [options]
   docx code add FILE (--at-start | --at-end) --code-file PATH [options]
 
+Examples:
+  docx code add doc.docx --after p4 --code-file snippet.go --language go
+  cat main.py | docx code add doc.docx --at-end --code-file - --language python
+  docx code add doc.docx --before p0 --code "print('hi')" --language python
+
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
   --before LOCATOR  Insert before the block at LOCATOR
@@ -45,11 +50,6 @@ Options:
   --dry-run         Report what would change without writing the file
   -v, --verbose     Print the success ack JSON (default: the minted locator)
   -h, --help        Show this help
-
-Examples:
-  docx code add doc.docx --after p4 --code-file snippet.go --language go
-  cat main.py | docx code add doc.docx --at-end --code-file - --language python
-  docx code add doc.docx --before p0 --code "print('hi')" --language python
 
 Output:
   Prints the inserted block's locator (pN), one per line. --verbose prints

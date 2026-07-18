@@ -24,6 +24,11 @@ Usage:
   docx equations edit FILE --at eqN --display [options]
   docx equations edit FILE --at eqN --inline [options]
 
+Examples:
+  docx equations edit doc.docx --at eq0 --equation "x = \\\\frac{-b}{2a}"
+  docx equations edit doc.docx --at eq0 --display
+  docx equations edit doc.docx --at eq0 --equation "y^3" --inline
+
 Locator (required):
   --at eqN          The equation to edit, addressed by document order. Discover
                     ids with \`docx read FILE --ast\` (EquationRun.id).
@@ -44,18 +49,13 @@ Options:
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
-Examples:
-  docx equations edit doc.docx --at eq0 --equation "x = \\\\frac{-b}{2a}"
-  docx equations edit doc.docx --at eq0 --display
-  docx equations edit doc.docx --at eq0 --equation "y^3" --inline
+Under track-changes, the edit records a paired tracked delete + insert —
+accept keeps the NEW equation, reject restores the OLD.
 
 Output:
   Prints a one-line confirmation on success (exit 0) — an in-place edit shifts
   nothing, so the eqN is unchanged. --verbose prints {ok:true, operation:"edit",
   path, locator}. Errors print {code, error, hint?} with a nonzero exit.
-
-Under track-changes (document toggle on), the edit emits a paired
-<w:del>OLD</w:del><w:ins>NEW</w:ins>; accept keeps NEW, reject restores OLD.
 `;
 
 const OPTION_SPEC = {

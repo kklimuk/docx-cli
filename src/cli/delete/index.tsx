@@ -15,6 +15,7 @@ import {
 	removeParagraphLine,
 	TrackedRangeConflictError,
 } from "@core/track-changes/replace";
+import { batchExampleIntro } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -38,6 +39,18 @@ Usage:
   docx delete FILE --batch FILE.jsonl [options]   # remove many, one read
   docx delete FILE --batch -          [options]   # read JSONL from stdin
 
+Examples:
+${batchExampleIntro("Delete several blocks")}
+  #   drop.jsonl:
+  #     {"at": "p4"}
+  #     {"at": "p9"}
+  #     {"at": "p15"}
+  docx delete doc.docx --batch drop.jsonl
+  # …or one at a time:
+  docx delete doc.docx --at p3
+  docx delete doc.docx --at t0
+  docx delete doc.docx --at s2
+
 Locator (required, unless --batch):
   --at LOCATOR      What to remove. One of:
                     pN     paragraph (whole block, with all its runs)
@@ -49,21 +62,19 @@ Locator (required, unless --batch):
                     tN:rRcC:pK  paragraph K of a table cell — removed, but
                            blanked in place if it's the cell's only/last
                            paragraph so the cell stays valid
-                    Discover ids with \`docx read FILE --ast\`. See
-                    \`docx info locators\`.
+                    See \`docx info locators\`.
 
 Batch (--batch PATH | -):
   Remove many blocks from one read. Each JSONL line is { "at": LOCATOR } where
   LOCATOR is a whole-block locator (pN, tN, or a cell paragraph tN:rRcC:pK).
-  All locators address the document AS READ — they're resolved to live node
-  refs before anything is removed, so deleting one never shifts another's id.
-  So when you're clearing SEVERAL scattered blocks (e.g. every "[Note: …]"
-  helper line, or a set of placeholder paragraphs), read ONCE, list ALL their
-  pN ids, and delete them in ONE batch — do NOT delete-one-then-re-read-then-
-  delete-the-next (the ids you read stay valid for the whole batch).
+  When clearing SEVERAL scattered blocks (e.g. every "[Note: …]" helper line,
+  or a set of placeholder paragraphs), read ONCE, list ALL their pN ids, and
+  delete them in ONE batch — do NOT delete-one-then-re-read-then-delete-the-
+  next (the ids you read stay valid for the whole batch).
   Range (pN-pM), section (sN), equation (eqN), and span (pN:S-E) deletes run
   one at a time, not in a batch. Don't mix --batch with --at.
 
+Options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
   --track           Record this deletion as a tracked change even when the
                     document's track-changes toggle is off (OFF by default).
@@ -74,34 +85,14 @@ Batch (--batch PATH | -):
 
 Last-paragraph safety:
   A container that requires a paragraph keeps one. A table cell must hold at
-  least one paragraph (OOXML), and the document body can't be left with only its
+  least one paragraph, and the document body can't be left with only its
   section properties — so deleting the LAST paragraph of a cell (or the body's
   sole paragraph) blanks it in place (leaves an empty paragraph) instead of
-  removing it, never producing an invalid empty <w:tc/> or <w:body>. (The same
-  removal backs \`docx edit --at pN --text ""\`.)
-
-Tracked behavior:
-  When tracking is on, paragraph deletion wraps runs in <w:del> and marks
-  the paragraph mark as deleted (accept removes the paragraph by merging it
-  forward). Section deletion under tracking emits a [docx-cli] audit comment
-  on the owning paragraph if it has runs to anchor on; otherwise (sentinel
-  section sentinel paragraphs have no runs) the mutation is silent.
-  delete --at tN under tracking is rejected (tracked table-row deletion is
-  not supported).
+  removing it.
 
 Output:
   Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   locator}. Errors print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx delete doc.docx --at p3
-  docx delete doc.docx --at t0
-  docx delete doc.docx --at s2
-  docx delete doc.docx --batch drop.jsonl   # {"at":"p26"} per line
-  # Clear every placeholder in ONE pass (one read → one batch), e.g. drop.jsonl:
-  #   {"at": "p4"}
-  #   {"at": "p9"}
-  #   {"at": "p15"}
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -225,7 +216,7 @@ async function commitSectionDelete(
 		return fail(
 			"USAGE",
 			"Cannot delete the trailing section break (mandatory in OOXML)",
-			"Use `docx edit --at sN --columns 1` to reset its properties instead.",
+			"Use `docx sections --at sN --columns 1` to reset its properties instead.",
 		);
 	}
 

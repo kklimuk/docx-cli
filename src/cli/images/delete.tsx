@@ -18,6 +18,9 @@ const HELP = `docx images delete — remove an embedded image
 Usage:
   docx images delete FILE --at imgN [options]
 
+Examples:
+  docx images delete doc.docx --at img0
+
 Required:
   --at imgN         image id to remove (e.g. img0)
 
@@ -32,21 +35,15 @@ Optional:
 Removes the inline drawing (and its containing run). If the underlying media
 part is no longer referenced, both it and the relationship are pruned.
 
-When track-changes is on, the drawing's run is wrapped in <w:del> instead — a
-real tracked deletion (Word reverts it on reject, removes it on accept). The
-media part is always kept (rejecting must be able to restore the image); an
-accepted deletion leaves it as a harmless unreferenced part rather than pruning.
-Image ids are positional and shift after a delete — re-read before the next
-mutation.
+When track-changes is on, the removal is recorded as a real tracked deletion
+(Word restores the image on reject, removes it on accept). Image ids are
+positional and shift after a delete — re-read before the next mutation.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — delete mints no new id. --verbose prints
-  {ok:true, operation, path, imageId, partName, pruned}. Errors print
-  {code, error, hint?} with a nonzero exit. Discover ids with
+  Prints a one-line confirmation on success (exit 0) — delete mints no new
+  id. --verbose prints {ok:true, operation, path, imageId, partName, pruned}.
+  Errors print {code, error, hint?} with a nonzero exit. Discover ids with
   \`docx images list FILE\`.
-
-Examples:
-  docx images delete doc.docx --at img0
 `;
 
 export async function run(args: string[]): Promise<number> {

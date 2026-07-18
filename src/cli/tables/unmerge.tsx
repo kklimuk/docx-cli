@@ -29,10 +29,12 @@ const HELP = `docx tables unmerge — split a merged cell back into individual c
 Usage:
   docx tables unmerge FILE --at tN:rRcC [options]
 
+Examples:
+  docx tables unmerge doc.docx --at t0:r0c0
+
 Required:
-  --at LOCATOR       The merge anchor — the top-left cell of the merge
-                     (the <w:gridSpan> cell and/or the "restart" of a vMerge).
-                     Supports:
+  --at LOCATOR       The merge anchor — the top-left cell of the merged
+                     region. Supports:
 ${AT_FORMS}
                      See \`docx info locators\`.
 
@@ -43,18 +45,15 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Horizontal spans are split by re-inserting the collapsed empty cells; vertical
-merges are split by stripping the <w:vMerge> markers from the anchor and its
-continuation cells. OOXML has no tracked-change construct for this, so under
+The merged region splits back into individual empty cells; the anchor keeps
+its content. Unmerges can't be recorded as tracked changes, so under
 track-changes the change applies immediately with a [docx-cli] audit comment.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  cell}. --dry-run prints the preview object (no ok field). Errors print
-  {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables unmerge doc.docx --at t0:r0c0
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, cell}. --dry-run prints the preview
+  object (no ok field). Errors print {code, error, hint?} with a nonzero
+  exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

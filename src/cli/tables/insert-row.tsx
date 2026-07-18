@@ -6,8 +6,10 @@ import type { XmlNode } from "@core/parser";
 import {
 	buildGrid,
 	cellAt,
+	cellParagraphLike,
 	type Grid,
 	type GridRow,
+	inheritCellBorders,
 	markRowTracked,
 	resolveTableNode,
 	TableCell,
@@ -33,6 +35,10 @@ const HELP = `docx tables insert-row — insert a table row
 Usage:
   docx tables insert-row FILE --at tN [options]
 
+Examples:
+  docx tables insert-row doc.docx --at t0                          # append at bottom
+  docx tables insert-row doc.docx --at t0 --position 1 --cells "Q3,42,up"
+
 Required:
   --at LOCATOR       Target table. Supports:
 ${AT_FORMS}
@@ -53,24 +59,22 @@ Optional:
 
 The new row mirrors the neighbor row's structure AND look: it copies each cell's
 gridSpan pattern and inherits the neighbor cell's paragraph properties
-(alignment, spacing, indent) — so an inserted numeric column stays right-aligned
-in column with the rows above, not left-aligned out of column.
+(alignment, spacing, indent), cell borders, and text font/size — so an inserted
+row lines up and matches the rows above. Cell shading is NOT copied (banded
+tables); use \`tables format --shade\` if the new row needs it.
 
 A row inserted inside a vertical merge extends the merge through the new row
 (its cell in the merged column becomes a vMerge continuation) — matching Word.
 A row inserted below the merge is a normal independent row.
 
-When track-changes is on, the new row is wrapped as a tracked insertion
-(<w:trPr><w:ins/>) — accept keeps it, reject removes it.
+When track-changes is on, the new row is recorded as a tracked insertion —
+accept keeps it, reject removes it.
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  position, tracked}. --dry-run prints the preview object (no ok field). Errors
-  print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables insert-row doc.docx --at t0
-  docx tables insert-row doc.docx --at t0 --position 1 --cells "Q3,42,up"
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, position, tracked}. --dry-run prints the
+  preview object (no ok field). Errors print {code, error, hint?} with a
+  nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -244,33 +248,17 @@ function buildRow(grid: Grid, position: number, cellTexts: string[]): XmlNode {
 		}
 		const refCell = spans ? cellAt(spans, col) : undefined;
 		const refSpan = refCell?.colSpan ?? 1;
-		cells.push(
+		const cell = (
 			<TableCell gridSpan={refSpan > 1 ? refSpan : undefined}>
-				{cellParagraph(cellTexts[logical] ?? "", refCell?.node)}
-			</TableCell>,
+				{cellParagraphLike(refCell?.node, cellTexts[logical] ?? "")}
+			</TableCell>
 		);
+		if (refCell) inheritCellBorders(cell, refCell.node);
+		cells.push(cell);
 		logical += 1;
 		col += refSpan;
 	}
 	return <w.tr>{cells}</w.tr>;
-}
-
-/** Build an inserted cell's paragraph, inheriting the reference (sibling-row)
- * cell's paragraph properties so the new row lines up with the rows above —
- * alignment (`<w:jc>`), spacing, and indent. Without this an inserted numeric
- * column falls back to the left-aligned default and sits visibly out of column
- * with the right-aligned values above it (the invoice "Calibration kit" row).
- * `<w:pPr>` carries only properties (no content), so cloning it wholesale is
- * safe; `<Paragraph>` with no options emits no `<w:pPr>`, so the clone becomes
- * the paragraph's sole (and correctly first) `<w:pPr>`. */
-function cellParagraph(
-	text: string,
-	referenceCell: XmlNode | undefined,
-): XmlNode {
-	const paragraph = <Paragraph text={text} />;
-	const pPr = referenceCell?.findChild("w:p")?.findChild("w:pPr");
-	if (pPr) paragraph.children.unshift(pPr.clone());
-	return paragraph;
 }
 
 /** Index in `table.children` at which to splice a row inserted at logical

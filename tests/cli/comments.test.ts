@@ -297,12 +297,7 @@ describe("docx comments", () => {
 
 		await runCli("comments", "delete", docPath, "--at", "c0");
 
-		const list = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
+		const list = await runCli("comments", "list", docPath);
 		expect((list.parsed as unknown[]).length).toBe(0);
 
 		// No orphaned reply markers or dangling thread links survive the cascade.
@@ -313,7 +308,7 @@ describe("docx comments", () => {
 		expect(extendedXml).not.toContain("w15:paraIdParent=");
 	});
 
-	test("resolve flips done flag and filter excludes by default", async () => {
+	test("resolve stays visible in the default list; --open filters it", async () => {
 		await runCli(
 			"comments",
 			"add",
@@ -327,17 +322,15 @@ describe("docx comments", () => {
 		);
 		await runCli("comments", "resolve", docPath, "--at", "c0");
 
+		// The resolve must survive the write→read loop: the comment stays
+		// listed, flagged resolved — hiding it made resolve look like delete.
 		const defaultList = await runCli("comments", "list", docPath);
-		expect((defaultList.parsed as unknown[]).length).toBe(0);
-
-		const allList = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
-		const all = allList.parsed as Array<{ resolved?: boolean }>;
+		const all = defaultList.parsed as Array<{ resolved?: boolean }>;
+		expect(all.length).toBe(1);
 		expect(all[0]?.resolved).toBe(true);
+
+		const openList = await runCli("comments", "list", docPath, "--open");
+		expect((openList.parsed as unknown[]).length).toBe(0);
 	});
 
 	test("delete removes the comment from the listing", async () => {
@@ -353,12 +346,7 @@ describe("docx comments", () => {
 			"A",
 		);
 		await runCli("comments", "delete", docPath, "--at", "c0");
-		const afterDelete = await runCli(
-			"comments",
-			"list",
-			docPath,
-			"--include-resolved",
-		);
+		const afterDelete = await runCli("comments", "list", docPath);
 		expect((afterDelete.parsed as unknown[]).length).toBe(0);
 	});
 
@@ -489,12 +477,7 @@ describe("docx comments", () => {
 		await Bun.write(docCopy, Bun.file("tests/fixtures/comments-simple.docx"));
 		const result = await runCli("comments", "resolve", docCopy, "--at", "c0");
 		expect(result.exitCode).toBe(0);
-		const list = await runCli(
-			"comments",
-			"list",
-			docCopy,
-			"--include-resolved",
-		);
+		const list = await runCli("comments", "list", docCopy);
 		const found = (
 			list.parsed as Array<{ id: string; resolved?: boolean }>
 		).find((comment) => comment.id === "c0");

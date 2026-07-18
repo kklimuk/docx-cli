@@ -27,20 +27,34 @@ import { partialReplaceHint, runReplaceAcross } from "./across";
 import { runReplaceBatch } from "./batch";
 import { matchesInScope, resolveReplaceScope, ScopeError } from "./scope";
 
-const HELP = `docx replace — substitute text spans (sed for docx)
+const HELP = `docx replace — substitute content (sed for docx)
 
 Usage:
   docx replace FILE PATTERN REPLACEMENT [options]
   docx replace FILE --batch FILE.jsonl [options]   # a sed-script, one read
   docx replace FILE --batch -          [options]   # read JSONL from stdin
 
+Examples:
+  # Replace many placeholders/terms in ONE call — the preferred path (a sed-script).
+  # Write one substitution (JSON object) per line to a file, then apply it:
+  #   subs.jsonl:
+  #     {"pattern":"Q2","replacement":"Q3","all":true}
+  #     {"pattern":"FY24","replacement":"FY25"}
+  #     {"pattern":"(\\\\w+)@old\\\\.com","replacement":"$1@new.com","regex":true,"all":true}
+  #     {"pattern":"City, State","replacement":"Boston, MA","at":"p20"}
+  docx replace doc.docx --batch subs.jsonl
+  # …or one at a time:
+  docx replace doc.docx "fox" "cat" --all
+  docx replace doc.docx "TODO|FIXME" "DONE" --regex --all
+  docx replace doc.docx "(\\w+) (\\w+)" "$2 $1" --regex --all
+  docx replace doc.docx "wordy phrase" "tighter phrase" --all --dry-run
+
 Options:
-  --at LOCATOR      confine the replace to ONE paragraph: a body pN or a cell
-                    paragraph tT:rRcC:pN. Use this when the same placeholder
-                    repeats across the document (a résumé's "City, State" /
-                    "Position Title" in every entry) and you want THE one in a
-                    specific paragraph — no find + offset-span edit needed:
-                      docx replace doc.docx --at p20 "City, State" "San Francisco, CA"
+  --at LOCATOR      confine the replace to ONE paragraph (a body pN or a cell
+                    paragraph tT:rRcC:pN). Use when the same placeholder repeats
+                    across the document and you want the one in a specific
+                    paragraph:
+                      docx replace doc.docx --at p20 "City, State" "Boston, MA"
   --regex           treat PATTERN as a JavaScript regular expression
   --ignore-case     case-insensitive match
   --all             replace every match (default: just the first; with --at,
@@ -61,72 +75,48 @@ Options:
   -v, --verbose     print the success ack JSON (default: a one-line confirmation)
   -h, --help        show this help
 
-Run formatting (rPr) on the surrounding text is preserved; the replacement
-run inherits the rPr of the first run that overlaps the matched span. Tabs
-and other runs in the paragraph are left in place — only the matched text
-changes (a TAB matches as one character, so a pattern typed with spaces fills
-a tab-separated line). So this is the no-rebuild way to FILL a formatted/
-tabbed template line: \`replace "Organization Name" "Northwind Robotics"\`
-on a "**Organization Name**⇥Date" line keeps the bold and the tab; don't
-hand-build \`edit --runs\` JSON to refill a line. \`--batch\` fills many at once.
-When a single invocation produces multiple replacements in the same paragraph,
-they're applied in reverse offset order so earlier offsets don't shift before
-being applied.
+Batch (--batch PATH | -):
+  A sed-script from one read — the preferred way to run several substitutions.
+  Each JSONL line is one substitution whose keys mirror the flags:
+  {"pattern": …, "replacement": …} plus optional "regex"/"ignoreCase"/"all"/
+  "limit"/"exact"/"at". Entries apply in order, each seeing the previous
+  entry's edits (like running replace repeatedly). Don't pass the PATTERN/
+  REPLACEMENT positionals or --at alongside --batch.
 
-Multi-line (editor-style): \\n and \\t in PATTERN/REPLACEMENT are decoded to
-real characters. A "\\n" in the PATTERN matches an in-paragraph line break OR
-the boundary between consecutive paragraphs — in the body or within one table
-cell (never across a table, section break, or cell wall); the REPLACEMENT's
-newlines then define the resulting
-structure, exactly as if the span were selected in Word and the replacement
-typed — a single-line replacement MERGES the spanned paragraphs into one
-(first paragraph's formatting governs), "\\n"s in the replacement keep/create
-paragraph marks (so a "\\n" in the replacement splits a paragraph even when
-the pattern didn't cross one). \`replace FILE "\\n" "" --all\` merges every
-paragraph pair. Cross-paragraph replaces can't be tracked yet: with tracking
-on (or --track) they refuse loudly rather than skip the journal — turn
-tracking off first. Block ids shift afterward; re-read before more edits.
+Matching:
+  By default the PATTERN is normalized so text copied from \`docx read\`
+  matches the real document text: markdown emphasis is stripped (**X**
+  matches X), smart quotes match straight quotes, em/en dashes match "-".
+  The REPLACEMENT is always literal — whatever you pass goes in as-is, and it
+  inherits the formatting of the matched span (bold text stays bold).
+  --exact matches the raw pattern verbatim; --regex is always verbatim.
+  If PATTERN or REPLACEMENT begins with a dash ("-$500.00", "--TODO"), put a
+  bare "--" before the positionals: docx replace doc.docx -- "Total" "-$500.00"
+  With --regex, REPLACEMENT supports $1, $2, … (capture groups), $& (the
+  whole match), and $$ (a literal $).
 
-By default the PATTERN is normalized: balanced markdown emphasis around
-non-whitespace (**X**, __X__, *X*, \`X\`) is stripped; smart quotes match
-straight quotes; em-dash and en-dash match the hyphen. The REPLACEMENT
-is always literal — whatever bytes you pass go in as-is. Pass --exact
-to match the raw pattern verbatim. --regex is always verbatim.
-
-If the PATTERN or REPLACEMENT begins with a dash (a negative number, "-$500.00",
-"--TODO"), put a bare "--" before the positionals so it isn't parsed as a flag:
-  docx replace doc.docx -- "Total" "-$500.00"
-
-With --regex, REPLACEMENT supports JS String.replace substitution syntax:
-  $1, $2, ...   numbered capture groups
-  $&            the matched substring
-  $\`            text before the match
-  $'            text after the match
-  $$            a literal $
+Multi-line (editor-style):
+  \\n and \\t in PATTERN/REPLACEMENT are decoded to real characters. A "\\n"
+  in the PATTERN matches an in-paragraph line break OR the boundary between
+  consecutive paragraphs (in the body or within one table cell — never across
+  a cell wall). The REPLACEMENT's "\\n"s then define the resulting structure,
+  as if the span were selected in Word and the replacement typed:
+    docx replace doc.docx "One.\\nTwo." "One. Two."   # MERGES two paragraphs
+    docx replace doc.docx "One. Two." "One.\\nTwo."   # SPLITS a paragraph
+  Untracked only — with tracking on (or --track) it refuses; turn tracking
+  off first. Block ids shift afterward; re-read before more edits.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — replace mutates text in place and mints no new
-  addressable handle (matched-span locators shift as text changes; re-read or
-  use --dry-run to see them). --verbose / --dry-run print
-  {ok:true, operation, totalMatches, replaced, matches:[{locator,…}], …}.
-  A PATTERN that matches NOTHING is an error, not a silent success — 0 occurrences
-  exits nonzero (MATCH_NOT_FOUND), so a no-op replace can't read as "done." Unsure it
-  matches? Probe with \`docx find PATTERN FILE\` or --dry-run and READ the reported count
-  — both exit 0 whether or not it matches; only the real replace exits nonzero on 0.
-  Errors print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx replace doc.docx "fox" "cat"
-  docx replace doc.docx "fox" "cat" --all
-  docx replace doc.docx "TODO|FIXME" "DONE" --regex --all
-  docx replace doc.docx "(\\w+) (\\w+)" "$2 $1" --regex --all
-  docx replace doc.docx "wordy phrase" "tighter phrase" --all --dry-run
-  docx replace doc.docx --batch edits.jsonl
-
-Batch JSONL example (one substitution per line, applied in order):
-  {"pattern": "Q2", "replacement": "Q3", "all": true}
-  {"pattern": "FY24", "replacement": "FY25"}
-  {"pattern": "(\\\\w+)@old\\\\.com", "replacement": "$1@new.com", "regex": true, "all": true}
+  Prints a one-line confirmation with the replaced count on success (exit 0).
+  --verbose / --dry-run print {ok:true, operation, totalMatches, replaced,
+  matches:[{locator,…}], …}. Errors print {code, error, hint?} + nonzero exit.
+  A PATTERN that matches NOTHING is an error, not a silent success — 0
+  occurrences exits nonzero (MATCH_NOT_FOUND). Unsure it matches? Probe with
+  \`docx find FILE PATTERN\` or --dry-run and READ the reported count — both
+  exit 0 whether or not it matches; only the real replace exits nonzero on 0.
+  --batch: if ANY entry matches nothing, the exit is nonzero — but the entries
+  that DID match are already applied and SAVED. Nonzero means "some entries
+  missed," not "nothing changed" (the error names the misses).
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -317,7 +307,7 @@ export async function run(args: string[]): Promise<number> {
 		return await fail(
 			"MATCH_NOT_FOUND",
 			`Pattern not found${scopeNote}: ${JSON.stringify(pattern)} — 0 occurrences, nothing changed.`,
-			`Match LITERAL document text, not read-view markup (\`<mark>\`/\`<u>\`/\`**\`…) or a locator. Run \`docx find ${JSON.stringify(pattern)} ${path}\` to see if/where it occurs; add --ignore-case, --regex, --at <locator> to scope, or --current/--baseline to search tracked-change text.`,
+			`Match LITERAL document text, not read-view markup (\`<mark>\`/\`<u>\`/\`**\`…) or a locator. Run \`docx find ${path} ${JSON.stringify(pattern)}\` to see if/where it occurs; add --ignore-case, --regex, --at <locator> to scope, or --current/--baseline to search tracked-change text.`,
 		);
 	}
 

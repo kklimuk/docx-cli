@@ -561,6 +561,17 @@ export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 	else rPr.children.splice(at, 0, child);
 }
 
+/** Whether an `<w:rPr>` child may be INHERITED when cloning a reference run's
+ *  formatting onto fresh content. Excludes two markers: `<w:highlight>` (a
+ *  placeholder-fill marker — re-stamping it recreates the todo the fill was
+ *  meant to resolve) and `<w:rPrChange>` (a tracked-revision marker — cloning
+ *  one revision's id onto brand-new runs). The single exclusion policy shared by
+ *  the body-edit `inheritCommonRunFormatting` and the table `cellParagraphLike`,
+ *  so the two run-inheritance paths never drift on what they refuse to copy. */
+export function isInheritableRunProperty(child: XmlNode): boolean {
+	return child.tag !== "w:highlight" && child.tag !== "w:rPrChange";
+}
+
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.
  * Word renders this as a thin line spanning the page width.
  *

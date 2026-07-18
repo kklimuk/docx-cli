@@ -17,6 +17,9 @@ const HELP = `docx comments reply — reply to an existing comment
 Usage:
   docx comments reply FILE --at cN --text TEXT [options]
 
+Examples:
+  docx comments reply doc.docx --at c0 --text "Good catch" --author "Reviewer"
+
 Required:
   --at cN           Parent comment id (e.g., c0). The "c" prefix is optional.
                     Replying to a reply attaches to the thread root (Word
@@ -35,9 +38,6 @@ Output:
   full ack {ok:true, operation, path, commentId, parentId}. Errors print
   {code, error, hint?} with a nonzero exit.
   Discover existing comment ids with \`docx comments list FILE\`.
-
-Examples:
-  docx comments reply doc.docx --at c0 --text "Good catch" --author "Reviewer"
 `;
 
 export async function run(args: string[]): Promise<number> {

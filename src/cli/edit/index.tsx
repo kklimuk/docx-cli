@@ -15,21 +15,19 @@ import {
 	type Run,
 	type RunFormat,
 	resolveClearTags,
-	type SectionType,
 	type XmlNode,
 } from "@core";
 import type { ParagraphOptions, TabStop } from "@core/blocks";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
+	batchExampleIntro,
 	decodeInlineEscapes,
 	hasRunFormatFlags,
 	parseRunFormat,
 	parseRunsArg,
-	parseSectionFlags,
 	parseSpacingIndentFlags,
 	pickContextualHelp,
-	rejectMarkdownInText,
 	rejectShellMangledValue,
 } from "../parse-helpers";
 import {
@@ -54,37 +52,41 @@ import {
 } from "./tabs";
 
 const AT_FORMS = describeForms(
-	["paragraph", "span", "blockRange", "cellParagraph", "cellSpan", "section"],
+	["paragraph", "span", "blockRange", "cellParagraph", "cellSpan"],
 	"                      ",
 );
 
-const EDIT_HELP = `docx edit — replace a paragraph (or paragraph range) or a section
+const EDIT_HELP = `docx edit — replace content at a locator
 
 Usage:
   docx edit FILE --at LOCATOR <content> [options]
   docx edit FILE --batch FILE.jsonl [options]   # many edits, one read
   docx edit FILE --batch -          [options]   # read JSONL from stdin
 
+Examples:
+${batchExampleIntro("Edit several blocks")}
+  #   edits.jsonl:
+  #     {"at":"p2","markdown":"New **bold** text"}
+  #     {"at":"p4","text":"Delaware"}
+  #     {"at":"p7:0-4","text":"ACME","bold":true}
+  #     {"at":"p9","style":"Heading1"}
+  #     {"at":"p5","text":""}
+  #     {"at":"p6","text":"Acme Corp","clear":"highlight"}
+  docx edit doc.docx --batch edits.jsonl
+  # …or one at a time:
+  docx find doc.docx "fill in state"                   # → p4:25-38
+  docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
+  docx edit doc.docx --at p3 --markdown "## Revised heading"
+  docx edit doc.docx --at p4 --text "Title" --bold     # fill + format in one call
+  docx edit doc.docx --at p9-p38 --tabs right          # fix every wrapping tab line
+
 Locator (required):
   --at LOCATOR      What to edit. One of:
 ${AT_FORMS}
-                    A character span (pN:S-E, or a cell paragraph tN:rRcC:pK:S-E)
-                    replaces just those characters — paste a span straight from
-                    \`docx find\`. sN takes --columns/--type; edit an equation with
-                    \`docx equations edit --at eqN\`. See \`docx info locators\`.
+                    A character span (pN:S-E, or tN:rRcC:pK:S-E in a cell)
+                    replaces just those characters. More: \`docx info locators\`.
 
-Common edits:
-  Fill a line          --at pN --markdown "New **bold** text"  (parsed GFM — the
-                                                                default for formatting)
-                       --at pN --text "Plain literal text"     (verbatim, one run)
-  Fill part of a line  --at pN:S-E --text "Delaware"           (a span from \`docx find\`)
-  Format text          --at pN --text "Title" --bold           (→ \`docx edit --text --help\`)
-  Remove a line        --at pN --text ""
-  Restyle in place     --at pN --style Heading1   ·   --at pN --tabs right
-  Many at once         --batch edits.jsonl
-
-Content (one required for a paragraph / range locator — UNLESS you pass only the
-paragraph/formatting options below, which adjust the paragraph in place):
+Content (required, UNLESS you pass only the formatting options below):
   --markdown TEXT   Replace with parsed GFM markdown (headings, lists, tables,
                     code, links, math, footnotes, CriticMarkup, …). Same dialect
                     as \`docx insert --markdown\`. A multi-block source expands —
@@ -102,37 +104,33 @@ paragraph/formatting options below, which adjust the paragraph in place):
                     paragraph or span: \`--text "Delaware" --clear highlight\` fills
                     then un-highlights in one call. (Not tracked.)
 
-Paragraph options (pass ALONE to adjust the paragraph in place, keeping its
-text/runs — or ride along with --text to fill AND format in one call):
+Formatting options (except --tabs, not combinable with --markdown /
+--markdown-file; pass them ALONE to reformat a block in place, keeping its
+text — or add them to --text):
   --style NAME       Paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
   --space-before PT / --space-after PT   Space above / below, in points
   --line-spacing N   A multiple (1, 1.5, 2), a name (single, double), or 15pt
   --indent-left IN / --indent-right IN   Indent, in inches (negative outdents)
   --first-line IN / --hanging IN         First-line / hanging indent, in inches
-  --tabs SPEC        Replace the paragraph's tab stops. SPEC is \`right\` (a single
-                     RIGHT tab at the text margin — the CURE for the \`docx:layout\`
-                     wrap warning \`read\` prints when a long right-edge value wraps),
-                     \`clear\`, or an explicit list (\`left@1in,right@7.5in\`). A RANGE
-                     locator fixes every wrapping line at once: \`--at pN-pM --tabs
-                     right\` (the "fix-all" command \`read\` prints).
-  These apply across a RANGE (\`--at p0-p9 --line-spacing 2\`) and record a tracked
-  <w:pPrChange> under track-changes.
-
-Run formatting: set --bold/--italic/--color/--font/… on EXISTING or new text.
-Full flag list + Run[] JSON detail: \`docx edit --runs --help\`.
-
-Section options (for section locators sN):
-  --columns N        Number of columns for the targeted section
-  --type T           continuous | nextPage | evenPage | oddPage | nextColumn
+  --tabs SPEC        Replace the paragraph's tab stops. SPEC is one of:
+                       right — a single RIGHT tab at the text margin
+                       clear — remove all tab stops
+                       left@1in,right@7.5in — explicit stops (left|right|center)
+                     A RANGE locator fixes every wrapping line at once:
+                     \`--at pN-pM --tabs right\`.
 
 Batch (--batch PATH | -):
-  Apply many edits from one read. Each JSONL line is one edit: { "at": LOCATOR,
-  <one content field> } — content is "text"/"markdown"/"runs"; a whole-paragraph
-  entry may also carry "style"/"alignment"/"clear". Empty "text" or "delete": true
-  removes a line. All locators address the document AS READ. Range (pN-pM) and
-  section (sN) edits run one at a time, not in a batch. Don't mix --batch with
-  --at/--text/etc.
+  Apply many edits from one read — the preferred way to update several blocks
+  (locators do not shift between entries). Each JSONL line is one edit whose
+  keys mirror the flags: {"at": LOCATOR, ...} with at most one content field
+  ("text"/"markdown"/"runs"). "style"/"alignment"/"clear"/"bold"/"color"/…
+  can ride along with content, or stand alone to format existing text.
+  \`"text": ""\` or \`"delete": true\` removes the line. One entry per paragraph —
+  to fill AND format the same paragraph, put both fields in that one entry.
+  Ranges (pN-pM) aren't batchable; sections (sN) and equations (eqN) aren't
+  edit's at all — use \`docx sections\` / \`docx equations edit\`.
+  Don't pass --at/--text/… alongside --batch.
 
 General options:
   --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
@@ -152,16 +150,6 @@ Output:
   hint?} with a nonzero exit. Heads up: a locator you hold from BEFORE a structural
   edit (an insert/delete elsewhere renumbers ids) is stale — re-read after any
   insert/delete, or apply the whole set from one read with --batch.
-
-Examples:
-  docx find doc.docx "fill in state"                   # → p4:25-38
-  docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
-  docx edit doc.docx --at p5 --text ""                 # remove a placeholder line
-  docx edit doc.docx --at p4 --text "Title" --bold     # fill + format in one call
-  docx edit doc.docx --at p3 --markdown "## Revised heading"
-  docx edit doc.docx --at p2 --style Heading2
-  docx edit doc.docx --at p9-p38 --tabs right          # fix every wrapping tab line
-  docx edit doc.docx --batch fills.jsonl               # fill many spans at once
 `;
 
 const EDIT_TEXT_HELP = `docx edit --text — replace a line's text and format it
@@ -170,9 +158,15 @@ Usage:
   docx edit FILE --at pN --text "New text" [formatting]
   docx edit FILE --at pN:S-E --text "New text" [formatting]   # just a span
 
+Examples:
+  docx edit doc.docx --at p4 --text "Delaware"
+  docx edit doc.docx --at p4 --text "Title" --bold --color C00000
+  docx edit doc.docx --at p4:4-13 --text "flawless" --italic
+  docx edit doc.docx --at p4 --markdown "New **bold** text"
+
 --text writes LITERAL characters — every character lands verbatim in a single
-run. \`--text "**bold**"\` bakes in a literal ** (the markdown guard rejects it).
-To get FORMATTED text there are two paths:
+run. \`--text "**bold**"\` puts the literal ** characters in (use --markdown to
+parse them instead). To get FORMATTED text there are two paths:
 
   1. Run-formatting flags that ride along with --text (they format the whole new
      run; on a span pN:S-E too):
@@ -196,19 +190,20 @@ Other --text behavior:
   --no-formatting   Replace with a single fresh run, dropping the per-word rPr
                     preservation --text applies by default.
 
-Run-formatting flags apply DIRECTLY — never tracked (Word's <w:rPrChange> isn't
-modeled). To SET formatting WITHOUT changing the text, see \`docx edit --runs --help\`.
-
-Examples:
-  docx edit doc.docx --at p4 --text "Delaware"
-  docx edit doc.docx --at p4 --text "Title" --bold --color C00000
-  docx edit doc.docx --at p4:4-13 --text "flawless" --italic
-  docx edit doc.docx --at p4 --markdown "New **bold** text"
+Run-formatting flags apply DIRECTLY — never recorded as tracked changes. To
+SET formatting WITHOUT changing the text, see \`docx edit --runs --help\`.
 `;
 
 const EDIT_RUNS_HELP = `docx edit --runs — build runs from JSON, or set formatting on existing text
 
 Two advanced surfaces. Prefer --text + flags or --markdown unless you need one.
+
+Examples:
+  docx edit doc.docx --at p2 --font "Times New Roman" --size 12
+  docx edit doc.docx --at p4:4-13 --bold --color C00000
+  docx edit doc.docx --at p0-p9 --italic           # format every paragraph in range
+  docx edit doc.docx --at p2 --clear all           # strip all run formatting
+  docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
 
 --runs JSON — replace a paragraph with an explicit array of runs (Run[] JSON).
 Each run object may carry:
@@ -233,15 +228,8 @@ span (pN:S-E), a whole paragraph (pN), or a range (pN-pM) — paste a span from
   --smallcaps       Small caps            --superscript / --subscript
   --clear ATTRS     Turn formatting OFF (comma list, or "all")
 
-These apply DIRECTLY — never recorded as tracked changes (Word's <w:rPrChange>
-isn't modeled), regardless of --track or the document's track-changes toggle.
-
-Examples:
-  docx edit doc.docx --at p2 --font "Times New Roman" --size 12
-  docx edit doc.docx --at p4:4-13 --bold --color C00000
-  docx edit doc.docx --at p0-p9 --italic           # format every paragraph in range
-  docx edit doc.docx --at p2 --clear all           # strip all run formatting
-  docx edit doc.docx --at p0 --runs '[{"type":"text","text":"X","bold":true}]'
+These apply DIRECTLY — never recorded as tracked changes, regardless of
+--track or the document's track-changes toggle.
 `;
 
 export async function run(args: string[]): Promise<number> {
@@ -284,16 +272,8 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	// Range locator (`pN-pM`): replaces a span of paragraphs as a unit. Section
-	// edits don't make sense here (sN has its own grammar).
+	// Range locator (`pN-pM`): replaces a span of paragraphs as a unit.
 	if (isBlockRangeLocator(opts.locator)) {
-		if (opts.spec.kind === "section") {
-			return fail(
-				"USAGE",
-				"Range locators (pN-pM) don't accept --columns/--type — use sN for section edits",
-				EDIT_HELP,
-			);
-		}
 		return commitRangeEdit(document, opts);
 	}
 
@@ -411,7 +391,7 @@ async function commitSpanEdit(
 	return emitEditAck(opts);
 }
 
-/** Single-block edit: section / paragraph dispatch through the Edit
+/** Single-block edit: paragraph content / props dispatch through the Edit
  * lens. The lens handles tracked-vs-untracked, style ensures, and the
  * formatting-preservation decision. */
 async function commitBlockEdit(
@@ -428,9 +408,7 @@ async function commitBlockEdit(
 		// strips formatting from THIS node afterward (it may be a freshly spliced
 		// node, not the original blockRef).
 		let resultNode: XmlNode | null = null;
-		if (opts.spec.kind === "section") {
-			edit.section(blockRef, opts.spec, { authorFlag: opts.authorFlag, track });
-		} else if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
+		if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
 			resultNode = edit.paragraph(blockRef, opts.spec, {
 				authorFlag: opts.authorFlag,
 				noFormatting: opts.noFormatting,
@@ -441,6 +419,7 @@ async function commitBlockEdit(
 			if (typeof resolved === "number") return resolved;
 			resultNode = edit.paragraph(blockRef, resolved, {
 				authorFlag: opts.authorFlag,
+				noFormatting: opts.noFormatting,
 				track,
 			});
 		} else if (opts.spec.kind === "removeLine") {
@@ -494,14 +473,6 @@ async function commitRangeEdit(
 	document: Document,
 	opts: ValidatedOptions,
 ): Promise<number> {
-	if (opts.spec.kind === "section") {
-		// Type narrowing — caller already rejected this above.
-		return fail(
-			"USAGE",
-			"Section edits don't support range locators",
-			EDIT_HELP,
-		);
-	}
 	if (opts.spec.kind === "removeLine") {
 		return fail(
 			"USAGE",
@@ -765,6 +736,21 @@ async function validateSingleShotOptions(
 		);
 	}
 
+	// Section editing (columns / type / page geometry) moved to `docx sections`.
+	// Fire on the sN locator OR the section flags (kept in OPTION_SPEC so they
+	// parse and hit this redirect rather than a generic "unknown option").
+	if (
+		/^s\d+$/.test(locator) ||
+		values.columns !== undefined ||
+		values.type !== undefined
+	) {
+		return fail(
+			"USAGE",
+			"edit no longer edits sections — use `docx sections`",
+			"e.g. `docx sections FILE --at sN --columns 2` (or --type/--margins/--orientation/--size). See `docx sections --help`.",
+		);
+	}
+
 	const paragraphOptions = await parseParagraphOptions(values);
 	if (typeof paragraphOptions === "number") return paragraphOptions;
 
@@ -775,10 +761,7 @@ async function validateSingleShotOptions(
 		tabsDirective = parsed;
 	}
 
-	const isSectionLocator = /^s\d+$/.test(locator);
-	const spec = isSectionLocator
-		? await validateSectionEdit(values)
-		: await validateParagraphEdit(values, paragraphOptions);
+	const spec = await validateParagraphEdit(values, paragraphOptions);
 	if (typeof spec === "number") return spec;
 
 	// `--clear` combined with content (spec is a content kind, not clear-alone):
@@ -937,7 +920,6 @@ type ValidatedOptions = {
 };
 
 type EditSpec =
-	| { kind: "section"; columns?: number; sectionType?: SectionType }
 	| {
 			kind: "text";
 			text: string;
@@ -962,38 +944,6 @@ type TextFormatting = {
 };
 
 type RawValues = ReturnType<typeof parseArgs>["values"];
-
-async function validateSectionEdit(
-	values: RawValues,
-): Promise<EditSpec | number> {
-	if (values.text !== undefined || values.runs !== undefined) {
-		return fail(
-			"USAGE",
-			"Section locators (sN) take --columns and --type, not --text/--runs",
-			EDIT_HELP,
-		);
-	}
-	// A section break has no runs — run-formatting/clear flags would silently do
-	// nothing, so reject them with a targeted message instead of letting them
-	// fall through to the columns/type check.
-	if (hasRunFormatFlags(values) || values.clear !== undefined) {
-		return fail(
-			"USAGE",
-			"Section locators (sN) take --columns and --type — run-formatting flags (--bold/--color/--font/…) and --clear apply to a paragraph's runs, which a section break has none of.",
-			EDIT_HELP,
-		);
-	}
-	if (values.columns === undefined && values.type === undefined) {
-		return fail(
-			"USAGE",
-			"Section edit requires --columns and/or --type",
-			EDIT_HELP,
-		);
-	}
-	const sectionFlags = await parseSectionFlags(values);
-	if (typeof sectionFlags === "number") return sectionFlags;
-	return { kind: "section", ...sectionFlags };
-}
 
 /** Parse a `--clear` value (comma list of attrs, or "all") into the rPr tag set,
  *  or return a `fail()` exit code. Shared by the clear-alone spec and the
@@ -1029,14 +979,6 @@ async function validateParagraphEdit(
 	values: RawValues,
 	paragraphOptions: ParagraphOptions,
 ): Promise<EditSpec | number> {
-	if (values.columns !== undefined || values.type !== undefined) {
-		return fail(
-			"USAGE",
-			"--columns and --type require a section locator (sN)",
-			EDIT_HELP,
-		);
-	}
-
 	// `--clear` strips run formatting. It may stand ALONE (its own content kind)
 	// or RIDE ALONG with a content flag — `--text X --clear highlight` fills the
 	// paragraph then strips the highlight in one call (the canonical form-fill +
@@ -1153,8 +1095,6 @@ async function validateParagraphEdit(
 			}
 			return { kind: "removeLine" };
 		}
-		const rejected = await rejectMarkdownInText(text);
-		if (typeof rejected === "number") return rejected;
 		const mangled = await rejectShellMangledValue(text, "--text");
 		if (typeof mangled === "number") return mangled;
 		return {

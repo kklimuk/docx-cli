@@ -27,6 +27,11 @@ const HELP = `docx hyperlinks add — wrap an existing span in a hyperlink
 Usage:
   docx hyperlinks add FILE --at LOCATOR --url URL [options]
 
+Examples:
+  docx find doc.docx "click here"                  # → p3:5-15 (don't hand-count)
+  docx hyperlinks add doc.docx --at p3:5-15 --url https://example.com
+  docx hyperlinks add doc.docx --at t0:r1c2:p0:0-8 --url https://example.com
+
 Required:
   --at LOCATOR      Span to wrap (within a single paragraph or cell). Supports:
 ${AT_FORMS}
@@ -47,12 +52,11 @@ Optional:
   -h, --help        Show this help
 
 The span must lie inside a single paragraph and must not overlap an existing
-hyperlink, a tracked-change wrapper (<w:ins>/<w:del>/<w:moveFrom>/<w:moveTo>),
-or any other run-bearing wrapper that we model. Resolve or accept the
-wrapper first, then add the hyperlink.
+hyperlink or a tracked change. Accept/reject the tracked change first, then
+add the hyperlink.
 
-When track-changes is on, an audit comment is anchored to the wrapped span
-since OOXML has no native tracked-change form for hyperlink edits.
+Hyperlink edits can't be recorded as tracked changes, so when track-changes
+is on an audit comment is anchored to the wrapped span instead.
 
 Output:
   Prints the new hyperlink id (e.g. linkN) on success — address it later with
@@ -60,12 +64,7 @@ Output:
   hyperlinkId, text, at, url} — \`text\` echoes the span that was actually
   wrapped, so an off-by-one offset is obvious. A --dry-run prints a bare preview
   object (no id minted). Errors print {code, error, hint?} with a nonzero exit.
-  Notation: uppercase letters are numeric indices; offsets are 0-based,
-  end-exclusive.
-
-Examples:
-  docx hyperlinks add doc.docx --at p3:5-20 --url https://example.com
-  docx hyperlinks add doc.docx --at t0:r1c2:p0:0-8 --url https://example.com
+  Offsets are 0-based, end-exclusive.
 `;
 
 export async function run(args: string[]): Promise<number> {

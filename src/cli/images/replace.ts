@@ -24,9 +24,14 @@ const HELP = `docx images replace — swap an image's bytes
 Usage:
   docx images replace FILE --at imgN --with PATH [options]
 
+Examples:
+  docx images replace doc.docx --at img2 --with ./new-photo.png
+  docx images replace doc.docx --at img0 --with ./diagram.jpg
+
 Required:
   --at imgN         image id to replace (e.g. img0)
-  --with PATH       New image file (format keyed off the file extension: png/jpg/gif/bmp/tiff/emf/wmf)
+  --with PATH       New image file (format keyed off the file extension:
+                    png/jpg/gif/webp/bmp/tiff/svg/emf/wmf/ico)
 
 Optional:
   --author NAME     Author for the audit comment when track-changes is on
@@ -36,23 +41,17 @@ Optional:
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
 
-If the replacement uses a different format from the original, the part is
-renamed (extension changes), the relationship Target is rewritten, and
-[Content_Types].xml gets a Default entry for the new extension if needed.
+The replacement may use a different format from the original — the embedded
+part is renamed and re-registered automatically.
 
-When track-changes is on, an audit comment is anchored to each drawing that
-referenced the swapped image since OOXML has no native tracked-change form
-for image replacement.
+Image swaps can't be recorded as tracked changes, so when track-changes is on
+an audit comment is anchored to each place the swapped image appears.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — replace mints no new id (the image keeps its
-  imgN). --verbose prints {ok:true, operation, path, imageId, partName,
-  mimeType, bytes}. Errors print {code, error, hint?} with a nonzero exit.
-  Discover ids with \`docx images list FILE\`.
-
-Examples:
-  docx images replace doc.docx --at img2 --with ./new-photo.png
-  docx images replace doc.docx --at img0 --with ./diagram.svg
+  Prints a one-line confirmation on success (exit 0) — replace mints no new
+  id (the image keeps its imgN). --verbose prints {ok:true, operation, path,
+  imageId, partName, mimeType, bytes}. Errors print {code, error, hint?} with
+  a nonzero exit. Discover ids with \`docx images list FILE\`.
 `;
 
 export async function run(args: string[]): Promise<number> {

@@ -53,7 +53,8 @@ type RawValues = Record<
  *  invalidates another's locator. Same-paragraph spans apply in descending
  *  offset order (so earlier offsets stay valid); a paragraph may take one
  *  whole-paragraph edit OR several non-overlapping spans, not both. Range
- *  (pN-pM), section (sN), and equation (eqN) edits are done one at a time. */
+ *  (pN-pM) edits are done one at a time; sections (sN) and equations (eqN)
+ *  aren't `edit`'s surface at all (see `docx sections` / `docx equations`). */
 export async function runEditBatch(
 	filePath: string,
 	batchSource: string,
@@ -295,8 +296,8 @@ async function resolveEntry(
 	if (/^s\d+$/.test(at)) {
 		throw new EntryError(
 			"USAGE",
-			`entry ${index}: section edits (${at}) aren't supported in --batch`,
-			"Edit sections individually with `docx edit --at sN`.",
+			`entry ${index}: edit no longer edits sections (${at})`,
+			"Section layout/geometry lives in `docx sections --at sN` (one at a time, not batchable).",
 		);
 	}
 	if (/^eq\d+$/.test(at)) {
@@ -322,7 +323,7 @@ async function resolveEntry(
 		throw new EntryError(
 			"INVALID_LOCATOR",
 			`entry ${index}: "${at}" is not a paragraph, span, or cell-paragraph locator`,
-			"Batch edits address pN, pN:S-E, or tN:rRcC:pK[:S-E]. Edit ranges (pN-pM), sections (sN), and equations (eqN) one at a time.",
+			"Batch edits address pN, pN:S-E, or tN:rRcC:pK[:S-E]. Edit ranges (pN-pM) one at a time; sections → `docx sections`, equations → `docx equations edit`.",
 		);
 	}
 
@@ -602,7 +603,11 @@ async function buildWholeParagraphContent(
 		new Edit(document).paragraph(
 			blockRef,
 			{ kind: "markdown-blocks", blocks, paragraphOptions },
-			{ authorFlag: author, track: opts.track },
+			{
+				authorFlag: author,
+				noFormatting: opts.noFormatting,
+				track: opts.track,
+			},
 		);
 }
 

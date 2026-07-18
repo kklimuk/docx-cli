@@ -210,6 +210,11 @@ export class NumberingView {
 				lvlOverride,
 				<w.startOverride w-val={String(start)} />,
 			);
+		// A sibling format-override `<w:lvl>` carries its own `<w:start>`; keep
+		// it in lockstep so no reader ever sees two different starts.
+		const innerLvl = lvlOverride.findChild("w:lvl");
+		if (innerLvl) setLvlStart(innerLvl, String(start));
+		this.normalizeLvlOverrides(num);
 		return true;
 	}
 
@@ -221,7 +226,7 @@ export class NumberingView {
 	setFormat(numId: string, level: number, numFmt: string): boolean {
 		const num = this.findNum(numId);
 		if (!num) return false;
-		const lvl = this.buildOverrideLevel(numId, level, numFmt);
+		const lvl = this.buildOverrideLevel(num, level, numFmt);
 		const lvlOverride = this.ensureLvlOverride(num, level);
 		const existing = lvlOverride.findChild("w:lvl");
 		if (existing) {
@@ -233,7 +238,32 @@ export class NumberingView {
 		} else {
 			insertLvlOverrideChildInOrder(lvlOverride, lvl);
 		}
+		this.normalizeLvlOverrides(num);
 		return true;
+	}
+
+	/** Word drops the numbering of any level whose `<w:lvlOverride>` holds only
+	 * a bare `<w:startOverride>` while a SIBLING override carries a full
+	 * `<w:lvl>` — verified empirically against Word-for-Mac (the contract
+	 * fixture's 15 section numbers vanished when `setFormat` added an ilvl-1
+	 * level next to the pre-existing ilvl-0 startOverride; giving that override
+	 * a cloned level restored them). So overrides must be homogeneous: once any
+	 * carries a `<w:lvl>`, upgrade every bare sibling with a clone of its
+	 * abstract level (keeping that level's own format and start). */
+	private normalizeLvlOverrides(num: XmlNode): void {
+		const overrides = num.findChildren("w:lvlOverride");
+		if (!overrides.some((node) => node.findChild("w:lvl"))) return;
+		for (const lvlOverride of overrides) {
+			if (lvlOverride.findChild("w:lvl")) continue;
+			const levelRaw = Number(lvlOverride.getAttribute("w:ilvl") ?? "0");
+			// buildOverrideLevel writes this back as `w:ilvl` — never emit NaN
+			// from a malformed sibling ilvl.
+			const level = Number.isFinite(levelRaw) ? levelRaw : 0;
+			insertLvlOverrideChildInOrder(
+				lvlOverride,
+				this.buildOverrideLevel(num, level),
+			);
+		}
 	}
 
 	/** Mint a fresh numId reproducing `srcNumId`'s abstractNum and any per-list
@@ -279,16 +309,24 @@ export class NumberingView {
 			.find((node) => node.getAttribute("w:ilvl") === target);
 	}
 
-	/** The `<w:num>`'s level-`level` `<w:lvlOverride>`, creating it (in CT_Num
-	 * order — after `<w:abstractNumId>`) if absent. */
+	/** The `<w:num>`'s level-`level` `<w:lvlOverride>`, creating it if absent —
+	 * after `<w:abstractNumId>` AND after every existing lvlOverride with a
+	 * lower ilvl. Word expects lvlOverrides in ascending ilvl order (its own
+	 * output always is); splicing a new one at the front put ilvl=1 before an
+	 * existing ilvl=0 and Word dropped the whole list's numbering in render. */
 	private ensureLvlOverride(num: XmlNode, level: number): XmlNode {
 		const existing = this.findLvlOverride(num, level);
 		if (existing) return existing;
 		const created = <w.lvlOverride w-ilvl={String(level)} />;
-		const abstractIdx = num.children.findIndex(
+		let insertIdx = num.children.findIndex(
 			(child) => child.tag === "w:abstractNumId",
 		);
-		num.children.splice(abstractIdx + 1, 0, created);
+		for (const [index, child] of num.children.entries()) {
+			if (child.tag !== "w:lvlOverride") continue;
+			const ilvl = Number(child.getAttribute("w:ilvl") ?? "0");
+			if (ilvl < level) insertIdx = index;
+		}
+		num.children.splice(insertIdx + 1, 0, created);
 		return created;
 	}
 
@@ -302,43 +340,55 @@ export class NumberingView {
 
 	/** A well-formed CT_Lvl for an override: clone the abstractNum's level (so we
 	 * keep its indent pPr / lvlText) and swap the numFmt. Falls back to a fresh
-	 * ordered level if the abstractNum can't be resolved. Drops the cloned
-	 * `<w:start>` so the sibling `<w:startOverride>` is the SOLE source of the
-	 * level's start — keeping both (with possibly different values) is internally
-	 * contradictory and risks a reader/renderer picking the stale inner start. */
+	 * ordered level if the abstractNum can't be resolved. The clone KEEPS its
+	 * `<w:start>` — a lvl without one makes Word start the counter at 0, and a
+	 * roman/alpha glyph of 0 renders as an EMPTY marker (the "( ), i, ii, iii"
+	 * corruption). A sibling `<w:startOverride>` still wins for the restart
+	 * value, so we sync the inner start to it when one exists. The clone also
+	 * drops `w15:tentative` — that attribute marks a level as unused, and this
+	 * override level is in use by definition. */
 	private buildOverrideLevel(
-		numId: string,
+		num: XmlNode,
 		level: number,
-		numFmt: string,
+		numFmt?: string,
 	): XmlNode {
-		const abstractNum = this.resolveAbstractNum(numId);
+		const abstractNum = this.abstractNumOf(num);
 		const base =
 			abstractNum &&
 			(findLevel(abstractNum, level) ?? findLevel(abstractNum, 0));
 		const lvl = base ? (
 			base.clone()
 		) : (
-			<OrderedLevel ilvl={level} text={`%${level + 1}.`} fmt={numFmt} />
+			<OrderedLevel
+				ilvl={level}
+				text={`%${level + 1}.`}
+				fmt={numFmt ?? "decimal"}
+			/>
 		);
 		lvl.setAttribute("w:ilvl", String(level));
-		lvl.findChild("w:numFmt")?.setAttribute("w:val", numFmt);
-		lvl.children = lvl.children.filter((child) => child.tag !== "w:start");
+		delete lvl.attributes["w15:tentative"];
+		if (numFmt) lvl.findChild("w:numFmt")?.setAttribute("w:val", numFmt);
+		const overrideStart = this.findLvlOverride(num, level)
+			?.findChild("w:startOverride")
+			?.getAttribute("w:val");
+		if (overrideStart) setLvlStart(lvl, overrideStart);
+		else if (!lvl.findChild("w:start")) setLvlStart(lvl, "1");
 		return lvl;
 	}
 
 	private resolveAbstractNum(numId: string): XmlNode | undefined {
-		const root = XmlNode.findRoot(this.tree, "w:numbering");
-		if (!root) return undefined;
-		const num = root
-			.findChildren("w:num")
-			.find((node) => node.getAttribute("w:numId") === numId);
-		if (!num) return undefined;
+		const num = this.findNum(numId);
+		return num ? this.abstractNumOf(num) : undefined;
+	}
+
+	/** The `<w:abstractNum>` a `<w:num>` node points at, if resolvable. */
+	private abstractNumOf(num: XmlNode): XmlNode | undefined {
 		const abstractNumId = num
 			.findChild("w:abstractNumId")
 			?.getAttribute("w:val");
 		if (!abstractNumId) return undefined;
-		return root
-			.findChildren("w:abstractNum")
+		return XmlNode.findRoot(this.tree, "w:numbering")
+			?.findChildren("w:abstractNum")
 			.find((node) => node.getAttribute("w:abstractNumId") === abstractNumId);
 	}
 
@@ -398,6 +448,17 @@ function nextNumId(root: XmlNode): number {
 		}
 	}
 	return max + 1;
+}
+
+/** Set (or create) a `<w:lvl>`'s `<w:start>`. The single home of the "an
+ * override `<w:lvl>` must carry a `<w:start>` in lockstep with any sibling
+ * `<w:startOverride>`" rule — a lvl without one makes Word start the counter
+ * at 0, and roman/alpha glyphs render 0 as an EMPTY marker. `<w:start>` is
+ * first in CT_Lvl order, so a created one is unshifted. */
+function setLvlStart(lvl: XmlNode, value: string): void {
+	const existing = lvl.findChild("w:start");
+	if (existing) existing.setAttribute("w:val", value);
+	else lvl.children.unshift(<w.start w-val={value} />);
 }
 
 /** CT_LvlOverride is an ordered sequence (ECMA-376 §17.9.8): `<w:startOverride>`

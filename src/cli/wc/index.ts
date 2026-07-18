@@ -36,6 +36,14 @@ const HELP = `docx wc — count words in a document or a locator-addressed slice
 Usage:
   docx wc FILE [LOCATOR] [options]
 
+Examples:
+  docx wc doc.docx                  # whole document (words + section count)
+  docx wc doc.docx p3               # one paragraph
+  docx wc doc.docx p2-p5            # a paragraph range
+  docx wc doc.docx t0:r1c0          # a table cell
+  docx wc doc.docx s2               # a section
+  docx wc doc.docx --json | jq .words
+
 Locator (optional positional; default: whole document):
 ${describeForms([
 	"paragraph",
@@ -57,16 +65,10 @@ ${describeForms([
   See \`docx info locators\`.
 
 View flags (mutually exclusive; default --accepted):
-  --accepted        Default. Count the accepted view: skip subtractive
-                    wrappers (<w:del>, <w:moveFrom>); keep additive
-                    wrappers (<w:ins>, <w:moveTo>) as plain text. Mirrors
-                    "docx read" / "docx find" defaults.
-  --baseline        Count the baseline view: skip additive wrappers
-                    (<w:ins>, <w:moveTo>); keep subtractive wrappers
-                    (<w:del>, <w:moveFrom>) as plain text — i.e., the doc as
-                    it was before any tracked changes were made.
-  --current         Count the raw concatenation: every tracked-change
-                    wrapper's text counts (everything on disk).
+  --accepted        Default. Count the document as if every tracked change
+                    were accepted (matches "docx read" / "docx find").
+  --baseline        Count the document as it was BEFORE the tracked changes.
+  --current         Count everything on disk (insertions AND deletions).
 
 Options:
   --json            Emit JSON instead of the bare count
@@ -80,16 +82,6 @@ Output:
   second tab-separated column gives the section count, like real \`wc\`.
   --json: { words, scope, view, sections? } (no envelope). Errors print
   {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx wc doc.docx
-  docx wc doc.docx p3
-  docx wc doc.docx p2-p5
-  docx wc doc.docx p3:0-120
-  docx wc doc.docx p5:10-p9:42
-  docx wc doc.docx t0:r1c0
-  docx wc doc.docx s2
-  docx wc doc.docx --json | jq .words
 `;
 
 export async function run(args: string[]): Promise<number> {

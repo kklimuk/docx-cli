@@ -29,6 +29,10 @@ const HELP = `docx tables borders — set table borders
 Usage:
   docx tables borders FILE --at tN [options]
 
+Examples:
+  docx tables borders doc.docx --at t0 --style double --size 8 --color 444444
+  docx tables borders doc.docx --at t0 --style none
+
 Required:
   --at LOCATOR       Target table. Supports:
 ${AT_FORMS}
@@ -45,19 +49,16 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Applies to all six table border edges (<w:tblBorders>). OOXML has no
-tracked-change construct Word will round-trip for a hand-authored border change
-(Word does not revert a tblPrChange we author on reject), so under track-changes
+Applies to all six table border edges (outside + inside). Border changes
+can't be recorded as tracked changes Word will honor, so under track-changes
 the change is applied in place with a [docx-cli] audit comment instead.
+(For per-cell borders, use \`docx tables format --cell-borders\`.)
 
 Output:
-  Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path, table,
-  style, ...}. --dry-run prints the preview object (no ok field). Errors print
-  {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx tables borders doc.docx --at t0 --style double --size 8 --color 444444
-  docx tables borders doc.docx --at t0 --style none
+  Prints a one-line confirmation on success (exit 0). --verbose prints
+  {ok:true, operation, path, table, style, ...}. --dry-run prints the preview
+  object (no ok field). Errors print {code, error, hint?} with a nonzero
+  exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

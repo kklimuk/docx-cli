@@ -25,6 +25,14 @@ const HELP = `docx create — create a new minimal .docx
 Usage:
   docx create FILE [options]
 
+Examples:
+  docx create out.docx --from draft.md      # build a whole doc from markdown
+  cat draft.md | docx create out.docx --from -
+  docx create out.docx --text-file notes.txt   # literal text, no parsing
+  docx create out.docx --title "Spec" --author "Claude" --text "First paragraph."
+  docx create out.docx --from draft.md --orientation landscape --size a4
+  docx create out.docx --text "Memo" --margins 1.25in --page-numbers
+
 Options:
   --title TEXT       Document title
   --author TEXT      Document author (default: $DOCX_AUTHOR)
@@ -62,16 +70,6 @@ Output:
   Prints a one-line confirmation on success (exit 0). --verbose prints {ok:true, operation, path,
   bytes, blocks}. --dry-run prints {operation, dryRun:true, path, ...} and
   writes nothing. Errors print {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx create out.docx
-  docx create out.docx --title "Spec" --author "Claude" --text "First paragraph."
-  docx create out.docx --from draft.md
-  cat draft.md | docx create out.docx --from -
-  docx create out.docx --text-file reviewer-notes.txt
-  cat notes.txt | docx create out.docx --text-file -
-  docx create out.docx --from draft.md --orientation landscape --size a4
-  docx create out.docx --text "Memo" --margins 1.25in
 
 For a doc that opens with a code block, chain create with insert:
   docx create out.docx

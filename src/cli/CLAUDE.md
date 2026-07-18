@@ -42,8 +42,13 @@ tokens; `type` attr only for `first`/`even`), and `docx:list` on a numbered
 list's FIRST run item (the numbering `docx lists set` authors): `start` when ≠ 1
 and `format` when the glyph isn't `decimal` (`upper-roman`/`lower-alpha`/… — GFM
 can't render a non-decimal ordered list, so the body stays `5.` and the hint
-carries the real glyph), or a bare `continues` token when the run shares an
-earlier list's numId (a `--continue` link, lost on a `read → create` rebuild). A
+carries the real glyph) PLUS a `renders="i, ii, iii, …"` glyph preview (the
+first three rendered glyphs from the start value) so a weak agent SEES how the
+list renders and doesn't distrust the decimal body — verified in the
+weak-agent harness: control agents twice re-tried or logged uncertainty about
+whether `--format` took; the preview removed that friction. Or a bare `continues`
+token when the run shares an earlier list's numId (a `--continue` link, lost on a
+`read → create` rebuild). A
 default decimal-from-1 list emits nothing; `--start` round-trips through the
 markdown ordinal itself (`orderedOrdinal` seeds from `list.start`), so the note is
 for what the ordinal can't show. Like `docx:p`, the note carries `pN` as its

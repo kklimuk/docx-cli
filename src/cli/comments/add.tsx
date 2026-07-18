@@ -11,6 +11,7 @@ import {
 } from "@core";
 import { type FindView, findTextSpans } from "@core/find";
 import {
+	batchExampleIntro,
 	decodeInlineEscapes,
 	readJsonlObjects,
 	resolveView,
@@ -40,6 +41,18 @@ Usage:
   docx comments add FILE --anchor PHRASE --text TEXT [options]
   docx comments add FILE --batch FILE.jsonl [options]
   docx comments add FILE --batch -    [options]   # read JSONL from stdin
+
+Examples:
+${batchExampleIntro("Comment several spots")}
+  #   reviews.jsonl:
+  #     {"at":"p3:5-20","text":"Sharper wording?"}
+  #     {"anchor":"fatally flawed","text":"Cite Bianco here.","author":"Reviewer"}
+  docx comments add doc.docx --batch reviews.jsonl
+  # …or one at a time:
+  docx comments add doc.docx --at p3 --text "Reconsider this paragraph"
+  docx comments add doc.docx --at p3:5-20 --text "Tighten this clause"
+  docx comments add doc.docx --anchor "fatally flawed" --text "Cite source?"
+  docx comments add doc.docx --anchor "TODO" --occurrence 2 --text "Pick up here"
 
 Anchor (one required, mutually exclusive):
   --at LOCATOR        Where to anchor. Supports:
@@ -75,22 +88,11 @@ General options:
 Output:
   Prints the new comment id (e.g. c0), one per line for --batch. Address it
   later with \`--at c0\`. --verbose prints the full ack
-  {ok:true, operation, path, commentId, locator}. Errors print
-  {code, error, hint?} with a nonzero exit. Notation: uppercase letters are
-  numeric indices; offsets are 0-based, end-exclusive. See \`docx info locators\`.
-  Discover existing comment ids with \`docx comments list FILE\`.
-
-Examples:
-  docx comments add doc.docx --at p3 --text "Reconsider this paragraph"
-  docx comments add doc.docx --at p3:5-20 --text "Tighten this clause"
-  docx comments add doc.docx --anchor "fatally flawed" --text "Cite source?"
-  docx comments add doc.docx --anchor "TODO" --occurrence 2 --text "Pick up here"
-  docx comments add doc.docx --batch reviews.jsonl
-  cat reviews.jsonl | docx comments add doc.docx --batch -
-
-Batch JSONL example:
-  {"at": "p3:5-20", "text": "Sharper wording?"}
-  {"anchor": "fatally flawed", "text": "Cite Bianco here.", "author": "Reviewer"}
+  {ok:true, operation, path, commentId, locator}. An --anchor that matches
+  NOTHING is an error (MATCH_NOT_FOUND, nonzero exit), not a silent success.
+  Errors print {code, error, hint?} with a nonzero exit. Offsets are 0-based,
+  end-exclusive — see \`docx info locators\`. Discover existing comment ids
+  with \`docx comments list FILE\`.
 `;
 
 type RawEntry = {

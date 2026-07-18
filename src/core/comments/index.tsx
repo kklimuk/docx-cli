@@ -47,14 +47,14 @@ import { resolveDate } from "../track-changes";
 export class Comments {
 	constructor(private document: Document) {}
 
-	/** List comments in document order. Filters resolved by default; pass
-	 * `includeResolved: true` to keep them. `thread: cN` restricts the result
-	 * to that root and its descendants. */
-	list(
-		options: { includeResolved?: boolean; thread?: string } = {},
-	): Comment[] {
+	/** List comments in document order. Resolved comments are included (flagged
+	 * `resolved: true`) so a just-resolved comment is still retrievable on the
+	 * next read — hiding it made `resolve` look like `delete` to a verifying
+	 * agent. Pass `openOnly: true` for only unresolved ones. `thread: cN`
+	 * restricts the result to that root and its descendants. */
+	list(options: { openOnly?: boolean; thread?: string } = {}): Comment[] {
 		let comments = this.document.body.comments;
-		if (!options.includeResolved) {
+		if (options.openOnly) {
 			comments = comments.filter((comment) => !comment.resolved);
 		}
 		if (options.thread) {

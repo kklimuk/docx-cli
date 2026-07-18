@@ -5,10 +5,14 @@ const HELP = `docx tasks uncheck — clear an existing task's checkbox (☐)
 Usage:
   docx tasks uncheck FILE --at pN [options]
 
+Examples:
+  docx tasks uncheck doc.docx --at p3
+  docx tasks uncheck doc.docx --at p3 --track --author "Reviewer"
+
 Locator (required):
-  --at pN           The task-list paragraph to uncheck. It must already be a GFM
-                    task item (a leading <w:sdt><w14:checkbox/> SDT). Discover
-                    ids with \`docx read FILE\` (task lines render as - [ ] / - [x]).
+  --at pN           The task-list paragraph to uncheck. It must already be a
+                    task item with a checkbox. Discover ids with \`docx read
+                    FILE\` (task lines render as - [ ] / - [x]).
 
 Options:
   --track           Record the toggle as a tracked change even when the
@@ -19,10 +23,6 @@ Options:
   --dry-run         Report what would change without writing the file
   -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
   -h, --help        Show this help
-
-Examples:
-  docx tasks uncheck doc.docx --at p3
-  docx tasks uncheck doc.docx --at p3 --track --author "Reviewer"
 
 Output:
   Prints a one-line confirmation on success (exit 0) — an in-place toggle shifts

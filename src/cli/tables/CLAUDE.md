@@ -55,15 +55,16 @@ Word UI row-insert inside a vmerge extends it, and our output round-trips
 through Word unchanged), and is why `insert-row` builds its row via `buildRow`
 (consulting the row now below) rather than a flat band of empty cells.
 
-`buildRow` also inherits each new cell's paragraph **properties** from the
-reference (sibling) row's cell — it clones that cell's first `<w:p>`'s `<w:pPr>`
-(alignment/spacing/indent) via `cellParagraph`. Without this the new row copied
-only the gridSpan/merge *structure* and the cells fell back to the left-aligned
-default, so an inserted numeric column sat visibly out of column with the
-right-aligned rows above (the invoice "Calibration kit" row defect). `<w:pPr>` is
-pure properties (no content), so cloning it wholesale is safe; cell-level
-`<w:tcPr>` (shading/vAlign) is deliberately NOT inherited — striped/alternating
-rows make that unsafe to assume.
+`buildRow` also inherits each new cell's **look** from the reference (sibling)
+row's cell, in three slices — all via `@core/table`: the first `<w:p>`'s
+`<w:pPr>` (alignment/spacing/indent — pure properties, cloned wholesale) and the
+first run's `<w:rPr>` (font/size — without it new text falls back to docDefaults
+and renders visibly off-weight from its siblings) via `cellParagraphLike`, and
+`<w:tcBorders>` via `inheritCellBorders` (without it the new row has no rule
+lines while every sibling row does; both run-level gaps were flagged by
+independent judge runs on the invoice "Calibration kit" row). Cell
+`<w:shd>`/`<w:vAlign>` are deliberately NOT inherited — striped/alternating rows
+make shading unsafe to assume; borders are uniform across data rows in practice.
 
 ## Track-changes: native where a construct exists, audit comment otherwise
 
