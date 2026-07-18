@@ -67,6 +67,14 @@ const only = normalizeOnly(parsedArgs.only);
 // probe a stronger model: does it ACT on the read-time hints/cures a weaker agent
 // ignores? Only the exercise agents change; stage/render/judge/synth are unaffected.
 const exerciseModel = parsedArgs.model || "haiku";
+// The exercise agents run as the repo's `weak-exercise` agent type
+// (.claude/agents/weak-exercise.md): minimal tools and NO Skill tool, which
+// also drops the session's skills catalog from their context — the catalog is
+// a per-turn token tax AND a leak into the "capable-but-fresh agent" premise
+// (it names docx-cli and the harness). The agent registry is loaded at SESSION
+// start, so a session older than the definition won't resolve it — pass
+// args.exerciseAgentType: "general-purpose" to override in that case.
+const exerciseAgentType = parsedArgs.exerciseAgentType || "weak-exercise";
 // The judge and the synthesizer are pinned to the STRONGEST model — grading and
 // prioritization are where quality matters most, and they must not drift with the
 // session model or the exercise model.
@@ -499,11 +507,20 @@ const pipelines = active.map((scenario) => {
 				label: `exercise:${scenario.key}`,
 				phase: "Exercise",
 				model: exerciseModel,
-				agentType: "general-purpose",
+				agentType: exerciseAgentType,
 				schema: EXERCISE_SCHEMA,
 			})
-				.then((result) => (result ? { ...result, key: scenario.key } : null))
-				.catch(() => null);
+				.then((result) =>
+					result
+						? { ...result, key: scenario.key }
+						: lostExerciseAccount(scenario),
+				)
+				// null = the agent died mid-work or finished but fumbled the
+				// StructuredOutput handoff. Substitute a placeholder so render +
+				// judge still grade the on-disk document; the operator adjudicates
+				// from the transcript. Full policy (and why such a run must NEVER
+				// be resumed) lives in SKILL.md.
+				.catch(() => lostExerciseAccount(scenario));
 
 	// Render fires as soon as THIS exercise resolves, queued behind any in-flight
 	// render. Skip if the exercise produced nothing.
@@ -534,7 +551,12 @@ const exercises = (
 	await Promise.all(pipelines.map((pipeline) => pipeline.exerciseP))
 ).filter(Boolean);
 log(
-	`Exercise done: ${exercises.map((e) => `${e.key}=${e.status || e.completed}`).join(", ")}`,
+	`Exercise done: ${exercises
+		.map(
+			(exercise) =>
+				`${exercise.key}=${exercise.status || exercise.completed || (exercise.accountLost ? "ACCOUNT-LOST" : "?")}`,
+		)
+		.join(", ")}`,
 );
 
 const renders = (
@@ -618,7 +640,7 @@ function exercisePromptDocxCli(scenario) {
 
 	return `You are stress-testing **docx-cli**, a command-line tool that lets agents read, edit, and comment on Microsoft Word (.docx) files. You are playing the role of a CAPABLE-BUT-FRESH agent: you have NOT used this tool before. Discover everything you need from the tool's own help — do not assume flags.
 
-The CLI executable is at this absolute path (invoke it directly):
+The CLI executable is at this absolute path. It is a COMPILED BINARY — run it with Bash; NEVER open it with the Read tool (that dumps megabytes of machine code into your context):
   ${binary}
 
 Start by orienting yourself:
@@ -723,7 +745,7 @@ The CLI executable:
   ${binary}
 
 Command shapes (confirm with \`${binary} render --help\` and \`${binary} read --help\`):
-  ${binary} render <FILE> --engine word --out <DIR>       # → page PNGs (slow; SKIP if the dir already has *.png)
+  ${binary} render <FILE> --engine word --out <DIR>        # → page PNGs (slow; SKIP if the dir already has *.png)
   ${binary} read <FILE> > <FILE.md>                        # → markdown read view (instant; prints to stdout, redirect to a file)
 
 Renders are safe to run back-to-back: the CLI serializes Word access across processes with a lock, so a render may briefly WAIT if another run holds Word. Give each render you actually run a generous timeout (10 minutes) and run them SEQUENTIALLY — never background one or start a second before the first returns. (\`read\` never touches Word.)
@@ -735,6 +757,22 @@ For this target (key "${target.key}") — CHECK-THEN-ACT on each:
 Then \`ls\` each dir to capture the REAL page-PNG paths (whether they pre-existed or you just made them). If a render you run fails, capture the error text and move on — do not retry more than once. If a \`read\` fails, note it in \`error\` and return an empty path for that side.
 
 Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether the output PNGs are present (\`rendered\`), the list of output page PNG paths, the \`markdownPath\` (${target.mdPath} if present, else empty),${baselineReturn} and any error text.`;
+}
+
+/** Placeholder exercise account for a scenario whose agent returned nothing —
+ * died on a terminal API error, or (the common case: haiku) finished the work
+ * but never actually called StructuredOutput. Truthy, so render + judge still
+ * run against the on-disk document; carries no `completed`/`outputPath` (the
+ * judge prompt drops undefined fields and falls back to the staged doc path). */
+function lostExerciseAccount(scenario) {
+	return {
+		key: scenario.key,
+		accountLost: true,
+		summary:
+			"(no self-report: the exercise agent's structured handoff failed — it either died on a terminal API error mid-work or finished but never called StructuredOutput. The document on disk is whatever state the agent left it in.)",
+		frictions: [],
+		deadEnds: [],
+	};
 }
 
 function judgePrompt(scenario, exercise, render) {
@@ -777,7 +815,9 @@ function judgePrompt(scenario, exercise, render) {
 	const statusNote =
 		exercise && exercise.status === "failed"
 			? `\n\n**Run status: FAILED** — the local harness run was cut short (watchdog timeout or crash) before it finished, so the document is whatever partial state it reached. Grade the ACTUAL rendered output; attribute clearly-unfinished content to the run being killed (a run/harness limitation), not automatically a docx-cli defect.`
-			: "";
+			: exercise && exercise.accountLost
+				? `\n\n**Exercise self-report LOST** — the agent's structured handoff failed (it died mid-work OR finished but never called its output tool), so there is no first-person account. Grade the ACTUAL rendered output on its own merits against the rubric; do not infer anything from the missing self-report. If the document looks clearly abandoned mid-task, say so explicitly in the review (the operator uses that to decide whether this run counts).`
+				: "";
 	const pages = (render && render.pages) || [];
 	const baselinePages = (render && render.baselinePages) || [];
 	const markdownPath = (render && render.markdownPath) || "";
@@ -815,6 +855,11 @@ ${exerciseJson}
 
 ## Renders produced (Word)
 ${renderLine}
+
+**\`rendersCorrectly\` is decided by the render outcome above — not by the zip being parseable.**
+- \`Rendered: true\` with visible output page PNGs → judge \`rendersCorrectly\` from what the pages actually look like (layout, no leftover placeholders/highlights, tables/figure/columns intact).
+- \`Rendered: false\` → Word could NOT open and convert this document. Set \`rendersCorrectly = false\` and record a demerit quoting the render error ("Word could not open the document: <error>"). A structurally-valid zip that Word refuses to open does NOT render correctly — do NOT infer \`rendersCorrectly = true\` from \`read\` succeeding, from the file unzipping, or from the markdown read view. \`rendersCorrectly = true\` REQUIRES actual output PNGs you have looked at.
+  - **Document defect vs environment failure:** a render error specific to THIS file — Word opened it but rejected it ("unreadable content"), or it timed out on this file **while the pristine BASELINE rendered fine** — is a real document defect → \`rendersCorrectly = false\`. But if the SAME failure also hit the baseline, or the error clearly names a broken environment (automation-permission denied, Word not installed), then Word never got to judge this document: say so in the review and treat \`rendersCorrectly\` as not-determinable (flag it), rather than scoring the document a render failure.
 
 ## How to judge
 1. READ ${dir}/task.md (the request) and ${criteriaPath} (the grading rubric you judge against).

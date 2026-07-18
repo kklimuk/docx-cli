@@ -162,6 +162,33 @@ Workflow({
 })
 ```
 
+> **Exercise agent type.** The exercise agents run as the repo's `weak-exercise`
+> agent type (`.claude/agents/weak-exercise.md`): minimal tools and no Skill
+> tool, so the session's skills catalog stays OUT of their context (it's a
+> per-turn token tax and leaks docx-cli/harness names into the
+> "capable-but-fresh agent" premise). The agent registry loads at SESSION
+> start — in a session older than that file, the workflow aborts with
+> "agent type 'weak-exercise' not found"; pass
+> `exerciseAgentType: "general-purpose"` to override for that session (and note
+> the run's base context is then ~4k tokens/turn heavier, so its token numbers
+> aren't comparable to weak-exercise runs).
+
+> **Never resume a benchmark run whose exercise phase failed.** If an exercise
+> agent dies (API error → that scenario reports no exercise/verdict), re-run
+> the WHOLE run in a FRESH run dir. `resumeFromRunId` replays the cached stage
+> step without re-copying fixtures, so re-run exercise agents would edit
+> already-edited documents — double redlines, double fills, unusable verdicts
+> (this voided run r2 on 2026-07-15, twice). The failure is worse than it
+> looks because the resume cache is **PREFIX-based, not keyed**: everything
+> issued AFTER the first missing/changed result re-runs live, not just the
+> dead agent. So a dead exercise for a MANIFEST-EARLY scenario (`mnda` is
+> first) re-runs EVERY exercise against edited docs even if you restore that
+> one scenario's staging state — while a dead LAST scenario (`eliot-journal`)
+> happens to resume cleanly. Don't gamble on manifest position: exercise-phase
+> failure → fresh run dir, no exceptions. Resume is only safe for failures at
+> or after the render phase (dead judge/synth), where nothing mutates
+> documents no matter how much of the suffix re-runs.
+
 **Running 3 at a time (the fast path to averaged numbers).** The benchmark
 methodology is 3 runs per arm/model, and runs can go **concurrently**: launch up to
 three Workflow invocations in one message, each with its OWN `RUN_DIR` from step 2
