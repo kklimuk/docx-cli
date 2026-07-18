@@ -14,6 +14,7 @@ export type Locator =
 	| { kind: "equation"; equationId: string }
 	| { kind: "footnote"; footnoteId: string }
 	| { kind: "endnote"; endnoteId: string }
+	| { kind: "marginal"; marginalId: string }
 	| {
 			kind: "cell";
 			tableId: string;
@@ -55,8 +56,34 @@ const TRACKED_CHANGE_RE = /^tc(\d+)$/;
 const EQUATION_RE = /^eq(\d+)$/;
 const FOOTNOTE_RE = /^fn(\d+)$/;
 const ENDNOTE_RE = /^en(\d+)$/;
+const MARGINAL_RE = /^(hdr|ftr)(\d+)$/;
 const CELL_RANGE_RE = /^t(\d+):r(\d+)c(\d+)-r(\d+)c(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
+
+/** True when a locator carries a cell segment (`…:rRcC`, nested chains
+ *  included) — i.e. it addresses a cell or content inside one. Lives beside
+ *  `CELL_RE` so it moves with the grammar; the raw splice paths use it to
+ *  apply Word's "a cell ends with a paragraph" rule to the spliced parent. */
+export function isCellScopedLocator(locator: string): boolean {
+	return /:r\d+c\d+(?::|$)/.test(locator);
+}
+
+/** True for an `rIdN` relationship handle. The rels family rides `--at`
+ *  alongside block locators (an `rId` names the relationship a body reference
+ *  points at), so its recognition lives here in the grammar rather than as
+ *  scattered inline regexes across the raw CLI verbs. */
+export function isRelationshipLocator(locator: string): boolean {
+	return /^rId\d+$/.test(locator);
+}
+
+/** True for a `hdrN` / `ftrN` marginal handle — the page header/footer id that
+ *  `headers list`/`footers list` report, `read` carries on the `docx:header`/
+ *  `docx:footer` hint, and `raw get` / `headers`/`footers --at` resolve. Unlike
+ *  block locators it addresses content in a SEPARATE part (`word/footer1.xml`),
+ *  not the body, so the CLI routes it through the marginal resolver. */
+export function isMarginalLocator(locator: string): boolean {
+	return MARGINAL_RE.test(locator);
+}
 const TABLE_ROW_RE = /^t(\d+):r(\d+)$/;
 const TABLE_COLUMN_RE = /^t(\d+):c(\d+)$/;
 
@@ -98,6 +125,11 @@ export function parseLocator(input: string): Locator {
 	const endnoteMatch = trimmed.match(ENDNOTE_RE);
 	if (endnoteMatch) {
 		return { kind: "endnote", endnoteId: `en${endnoteMatch[1]}` };
+	}
+
+	// MARGINAL_RE is anchored ^(hdr|ftr)\d+$, so a match IS the whole id.
+	if (MARGINAL_RE.test(trimmed)) {
+		return { kind: "marginal", marginalId: trimmed };
 	}
 
 	// Checked before the cell forms: a cell-prefixed cross-paragraph range

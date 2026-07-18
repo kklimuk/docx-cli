@@ -31,7 +31,7 @@ const body = `
 	<w:p>
 		<w:r><w:t xml:space="preserve">Use </w:t></w:r>
 		<w:r>
-			<w:rPr><w:color w:val="800080"/><w:b/></w:rPr>
+			<w:rPr><w:b/><w:color w:val="800080"/></w:rPr>
 			<w:t>important</w:t>
 		</w:r>
 		<w:r><w:t xml:space="preserve"> terms in purple bold.</w:t></w:r>

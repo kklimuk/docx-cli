@@ -429,7 +429,7 @@ export function hasParagraphProperties(options: ParagraphOptions): boolean {
  *  most commonly `<w:jc>` after the trailing paragraph-mark `<w:rPr>` — with the
  *  "unreadable content / repair" prompt. Any code that splices a child into an
  *  existing pPr must go through `insertPprChildInOrder`, never `push`. */
-const PPR_CHILD_ORDER = [
+export const PPR_CHILD_ORDER = [
 	"w:pStyle",
 	"w:keepNext",
 	"w:keepLines",
@@ -494,7 +494,7 @@ export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
  *  rejects the file. The classic break is adding `<w:sz>` after `<w:rFonts>` when
  *  `<w:b>`/`<w:color>`/`<w:kern>` sit between them (CT_RPr puts sz well after
  *  those) — `insertAfter(rFonts)` would land sz too early. */
-const RPR_CHILD_ORDER = [
+export const RPR_CHILD_ORDER = [
 	"w:rStyle",
 	"w:rFonts",
 	"w:b",
@@ -534,6 +534,7 @@ const RPR_CHILD_ORDER = [
 	"w:eastAsianLayout",
 	"w:specVanish",
 	"w:oMath",
+	"w:rPrChange",
 ] as const;
 
 /** Rank an rPr child by CT_RPr position. Unknown tags rank last so an

@@ -58,7 +58,7 @@ await cli("replace", out, "Alpha", "Aleph");
 await cli("replace", out, "Beta", "Bet");
 await cli("replace", out, "Gamma", "Gimel");
 
-const trackedJson = await cli("track-changes", "list", out);
+const trackedJson = await cli("track-changes", "list", out, "--json");
 const changes = JSON.parse(trackedJson) as Array<{
 	id: string;
 	kind: string;

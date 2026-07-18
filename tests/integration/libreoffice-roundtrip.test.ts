@@ -33,6 +33,7 @@ const CORE_FIXTURES = [
 	"letter.docx", // paragraph pPr: <w:spacing> (before/after/line) + <w:ind> (left/right/firstLine/hanging), authored via insert/edit
 	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields
 	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
+	"raw-ooxml.docx", // `docx raw` escape hatch: drop-cap framePr, nested table, sectPr patch loop (lnNumType) + dcx:raw markers
 ] as const;
 
 const EXTRA_FIXTURES = [

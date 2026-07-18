@@ -71,7 +71,7 @@ docx replace contract.docx --batch fills.jsonl           # many fields, one read
 
 ### Redline with tracked changes
 ```sh
-docx track-changes on contract.docx       # turn tracking on (doc-level)
+docx track-changes contract.docx on       # turn tracking on (doc-level)
 docx replace contract.docx "Net 90" "Net 30"   # now auto-emits <w:ins>/<w:del>
 docx edit --at p12:0-40 contract.docx --text "…" --track   # or redline one edit
 docx track-changes list contract.docx     # the tcN handles

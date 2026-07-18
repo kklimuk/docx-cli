@@ -6,6 +6,24 @@ Each command is a kebab-case folder. `index.ts(x)` is the public surface: `expor
 
 Add a folder here, register it in the COMMANDS map in [index.ts](index.ts), add tests under `tests/cli/`, document in README and the root CLAUDE.md. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
 
+## `raw` — the verbatim `--xml` channel
+
+`docx raw insert/replace` takes `--xml` VERBATIM — never route it through
+`decodeInlineEscapes`. XML is a machine format with its own escaping (`&#10;`
+for a newline), and a literal `\n` inside an attribute value must survive.
+This mirrors `--text-file` being the parser-free channel for prose;
+`--xml-file PATH|-` is the bulk/stdin form. All gate AND splice logic lives in
+[`@core/raw`](../core/raw/CLAUDE.md) (`prepareFragment`, `spliceBlocks`,
+`proveAddressable`, the relationship trio); `cli/raw/commit.ts` is the
+respond/save shell — RawError→fail translation, the baseline-diff schema gate
+(validator dynamic-imported so non-validating paths never instantiate the
+WASM), save, mint — so NOTHING is written when a gate fails. Routing:
+a fragment whose roots are `<Relationship>` goes to the rels part
+(`cli/raw/rels.ts`, no placement flags), an `--at rIdN`/`rels` locator
+likewise; everything else is a body block. `docx validate` is a thin shell
+over the same engine on a bare `Pkg` (no `Document` — it validates parts,
+so building the body AST would be pure waste).
+
 ## `info` subcommands & the generated Agent Skill
 
 `docx info` ([info/index.ts](info/index.ts)) dispatches reference emitters that take
@@ -36,9 +54,13 @@ invisible in a GFM cell), a head
 `docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
 its default — a weak agent reads "no hint" as "unknown," not "off," and a wrong
 tracking guess is high-cost, so the state is stated outright),
-`docx:header`/`docx:footer` notes (the content in a `text` attr — so the importer's
-`docx:` drop can't re-inject it into the body — with fields as `{page}`/`{date}`/…
-tokens; `type` attr only for `first`/`even`), and `docx:list` on a numbered
+`docx:header`/`docx:footer` notes (led by the marginal's `hdrN`/`ftrN` id — the
+handle `raw get --at` and `headers`/`footers set/clear --at` accept, the same id
+`headers`/`footers list` reports; a per-section marginal also carries its `sN` as a
+second bare token, a uniform one rides the head with the id alone. Content in a
+`text` attr — so the importer's `docx:` drop can't re-inject it into the body —
+with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`),
+and `docx:list` on a numbered
 list's FIRST run item (the numbering `docx lists set` authors): `start` when ≠ 1
 and `format` when the glyph isn't `decimal` (`upper-roman`/`lower-alpha`/… — GFM
 can't render a non-decimal ordered list, so the body stays `5.` and the hint
@@ -89,6 +111,6 @@ importer won't reconstruct it — NO comment is parse-back, not even `docx:base`
 
 ## Hyperlink/image edits emit audit comments under track-changes
 
-OOXML has no `w:hyperlinkChange` / `w:drawingChange` element — Word silently bypasses tracking for hyperlink edits and image swaps. We compromise: when `<w:trackChanges/>` is on, `hyperlinks add/replace/delete` and `images replace` each auto-emit a `[docx-cli] …` comment anchored to the affected span/run, attributed via the `--author` chain. The mutation itself stays silent (no fake `<w:ins>`/`<w:del>` — OOXML has no honest construct for it). The entry point is `new Comments(document).addAudit(anchor, { body, author, date })` (in [@core/comments](../core/comments/index.tsx)); the lower-level marker helpers `findContainingParagraph`, `findElementOffsetsInParagraph`, `addCommentMarkersAroundRun` live in [@core/comments/markers](../core/comments/markers.tsx). When track-changes is off, no comment is emitted.
+OOXML has no `w:hyperlinkChange` / `w:drawingChange` element — Word silently bypasses tracking for hyperlink edits and image swaps. We compromise: when `<w:trackRevisions/>` is on, `hyperlinks add/replace/delete` and `images replace` each auto-emit a `[docx-cli] …` comment anchored to the affected span/run, attributed via the `--author` chain. The mutation itself stays silent (no fake `<w:ins>`/`<w:del>` — OOXML has no honest construct for it). The entry point is `new Comments(document).addAudit(anchor, { body, author, date })` (in [@core/comments](../core/comments/index.tsx)); the lower-level marker helpers `findContainingParagraph`, `findElementOffsetsInParagraph`, `addCommentMarkersAroundRun` live in [@core/comments/markers](../core/comments/markers.tsx). When track-changes is off, no comment is emitted.
 
 `images delete` is the exception — deleting an image is honest content removal, so under tracking it wraps the drawing's run in a real `<w:del>` (accept removes it, reject restores it; the media part is kept until accept). It does **not** emit an audit comment. Replace stays audit-comment because swapping bytes has no tracked-change construct, but removal does.

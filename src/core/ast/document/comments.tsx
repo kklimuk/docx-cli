@@ -1,4 +1,5 @@
 import { w, w15 } from "../../jsx";
+import { ensureIgnorable, NS_MC } from "../../mc";
 import { XmlNode } from "../../parser";
 import type { Comment, CommentAnchor } from "../types";
 import type { CommentReference } from "./body";
@@ -155,6 +156,10 @@ export class CommentsView {
 		if (!root.attributes["xmlns:w14"]) {
 			root.setAttribute("xmlns:w14", NS_W14);
 		}
+		// An adopted part (not built by CommentsRoot) may lack the
+		// markup-compatibility registration the w14 attribute needs — see
+		// CommentsRoot.
+		ensureIgnorable(root, "w14");
 		return fresh;
 	}
 
@@ -385,7 +390,20 @@ export class CommentsView {
 }
 
 function CommentsRoot(): XmlNode {
-	return <w.comments {...{ "xmlns:w": NS_W, "xmlns:w14": NS_W14 }} />;
+	// `w14:paraId`/`w14:textId` are extension attributes: per OOXML's
+	// markup-compatibility rules they're only valid when their prefix rides
+	// `mc:Ignorable` on the part root (Word declares exactly this on its own
+	// comments.xml). Without it the part is schema-invalid.
+	return (
+		<w.comments
+			{...{
+				"xmlns:w": NS_W,
+				"xmlns:w14": NS_W14,
+				"xmlns:mc": NS_MC,
+				"mc:Ignorable": "w14",
+			}}
+		/>
+	);
 }
 
 /** A comment's threading identity is its LAST `<w:p>` — that's the paragraph

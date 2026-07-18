@@ -81,6 +81,7 @@ const JSON_SCHEMA = {
 					},
 				},
 				taskState: { enum: ["checked", "unchecked"] },
+				rawXml: { const: true },
 				tabStops: {
 					type: "array",
 					items: {
@@ -278,6 +279,7 @@ const JSON_SCHEMA = {
 				borders: { type: "string" },
 				style: { type: "string" },
 				align: { enum: ["left", "center", "right"] },
+				rawXml: { const: true },
 				rows: {
 					type: "array",
 					items: {

@@ -76,6 +76,7 @@
 		"heic-convert": "^2.1.0",
 		"jpeg-js": "^0.4.4",
 		"jszip": "^3.10.1",
+		"libxml2-wasm": "^0.7.1",
 		"lowlight": "^3.3.0",
 		"mdast-util-math": "^3.0.0",
 		"pngjs": "^7.0.0",

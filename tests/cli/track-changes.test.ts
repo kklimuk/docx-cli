@@ -19,7 +19,7 @@ describe("docx track-changes", () => {
 		});
 
 		const xml = await (await Pkg.open(docPath)).readText("word/settings.xml");
-		expect(xml).toContain("<w:trackChanges/>");
+		expect(xml).toContain("<w:trackRevisions/>");
 		expect(xml).toContain("xmlns:w=");
 	});
 
@@ -35,7 +35,7 @@ describe("docx track-changes", () => {
 		});
 
 		const xml = await (await Pkg.open(docPath)).readText("word/settings.xml");
-		expect(xml).not.toContain("<w:trackChanges/>");
+		expect(xml).not.toContain("<w:trackRevisions/>");
 	});
 
 	test("read surfaces the tracking state as a head hint (always on or off)", async () => {
@@ -69,14 +69,14 @@ describe("docx track-changes", () => {
 		});
 		expect(
 			await (await Pkg.open(docPath)).readText("word/settings.xml"),
-		).toContain("<w:trackChanges/>");
+		).toContain("<w:trackRevisions/>");
 
 		// Legacy FILE-first order still works (back-compat).
 		const off = await runCli("track-changes", docPath, "off");
 		expect(off.parsed).toMatchObject({ mode: "off", previouslyOn: true });
 		expect(
 			await (await Pkg.open(docPath)).readText("word/settings.xml"),
-		).not.toContain("<w:trackChanges/>");
+		).not.toContain("<w:trackRevisions/>");
 	});
 
 	test("rejects invalid mode", async () => {
@@ -430,8 +430,13 @@ describe("docx replace — tracked changes", () => {
 		expect(insRun?.trackedChange?.kind).toBe("ins");
 	});
 
+	// The Word-authored fixture has <w:trackRevisions/> ON in settings.xml (we
+	// once misread that as "off" — the very defect the trackRevisions fix
+	// cured). These three tests exercise the UNTRACKED span-splitting
+	// mechanics, so they turn the toggle off explicitly first.
 	test("span crossing a tracked-change boundary replaces and splits the wrapper", async () => {
 		const docPath = await freshTracked("replace-cross-tc");
+		await runCli("track-changes", "off", docPath);
 		const result = await runCli("replace", docPath, "with two", "with three");
 		expect(result.exitCode).toBe(0);
 
@@ -441,6 +446,7 @@ describe("docx replace — tracked changes", () => {
 
 	test("plain-text replacement before a tracked change still works", async () => {
 		const docPath = await freshTracked("replace-before-tc");
+		await runCli("track-changes", "off", docPath);
 		const result = await runCli("replace", docPath, "text", "string");
 		expect(result.exitCode).toBe(0);
 
@@ -450,6 +456,7 @@ describe("docx replace — tracked changes", () => {
 
 	test("plain-text replacement after a tracked change still works", async () => {
 		const docPath = await freshTracked("replace-after-tc");
+		await runCli("track-changes", "off", docPath);
 		const result = await runCli("replace", docPath, "insertions", "edits");
 		expect(result.exitCode).toBe(0);
 

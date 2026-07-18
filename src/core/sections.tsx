@@ -266,7 +266,7 @@ function findOrCreateSectPrChild(sectPr: XmlNode, tag: string): XmlNode {
 // Word REJECTS an out-of-order sectPr ("unreadable content"); <w:sectPrChange>
 // must be LAST (§17.6.18). Any code adding a child to an existing sectPr must
 // splice via `insertSectPrChildInOrder`, never `push`.
-const SECTPR_CHILD_ORDER = [
+export const SECTPR_CHILD_ORDER = [
 	"w:headerReference",
 	"w:footerReference",
 	"w:footnotePr",
@@ -311,8 +311,11 @@ export function insertSectPrChildInOrder(
 	child: XmlNode,
 ): void {
 	const rank = sectPrChildRank(child.tag);
+	// Rank only against real element siblings — a pretty-printed sectPr keeps
+	// inter-element whitespace `#text` nodes, which rank as "unknown" and would
+	// otherwise pull the new child to the front, breaking CT_SectPr order.
 	const at = sectPr.children.findIndex(
-		(existing) => sectPrChildRank(existing.tag) > rank,
+		(existing) => !existing.isText && sectPrChildRank(existing.tag) > rank,
 	);
 	if (at < 0) sectPr.children.push(child);
 	else sectPr.children.splice(at, 0, child);

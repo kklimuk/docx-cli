@@ -1,15 +1,11 @@
 import { normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
 
-import {
-	type MarginalKind,
-	type MarginalType,
-	marginalConfig,
-	marginalPartNameFromTarget,
-} from "../marginals/config";
+import { enumerateMarginalRefs } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
 import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
+import { RAW_MARKER_ATTRIBUTE } from "../raw/namespaces";
 import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
 import type { Document } from "./document";
@@ -106,46 +102,17 @@ function readMarginals(document: Document): {
 } {
 	const headers: Marginal[] = [];
 	const footers: Marginal[] = [];
-	if (!document.marginals) return { headers, footers };
-	let headerIndex = 0;
-	let footerIndex = 0;
-	for (const block of document.body.blocks) {
-		if (block.type !== "sectionBreak") continue;
-		const sectPr = document.body.blockReferences.get(block.id)?.node;
-		if (!sectPr) continue;
-		for (const child of sectPr.children) {
-			const kind = marginalKindForTag(child.tag);
-			if (!kind) continue;
-			const rId = child.getAttribute("r:id");
-			if (!rId) continue;
-			const relationship = document.relationships.findByRid(rId);
-			const target = relationship?.getAttribute("Target");
-			if (!target) continue;
-			const tree = document.marginals.partTree(
-				marginalPartNameFromTarget(target),
-			);
-			if (!tree) continue;
-			const type = (child.getAttribute("w:type") ?? "default") as MarginalType;
-			const id = `${marginalConfig(kind).locatorPrefix}${
-				kind === "header" ? headerIndex++ : footerIndex++
-			}`;
-			const marginal: Marginal = {
-				id,
-				kind,
-				type,
-				sectionId: block.id,
-				text: marginalText(tree),
-			};
-			(kind === "header" ? headers : footers).push(marginal);
-		}
+	for (const ref of enumerateMarginalRefs(document)) {
+		const marginal: Marginal = {
+			id: ref.id,
+			kind: ref.kind,
+			type: ref.type,
+			sectionId: ref.sectionId,
+			text: marginalText(ref.tree),
+		};
+		(ref.kind === "header" ? headers : footers).push(marginal);
 	}
 	return { headers, footers };
-}
-
-function marginalKindForTag(tag: string): MarginalKind | undefined {
-	if (tag === "w:headerReference") return "header";
-	if (tag === "w:footerReference") return "footer";
-	return undefined;
 }
 
 function readBlocks(
@@ -412,6 +379,7 @@ function readParagraph(
 	state: WalkState,
 ): Paragraph {
 	const paragraph: Paragraph = { id, type: "paragraph", runs: [] };
+	if (node.getAttribute(RAW_MARKER_ATTRIBUTE)) paragraph.rawXml = true;
 	const paragraphProperties = node.findChild("w:pPr");
 	if (paragraphProperties) {
 		applyParagraphProperties(document, paragraph, paragraphProperties);
@@ -1155,6 +1123,7 @@ function readTable(
 		rowIndex++;
 	}
 	const table: Table = { id, type: "table", grid, rows };
+	if (node.getAttribute(RAW_MARKER_ATTRIBUTE)) table.rawXml = true;
 	if (width) table.width = width;
 	if (borders) table.borders = borders;
 	if (style) table.style = style;

@@ -1,4 +1,9 @@
-import { type Document, describeForms, TrackChanges } from "@core";
+import {
+	type Document,
+	describeForms,
+	type RevisionAllocator,
+	TrackChanges,
+} from "@core";
 import { parseTableAt } from "@core/locators";
 import type { XmlNode } from "@core/parser";
 import {
@@ -165,6 +170,7 @@ export async function run(args: string[]): Promise<number> {
 
 	const tracking = resolveTracked(document, parsed.values.track);
 	const author = parsed.values.author as string | undefined;
+	const allocator = new TrackChanges(document).createAllocator();
 	// Snapshot the prior grid columns before resizing so a tracked width change
 	// is reversible (reject restores the prior <w:tblGrid> from the snapshot).
 	const priorCols = tracking ? cols.map((col) => col.clone()) : [];
@@ -179,8 +185,10 @@ export async function run(args: string[]): Promise<number> {
 		// Word records a width change as a grid revision (<w:tblGridChange>) plus
 		// a per-cell <w:tcPrChange> (each cell's <w:tcW>) — and it's the per-cell
 		// tcPrChange that Word's reject actually reverts (a grid snapshot alone
-		// isn't honored). Mirror Word's full output under tracking.
-		if (tracking) applyCellWidthsTracked(document, grid, twips, author);
+		// isn't honored). Mirror Word's full output under tracking. One allocator
+		// for the whole command so every snapshot gets a distinct revision id.
+		if (tracking)
+			applyCellWidthsTracked(document, grid, twips, author, allocator);
 		else applyCellWidths(grid, twips);
 		setTableLayout(tableNode, "fixed");
 	}
@@ -189,7 +197,7 @@ export async function run(args: string[]): Promise<number> {
 		appendTblGridChange(
 			grid.tblGrid,
 			priorCols,
-			new TrackChanges(document).mintMeta(author),
+			new TrackChanges(document).mintMeta(author, allocator),
 		);
 	}
 
@@ -281,6 +289,7 @@ function applyCellWidthsTracked(
 	grid: Grid,
 	twips: number[],
 	authorFlag: string | undefined,
+	allocator: RevisionAllocator,
 ): void {
 	for (const row of grid.rows) {
 		for (const cell of row.cells) {
@@ -293,7 +302,7 @@ function applyCellWidthsTracked(
 			appendTcPrChange(
 				cell.node,
 				prior,
-				new TrackChanges(document).mintMeta(authorFlag),
+				new TrackChanges(document).mintMeta(authorFlag, allocator),
 			);
 		}
 	}

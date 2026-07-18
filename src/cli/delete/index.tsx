@@ -3,10 +3,8 @@ import {
 	type Document,
 	isTrailingSectPr,
 	removeInlineSectPr,
-	resolveAuthor,
-	resolveDate,
 } from "@core";
-import { Comments, findContainingParagraph } from "@core/comments";
+import { findContainingParagraph } from "@core/comments";
 import { XmlNode } from "@core/parser";
 import {
 	applyTrackedRangeDelete,
@@ -15,6 +13,7 @@ import {
 	removeParagraphLine,
 	TrackedRangeConflictError,
 } from "@core/track-changes/replace";
+import { addAuditComment } from "../audit-comment";
 import { batchExampleIntro } from "../parse-helpers";
 import {
 	EXIT,
@@ -232,13 +231,11 @@ async function commitSectionDelete(
 	removeInlineSectPr(blockRef.node, blockRef.parent);
 
 	if (trackingOn && owningParagraph && anchorRun) {
-		new Comments(document).addAudit(
+		addAuditComment(
+			document,
 			{ kind: "run", paragraph: owningParagraph, run: anchorRun },
-			{
-				body: `[docx-cli] section break removed (${opts.locator})`,
-				author: resolveAuthor(opts.authorFlag),
-				date: resolveDate(),
-			},
+			`section break removed (${opts.locator})`,
+			opts.authorFlag,
 		);
 	}
 

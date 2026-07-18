@@ -74,6 +74,9 @@ export {
 	type BlockRangeReference,
 	type BlockTarget,
 	describeForms,
+	isCellScopedLocator,
+	isMarginalLocator,
+	isRelationshipLocator,
 	LOCATOR_FORMS,
 	type Locator,
 	type LocatorForm,
@@ -89,13 +92,20 @@ export {
 	parseTableAt,
 } from "./locators";
 export {
+	enumerateMarginalRefs,
+	findMarginalRef,
 	type MarginalField,
 	type MarginalKind,
+	type MarginalRef,
 	type MarginalSpec,
 	Marginals,
 	type MarginalType,
 } from "./marginals";
-export { isMarginalType, MARGINAL_TYPES } from "./marginals/config";
+export {
+	isMarginalType,
+	MARGINAL_TYPES,
+	marginalConfig,
+} from "./marginals/config";
 export {
 	MarkdownImport,
 	MarkdownImportError,

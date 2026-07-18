@@ -100,10 +100,28 @@ async function appendSection(opts: {
 	columns?: number;
 	type?: string;
 }): Promise<void> {
-	const args = ["insert", out, "--after", `p${lastP}`, "--section"];
-	if (opts.columns !== undefined) args.push("--columns", String(opts.columns));
-	if (opts.type !== undefined) args.push("--type", opts.type);
-	await cli(...args);
+	// `insert --section` was removed from the CLI (a raw section break formats
+	// the content ABOVE it — the weak-agent trap; `docx sections --at pN-pM` is
+	// the supported path). This fixture deliberately exercises every raw
+	// `w:type` semantics against hand-picked boundaries, so it authors each
+	// section-sentinel paragraph through the `docx raw` escape hatch —
+	// dogfooding the gate pipeline with an inline `<w:pPr><w:sectPr>` fragment
+	// (type before cols, per CT_SectPr order).
+	const sectPr = [
+		opts.type !== undefined ? `<w:type w:val="${opts.type}"/>` : "",
+		opts.columns !== undefined
+			? `<w:cols w:num="${opts.columns}" w:space="720"/>`
+			: "",
+	].join("");
+	await cli(
+		"raw",
+		"insert",
+		out,
+		"--after",
+		`p${lastP}`,
+		"--xml",
+		`<w:p><w:pPr><w:sectPr>${sectPr}</w:sectPr></w:pPr></w:p>`,
+	);
 	lastP += 1;
 }
 
@@ -297,7 +315,7 @@ for (const section of sections) {
 		`  ${section.id}: columns=${section.columns ?? "(default)"} type=${section.sectionType ?? "(default)"}`,
 	);
 }
-const trackedJson = await cli("track-changes", "list", out);
+const trackedJson = await cli("track-changes", "list", out, "--json");
 const tracked = JSON.parse(trackedJson) as Array<{
 	id: string;
 	kind: string;

@@ -492,7 +492,11 @@ export function CommentBody({
 			w-date={options.date}
 			w-initials={options.initials}
 		>
-			<w.p {...{ "w14:paraId": options.paraId, "w14:textId": "00000000" }}>
+			{/* textId shares paraId's MS-DOCX range rule (0x1–0x7FFFFFFF) — the
+			    literal 00000000 this once wrote is out of range, and Word
+			    re-keys invalid ids on open. The paraId value is in range by
+			    construction and deterministic under the fixture seed. */}
+			<w.p {...{ "w14:paraId": options.paraId, "w14:textId": options.paraId }}>
 				{textToRunElements(options.text)}
 			</w.p>
 		</w.comment>

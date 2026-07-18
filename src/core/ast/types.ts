@@ -30,6 +30,12 @@ export type Paragraph = {
 	 * plus the leading whitespace run after it are stripped from `runs` so the
 	 * AST carries only the task text. Markdown render emits `- [ ]` / `- [x]`. */
 	taskState?: "checked" | "unchecked";
+	/** The block was authored by `docx raw insert`/`replace` (the `dcx:raw`
+	 * marker attribute, carried in an `mc:Ignorable` namespace so Word skips
+	 * it). Read-time visibility only — the marker may not survive a resave by
+	 * Word/LibreOffice. Markdown surfaces it as a bare `raw` token on the
+	 * block's `docx:p` note. */
+	rawXml?: true;
 	/** Markdown blockquote depth (1 = single `>`, 2 = `> >`, etc.). Detected
 	 * by the AST reader from `pStyle="Quote"` / `pStyle="QuoteListParagraph"`
 	 * combined with the paragraph's `<w:ind w:left>` value (each 720-twip
@@ -101,6 +107,10 @@ export type Table = {
 	 * (`"center"` / `"right"`). Absent ⇒ the default `"left"`. Authorable via
 	 * `docx tables format --at tN --align`. */
 	align?: "left" | "center" | "right";
+	/** The block was authored by `docx raw insert`/`replace` — see
+	 * `Paragraph.rawXml`. Surfaces as a bare `raw` token on the `docx:table`
+	 * note. */
+	rawXml?: true;
 	rows: TableRow[];
 };
 

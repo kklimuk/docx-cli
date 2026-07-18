@@ -21,6 +21,7 @@ docx info skill        # this skill, regenerated from the binary
 | `outline FILE`      | Headings as a locator tree.                                                                                                                                                 |
 | `render FILE`       | Render each page to PNG/JPG via Word or LibreOffice — for verifying LAYOUT only.                                                                                            |
 | `styles FILE`       | List/describe styles (`--used`, `--at ID`).                                                                                                                                 |
+| `validate FILE`     | Schema-check every WML part against the bundled ECMA-376 transitional XSDs (exit 0 = clean).                                                                                |
 | `info <topic>`      | `schema` / `locators` / `skill` — reference material, no FILE.                                                                                                              |
 
 ## Mutate (overwrite FILE in place; `-o PATH` writes a copy; `--dry-run` previews)
@@ -42,6 +43,7 @@ docx info skill        # this skill, regenerated from the binary
 | `tables`                             | Insert/delete rows & columns, merge/unmerge, set widths, borders, formatting.                                                     |
 | `lists`                              | Renumber a numbered list (`set --at pN --start 5` / `--format upper-roman` / `--restart` / `--continue`).                         |
 | `track-changes`                      | `on`/`off`, `list`, `accept`/`reject` (`--at tcN` / `--all`).                                                                     |
+| `raw`                                | LAST RESORT: `get` a target's exact XML, `edit --find/--with` to patch in place, `insert`/`replace` raw OOXML at a locator (blocks, sections, `rIdN` relationships), `raw part list\|get\|add\|replace\|edit --name` for package parts — hard-gated (well-formedness, ECMA child order, rId checks, schema validation; nothing written on failure). For constructs no other verb covers. |
 
 ## The two gotchas that can trip you up
 

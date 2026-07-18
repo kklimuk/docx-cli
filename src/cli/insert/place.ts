@@ -119,7 +119,7 @@ export async function parseTargetPlacement(
  *  `--at-start`/`--at-end` boundary this resolves against the open document
  *  (first/last content block, or — for an otherwise-empty body — before the
  *  mandatory trailing `<w:sectPr>`). */
-async function resolvePlacement(
+export async function resolvePlacement(
 	document: Document,
 	placement: TargetPlacement,
 ): Promise<

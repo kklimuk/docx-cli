@@ -261,15 +261,17 @@ describe("headers/footers — read hints + clear", () => {
 		await runCli("headers", "set", path, "--text", "Title");
 		await runCli("footers", "set", path, "--page-number", "--of-pages");
 		const md = await readMarkdown(path);
-		expect(md).toContain('<!-- docx:header text="Title" -->');
-		expect(md).toContain('<!-- docx:footer text="Page {page} of {pages}" -->');
+		expect(md).toContain('<!-- docx:header hdr0 text="Title" -->');
+		expect(md).toContain(
+			'<!-- docx:footer ftr0 text="Page {page} of {pages}" -->',
+		);
 	});
 
-	test("first-page hint carries the type attribute", async () => {
+	test("first-page hint carries the id + type attribute", async () => {
 		const path = await newDoc("hf-hint-first");
 		await runCli("headers", "set", path, "--first-page", "--text", "Cover");
 		expect(await readMarkdown(path)).toContain(
-			'<!-- docx:header type="first" text="Cover" -->',
+			'<!-- docx:header hdr0 type="first" text="Cover" -->',
 		);
 	});
 
@@ -319,6 +321,70 @@ describe("headers/footers — read hints + clear", () => {
 		expect(await partText(path, "word/document.xml")).not.toContain(
 			"<w:headerReference",
 		);
+	});
+});
+
+describe("headers/footers — addressing by hdrN/ftrN id", () => {
+	test("clear --at ftr0 removes that specific footer (the id from list/read)", async () => {
+		const path = await newDoc("hf-id-clear");
+		await runCli("footers", "set", path, "--text", "Bye");
+		expect(await list("footers", path)).toHaveLength(1);
+		const result = await runCli("footers", "clear", path, "--at", "ftr0");
+		expect(result.exitCode).toBe(0);
+		expect(await list("footers", path)).toHaveLength(0);
+	});
+
+	test("set --at hdr0 updates that header in place (resolves via the id)", async () => {
+		const path = await newDoc("hf-id-set");
+		await runCli("headers", "set", path, "--text", "Old");
+		await runCli("headers", "set", path, "--at", "hdr0", "--text", "New");
+		const headers = await list("headers", path);
+		expect(headers).toHaveLength(1);
+		expect(headers[0]?.text).toBe("New");
+	});
+
+	test("headers set --at ftr0 rejects the kind mismatch", async () => {
+		const path = await newDoc("hf-id-kind");
+		await runCli("footers", "set", path, "--text", "F");
+		const result = await runCli(
+			"headers",
+			"set",
+			path,
+			"--at",
+			"ftr0",
+			"--text",
+			"X",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain(
+			"ftr0 is a footer, not a header",
+		);
+	});
+
+	test("set --at ftr0 with an explicit placement flag is rejected as redundant", async () => {
+		const path = await newDoc("hf-id-type");
+		await runCli("footers", "set", path, "--text", "F");
+		const result = await runCli(
+			"footers",
+			"set",
+			path,
+			"--at",
+			"ftr0",
+			"--first-page",
+			"--text",
+			"X",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain(
+			"already fixes the placement",
+		);
+	});
+
+	test("an unknown marginal id exits non-zero with a list hint", async () => {
+		const path = await newDoc("hf-id-missing");
+		const result = await runCli("footers", "clear", path, "--at", "ftr9");
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { hint?: string }).hint).toContain("footers list");
 	});
 });
 
@@ -514,7 +580,8 @@ describe("headers/footers — review regressions", () => {
 		);
 		await runCli("headers", "set", path, "--at", "s0", "--text", "OnlyS0");
 		const md = await readMarkdown(path);
-		expect(md).toContain('docx:header s0 text="OnlyS0"');
+		// Per-section note: the marginal id leads, the section `sN` follows.
+		expect(md).toContain('docx:header hdr0 s0 text="OnlyS0"');
 		expect(md).not.toContain('<!-- docx:header text="OnlyS0" -->');
 	});
 

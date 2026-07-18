@@ -151,6 +151,9 @@ export async function run(args: string[]): Promise<number> {
 	const author = parsed.values.author as string | undefined;
 	const priorCols = grid.tblGrid.findChildren("w:gridCol");
 	insertGridColumn(grid.tblGrid, position, width);
+	// One allocator for the whole command: the grid snapshot + every cell's
+	// marker each get a DISTINCT revision id (w:id is unique per document).
+	const allocator = new TrackChanges(document).createAllocator();
 	if (tracking) {
 		// Pair the per-cell cellIns marks with a grid-revision snapshot so the
 		// width change is reversible (Word keeps the grown grid; reject restores
@@ -158,13 +161,17 @@ export async function run(args: string[]): Promise<number> {
 		appendTblGridChange(
 			grid.tblGrid,
 			priorCols,
-			new TrackChanges(document).mintMeta(author),
+			new TrackChanges(document).mintMeta(author, allocator),
 		);
 	}
 	for (const row of grid.rows) {
 		const cell = emptyCell();
 		if (tracking) {
-			markCellTracked(cell, "ins", new TrackChanges(document).mintMeta(author));
+			markCellTracked(
+				cell,
+				"ins",
+				new TrackChanges(document).mintMeta(author, allocator),
+			);
 		}
 		insertCellAtColumn(row, position, cell);
 	}

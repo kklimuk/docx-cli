@@ -106,6 +106,7 @@ const W_TAGS = [
 	"comment",
 	"settings",
 	"trackChanges",
+	"trackRevisions",
 	"hyperlink",
 	"styles",
 	"style",

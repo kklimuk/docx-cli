@@ -43,6 +43,8 @@ src/
     tables/                   # row/column insert+delete | set-widths | merge | unmerge | borders (grid.ts: merge-aware model)
     track-changes/            # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
     info/                     # schema | locators | skill (reference output; skill.ts emits the canonical SKILL.md)
+    raw/                      # get | insert | replace — the raw-OOXML escape hatch (commit.ts: reread→assert→schema-gate→save tail)
+    validate/                 # ECMA-376 schema check, per WML part (thin shell over @core/raw/validate)
   core/
     diff/                     # pure text→text unified-diff engine (jsdiff wrapper + HTML-aware word refinement); backs docx diff
     package/                  # JSZip wrapper: open, read/write XML parts, save
@@ -53,6 +55,7 @@ src/
     image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http + HEIC→JPEG), formats.ts (one mime↔ext table)
     equation/                 # latexToOmml / ommlToLatex bidirectional (temml + own MathML↔OMML adapter)
     markdown/                 # MarkdownImport lens: remark-parse + remark-gfm + remark-math + CriticMarkup plugin → walker → emitters
+    raw/                      # Raw lens: fragment gate pipeline (element-order, namespaces+dcx:raw marker, reference audit) + libxml2-wasm XSD engine over bundled ECMA-376 schemas (schemas/)
     blocks.tsx                # <Paragraph> / <RunElement> / <ListParagraph> / <HorizontalRule> emitters
     table.tsx                 # <BlankTable> / <Table> / <TableRow> / <TableCell> emitters
     sections.tsx              # sectPr emitters + mutators

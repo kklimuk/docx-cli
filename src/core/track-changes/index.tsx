@@ -36,7 +36,7 @@ export type RevisionAllocator = { next(): number };
 /** Cross-cutting lens over the document's tracked-changes facilities. Owns
  * no state — constructed at call sites with `new TrackChanges(document)` and
  * holds only a back-reference. Surface: minting revision metadata
- * (`mintMeta`/`createAllocator`), toggling `<w:trackChanges/>` in
+ * (`mintMeta`/`createAllocator`), toggling `<w:trackRevisions/>` in
  * settings.xml (`setEnabled`), inventorying revisions (`list` — reads
  * `document.trackedChangeReferences`, the reader's single walk), previewing
  * accept/reject (`preview`), applying them (`accept`/`reject`), and the
@@ -46,26 +46,32 @@ export class TrackChanges {
 	constructor(private document: Document) {}
 
 	/** Mint a fresh `TrackedMeta` (author + date + revisionId) for a single
-	 * tracked change about to be emitted. Internally builds a one-shot
-	 * allocator — for operations that emit several coupled revisions (e.g.
-	 * a tracked delete with ref-run + body + paragraph-mark), hold an
-	 * allocator via `createAllocator()` instead so the max-id scan runs once. */
-	mintMeta(authorFlag?: string): TrackedMeta {
+	 * tracked change about to be emitted. For operations that emit several
+	 * coupled revisions (a tracked column insert marks every cell; a tracked
+	 * delete has ref-run + body + paragraph-mark), pass ONE allocator from
+	 * `createAllocator()` so each mint gets a distinct id from a single
+	 * max-id scan — without it every call re-scans, which is slower AND can
+	 * only stay collision-free because the scan sees the ids already emitted. */
+	mintMeta(authorFlag?: string, allocator?: RevisionAllocator): TrackedMeta {
 		return {
 			author: resolveAuthor(authorFlag),
 			date: resolveDate(),
-			revisionId: this.createAllocator().next(),
+			revisionId: (allocator ?? this.createAllocator()).next(),
 		};
 	}
 
-	/** Build a revision-id allocator seeded from a fresh max-id scan over
-	 * document.xml + footnotes.xml + endnotes.xml. Returns monotonically
-	 * increasing ids; safe to call `.next()` repeatedly for multi-revision
-	 * operations without re-scanning. */
+	/** Build a revision-id allocator seeded from a max-id scan over
+	 * document.xml + footnotes.xml + endnotes.xml. The scan runs lazily on the
+	 * first `.next()` — commands create the allocator unconditionally but only
+	 * draw from it under tracking, and an untracked run shouldn't pay a
+	 * full-tree walk for ids it never mints. Monotonic after that; safe for
+	 * multi-revision operations without re-scanning. */
 	createAllocator(): RevisionAllocator {
-		let nextId = computeMaxRevisionId(this.document) + 1;
+		const document = this.document;
+		let nextId: number | undefined;
 		return {
 			next(): number {
+				nextId ??= computeMaxRevisionId(document) + 1;
 				const id = nextId;
 				nextId += 1;
 				return id;
@@ -265,15 +271,13 @@ export function convertTextToDelText(node: XmlNode): XmlNode {
 function computeMaxRevisionId(document: Document): number {
 	let max = -1;
 	const visit = (node: XmlNode): void => {
-		// All revision-tracking wrappers share the same `w:id` namespace —
-		// scan moves alongside ins/del so newly minted ids don't collide.
-		if (
-			node.tag !== "w:ins" &&
-			node.tag !== "w:del" &&
-			node.tag !== "w:moveFrom" &&
-			node.tag !== "w:moveTo"
-		)
-			return;
+		// All revision-tracking wrappers share the same `w:id` namespace — scan
+		// EVERY CT_Markup-derived revision element, not just run wrappers, so
+		// newly minted ids don't collide. (This scanner once only saw
+		// ins/del/move, so a command emitting several table revisions minted the
+		// same id for each — the duplicate-`w:id` defect the schema validator
+		// caught in tables-mutations.docx.)
+		if (!REVISION_ID_TAGS.has(node.tag)) return;
 		const idAttr = node.getAttribute("w:id");
 		if (!idAttr) return;
 		const value = Number(idAttr);
@@ -289,6 +293,30 @@ function computeMaxRevisionId(document: Document): number {
 	if (document.endnotes?.tree) walkXml(document.endnotes?.tree, visit);
 	return max;
 }
+
+/** Every element whose `w:id` lives in the revision-id space (CT_Markup and
+ *  its CT_TrackChange descendants): run wrappers, move ranges, the table
+ *  revisions, and the property-change snapshots. Bookmarks and comments carry
+ *  `w:id` too but in their OWN id spaces — deliberately not listed. */
+const REVISION_ID_TAGS = new Set<string>([
+	"w:ins",
+	"w:del",
+	"w:moveFrom",
+	"w:moveTo",
+	"w:moveFromRangeStart",
+	"w:moveToRangeStart",
+	"w:cellIns",
+	"w:cellDel",
+	"w:cellMerge",
+	"w:tblGridChange",
+	"w:tblPrChange",
+	"w:trPrChange",
+	"w:tcPrChange",
+	"w:pPrChange",
+	"w:rPrChange",
+	"w:sectPrChange",
+	"w:numberingChange",
+]);
 
 function walkXml(nodes: XmlNode[], visit: (node: XmlNode) => void): void {
 	for (const node of nodes) {

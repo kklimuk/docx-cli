@@ -873,18 +873,28 @@ function collectMarginalNotes(
 		if (distinctText.size === 1 && coversEverySection) {
 			const first = group[0];
 			if (!first) continue;
-			emit(null, formatNote(noteType, [...typePairs, ["text", first.text]]));
+			// Leading token is the marginal id (`hdr0`/`ftr0`) — the handle
+			// `raw get`/`headers set --at` accept and `headers list` reports. A
+			// document-wide marginal shares ONE part across sections, so the first
+			// id addresses it. Rides the head block (no section placement).
+			emit(
+				null,
+				formatNote(noteType, [...typePairs, ["text", first.text]], [first.id]),
+			);
 			continue;
 		}
 		// Differs by section, or only covers some → one line per section, co-located
-		// via its `sN`.
+		// via its `sN`. Both bare tokens ride: the marginal id (`hdr2` — the address
+		// `raw get`/`--at` take) AND the section `sN` (which section it governs, and
+		// the `--at sN` scope). The `sN` also marks it per-section (a uniform marginal
+		// rides the head with the id ALONE), so read stays unambiguous.
 		for (const marginal of group) {
 			emit(
 				marginal.sectionId,
 				formatNote(
 					noteType,
 					[...typePairs, ["text", marginal.text]],
-					[marginal.sectionId],
+					[marginal.id, marginal.sectionId],
 				),
 			);
 		}
@@ -1042,8 +1052,11 @@ function formatParagraphNote(paragraph: Paragraph): string {
 		if (indent.hanging !== undefined)
 			pairs.push(["hanging", `${twipsToInches(indent.hanging)}in`]);
 	}
-	if (pairs.length === 0) return "";
-	return ` ${formatNote("p", pairs, [paragraph.id])}`;
+	if (pairs.length === 0 && !paragraph.rawXml) return "";
+	// A raw-authored block flags itself with a bare `raw` token so the agent
+	// knows this block came from `docx raw` (and can `raw get` it for the truth).
+	const bareTokens = paragraph.rawXml ? [paragraph.id, "raw"] : [paragraph.id];
+	return ` ${formatNote("p", pairs, bareTokens)}`;
 }
 
 /** Styles already conveyed by the Markdown construct itself (so annotating them
@@ -1732,8 +1745,9 @@ function formatTableNote(table: Table): string {
 		)
 		.filter((value): value is string => value !== null);
 	if (rowHeights.length > 0) pairs.push(["row-heights", rowHeights.join(",")]);
-	if (pairs.length === 0) return "";
-	return formatNote("table", pairs, [table.id]);
+	if (pairs.length === 0 && !table.rawXml) return "";
+	const bareTokens = table.rawXml ? [table.id, "raw"] : [table.id];
+	return formatNote("table", pairs, bareTokens);
 }
 
 /** A row height as an inches measure for the `docx:table row-heights` hint,
@@ -2037,6 +2051,7 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "equation":
 		case "footnote":
 		case "endnote":
+		case "marginal":
 		case "tableRow":
 		case "tableColumn":
 		case "cellRange":

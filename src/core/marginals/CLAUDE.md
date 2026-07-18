@@ -10,6 +10,17 @@ word, hence the coinage). Three files behind the `@core` barrel:
   `w:headerReference`/`w:footerReference`, locator prefix `hdr`/`ftr`, relationship
   type + content type). Leaf data, same shape as `noteConfig`. Plus the part-name
   helpers `isMarginalPartName` / `marginalPartNameFromTarget`.
+- [resolve.ts](resolve.ts) — `enumerateMarginalRefs(document)` + `findMarginalRef`:
+  the ONE positional walk over every `<w:sectPr>`'s header/footer references,
+  resolving each to a `MarginalRef` (its `hdrN`/`ftrN` id, kind, placement type,
+  owning `sN` + live `<w:sectPr>`/reference node, and the part it points at). The
+  single source of the `hdrN`/`ftrN` → everything mapping — `read` projects it to
+  `Marginal[]`, `headers`/`footers list` reports the id, `raw get --at ftrN`
+  serializes the part, and `headers`/`footers set/clear --at ftrN` resolve to the
+  section + type — so **the id `list` reports is the id every other surface
+  accepts** (a `hdrN`/`ftrN` is a first-class locator, `isMarginalLocator` in
+  `core/locators`). A marginal addresses a SEPARATE part, not the body, so block
+  verbs (`edit`/`delete`) reject it; the marginal surfaces route it explicitly.
 - [text.ts](text.ts) — `marginalText(tree)` + `fieldToken(instr)`: the read-side
   extraction that turns a `<w:hdr>`/`<w:ftr>` tree into `Marginal.text`, rendering
   `<w:fldSimple>` fields as `{page}` / `{pages}` / `{date}` / `{time}` /

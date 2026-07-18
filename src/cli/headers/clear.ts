@@ -15,8 +15,8 @@ import {
 import {
 	isTypeError,
 	marginalNoun,
+	resolveMarginalScope,
 	resolveMarginalType,
-	resolveTargetSectPrs,
 } from "./shared";
 
 const OPTION_SPEC = {
@@ -35,17 +35,21 @@ function helpFor(kind: MarginalKind): string {
 	return `docx ${noun} clear — remove a ${kind} reference
 
 Usage:
-  docx ${noun} clear FILE [--at sN] [--type T | --first-page | --even | --odd] [options]
+  docx ${noun} clear FILE [--at sN | --at ${noun === "headers" ? "hdrN" : "ftrN"}] [--type T | --first-page | --even | --odd] [options]
 
 Examples:
   docx ${noun} clear doc.docx
   docx ${noun} clear doc.docx --at s0 --first-page
 
-Removes the ${kind} of the given type from one section (--at sN) or every
-section (default). Idempotent — clearing an absent ${kind} is a no-op.
+Removes the ${kind} reference of the given type from one section (--at sN), one
+specific ${kind} (--at ${noun === "headers" ? "hdrN" : "ftrN"}, from ${noun} list / read), or every section (default).
+The ${kind} part itself is left in the file as a harmless orphan (re-setting mints
+a fresh part). Idempotent — clearing an absent ${kind} is a no-op.
 
 Options:
   --at sN            Target one section (default: the whole document)
+  --at ${noun === "headers" ? "hdrN" : "ftrN"}         Target ONE existing ${kind} by its id (placement fixed by
+                     the id — don't also pass --type/--first-page/--even)
   --type T           default | first | even (default: default)
   --first-page       ≡ --type first    --even ≡ --type even    --odd ≡ --type default
   --track            Record the removal as a tracked change
@@ -76,15 +80,23 @@ export async function runClearMarginal(
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", helpFor(kind));
 
-	const type = resolveMarginalType(parsed.values);
-	if (isTypeError(type)) return fail("USAGE", type.error, type.hint);
+	const placement = resolveMarginalType(parsed.values);
+	if (isTypeError(placement))
+		return fail("USAGE", placement.error, placement.hint);
 
 	const document = await openOrFail(filePath);
 	if (typeof document === "number") return document;
 
 	const atLocator = parsed.values.at as string | undefined;
-	const targets = await resolveTargetSectPrs(document, atLocator);
-	if (typeof targets === "number") return targets;
+	const scope = await resolveMarginalScope(
+		document,
+		atLocator,
+		kind,
+		placement.type,
+		placement.explicit,
+	);
+	if (typeof scope === "number") return scope;
+	const { sectPrs: targets, type } = scope;
 
 	const tracked = resolveTracked(document, parsed.values.track);
 	const result = new Marginals(document).clear(targets, kind, type, {

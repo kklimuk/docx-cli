@@ -23,7 +23,9 @@ export type LocatorFormKey =
 	| "equation"
 	| "trackedChange"
 	| "footnote"
-	| "endnote";
+	| "endnote"
+	| "header"
+	| "footer";
 
 export type LocatorForm = {
 	syntax: string;
@@ -104,6 +106,16 @@ export const LOCATOR_FORMS: Record<LocatorFormKey, LocatorForm> = {
 	},
 	footnote: { syntax: "fnN", example: "fn0", summary: "footnote id" },
 	endnote: { syntax: "enN", example: "en0", summary: "endnote id" },
+	header: {
+		syntax: "hdrN",
+		example: "hdr0",
+		summary: "page header id (headers list / raw get / headers set/clear --at)",
+	},
+	footer: {
+		syntax: "ftrN",
+		example: "ftr0",
+		summary: "page footer id (footers list / raw get / footers set/clear --at)",
+	},
 };
 
 /** Render an aligned `syntax  summary` block for a command's accepted subset,
