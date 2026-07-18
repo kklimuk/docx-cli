@@ -1100,13 +1100,21 @@ function orderedOrdinal(paragraph: Paragraph, ctx: RenderContext): number {
 	return next;
 }
 
-/** The `<!-- docx:list pN start="5" format="upper-roman" -->` (or
- * `<!-- docx:list pN continues -->`) hint, emitted at the FIRST item of each
- * list RUN and replacing that item's bare locator — the GFM body can't show a
- * non-decimal glyph, and a continued run's link is lost on a `read → create`
- * rebuild, so the note is the agent-visible channel (and carries the values
- * back to `docx lists set`). Returns "" for a non-deviating run, a non-run-start
- * item, or a bullet list. Always updates the run-tracking context so a
+/** The `<!-- docx:list pN start="5" format="upper-roman" renders="i, ii, iii, …" -->`
+ * (or `<!-- docx:list pN continues -->`) hint, emitted at the FIRST item of each
+ * list RUN and replacing that item's bare locator — the agent-visible channel for
+ * the numbering the GFM `N.` body can't show (a non-decimal glyph, a `--start`, or
+ * a continued run's lost link), carrying the values back to `docx lists set`.
+ *
+ * For a non-decimal format the body still renders as plain `1. 2. 3.` (valid GFM),
+ * so a weak agent can't SEE that `lists set --format lower-roman` took — measured
+ * in the weak-agent harness, it distrusts the decimal and re-tries or hard-codes
+ * glyphs on top (the contract-markup blocker). The `renders="i, ii, iii, …"`
+ * preview lets it reconcile "the body says 1. but it RENDERS as i, ii, iii"
+ * instead. The glyph lives ONLY in this dropped comment, never the body marker, so
+ * there's no round-trip corruption (the importer drops the hint; `--start` still
+ * round-trips through the decimal ordinal). Returns "" for a bullet list, a
+ * non-deviating run, or a non-run-start item. Always updates run-tracking so a
  * later run of the same numId reads as a continuation. */
 function listAnnotation(paragraph: Paragraph, ctx: RenderContext): string {
 	const list = paragraph.list;
@@ -1131,8 +1139,91 @@ function listAnnotation(paragraph: Paragraph, ctx: RenderContext): string {
 	if (list.start !== undefined && list.start !== 1)
 		pairs.push(["start", list.start]);
 	if (list.format) pairs.push(["format", list.format]);
+	// A non-decimal glyph (`decimal`/absent renders as the body's `N.` already) also
+	// gets a `renders="i, ii, iii, …"` preview so the agent sees how it renders.
+	const glyphFormat =
+		list.format !== undefined && list.format !== "decimal"
+			? list.format
+			: undefined;
+	if (glyphFormat) {
+		pairs.push(["renders", rendersPreview(list.start ?? 1, glyphFormat)]);
+	}
 	if (pairs.length === 0) return "";
 	return ` ${formatNote("list", pairs, [paragraph.id])}`;
+}
+
+/** A short rendered-glyph preview: the first three glyphs from `start` under
+ * `format`, then an ellipsis (`i, ii, iii, …`) — enough to show the shape without
+ * walking the whole list. */
+function rendersPreview(start: number, format: string): string {
+	const glyphs = [start, start + 1, start + 2].map((value) =>
+		orderedMarker(value, format),
+	);
+	return `${glyphs.join(", ")}, …`;
+}
+
+/** The ordered-list marker glyph for a 1-based `ordinal` under a numbering
+ * `format` — a lowercase/uppercase roman (`iv`/`IV`) or bijective-alpha (`c`/`C`,
+ * then `aa`/`AA` past 26) string, else plain decimal for `decimal`/unknown/absent
+ * formats. Used ONLY inside the `docx:list` comment (never the body marker), so it
+ * carries no round-trip risk. A non-positive ordinal falls back to decimal. */
+function orderedMarker(ordinal: number, format: string | undefined): string {
+	if (ordinal < 1) return String(ordinal);
+	switch (format) {
+		case "lower-roman":
+			return toRoman(ordinal).toLowerCase();
+		case "upper-roman":
+			return toRoman(ordinal);
+		case "lower-alpha":
+			return toAlpha(ordinal).toLowerCase();
+		case "upper-alpha":
+			return toAlpha(ordinal);
+		default:
+			return String(ordinal);
+	}
+}
+
+/** Subtractive-notation roman numeral for a positive integer (`4` → `IV`). */
+function toRoman(value: number): string {
+	let remaining = value;
+	let out = "";
+	for (const [amount, glyph] of ROMAN_NUMERALS) {
+		while (remaining >= amount) {
+			out += glyph;
+			remaining -= amount;
+		}
+	}
+	return out;
+}
+
+const ROMAN_NUMERALS: ReadonlyArray<readonly [number, string]> = [
+	[1000, "M"],
+	[900, "CM"],
+	[500, "D"],
+	[400, "CD"],
+	[100, "C"],
+	[90, "XC"],
+	[50, "L"],
+	[40, "XL"],
+	[10, "X"],
+	[9, "IX"],
+	[5, "V"],
+	[4, "IV"],
+	[1, "I"],
+];
+
+/** Bijective base-26 (spreadsheet-column) letters for a positive integer
+ * (`1` → `A`, `26` → `Z`, `27` → `AA`) — the glyph sequence Word's
+ * `upperLetter`/`lowerLetter` numbering produces. */
+function toAlpha(value: number): string {
+	let remaining = value;
+	let out = "";
+	while (remaining > 0) {
+		const digit = (remaining - 1) % 26;
+		out = String.fromCharCode(65 + digit) + out;
+		remaining = Math.floor((remaining - 1) / 26);
+	}
+	return out;
 }
 
 function paragraphPrefix(paragraph: Paragraph, ordinal: number): string {
@@ -1208,7 +1299,7 @@ function renderRuns(
 			while (lookahead < visibleEntries.length) {
 				const next = visibleEntries[lookahead];
 				if (!next || next.run.type !== "text") break;
-				if (!sameDecoration(run, next.run)) break;
+				if (!sameDecoration(run, next.run, view)) break;
 				lookahead++;
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
@@ -1309,7 +1400,7 @@ function commentEndingsFor(
 	return out;
 }
 
-function sameDecoration(a: TextRun, b: TextRun): boolean {
+function sameDecoration(a: TextRun, b: TextRun, view: MarkdownView): boolean {
 	return (
 		(a.bold ?? false) === (b.bold ?? false) &&
 		(a.italic ?? false) === (b.italic ?? false) &&
@@ -1329,7 +1420,14 @@ function sameDecoration(a: TextRun, b: TextRun): boolean {
 		(a.allCaps ?? false) === (b.allCaps ?? false) &&
 		(a.runStyle ?? "") === (b.runStyle ?? "") &&
 		a.hyperlink?.id === b.hyperlink?.id &&
-		a.trackedChange?.id === b.trackedChange?.id &&
+		// The tracked-change boundary only affects rendering in the "current" view,
+		// which wraps each change in its own CriticMarkup span + footnote. The
+		// "accepted"/"baseline" views show plain resolved text, so two runs that
+		// differ ONLY by tracked-change id must still coalesce there — otherwise a
+		// tracked edit that split a formatted run (a bold cell whose "Net 90…" became
+		// "Net" + inserted " 30 from invoice") emits a spurious `**Net**** 30…**`
+		// double-marker instead of one clean `**Net 30…**` span.
+		(view !== "current" || a.trackedChange?.id === b.trackedChange?.id) &&
 		sameCommentSet(a.comments, b.comments)
 	);
 }
@@ -1717,9 +1815,12 @@ function renderCell(cell: TableCell, ctx: RenderContext): string {
 	// this is its own `docx:cell` annotation, NOT riding the bare cell locator. A
 	// DROPPED read-time hint. A merged/shaded cell is often EMPTY (a
 	// vMerge="continue" cell carries no content) — surface the note regardless.
+	// The note LEADS the cell (like `docx:section`/`docx:table` lead their scope),
+	// so the cell-level metadata reads before the content and the per-paragraph
+	// locators that follow it — kept SEPARATE from those bare locators, not merged.
 	const note = cellNote(cell);
 	if (!note) return escapeCell(body);
-	return escapeCell(body ? `${body} ${note}` : note);
+	return escapeCell(body ? `${note} ${body}` : note);
 }
 
 /** The `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699"

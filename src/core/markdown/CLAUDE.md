@@ -68,11 +68,15 @@ comments shaped `<!-- docx:TYPE [bareId] key="value" … -->` (emitted via
 `formatNote` in [cli/read/annotations.ts](../../cli/read/annotations.ts), escaped
 with `htmlAttr`): `docx:section` (section breaks), `docx:page` (page geometry),
 `docx:table` (uneven column widths + border summary), `docx:cell` (per-cell
-merge/shading, carrying the cell address), `docx:image` (size always +
+merge/shading, carrying the cell address — emitted LEADING the cell, ahead of the
+content and its per-paragraph locators, like `docx:section`/`docx:table` lead
+their scope), `docx:image` (size always +
 float/wrap/align/overflow deviation-only, carrying the `imgN` id), and `docx:list`
-(a numbered list's first-run `start`/`format`/`continues`, carrying the `pN` — the
-glyph + continue link the GFM ordinal can't show; `--start` itself round-trips
-through the ordinal).
+(a numbered list's first-run `start`/`format`/`renders`/`continues`, carrying the
+`pN` — the glyph + continue link the GFM ordinal can't show, PLUS a
+`renders="i, ii, iii, …"` preview of the rendered glyphs so a weak agent sees how
+a non-decimal list renders instead of distrusting the decimal body; `--start`
+itself round-trips through the ordinal).
 
 **These are read-time VISIBILITY hints, not round-trip carriers — ONE contract.**
 The importer DROPS every one: `walkBlock`'s `case "html"` returns `[]`, and the

@@ -16,6 +16,13 @@ const HELP = `docx read — render document body as Markdown, or print AST as JS
 Usage:
   docx read FILE [options]
 
+Examples:
+  docx read doc.docx                           # markdown + locators — start here
+  docx read doc.docx --from p3 --to p20        # just a slice
+  docx read doc.docx --current                 # tracked changes shown inline
+  docx read doc.docx --comments                # comments as footnotes
+  docx read doc.docx --ast | jq '.blocks[0]'   # lossless JSON AST
+
 Options:
   --ast             Print the typed AST as JSON instead of rendering Markdown.
                     Disables all the Markdown-only flags below.
@@ -27,18 +34,15 @@ Options:
                     to their enclosing top-level block (the table or paragraph).
                     (This is a block slice, distinct from a character span like
                     pN:S-E. See \`docx info locators\`.)
-  --accepted        Default view: render the post-accept document — drop
-                    subtractive wrappers (<w:del>, <w:moveFrom>), inline
-                    additive wrappers (<w:ins>, <w:moveTo>) as plain text,
-                    no markers/refs. Kept as an explicit alias for clarity.
-  --baseline        Render the pre-change view: drop additive wrappers
-                    (<w:ins>, <w:moveTo>), inline subtractive wrappers
-                    (<w:del>, <w:moveFrom>) as plain text, no markers/refs.
-  --current         Render the raw concatenation: additive wrappers as
-                    {++text++}[^tcN] and subtractive as {--text--}[^tcN]
-                    (CriticMarkup); the [^tcN] footnote spells out the kind
-                    (insertion / deletion / moveTo / moveFrom). Mutually
-                    exclusive with --accepted/--baseline.
+  --accepted        Default view: the document as if every tracked change
+                    were accepted (insertions kept, deletions gone).
+  --baseline        The document as it was BEFORE the tracked changes
+                    (insertions gone, deletions kept).
+  --current         Show tracked changes inline: insertions as
+                    {++text++}[^tcN], deletions as {--text--}[^tcN]
+                    (CriticMarkup); the [^tcN] footnote spells out the kind.
+                    The tcN ids feed \`docx track-changes accept/reject --at\`.
+                    (The three views are mutually exclusive.)
   --comments        Append [^cN] after each commented span and emit a
                     footnote definition for each comment at the end of the
                     output (author, date, body).
@@ -50,13 +54,6 @@ Output:
   rendered text. --ast: the bare JSON AST (the body object: blocks, comments,
   footnotes, endnotes; no envelope) — see \`docx info schema\`. Errors print
   {code, error, hint?} with a nonzero exit.
-
-Examples:
-  docx read input.docx
-  docx read input.docx --from p3 --to p20
-  docx read input.docx --accepted --comments
-  docx read input.docx --baseline
-  docx read input.docx --ast | jq '.blocks[] | select(.type == "paragraph")'
 `;
 
 export async function run(args: string[]): Promise<number> {

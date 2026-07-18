@@ -1,9 +1,57 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const fixture = (name: string): string => join(FIXTURES, name);
+
+/** Minimal single-part .docx with a caller-supplied `<w:body>` inner — for
+ *  asserting how `read` renders run properties we can't author through the CLI
+ *  emitter (e.g. a `<w:b w:val="false"/>` toggle that turns OFF an inherited
+ *  bold). Mirrors the raw-fixture builder in invariants.test.ts. */
+async function buildRawDoc(bodyXml: string, label: string): Promise<string> {
+	const docPath = join(
+		mkdtempSync(join(tmpdir(), `docx-cli-${label}-`)),
+		"out.docx",
+	);
+	const zip = new JSZip();
+	zip.file(
+		"[Content_Types].xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+	<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+	<Default Extension="xml" ContentType="application/xml"/>
+	<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+	);
+	zip.file(
+		"_rels/.rels",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+	<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+	);
+	zip.file(
+		"word/document.xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>${bodyXml}<w:sectPr/></w:body>
+</w:document>`,
+	);
+	zip.file(
+		"word/_rels/document.xml.rels",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`,
+	);
+	await Bun.write(
+		docPath,
+		await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }),
+	);
+	return docPath;
+}
 
 async function render(...args: string[]): Promise<string> {
 	const result = await runCli("read", ...args);
@@ -41,9 +89,11 @@ describe("docx read (markdown)", () => {
 		const out = await render(fixture("tables-and-lists.docx"));
 		// The header cells are center-aligned, so each carries its paragraph
 		// locator AND a `docx:cell halign` hint (cell text alignment is otherwise
-		// invisible in a GFM table).
+		// invisible in a GFM table). The `docx:cell` note LEADS the cell (like
+		// `docx:section`/`docx:table` lead their scope), ahead of the content and
+		// its per-paragraph locator.
 		expect(out).toMatch(
-			/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 halign="center" --> \|/m,
+			/^\| <!-- docx:cell t0:r0c0 halign="center" --> \*\*Equipment\*\* <!-- t0:r0c0:p0 --> \|/m,
 		);
 		expect(out).toMatch(/^\| --- \| --- \|$/m);
 		expect(out).toContain("Agilent E3631A Triple Output DC Power Supply");
@@ -832,5 +882,58 @@ describe("docx read — direct indent on a Quote paragraph (write-read loop)", (
 		expect(p0?.quoteDepth).toBe(1);
 		expect(p0?.indent).toEqual({ right: 720, hanging: 360 });
 		expect(p0?.indent?.left).toBeUndefined();
+	});
+});
+
+describe("run toggle properties respect w:val (b/i/strike/…)", () => {
+	// A `<w:b w:val="false"/>` is direct run formatting that turns OFF a bold
+	// inherited from the style — NOT bold. Reading mere presence as bold rendered
+	// non-bold table-data cells as `**bold**` (the contract fixture's data row,
+	// whose cells carry `<w:b w:val="false"/>` under a bold-header table).
+	test('`<w:b w:val="false"/>` reads as NOT bold; a bare `<w:b/>` reads as bold', async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">BoldOn</w:t></w:r></w:p>` +
+				`<w:p><w:r><w:rPr><w:b w:val="false"/></w:rPr><w:t xml:space="preserve">BoldOff</w:t></w:r></w:p>`,
+			"toggle-bold-val",
+		);
+		const out = (await runCli("read", docPath)).stdout;
+		expect(out).toContain("**BoldOn**");
+		expect(out).toContain("BoldOff");
+		expect(out).not.toContain("**BoldOff**");
+	});
+
+	test('turning bold ON over a `w:val="false"` run flips it (read+write stay consistent)', async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:rPr><w:b w:val="false"/></w:rPr><w:t xml:space="preserve">Flip me</w:t></w:r></w:p>`,
+			"toggle-bold-flip",
+		);
+		expect((await runCli("read", docPath)).stdout).not.toContain("**Flip me**");
+		await runCli("edit", docPath, "--at", "p0", "--bold");
+		expect((await runCli("read", docPath)).stdout).toContain("**Flip me**");
+	});
+});
+
+describe("adjacent same-format runs coalesce across a tracked boundary (accepted view)", () => {
+	// A tracked span-edit inside a bold cell splits its single bold run into two
+	// (the kept prefix + the inserted replacement). In the accepted/baseline views
+	// — which render no CriticMarkup — those must coalesce into ONE `**…**` span,
+	// not emit the `**a**** b**` double-marker (the harness `**Net**** 30…**`).
+	test("bold cell + tracked span replace → default view is one clean bold span", async () => {
+		const workspace = tempWorkspace("coalesce-bold-split");
+		const docPath = join(workspace, "out.docx");
+		const src = join(workspace, "t.md");
+		await Bun.write(src, "| Head |\n|---|\n| **Total due now** |\n");
+		await runCli("create", docPath, "--from", src);
+		await runCli("track-changes", docPath, "on");
+		await runCli("edit", docPath, "--at", "t0:r1c0:p0:6-9", "--text", "owed");
+
+		const accepted = (await runCli("read", docPath)).stdout;
+		expect(accepted).toContain("**Total owed now**");
+		expect(accepted).not.toContain("****");
+
+		// The --current view keeps the tracked boundary as distinct CriticMarkup.
+		const current = (await runCli("read", docPath, "--current")).stdout;
+		expect(current).toContain("{--");
+		expect(current).toContain("{++");
 	});
 });
