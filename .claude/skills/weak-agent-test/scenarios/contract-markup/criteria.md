@@ -16,10 +16,12 @@
    Verified by: `docx track-changes list` shows ≥ 3 entries of type `insertion` or
    `deletion` touching the relevant clause paragraphs.
 
-3. **≥ 1 tracked paragraph-formatting change on §9** — the §9 Limitation of Liability
-   paragraph is set to 1.5 line spacing (and/or space-after) as a tracked revision.
-   This must appear as a `pPrChange` entry in `docx track-changes list` (type
-   `formatting`), not as a silent reformat.
+3. **§9 line spacing increased as a tracked change** — the §9 Limitation of Liability
+   paragraph's line spacing is opened up (to roughly 1.5, and/or extra space added
+   after) and the change is tracked, not applied silently. `docx track-changes list`
+   includes an entry on that paragraph whose `current` spacing is larger than its
+   `prior` spacing. Restructuring §9's wording or leaving it cramped does not satisfy
+   this — the spacing on that paragraph must actually increase, as a visible revision.
 
 4. **≥ 4 anchored comments** — comments attached to text in at least four of:
    - §4 IP over-assignment
@@ -47,14 +49,15 @@
 ## How to verify
 
 ```
-# 1. Check tracked changes (redlines + formatting revision)
+# 1. Check tracked changes (redlines + the §9 spacing change)
 docx track-changes list contract.docx
 
 # 2. Check anchored comments
 docx comments list contract.docx
 
-# 3. Spot-check a specific clause paragraph for the pPrChange
-docx read contract.docx --ast | grep -A5 pPrChange
+# 3. Spot-check §9 for the tracked line-spacing increase — a spacing entry whose
+#    values go up (e.g. "spacing.line ·→360", "spacing.after 80→240")
+docx track-changes list contract.docx | grep -iE 'format|spacing'
 
 # 4. Confirm the IP sub-points are lower-roman (level-1 list items)
 docx read contract.docx --ast | grep -o '"format":"lower-roman"'

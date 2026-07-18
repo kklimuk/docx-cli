@@ -40,8 +40,10 @@ can discuss them:
 
 ## One more thing
 
-Section 9 is also a dense, cramped wall of text — while you're in there, make it easier
-to actually read. It's the clause I most want them to re-read carefully.
+Section 9's lines are crammed tight together, which makes a clause I really care about a
+slog to read. Please increase the line spacing on it — open it up to something roomier
+like one-and-a-half — so it's easier on the eyes. It's the clause I most want them to
+re-read carefully.
 
 And a small house-style fix: in the intellectual-property section, the sub-points are
 labelled a, b, c, d. We always use small Roman numerals (i, ii, iii) for sub-clauses in
