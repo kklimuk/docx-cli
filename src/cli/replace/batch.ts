@@ -4,14 +4,23 @@ import {
 	applyAcrossReplace,
 	type FindView,
 	findTextSpans,
+	type ReplacementFormatting,
 	replacementExpander,
 	replaceSpanInParagraph,
 	selectMatches,
 	type TrackedReplaceOptions,
 } from "@core/find";
-import { readJsonlObjects, spanLocator } from "../parse-helpers";
 import {
-	type ErrorCode,
+	parseBatchClearTags,
+	parseBatchInteger,
+	parseBatchRunFormat,
+	readJsonlObjects,
+	rejectBatchOnlyFlags,
+	requireBatchBoolean,
+	spanLocator,
+} from "../parse-helpers";
+import {
+	EntryError,
 	EXIT,
 	fail,
 	openOrFail,
@@ -27,9 +36,35 @@ type RawValues = Record<
 	string | boolean | (string | boolean)[] | undefined
 >;
 
+const BATCH_ENTRY_ONLY_FLAGS = [
+	"at",
+	"regex",
+	"ignore-case",
+	"all",
+	"limit",
+	"current",
+	"baseline",
+	"exact",
+	"clear",
+	"bold",
+	"italic",
+	"underline",
+	"strike",
+	"caps",
+	"smallcaps",
+	"superscript",
+	"subscript",
+	"color",
+	"font",
+	"size",
+	"highlight",
+	"shade",
+] as const;
+
 /** `docx replace --batch FILE.jsonl`: a sed-script over one read. Each JSONL
  *  line is `{ pattern, replacement, regex?, ignoreCase?, all?, limit?, exact?,
- *  current?|baseline?, author? }`. Entries apply in listed order, each
+ *  current?|baseline?, author?, clear?, bold?, color?, … }`. Entries apply in
+ *  listed order, each
  *  re-finding against the document AS LEFT BY THE PREVIOUS ENTRY (we re-read
  *  the live tree between entries), so later patterns see earlier substitutions
  *  — the same semantics as running `replace` repeatedly. `--dry-run` runs the
@@ -39,6 +74,14 @@ export async function runReplaceBatch(
 	batchSource: string,
 	values: RawValues,
 ): Promise<number> {
+	const conflict = await rejectBatchOnlyFlags(
+		values,
+		BATCH_ENTRY_ONLY_FLAGS,
+		"replacement",
+		"Put per-entry fields (pattern, replacement, all, formatting, …) on each JSONL line.",
+	);
+	if (conflict !== undefined) return conflict;
+
 	const authorFlag = values.author as string | undefined;
 	const trackFlag = Boolean(values.track);
 	const outputPath = values.output as string | undefined;
@@ -192,6 +235,7 @@ export async function runReplaceBatch(
 				expand(match.text),
 				tracked,
 				spec.view,
+				spec.formatting,
 			);
 		}
 
@@ -267,6 +311,7 @@ type ReplaceSpec = {
 	view: FindView;
 	author?: string;
 	at?: string;
+	formatting?: ReplacementFormatting;
 };
 
 function validateSpec(
@@ -282,25 +327,19 @@ function validateSpec(
 			`entry ${index}: "replacement" is required (use "" to delete the match)`,
 		);
 	}
-	const wantCurrent = Boolean(raw.current);
-	const wantBaseline = Boolean(raw.baseline);
+	const wantCurrent = requireBatchBoolean(raw, index, "current");
+	const wantBaseline = requireBatchBoolean(raw, index, "baseline");
 	if (wantCurrent && wantBaseline) {
 		throw new EntryError(
 			"USAGE",
 			`entry ${index}: "current" and "baseline" are mutually exclusive`,
 		);
 	}
-	let limit: number | undefined;
-	if (raw.limit !== undefined) {
-		const value = Number(raw.limit);
-		if (!Number.isInteger(value) || value <= 0) {
-			throw new EntryError(
-				"USAGE",
-				`entry ${index}: "limit" must be a positive integer`,
-			);
-		}
-		limit = value;
+	const limitValue = parseBatchInteger(raw, index, "limit", 1);
+	if (limitValue !== undefined && typeof limitValue !== "number") {
+		throw new EntryError("USAGE", limitValue.error, limitValue.hint);
 	}
+	const limit = limitValue;
 	let at: string | undefined;
 	if (raw.at !== undefined) {
 		if (typeof raw.at !== "string") {
@@ -315,28 +354,54 @@ function validateSpec(
 			throw error;
 		}
 	}
+
+	const format = parseBatchRunFormat(raw, index);
+	if (format && "error" in format) {
+		throw new EntryError("USAGE", format.error, format.hint);
+	}
+	let clearTags: Set<string> | undefined;
+	if (raw.clear !== undefined) {
+		const parsed = parseBatchClearTags(raw.clear, index);
+		if ("error" in parsed) {
+			throw new EntryError("USAGE", parsed.error, parsed.hint);
+		}
+		clearTags = parsed;
+	}
+	const formatting: ReplacementFormatting | undefined =
+		format || clearTags
+			? {
+					...(clearTags ? { clearTags } : {}),
+					...(format ? { format } : {}),
+				}
+			: undefined;
+	const useRegex = requireBatchBoolean(raw, index, "regex");
+	const ignoreCaseFlag = requireBatchBoolean(raw, index, "ignoreCase");
+	const ignoreCaseAlias = requireBatchBoolean(raw, index, "ignore-case");
+	const ignoreCase = ignoreCaseFlag || ignoreCaseAlias;
+	const exact = requireBatchBoolean(raw, index, "exact");
+	const all = requireBatchBoolean(raw, index, "all");
+	let author: string | undefined;
+	if (raw.author !== undefined) {
+		if (typeof raw.author !== "string") {
+			throw new EntryError(
+				"USAGE",
+				`entry ${index}: "author" must be a string`,
+			);
+		}
+		author = raw.author;
+	}
+
 	return {
 		pattern: raw.pattern,
 		replacement: raw.replacement,
-		regex: Boolean(raw.regex),
-		ignoreCase: Boolean(raw.ignoreCase ?? raw["ignore-case"]),
-		exact: Boolean(raw.exact),
-		all: Boolean(raw.all),
+		regex: useRegex,
+		ignoreCase,
+		exact,
+		all,
 		...(limit !== undefined ? { limit } : {}),
 		view: wantCurrent ? "current" : wantBaseline ? "baseline" : "accepted",
-		...(typeof raw.author === "string" ? { author: raw.author } : {}),
+		...(author !== undefined ? { author } : {}),
 		...(at !== undefined ? { at } : {}),
+		...(formatting ? { formatting } : {}),
 	};
-}
-
-/** Per-entry validation failure, mirroring `comments add --batch`. */
-class EntryError extends Error {
-	constructor(
-		public code: ErrorCode,
-		message: string,
-		public hint?: string,
-	) {
-		super(message);
-		this.name = "EntryError";
-	}
 }

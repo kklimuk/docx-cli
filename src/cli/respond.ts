@@ -225,6 +225,21 @@ export async function fail(
 	return exitCodeFor(code);
 }
 
+/** A per-entry `--batch` validation failure. Carries the `fail()` triple so a
+ *  batch reader can validate every entry inside one try/catch and translate the
+ *  throw in a single line — shared by every `--batch` surface so they can't
+ *  drift on the error contract. */
+export class EntryError extends Error {
+	constructor(
+		public code: ErrorCode,
+		message: string,
+		public hint?: string,
+	) {
+		super(message);
+		this.name = "EntryError";
+	}
+}
+
 function exitCodeFor(code: ErrorCode): number {
 	switch (code) {
 		case "USAGE":

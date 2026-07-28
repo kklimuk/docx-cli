@@ -89,15 +89,97 @@ describe("docx read (markdown)", () => {
 		const out = await render(fixture("tables-and-lists.docx"));
 		// The header cells are center-aligned, so each carries its paragraph
 		// locator AND a `docx:cell halign` hint (cell text alignment is otherwise
-		// invisible in a GFM table). The `docx:cell` note LEADS the cell (like
-		// `docx:section`/`docx:table` lead their scope), ahead of the content and
-		// its per-paragraph locator.
+		// invisible in a GFM table). The `docx:cell` note TRAILS the cell, after
+		// the content and its per-paragraph locator.
 		expect(out).toMatch(
-			/^\| <!-- docx:cell t0:r0c0 halign="center" --> \*\*Equipment\*\* <!-- t0:r0c0:p0 --> \|/m,
+			/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 halign="center" --> \|/m,
 		);
 		expect(out).toMatch(/^\| --- \| --- \|$/m);
 		expect(out).toContain("Agilent E3631A Triple Output DC Power Supply");
 		expect(out).toContain("9.1 Ω Resistor");
+	});
+
+	test("empty cells expose one usable bare-cell handle", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tr>
+				<w:tc><w:p/></w:tc>
+				<w:tc><w:tcPr><w:shd w:fill="FFE699"/></w:tcPr><w:p/></w:tc>
+				<w:tc><w:p/><w:p/></w:tc>
+			</w:tr></w:tbl>`,
+			"empty-cell-locators",
+		);
+		const out = await render(docPath);
+
+		expect(out).toContain("<!-- t0:r0c0 -->");
+		expect(out).not.toContain("<!-- t0:r0c0:p0 -->");
+		expect(out).toContain('<!-- docx:cell t0:r0c1 shading="FFE699" -->');
+		expect(out.match(/t0:r0c1/g)).toHaveLength(1);
+		expect(out).toContain("<!-- t0:r0c2:p0 --><br><!-- t0:r0c2:p1 -->");
+		expect(out).not.toContain("<!-- t0:r0c2 -->");
+	});
+
+	// A bare handle is a PROMISE that `edit --at CELL` / `insert --at CELL`
+	// works. `resolveCellReference` rejects every cell of a row carrying a
+	// horizontal merge (physical cells no longer line up with logical grid
+	// columns), so read must not advertise one there — a printed address the
+	// mutation surface answers with TABLE_STRUCTURE is the worst outcome for a
+	// weak agent.
+	test("a merged row advertises no bare-cell handle its --at would reject", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tr>
+				<w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p/></w:tc>
+				<w:tc><w:p/></w:tc>
+			</w:tr><w:tr>
+				<w:tc><w:p/></w:tc>
+				<w:tc><w:p/></w:tc>
+				<w:tc><w:p/></w:tc>
+			</w:tr></w:tbl>`,
+			"merged-row-no-handle",
+		);
+		const out = await render(docPath);
+
+		expect(out).toContain('<!-- docx:cell t0:r0c0 gridSpan="2" -->');
+		expect(out).not.toContain("<!-- t0:r0c1 -->");
+		// The unmerged row below still gets its fill handles.
+		expect(out).toContain("<!-- t0:r1c0 -->");
+		expect(out).toContain("<!-- t0:r1c2 -->");
+
+		const rejected = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c1",
+			"--text",
+			"x",
+		);
+		expect(rejected.exitCode).not.toBe(0);
+		const accepted = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r1c0",
+			"--text",
+			"x",
+		);
+		expect(accepted.exitCode).toBe(0);
+	});
+
+	test("table placeholders share an outer highlight while preserving escaped pipes", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tr><w:tc><w:p>
+				<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>[choose 1: </w:t></w:r>
+				<w:r><w:rPr><w:u w:val="single"/><w:highlight w:val="yellow"/></w:rPr><w:t>Effective Date</w:t></w:r>
+				<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve"> || </w:t></w:r>
+				<w:r><w:rPr><w:u w:val="single"/><w:highlight w:val="yellow"/></w:rPr><w:t>the date of last disclosure</w:t></w:r>
+				<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>]</w:t></w:r>
+			</w:p></w:tc></w:tr></w:tbl>`,
+			"shared-mark-table",
+		);
+		const out = await render(docPath);
+		expect(out).toContain(
+			"<mark>[choose 1: <u>Effective Date</u> \\|\\| <u>the date of last disclosure</u>]</mark>",
+		);
+		expect(out).not.toContain("</mark><mark>");
 	});
 
 	test("lists fixture: bullet vs ordered hierarchy renders correctly", async () => {

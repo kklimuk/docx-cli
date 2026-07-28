@@ -17,7 +17,7 @@ import {
 	resolveView,
 } from "../parse-helpers";
 import {
-	type ErrorCode,
+	EntryError,
 	EXIT,
 	fail,
 	openOrFail,
@@ -112,17 +112,6 @@ type ResolvedEntry = {
 	author: string;
 	locatorString: string;
 };
-
-class EntryError extends Error {
-	constructor(
-		public code: ErrorCode,
-		message: string,
-		public hint?: string,
-	) {
-		super(message);
-		this.name = "EntryError";
-	}
-}
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(

@@ -43,11 +43,12 @@ export class LocatorParseError extends Error {
 
 const BLOCK_RE = /^(p|t|s)(\d+)$/;
 const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
-// Each side is a body paragraph (`p3`) or a cell paragraph (`t0:r1c2:p0`) —
-// the form `find` prints for a spanning match, so it pipes into `comments add
-// --at`. Both sides must share a container (validated after the match).
+// Each side is a body paragraph (`p3`) or a cell paragraph at any nesting depth
+// (`t0:r1c2:t0:r0c0:p0`) — the form `find` prints for a spanning match, so it
+// pipes into `comments add --at`. Both sides must share a container (validated
+// after the match).
 const RANGE_RE =
-	/^((?:t\d+:r\d+c\d+:)?p\d+):(\d+)-((?:t\d+:r\d+c\d+:)?p\d+):(\d+)$/;
+	/^((?:(?:t\d+:r\d+c\d+:)+)?p\d+):(\d+)-((?:(?:t\d+:r\d+c\d+:)+)?p\d+):(\d+)$/;
 const BLOCK_RANGE_RE = /^p(\d+)-p(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;

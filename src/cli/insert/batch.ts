@@ -1,12 +1,23 @@
 import {
 	type BlockReference,
+	type CellReference,
+	CellTargetError,
 	Insert,
 	InsertError,
 	LocatorResolveError,
+	parseCellAt,
+	resolveCellReference,
 	TrackChanges,
 } from "@core";
 import type { XmlNode } from "@core/parser";
-import { readJsonlObjects } from "../parse-helpers";
+import {
+	applyCellInsertion,
+	cellInsertionAnchor,
+	ensureCellEndsWithParagraph,
+	type Grid,
+	reusableEmptyCellParagraph,
+} from "@core/table";
+import { readJsonlObjects, rejectBatchOnlyFlags } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -21,10 +32,10 @@ import {
 	parseParagraphOptions,
 	type RawValues,
 } from "./index";
-import { parseTargetPlacement } from "./place";
+import { insertSide, mintedLocatorsFor, parseTargetPlacement } from "./place";
 
 /** `docx insert --batch FILE.jsonl`: many inserts from one read. Each JSONL
- *  line mirrors the CLI flags as keys — `{ after | before, <content>, ...opts }`
+ *  line mirrors the CLI flags as keys — `{ at | after | before, <content>, ...opts }`
  *  (e.g. `{"after":"p3","text":"Hi","style":"Heading2"}`). Every anchor is
  *  resolved to a LIVE node ref and all blocks are BUILT before anything is
  *  spliced, so positional ids never shift out from under a later anchor. The
@@ -36,16 +47,13 @@ export async function runInsertBatch(
 	batchSource: string,
 	values: RawValues,
 ): Promise<number> {
-	const conflicting = SINGLE_SHOT_FLAGS.find(
-		(flag) => values[flag] !== undefined && values[flag] !== false,
+	const conflict = await rejectBatchOnlyFlags(
+		values,
+		SINGLE_SHOT_FLAGS,
+		"insert",
+		"Put per-entry fields (after/before, text, markdown, style, …) on each JSONL line.",
 	);
-	if (conflicting) {
-		return fail(
-			"USAGE",
-			`--batch reads each insert from the JSONL file; don't also pass --${conflicting} on the CLI`,
-			"Put per-entry fields (after/before, text, markdown, style, …) on each JSONL line.",
-		);
-	}
+	if (conflict !== undefined) return conflict;
 
 	const globalAuthor = values.author as string | undefined;
 	const trackFlag = Boolean(values.track);
@@ -74,14 +82,23 @@ export async function runInsertBatch(
 
 	// Build phase: resolve every anchor to a live ref and build its blocks
 	// WITHOUT touching the body. No splice happens here, so every anchor stays
-	// valid for the whole phase.
+	// valid for the whole phase. A bare cell and one of its explicit direct blocks
+	// cannot share a batch: empty-cell reuse would consume that block anchor.
 	const built: BuiltEntry[] = [];
+	// The build phase never splices, so one grid per table stays valid across
+	// every entry — a many-cell fill of one table builds it once, not per entry.
+	const gridCache = new Map<XmlNode, Grid>();
+	const reservedEmptyCells = new Set<XmlNode>();
+	const cellTargets = new Map<XmlNode[], { index: number; locator: string }>();
+	const blockTargets = new Map<XmlNode[], { index: number; locator: string }>();
 	for (let index = 0; index < rawEntries.length; index++) {
 		const entry = rawEntries[index];
 		if (entry === undefined) continue;
 		const entryValues = entryToRawValues(entry);
 
-		const placement = await parseTargetPlacement(entryValues);
+		const placement = await parseTargetPlacement(entryValues, undefined, {
+			allowAt: true,
+		});
 		if (typeof placement === "number") return placement;
 		if ("boundary" in placement) {
 			return fail(
@@ -108,6 +125,80 @@ export async function runInsertBatch(
 		const paragraphOptions = await parseParagraphOptions(entryValues);
 		if (typeof paragraphOptions === "number") return paragraphOptions;
 
+		const author =
+			typeof entry.author === "string" ? entry.author : globalAuthor;
+		const cellTarget = parseCellAt(placement.locator);
+		if (cellTarget) {
+			let cell: CellReference;
+			try {
+				cell = resolveCellReference(document, placement.locator, gridCache);
+			} catch (error) {
+				if (error instanceof CellTargetError) {
+					return fail(
+						error.code,
+						`entry ${index}: ${error.message}`,
+						error.hint,
+					);
+				}
+				throw error;
+			}
+			const explicitTarget = blockTargets.get(cell.parent);
+			if (explicitTarget) {
+				return mixedCellTargetFailure(index, placement.locator, explicitTarget);
+			}
+			cellTargets.set(cell.parent, { index, locator: placement.locator });
+
+			const candidate = reusableEmptyCellParagraph(cell.node);
+			const reusable =
+				candidate && !reservedEmptyCells.has(cell.node) ? candidate : null;
+			if (reusable) reservedEmptyCells.add(cell.node);
+			const mode = insertSide(placement.mode);
+			const anchorRef = cellInsertionAnchor(cell, mode, reusable);
+			if (!anchorRef) {
+				return fail(
+					"TABLE_STRUCTURE",
+					`entry ${index}: Cell ${cell.id} has no direct paragraph to inherit insertion formatting from`,
+					"Target an explicit paragraph inside the cell, or repair the malformed cell first.",
+				);
+			}
+
+			let blocks: XmlNode[];
+			try {
+				blocks = await new Insert(document).paragraph(
+					anchorRef,
+					spec,
+					paragraphOptions,
+					{
+						placement: mode,
+						authorFlag: author,
+						track,
+						allocator,
+						reuseAnchorParagraph: reusable !== null,
+					},
+				);
+			} catch (error) {
+				if (error instanceof InsertError) {
+					return fail(
+						error.code,
+						`entry ${index}: ${error.message}`,
+						error.hint,
+					);
+				}
+				throw error;
+			}
+			built.push({
+				kind: "cell",
+				cell,
+				mode,
+				requestedPlacement: placement.mode,
+				reuseParagraph: reusable,
+				blocks,
+				locator: placement.locator,
+			});
+			continue;
+		}
+
+		const mode = insertSide(placement.mode);
 		let anchorRef: BlockReference;
 		try {
 			anchorRef = document.body.resolveBlock(placement.locator);
@@ -117,16 +208,27 @@ export async function runInsertBatch(
 			}
 			throw error;
 		}
+		const bareTarget = cellTargets.get(anchorRef.parent);
+		if (bareTarget) {
+			return mixedCellTargetFailure(bareTarget.index, bareTarget.locator, {
+				index,
+				locator: placement.locator,
+			});
+		}
+		blockTargets.set(anchorRef.parent, { index, locator: placement.locator });
 
-		const author =
-			typeof entry.author === "string" ? entry.author : globalAuthor;
 		let blocks: XmlNode[];
 		try {
 			blocks = await new Insert(document).paragraph(
 				anchorRef,
 				spec,
 				paragraphOptions,
-				{ placement: placement.mode, authorFlag: author, track, allocator },
+				{
+					placement: mode,
+					authorFlag: author,
+					track,
+					allocator,
+				},
 			);
 		} catch (error) {
 			if (error instanceof InsertError) {
@@ -134,10 +236,11 @@ export async function runInsertBatch(
 			}
 			throw error;
 		}
-
 		built.push({
+			kind: "block",
 			anchorRef,
-			mode: placement.mode,
+			mode,
+			requestedPlacement: placement.mode,
 			blocks,
 			locator: placement.locator,
 		});
@@ -150,19 +253,26 @@ export async function runInsertBatch(
 			path: filePath,
 			batch: built.map((entry) => ({
 				anchor: entry.locator,
-				placement: entry.mode,
+				placement: entry.requestedPlacement,
 			})),
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
 	}
 
-	// Splice phase: recompute each anchor's index fresh (so cross-anchor shifts
-	// are absorbed) and track a per-anchor "after" offset (so several inserts
-	// after the same paragraph stack in entry order rather than reversing).
+	// Splice phase: recompute block-anchor indexes fresh and keep one start/end
+	// cursor per cell. Cell cursors preserve JSONL order independently at each
+	// boundary while all targets still refer to the document as originally read.
 	const afterOffset = new Map<XmlNode, number>();
+	const cellStates = new Map<XmlNode, CellInsertionState>();
 	const insertedNodes = new Set<XmlNode>();
 	for (const entry of built) {
+		if (entry.kind === "cell") {
+			const failure = await spliceCellEntry(entry, cellStates, insertedNodes);
+			if (failure !== null) return failure;
+			continue;
+		}
+
 		const baseIndex = entry.anchorRef.parent.indexOf(entry.anchorRef.node);
 		if (baseIndex === -1) {
 			return fail(
@@ -181,16 +291,16 @@ export async function runInsertBatch(
 		entry.anchorRef.parent.splice(insertIndex, 0, ...entry.blocks);
 		for (const block of entry.blocks) insertedNodes.add(block);
 	}
+	for (const state of cellStates.values()) {
+		ensureCellEndsWithParagraph(state.parent);
+	}
 
 	await document.save(outputPath);
 
 	// Positional ids shifted; re-derive each inserted block's locator from the
 	// freshly-read tree (iteration is in document order).
 	document.reread();
-	const locators: string[] = [];
-	for (const [blockId, reference] of document.body.blockReferences) {
-		if (insertedNodes.has(reference.node)) locators.push(blockId);
-	}
+	const locators = mintedLocatorsFor(document, insertedNodes);
 
 	await respondMinted(locators, {
 		ok: true,
@@ -200,17 +310,134 @@ export async function runInsertBatch(
 		locators,
 		batch: built.map((entry) => ({
 			anchor: entry.locator,
-			placement: entry.mode,
+			placement: entry.requestedPlacement,
 		})),
 	});
 	return EXIT.OK;
 }
 
-type BuiltEntry = {
-	anchorRef: BlockReference;
-	mode: "after" | "before";
-	blocks: XmlNode[];
-	locator: string;
+/** Splice one bare-cell entry, advancing that cell's cursors. Returns null on
+ *  success, or a `fail()` exit code — the two insertion strategies (reuse Word's
+ *  mandatory empty paragraph vs. append at a cursor) are the whole reason this
+ *  is its own function rather than a branch in the splice loop. */
+async function spliceCellEntry(
+	entry: Extract<BuiltEntry, { kind: "cell" }>,
+	cellStates: Map<XmlNode, CellInsertionState>,
+	insertedNodes: Set<XmlNode>,
+): Promise<number | null> {
+	let state = cellStates.get(entry.cell.node);
+	if (!state) {
+		const firstBlock = entry.cell.blocks[0];
+		const lastBlock = entry.cell.blocks[entry.cell.blocks.length - 1];
+		if (!firstBlock || !lastBlock) {
+			return fail(
+				"TABLE_STRUCTURE",
+				`Cell ${entry.cell.id} has no direct block content`,
+			);
+		}
+		state = {
+			parent: entry.cell.parent,
+			beforeAnchor: firstBlock,
+			beforeCursor: null,
+			endCursor: lastBlock,
+		};
+		cellStates.set(entry.cell.node, state);
+	}
+
+	if (entry.reuseParagraph) {
+		const applied = applyCellInsertion(
+			entry.cell.node,
+			entry.blocks,
+			entry.mode,
+			entry.reuseParagraph,
+		);
+		const firstResult = applied[0];
+		const lastResult = applied[applied.length - 1];
+		if (!firstResult || !lastResult) {
+			return fail(
+				"TABLE_STRUCTURE",
+				`Insertion into ${entry.cell.id} produced no addressable blocks`,
+			);
+		}
+		state.beforeAnchor = firstResult;
+		state.endCursor = lastResult;
+		if (entry.mode === "before") state.beforeCursor = lastResult;
+		for (const block of applied) insertedNodes.add(block);
+		return null;
+	}
+
+	const lastInserted = entry.blocks[entry.blocks.length - 1];
+	if (!lastInserted) {
+		return fail(
+			"TABLE_STRUCTURE",
+			`Insertion into ${entry.cell.id} produced no addressable blocks`,
+		);
+	}
+	if (entry.mode === "before") {
+		const cursor = state.beforeCursor;
+		const boundary = cursor ?? state.beforeAnchor;
+		const boundaryIndex = state.parent.indexOf(boundary);
+		if (boundaryIndex === -1) {
+			return fail(
+				"BLOCK_NOT_FOUND",
+				`Cell boundary reference is stale for ${entry.cell.id}`,
+			);
+		}
+		const extendedCellEnd = cursor !== null && state.endCursor === cursor;
+		state.parent.splice(boundaryIndex + (cursor ? 1 : 0), 0, ...entry.blocks);
+		state.beforeCursor = lastInserted;
+		if (extendedCellEnd) state.endCursor = lastInserted;
+	} else {
+		const boundaryIndex = state.parent.indexOf(state.endCursor);
+		if (boundaryIndex === -1) {
+			return fail(
+				"BLOCK_NOT_FOUND",
+				`Cell boundary reference is stale for ${entry.cell.id}`,
+			);
+		}
+		state.parent.splice(boundaryIndex + 1, 0, ...entry.blocks);
+		state.endCursor = lastInserted;
+	}
+	for (const block of entry.blocks) insertedNodes.add(block);
+	return null;
+}
+
+function mixedCellTargetFailure(
+	cellEntryIndex: number,
+	cellLocator: string,
+	explicit: { index: number; locator: string },
+): Promise<number> {
+	return fail(
+		"USAGE",
+		`entry ${cellEntryIndex}: bare cell ${cellLocator} conflicts with explicit block target ${explicit.locator} in entry ${explicit.index}`,
+		"Put bare-cell and explicit CELL:pK operations in separate batches, with a re-read between them.",
+	);
+}
+
+type BuiltEntry =
+	| {
+			kind: "block";
+			anchorRef: BlockReference;
+			mode: "after" | "before";
+			requestedPlacement: "after" | "before" | "at";
+			blocks: XmlNode[];
+			locator: string;
+	  }
+	| {
+			kind: "cell";
+			cell: CellReference;
+			mode: "after" | "before";
+			requestedPlacement: "after" | "before" | "at";
+			reuseParagraph: XmlNode | null;
+			blocks: XmlNode[];
+			locator: string;
+	  };
+
+type CellInsertionState = {
+	parent: XmlNode[];
+	beforeAnchor: XmlNode;
+	beforeCursor: XmlNode | null;
+	endCursor: XmlNode;
 };
 
 /** CLI flags that have no meaning under `--batch` (each entry carries its own
@@ -220,6 +447,7 @@ type BuiltEntry = {
  *  so e.g. `insert --batch f.jsonl --style Heading1` is a USAGE error (matching
  *  the edit batch). */
 const SINGLE_SHOT_FLAGS = [
+	"at",
 	"after",
 	"before",
 	"at-start",

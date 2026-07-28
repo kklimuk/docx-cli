@@ -15,6 +15,9 @@ export {
 export {
 	type BlockRangeReference,
 	type BlockTarget,
+	type CellReference,
+	CellTargetError,
+	type CellTargetErrorCode,
 	LocatorResolveError,
 	locatorToBlockTarget,
 	parseCellAt,
@@ -22,4 +25,6 @@ export {
 	parseColumnAt,
 	parseRowAt,
 	parseTableAt,
+	resolveCellParagraphReference,
+	resolveCellReference,
 } from "./resolve";

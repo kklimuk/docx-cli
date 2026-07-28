@@ -1,4 +1,5 @@
 import { textToRunElements } from "../blocks";
+import { applyRunFormatToRpr, type RunFormat } from "../edit/set-formatting";
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
@@ -16,6 +17,11 @@ export type Span = { start: number; end: number };
 export type TrackedReplaceOptions = {
 	meta: Omit<TrackedMeta, "revisionId">;
 	allocator: RevisionAllocator;
+};
+
+export type ReplacementFormatting = {
+	clearTags?: Set<string>;
+	format?: RunFormat;
 };
 
 /** Whether a run-bearing wrapper's contents should be treated as VISIBLE in
@@ -71,6 +77,7 @@ export function replaceSpanInParagraph(
 	replacement: string,
 	tracked?: TrackedReplaceOptions,
 	view: FindView = "accepted",
+	formatting?: ReplacementFormatting,
 ): void {
 	if (span.start > span.end) {
 		throw new Error(
@@ -87,7 +94,7 @@ export function replaceSpanInParagraph(
 
 	const firstSlot = overlapping[0];
 	if (!firstSlot) {
-		paragraph.children.push(...replacementRuns(null, replacement));
+		paragraph.children.push(...replacementRuns(null, replacement, formatting));
 		return;
 	}
 
@@ -109,6 +116,7 @@ export function replaceSpanInParagraph(
 			firstParent === paragraph,
 			tracked ?? null,
 			view,
+			formatting,
 		);
 		return;
 	}
@@ -120,6 +128,7 @@ export function replaceSpanInParagraph(
 		inheritedProperties,
 		tracked ?? null,
 		view,
+		formatting,
 	);
 }
 
@@ -164,6 +173,7 @@ function rebuildContainer(
 	isParagraph: boolean,
 	tracked: TrackedReplaceOptions | null,
 	view: FindView,
+	formatting?: ReplacementFormatting,
 ): void {
 	const newChildren: XmlNode[] = [];
 	let offset = baseOffset;
@@ -172,7 +182,7 @@ function rebuildContainer(
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const runs = replacementRuns(runProperties, replacement);
+		const runs = replacementRuns(runProperties, replacement, formatting);
 		if (tracked && isParagraph) {
 			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
 			return;
@@ -232,6 +242,7 @@ function rebuildAcrossBoundaries(
 	runProperties: XmlNode | null,
 	tracked: TrackedReplaceOptions | null,
 	view: FindView,
+	formatting?: ReplacementFormatting,
 ): void {
 	const newChildren: XmlNode[] = [];
 	let offset = 0;
@@ -240,7 +251,7 @@ function rebuildAcrossBoundaries(
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const runs = replacementRuns(runProperties, replacement);
+		const runs = replacementRuns(runProperties, replacement, formatting);
 		if (tracked) {
 			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
 			return;
@@ -352,6 +363,7 @@ function rebuildAcrossBoundaries(
 				replacement,
 				tracked,
 				view,
+				formatting,
 				newChildren,
 				placeReplacement,
 				() => {
@@ -531,6 +543,7 @@ function splitHyperlinkAcrossSpan(
 	replacement: string,
 	tracked: TrackedReplaceOptions | null,
 	view: FindView,
+	formatting: ReplacementFormatting | undefined,
 	out: XmlNode[],
 	placeReplacement: () => void,
 	markReplacementPlaced: () => void,
@@ -573,7 +586,7 @@ function splitHyperlinkAcrossSpan(
 
 	if (startsInside) {
 		// Replacement inherits the link: append it inside the pre-half.
-		const innerRuns = replacementRuns(runProperties, replacement);
+		const innerRuns = replacementRuns(runProperties, replacement, formatting);
 		if (tracked) {
 			preInner.push(<Ins meta={mintMeta(tracked)}>{innerRuns}</Ins>);
 		} else {
@@ -621,18 +634,38 @@ function convertRunTextToDelText(run: XmlNode): void {
 export function replacementRuns(
 	runProperties: XmlNode | null,
 	text: string,
+	formatting?: ReplacementFormatting,
 ): XmlNode[] {
+	const properties = replacementRunProperties(runProperties, formatting);
 	if (text.length === 0) {
 		return [
 			<w.r>
-				{runProperties}
+				{properties}
 				<w.t {...{ "xml:space": "preserve" }} />
 			</w.r>,
 		];
 	}
 	const runs = textToRunElements(text);
 	for (const run of runs) {
-		if (runProperties) run.children.unshift(runProperties.clone());
+		if (properties) run.children.unshift(properties.clone());
 	}
 	return runs;
+}
+
+function replacementRunProperties(
+	runProperties: XmlNode | null,
+	formatting?: ReplacementFormatting,
+): XmlNode | null {
+	let properties = runProperties?.clone() ?? null;
+	if (properties && formatting?.clearTags) {
+		properties.children = properties.children.filter(
+			(child) => !formatting.clearTags?.has(child.tag),
+		);
+		if (properties.children.length === 0) properties = null;
+	}
+	if (formatting?.format) {
+		properties ??= XmlNode.element("w:rPr");
+		applyRunFormatToRpr(properties, formatting.format);
+	}
+	return properties;
 }

@@ -742,6 +742,110 @@ describe("docx edit --at pN:S-E — character-span edit", () => {
 	});
 });
 
+describe("edit a bare table-cell locator", () => {
+	test("fills the cell's sole paragraph and applies requested formatting", async () => {
+		const docPath = await docFrom(
+			"cell-edit-empty",
+			"| Field | Value |\n| --- | --- |\n| Name |  |\n",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r1c1",
+			"--text",
+			"Dana Okafor",
+			"--bold",
+		);
+
+		expect(result.exitCode).toBe(0);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("**Dana Okafor** <!-- t0:r1c1:p0 -->");
+	});
+
+	test("aliases a nonempty sole paragraph but rejects a multi-block cell", async () => {
+		const docPath = await docFrom(
+			"cell-edit-shape",
+			"| Field | Value |\n| --- | --- |\n| Name | Original |\n",
+		);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"t0:r1c1",
+					"--text",
+					"Replacement",
+				)
+			).exitCode,
+		).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain("Replacement");
+
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"t0:r1c1",
+			"--text",
+			"Second paragraph",
+		);
+		const ambiguous = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r1c1",
+			"--text",
+			"Nope",
+		);
+		expect(ambiguous.exitCode).not.toBe(0);
+		expect((ambiguous.parsed as { code: string }).code).toBe("TABLE_STRUCTURE");
+		expect(
+			(await runCli("edit", docPath, "--at", "t0:r1c1:p1", "--text", "Precise"))
+				.exitCode,
+		).toBe(0);
+	});
+
+	test("rejects merged cells and tracked rejection restores a blank cell", async () => {
+		const merged = await docFrom(
+			"cell-edit-merge",
+			"| A | B |\n| --- | --- |\n|  |  |\n",
+		);
+		await runCli("tables", "merge", merged, "--at", "t0:r1c0-r1c1");
+		const mergedEdit = await runCli(
+			"edit",
+			merged,
+			"--at",
+			"t0:r1c0",
+			"--text",
+			"Nope",
+		);
+		expect(mergedEdit.exitCode).not.toBe(0);
+		expect((mergedEdit.parsed as { code: string }).code).toBe(
+			"TABLE_STRUCTURE",
+		);
+
+		const tracked = await docFrom(
+			"cell-edit-track",
+			"| A | B |\n| --- | --- |\n|  |  |\n",
+		);
+		await runCli(
+			"edit",
+			tracked,
+			"--at",
+			"t0:r1c0",
+			"--text",
+			"Tracked",
+			"--track",
+		);
+		expect(await trackedKinds(tracked)).toEqual(["ins"]);
+		await runCli("track-changes", "reject", tracked, "--all");
+		const read = await runCli("read", tracked);
+		expect(read.stdout).toContain("<!-- t0:r1c0 -->");
+		expect(read.stdout).not.toContain("Tracked");
+	});
+});
+
 // Decision 2: a whole-paragraph edit with plain content (no explicit --style,
 // no block markers) preserves the paragraph's existing style — re-titling a
 // heading keeps it a heading. Markdown that carries its own block style wins.

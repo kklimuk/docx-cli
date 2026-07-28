@@ -337,6 +337,18 @@ describe("stdin '-' ingress (process boundary)", () => {
 		expect(markdown).toContain("TWO");
 	});
 
+	test("find --batch - reads JSONL queries from stdin", async () => {
+		const docPath = join(tempWorkspace("stdin-find-batch"), "doc.docx");
+		await runCli("create", docPath, "--text", "one two one");
+
+		const batch = `${JSON.stringify({ query: "one", nth: 1 })}\n${JSON.stringify(
+			{ query: "two" },
+		)}\n`;
+		const result = await spawnCliStdin(batch, "find", docPath, "--batch", "-");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim().split("\n")).toEqual(["p0:8-11", "p0:4-7"]);
+	});
+
 	test("code add --code-file - reads the code body from stdin", async () => {
 		const docPath = join(tempWorkspace("stdin-code"), "doc.docx");
 		await runCli("create", docPath, "--text", "intro");

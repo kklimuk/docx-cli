@@ -11,7 +11,11 @@ type Body = {
 			type: string;
 			text: string;
 			bold?: boolean;
+			italic?: boolean;
 			color?: string;
+			highlight?: string;
+			font?: string;
+			sizeHalfPoints?: number;
 		}>;
 	}>;
 };
@@ -217,6 +221,218 @@ describe("docx replace", () => {
 		const text = JSON.stringify(read.parsed);
 		expect(text).toContain("Protoboard");
 		expect(text).not.toContain("Breadboard");
+	});
+});
+
+describe("docx replace — replacement formatting", () => {
+	async function replacementRun(
+		path: string,
+		text: string,
+	): Promise<NonNullable<Body["blocks"][number]["runs"]>[number] | undefined> {
+		const read = await runCli("read", path, "--ast");
+		return (read.parsed as Body).blocks
+			.flatMap((block) => block.runs ?? [])
+			.find((run) => run.text === text);
+	}
+
+	test("format flags and --clear apply to only the replacement runs", async () => {
+		const path = join(tempWorkspace("replace-format"), "out.docx");
+		await runCli("create", path, "--text", "TODO remains");
+		await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0:0-4",
+			"--bold",
+			"--highlight",
+			"yellow",
+			"--font",
+			"Courier New",
+			"--size",
+			"9",
+		);
+
+		const result = await runCli(
+			"replace",
+			path,
+			"TODO",
+			"Done",
+			"--clear",
+			"bold,highlight",
+			"--italic",
+			"--color",
+			"00AA00",
+			"--size",
+			"12",
+		);
+		expect(result.exitCode).toBe(0);
+		const run = await replacementRun(path, "Done");
+		expect(run).toMatchObject({
+			italic: true,
+			color: "00AA00",
+			font: "Courier New",
+			sizeHalfPoints: 24,
+		});
+		expect(run?.bold).toBeUndefined();
+		expect(run?.highlight).toBeUndefined();
+	});
+
+	test("batch entries default to first and opt into every match with all", async () => {
+		const firstPath = join(tempWorkspace("replace-batch-first"), "out.docx");
+		await runCli("create", firstPath, "--text", "TODO TODO");
+		const firstBatch = join(
+			tempWorkspace("replace-batch-first-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			firstBatch,
+			'{"pattern":"TODO","replacement":"Done","bold":true}\n',
+		);
+		const first = await runCli("replace", firstPath, "--batch", firstBatch);
+		expect(first.parsed).toMatchObject({
+			batch: [{ totalMatches: 2, replaced: 1 }],
+		});
+		expect(await paragraphText(firstPath, "p0")).toBe("Done TODO");
+		expect((await replacementRun(firstPath, "Done"))?.bold).toBe(true);
+
+		const allPath = join(tempWorkspace("replace-batch-all"), "out.docx");
+		await runCli("create", allPath, "--text", "TODO TODO");
+		const allBatch = join(
+			tempWorkspace("replace-batch-all-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			allBatch,
+			'{"pattern":"TODO","replacement":"Done","italic":true,"all":true}\n',
+		);
+		const all = await runCli("replace", allPath, "--batch", allBatch);
+		expect(all.parsed).toMatchObject({
+			batch: [{ totalMatches: 2, replaced: 2 }],
+		});
+		expect(await paragraphText(allPath, "p0")).toBe("Done Done");
+		const read = await runCli("read", allPath, "--ast");
+		const doneRuns = (read.parsed as Body).blocks
+			.flatMap((block) => block.runs ?? [])
+			.filter((run) => run.text.includes("Done"));
+		expect(doneRuns.every((run) => run.italic)).toBe(true);
+	});
+
+	test("formatting applies to every segment of a multi-line replacement", async () => {
+		const path = join(tempWorkspace("replace-format-lines"), "out.docx");
+		await runCli("create", path, "--text", "alpha beta gamma");
+		const result = await runCli(
+			"replace",
+			path,
+			"beta",
+			"one\ntwo",
+			"--bold",
+			"--color",
+			"C00000",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await replacementRun(path, "one")).toMatchObject({
+			bold: true,
+			color: "C00000",
+		});
+		expect(await replacementRun(path, "two")).toMatchObject({
+			bold: true,
+			color: "C00000",
+		});
+	});
+
+	test("tracked replacement keeps formatting on the inserted text", async () => {
+		const path = join(tempWorkspace("replace-format-track"), "out.docx");
+		await runCli("create", path, "--text", "TODO");
+		await runCli("track-changes", path, "on");
+		const result = await runCli(
+			"replace",
+			path,
+			"TODO",
+			"Done",
+			"--bold",
+			"--color",
+			"007700",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await replacementRun(path, "Done")).toMatchObject({
+			bold: true,
+			color: "007700",
+		});
+		const xml = await readDocumentXml(path);
+		expect(xml).toMatch(/<w:ins[^>]*>.*?<w:rPr>.*?<w:b\s*\/>/s);
+	});
+
+	test("invalid single-shot and batch formatting fail with USAGE", async () => {
+		const path = join(tempWorkspace("replace-format-invalid"), "out.docx");
+		await runCli("create", path, "--text", "TODO");
+		const single = await runCli("replace", path, "TODO", "Done", "--size", "0");
+		expect(single.parsed).toMatchObject({ code: "USAGE" });
+
+		const batchPath = join(
+			tempWorkspace("replace-format-invalid-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			batchPath,
+			'{"pattern":"TODO","replacement":"Done","color":42}\n',
+		);
+		const batch = await runCli("replace", path, "--batch", batchPath);
+		expect(batch.parsed).toMatchObject({ code: "USAGE" });
+
+		const booleanPath = join(
+			tempWorkspace("replace-format-boolean-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			booleanPath,
+			'{"pattern":"TODO","replacement":"Done","all":"false","bold":"false"}\n',
+		);
+		const boolean = await runCli("replace", path, "--batch", booleanPath);
+		expect(boolean.parsed).toMatchObject({ code: "USAGE" });
+
+		const malformedSizePath = join(
+			tempWorkspace("replace-format-size-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			malformedSizePath,
+			'{"pattern":"TODO","replacement":"Done","size":"12garbage"}\n',
+		);
+		const malformedSize = await runCli(
+			"replace",
+			path,
+			"--batch",
+			malformedSizePath,
+		);
+		expect(malformedSize.parsed).toMatchObject({ code: "USAGE" });
+
+		const incompleteUnderlinePath = join(
+			tempWorkspace("replace-format-underline-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			incompleteUnderlinePath,
+			'{"pattern":"TODO","replacement":"Done","underlineColor":"FF0000"}\n',
+		);
+		const incompleteUnderline = await runCli(
+			"replace",
+			path,
+			"--batch",
+			incompleteUnderlinePath,
+		);
+		expect(incompleteUnderline.parsed).toMatchObject({ code: "USAGE" });
+
+		const limitPath = join(
+			tempWorkspace("replace-format-limit-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			limitPath,
+			'{"pattern":"TODO","replacement":"Done","limit":true}\n',
+		);
+		const limit = await runCli("replace", path, "--batch", limitPath);
+		expect(limit.parsed).toMatchObject({ code: "USAGE" });
+		expect(await paragraphText(path, "p0")).toBe("TODO");
 	});
 });
 

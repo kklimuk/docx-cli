@@ -34,6 +34,8 @@ describe("docx info locators", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("LOCATOR GRAMMAR");
 		expect(result.stdout).toContain("p3:5-20");
+		expect(result.stdout).toContain("edit --at CELL");
+		expect(result.stdout).toContain("insert --at");
 	});
 
 	test("--json outputs structured reference", async () => {
@@ -42,8 +44,12 @@ describe("docx info locators", () => {
 		const reference = result.parsed as {
 			blockLocators: Record<string, unknown>;
 			spanLocators: { span: { syntax: string } };
+			entityLocators: { cell: { summary: string } };
 		};
 		expect(reference.spanLocators.span.syntax).toBe("pN:S-E");
+		expect(reference.entityLocators.cell.summary).toContain(
+			"direct edit/insert",
+		);
 	});
 });
 

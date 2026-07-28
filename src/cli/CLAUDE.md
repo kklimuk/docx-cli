@@ -50,8 +50,10 @@ Today: `docx:section` (rendered at the section's START, with an
 row slot so they ride the table note keyed by `rR`), per-cell `docx:cell` hints
 (`gridSpan`/`vMerge`/`shading`/`vAlign`/`borders`, plus a `halign` derived from a
 uniform non-default cell-paragraph alignment — cell text alignment is otherwise
-invisible in a GFM cell), a head
-`docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
+invisible in a GFM cell). A PLAIN EMPTY cell emits exactly one bare `<!-- tN:rRcC -->`
+handle so `edit --at CELL` / `insert --at CELL` can fill it; an empty cell WITH
+metadata emits its `docx:cell` note alone, never a duplicate bare handle. The
+remaining annotations include a head `docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
 its default — a weak agent reads "no hint" as "unknown," not "off," and a wrong
 tracking guess is high-cost, so the state is stated outright),
 `docx:header`/`docx:footer` notes (led by the marginal's `hdrN`/`ftrN` id — the

@@ -2,9 +2,13 @@ import type { Document } from "../ast/document";
 import type { BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
+	ensureParagraphProperties,
+	hasParagraphProperties,
 	indentAttributes,
+	injectPprChange,
 	Paragraph,
 	type ParagraphOptions,
+	priorPprChildren,
 	spacingAttributes,
 } from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
@@ -21,6 +25,7 @@ import {
 import { w } from "../jsx";
 import { literalParagraphs } from "../literal-text";
 import { MarkdownImport, MarkdownImportError } from "../markdown";
+import { inheritParagraphFormattingIfPlain } from "../paragraph-inheritance";
 import type { XmlNode } from "../parser";
 import { getPageContentWidthEmu, SentinelSectionParagraph } from "../sections";
 import { BlankTable, type TableBorders, type TableLayout } from "../table";
@@ -49,6 +54,9 @@ export class Insert {
 			 *  builds every block before splicing any) keeps tracked-change w:ids
 			 *  unique across entries. Omit for single-shot — one is made per call. */
 			allocator?: RevisionAllocator;
+			/** Fill the anchor's pre-existing mandatory empty paragraph with the
+			 * first built paragraph rather than marking its paragraph break inserted. */
+			reuseAnchorParagraph?: boolean;
 		},
 	): Promise<XmlNode[]> {
 		// Task-item (`taskState`, from `docx tasks add`) or list (`--list`)
@@ -95,6 +103,14 @@ export class Insert {
 		) {
 			inheritFormattingFromAnchor(blocks, blockRef.node);
 		}
+		if (opts.reuseAnchorParagraph) {
+			inheritParagraphFormattingIfPlain(
+				blockRef.node,
+				blocks,
+				paragraphOptions.style,
+				{ preservePprChange: true },
+			);
+		}
 
 		if (opts.track ?? this.document.isTrackChangesEnabled()) {
 			// Tables under tracking would require per-row <w:trPr><w:ins/> wrappers
@@ -116,6 +132,25 @@ export class Insert {
 			// would re-scan the same tree max and mint duplicate w:ids.
 			const allocator = opts.allocator ?? trackChanges.createAllocator();
 			for (const block of blocks) {
+				if (
+					block === blocks[0] &&
+					opts.reuseAnchorParagraph &&
+					block.tag === "w:p"
+				) {
+					// Reusing Word's mandatory empty cell paragraph: the node is already
+					// in the tree, so its content is a tracked CONTENT insertion rather
+					// than a whole-paragraph <w:ins>, and new paragraph properties ride a
+					// <w:pPrChange> snapshotting the anchor's prior pPr.
+					trackChanges.applyContentInsertion(block, opts.authorFlag, allocator);
+					if (hasParagraphProperties(paragraphOptions)) {
+						injectPprChange(
+							ensureParagraphProperties(block),
+							priorPprChildren(blockRef.node.findChild("w:pPr")),
+							trackChanges.mintMeta(opts.authorFlag, allocator),
+						);
+					}
+					continue;
+				}
 				trackChanges.applyInsertion(block, opts.authorFlag, allocator);
 			}
 		}

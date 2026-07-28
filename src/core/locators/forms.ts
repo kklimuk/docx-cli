@@ -56,7 +56,8 @@ export const LOCATOR_FORMS: Record<LocatorFormKey, LocatorForm> = {
 	cell: {
 		syntax: "tN:rRcC",
 		example: "t0:r1c2",
-		summary: "cell at row R, column C of table N",
+		summary:
+			"cell at row R, column C; direct edit/insert target when simple and unmerged",
 	},
 	cellParagraph: {
 		syntax: "tN:rRcC:pK",

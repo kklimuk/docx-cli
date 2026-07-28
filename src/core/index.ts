@@ -73,6 +73,9 @@ export { literalParagraphs } from "./literal-text";
 export {
 	type BlockRangeReference,
 	type BlockTarget,
+	type CellReference,
+	CellTargetError,
+	type CellTargetErrorCode,
 	describeForms,
 	isCellScopedLocator,
 	isMarginalLocator,
@@ -90,6 +93,8 @@ export {
 	parseLocator,
 	parseRowAt,
 	parseTableAt,
+	resolveCellParagraphReference,
+	resolveCellReference,
 } from "./locators";
 export {
 	enumerateMarginalRefs,

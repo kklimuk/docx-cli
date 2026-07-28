@@ -46,6 +46,7 @@ The agent never sees this file. It is the ground-truth definition of "correct" f
 
 ## How to verify
 
+- `docx find FILE --batch checks.jsonl --json` — use one entry per placeholder family (`Item [123]`, `Description [123]`, `Customer name`, `Your Company Name`, address prompts, zero-dollar template amounts) and confirm every entry reports zero matches.
 - `docx read FILE` — scan for remaining placeholder strings; check Notes text; confirm four line items visible.
 - `docx read FILE --ast` — inspect table row counts, `w:tcW` column widths, run-level formatting on sample cells.
 - `docx images list FILE` — confirm exactly two images; confirm logo image index/rId is different from the original.

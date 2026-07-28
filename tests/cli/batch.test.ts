@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { newTableDoc, readDocumentXml } from "./helpers";
 
 /**
  * Per-command `--batch` for edit / replace / insert — apply many changes from
@@ -16,7 +16,12 @@ import { readDocumentXml } from "./helpers";
  */
 
 type RunAst = { type: string; text?: string; highlight?: string };
-type Block = { id: string; type: string; runs?: RunAst[] };
+type Block = {
+	id: string;
+	type: string;
+	runs?: RunAst[];
+	rows?: Array<{ cells: Array<{ blocks: Block[] }> }>;
+};
 
 async function blocks(path: string): Promise<Block[]> {
 	const result = await runCli("read", path, "--ast");
@@ -31,9 +36,22 @@ function textOf(block: Block): string {
 }
 
 async function blockText(path: string, id: string): Promise<string> {
-	const block = (await blocks(path)).find((candidate) => candidate.id === id);
+	const block = findBlock(await blocks(path), id);
 	if (!block) throw new Error(`block ${id} not found`);
 	return textOf(block);
+}
+
+function findBlock(candidates: Block[], id: string): Block | undefined {
+	for (const candidate of candidates) {
+		if (candidate.id === id) return candidate;
+		for (const row of candidate.rows ?? []) {
+			for (const cell of row.cells) {
+				const nested = findBlock(cell.blocks, id);
+				if (nested) return nested;
+			}
+		}
+	}
+	return undefined;
 }
 
 /** Paragraph texts in document order — excludes the trailing section-break (sN)
@@ -104,6 +122,33 @@ describe("edit --batch", () => {
 		expect(await blockText(path, "p0")).toBe("Name: Ada");
 		expect(await blockText(path, "p1")).toBe("City: Paris");
 		expect(await blockText(path, "p2")).toBe("Role: Eng");
+	});
+
+	test("fills several blank cells through bare locators from one read", async () => {
+		const path = await newTableDoc("edit-cell-batch");
+		const batch = await writeJsonl("edit-cell-batch", [
+			{ at: "t0:r0c0", text: "Dana" },
+			{ at: "t0:r0c1", text: "Marcus" },
+		]);
+		const result = await runCli("edit", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(0);
+		expect(await blockText(path, "t0:r0c0:p0")).toBe("Dana");
+		expect(await blockText(path, "t0:r0c1:p0")).toBe("Marcus");
+	});
+
+	test("bare CELL and explicit CELL:p0 resolve to one conflicting edit target", async () => {
+		const path = await newTableDoc("edit-cell-alias");
+		const before = await Bun.file(path).bytes();
+		const batch = await writeJsonl("edit-cell-alias", [
+			{ at: "t0:r0c0", text: "Bare" },
+			{ at: "t0:r0c0:p0", text: "Explicit" },
+		]);
+		const result = await runCli("edit", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+		expect(await Bun.file(path).bytes()).toEqual(before);
 	});
 
 	test("two spans in ONE paragraph stay correct (right-to-left apply)", async () => {
@@ -282,6 +327,60 @@ describe("insert --batch", () => {
 		const result = await runCli("insert", path, "--batch", batch);
 		expect(result.exitCode).toBe(0);
 		expect(await paragraphTexts(path)).toEqual(["Top", "One", "Two", "Bottom"]);
+	});
+
+	test("stacked `at` block entries alias after-placement and keep order", async () => {
+		const path = await docWithParagraphs("ins-at-block", ["Top", "Bottom"]);
+		const batch = await writeJsonl("ins-at-block", [
+			{ at: "p0", text: "One" },
+			{ at: "p0", text: "Two" },
+		]);
+		const result = await runCli("insert", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphTexts(path)).toEqual(["Top", "One", "Two", "Bottom"]);
+		expect(
+			(result.parsed as { batch: Array<{ placement: string }> }).batch.map(
+				(entry) => entry.placement,
+			),
+		).toEqual(["at", "at"]);
+	});
+
+	test("bare-cell entries fill empty cells and keep start/end order", async () => {
+		const path = await newTableDoc("insert-cell-batch");
+		const batch = await writeJsonl("insert-cell-batch", [
+			{ at: "t0:r0c0", text: "A" },
+			{ after: "t0:r0c0", text: "B" },
+			{ before: "t0:r0c0", text: "C" },
+			{ at: "t0:r0c1", text: "D" },
+		]);
+		const result = await runCli("insert", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { locators: string[] }).locators).toEqual([
+			"t0:r0c0:p0",
+			"t0:r0c0:p1",
+			"t0:r0c0:p2",
+			"t0:r0c1:p0",
+		]);
+		expect(await blockText(path, "t0:r0c0:p0")).toBe("C");
+		expect(await blockText(path, "t0:r0c0:p1")).toBe("A");
+		expect(await blockText(path, "t0:r0c0:p2")).toBe("B");
+		expect(await blockText(path, "t0:r0c1:p0")).toBe("D");
+	});
+
+	test("rejects a bare-cell plus explicit paragraph target before writing", async () => {
+		const path = await newTableDoc("insert-cell-conflict");
+		const before = await Bun.file(path).bytes();
+		const batch = await writeJsonl("insert-cell-conflict", [
+			{ at: "t0:r0c0", text: "Bare" },
+			{ after: "t0:r0c0:p0", text: "Explicit" },
+		]);
+		const result = await runCli("insert", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { code: string }).code).toBe("USAGE");
+		expect(await Bun.file(path).bytes()).toEqual(before);
 	});
 
 	test("an insert at an earlier anchor doesn't misdirect a later anchor", async () => {

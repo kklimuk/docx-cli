@@ -41,7 +41,7 @@ export type RevisionAllocator = { next(): number };
  * `document.trackedChangeReferences`, the reader's single walk), previewing
  * accept/reject (`preview`), applying them (`accept`/`reject`), and the
  * paragraph-level emit helpers every mutating CLI verb threads through
- * (`applyInsertion`/`applyDeletion`). */
+ * (`applyInsertion`/`applyDeletion` and their content-only counterparts). */
 export class TrackChanges {
 	constructor(private document: Document) {}
 
@@ -141,6 +141,21 @@ export class TrackChanges {
 			<Ins meta={mintMeta()}>{runs}</Ins>
 		));
 		markParagraphMarkAs(paragraph, "ins", mintMeta());
+	}
+
+	/** Wrap new content in `<w:ins>` WITHOUT marking the paragraph break inserted.
+	 * Used when insertion fills a table cell's pre-existing mandatory empty
+	 * paragraph: reject removes the inserted content but must keep that `<w:p>` so
+	 * the cell remains valid. */
+	applyContentInsertion(
+		paragraph: XmlNode,
+		authorFlag?: string,
+		allocator?: RevisionAllocator,
+	): void {
+		const mintMeta = this.metaMinter(authorFlag, allocator);
+		paragraph.children = wrapContiguousTrackable(paragraph.children, (runs) => (
+			<Ins meta={mintMeta()}>{runs}</Ins>
+		));
 	}
 
 	/** Wrap a paragraph's trackable run-level children in `<w:del>` (with

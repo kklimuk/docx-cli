@@ -92,6 +92,14 @@ describe("parseLocator", () => {
 		});
 	});
 
+	test("parses a nested-cell cross-paragraph range", () => {
+		expect(parseLocator("t0:r0c0:t0:r1c2:p0:2-t0:r0c0:t0:r1c2:p1:3")).toEqual({
+			kind: "range",
+			start: { blockId: "t0:r0c0:t0:r1c2:p0", offset: 2 },
+			end: { blockId: "t0:r0c0:t0:r1c2:p1", offset: 3 },
+		});
+	});
+
 	test("rejects a range that crosses a cell wall or leaves a cell", () => {
 		expect(() => parseLocator("t0:r0c0:p0:2-t0:r0c1:p0:3")).toThrow(
 			/share a container/,

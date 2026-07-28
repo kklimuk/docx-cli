@@ -1,13 +1,8 @@
-import {
-	findAcrossParagraphs,
-	findFormattedSpans,
-	findTextSpans,
-	type RunFormatFilter,
-} from "@core/find";
+import type { RunFormatFilter } from "@core/find";
 import {
 	decodeInlineEscapes,
+	rejectBatchOnlyFlags,
 	resolveView,
-	spanLocator,
 } from "../parse-helpers";
 import {
 	EXIT,
@@ -18,17 +13,30 @@ import {
 	writeStderr,
 	writeStdout,
 } from "../respond";
+import { runFindBatch } from "./batch";
+import {
+	executeFindQuery,
+	FindQueryError,
+	type FindQueryResult,
+} from "./query";
 
 const HELP = `docx find — locate content and return its locator
 
 Usage:
   docx find FILE QUERY [options]
   docx find FILE --highlight [COLOR]             # find by formatting (no QUERY)
+  docx find FILE --batch FILE.jsonl              # many queries, one read
+  docx find FILE --batch -                       # read JSONL from stdin
 
 Examples:
   docx find doc.docx "fox"                         # every match, one per line
   docx find doc.docx "TODO|FIXME" --regex --ignore-case
   docx find doc.docx --highlight yellow            # every yellow-highlighted span
+  # queries.jsonl:
+  #   {"query":"TODO|FIXME","regex":true,"ignoreCase":true}
+  #   {"query":"Clause A\\nClause B","nth":0}
+  #   {"highlight":"yellow"}
+  docx find doc.docx --batch queries.jsonl --json
   # remove every highlight:
   docx find doc.docx --highlight any | while read span; do
     docx edit doc.docx --at "$span" --clear highlight; done
@@ -36,7 +44,7 @@ Examples:
 
 Positional:
   QUERY             literal substring (or regex if --regex). Omit it when using
-                    a formatting filter below.
+                    a formatting filter or --batch.
 
 Formatting filters (alternative to QUERY — locate runs by formatting, the
 inverse of \`edit --clear\`; pair with \`edit --at <span> --clear\`):
@@ -64,6 +72,15 @@ General options:
   --json            emit the full match objects as JSON (default: bare locators)
   -h, --help        show this help
 
+Batch (--batch PATH | -):
+  Evaluate many independent queries against one document read. Each JSONL line
+  uses {"query": …} plus optional "regex"/"ignoreCase"/"nth"/"exact"/
+  "current"/"baseline", OR formatting keys "highlight"/"color"/"bold"/
+  "italic"/"underline". Default output flattens locators in entry order;
+  --json keeps request boundaries as {batch:[{totalMatches,matches,…}, …]}.
+  A zero-match entry is successful (and named on stderr in text mode); an invalid
+  query or out-of-range "nth" fails the batch with its entry number.
+
 Output:
   Default: EVERY matched span locator (e.g. p3:5-8), one per line — feed them
   straight into another command's --at (or a --batch). No matches prints
@@ -75,10 +92,7 @@ Output:
 `;
 
 /** `--highlight` with no value means "any color" — the common cleanup intent
- *  ("find every highlight, regardless of color"). `--highlight` is a string flag,
- *  so a bare `--highlight` (at the end, or before another flag) would otherwise be
- *  a parse error; rewrite it to `--highlight any` before parsing. `--highlight=`
- *  (explicit empty) is handled too. */
+ * ("find every highlight, regardless of color"). */
 function withBareHighlightAsAny(args: string[]): string[] {
 	const out: string[] = [];
 	for (let index = 0; index < args.length; index++) {
@@ -102,6 +116,7 @@ export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
 		withBareHighlightAsAny(args),
 		{
+			batch: { type: "string" },
 			regex: { type: "boolean" },
 			"ignore-case": { type: "boolean" },
 			all: { type: "boolean" },
@@ -127,25 +142,30 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const path = parsed.positionals[0];
-	// Inline argv decode, same as every authoring surface: an agent types
-	// "line one\nline two" to search across a line break, and bash hands us the
-	// literal backslash-n. A decoded "\n" is also the multi-paragraph gate below.
-	const query = decodeInlineEscapes(parsed.positionals[1]);
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
 
-	// Formatting filters (highlight/color/bold/italic/underline) are an
-	// alternative to a text QUERY — they locate runs by their formatting (the
-	// inverse of `edit --clear`).
-	const formatFilter: RunFormatFilter = {};
-	if (parsed.values.highlight !== undefined)
-		formatFilter.highlight = parsed.values.highlight as string;
-	if (parsed.values.color !== undefined)
-		formatFilter.color = parsed.values.color as string;
-	if (parsed.values.bold) formatFilter.bold = true;
-	if (parsed.values.italic) formatFilter.italic = true;
-	if (parsed.values.underline) formatFilter.underline = true;
-	const hasFormatFilter = Object.keys(formatFilter).length > 0;
+	const batchSource = parsed.values.batch as string | undefined;
+	if (batchSource !== undefined) {
+		if (parsed.positionals.length > 1) {
+			return fail(
+				"USAGE",
+				"--batch reads queries from JSONL; don't also pass a QUERY positional",
+				HELP,
+			);
+		}
+		const conflict = await rejectBatchOnlyFlags(
+			parsed.values,
+			BATCH_ENTRY_ONLY_FLAGS,
+			"query",
+			"Put query/filter/view/nth fields on each JSONL line. Only --json stays command-wide.",
+		);
+		if (conflict !== undefined) return conflict;
+		return runFindBatch(path, batchSource, Boolean(parsed.values.json));
+	}
 
+	const query = decodeInlineEscapes(parsed.positionals[1]);
+	const formatFilter = readFormatFilter(parsed.values);
+	const hasFormatFilter = Object.keys(formatFilter).length > 0;
 	if (query == null && !hasFormatFilter) {
 		return fail(
 			"USAGE",
@@ -161,9 +181,6 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const ignoreCase = Boolean(parsed.values["ignore-case"]);
-	const useRegex = Boolean(parsed.values.regex);
-	const exact = Boolean(parsed.values.exact);
 	const findView = resolveView(parsed.values);
 	if (!findView) {
 		return fail("USAGE", "--current and --baseline are mutually exclusive");
@@ -180,104 +197,60 @@ export async function run(args: string[]): Promise<number> {
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
-	// Three ways to gather matches, one output contract: every branch maps its
-	// match shape to `{locator, ...match}` so a single --nth / --json / print
-	// tail below serves them all.
-	let matches: { locator: string }[] = [];
-	let normalizationFields: object = {};
+	let result: FindQueryResult;
 	try {
-		if (query?.includes("\n")) {
-			// A query containing a newline spans lines: "\n" matches an
-			// in-paragraph line break OR a paragraph boundary (consecutive
-			// paragraphs in the body or within one table cell — never across a
-			// table, section break, or cell wall). Spanning locators print as
-			// pA:S-pB:E — the existing cross-paragraph range form `comments add
-			// --at` accepts, so they compose.
-			const result = findAcrossParagraphs(document.body, query, {
-				regex: useRegex,
-				ignoreCase,
-				view: findView,
-				exact,
-			});
-			matches = result.matches.map((match) => ({
-				locator: spanLocator(match),
-				...match,
-			}));
-			normalizationFields = normalizationPayload(result);
-		} else if (hasFormatFilter) {
-			matches = findFormattedSpans(document.body, formatFilter, findView).map(
-				(match) => ({ locator: spanLocator(match), ...match }),
-			);
-		} else if (query != null) {
-			const result = findTextSpans(document.body, query, {
-				regex: useRegex,
-				ignoreCase,
-				view: findView,
-				exact,
-			});
-			matches = result.matches.map((match) => ({
-				locator: spanLocator(match),
-				...match,
-			}));
-			normalizationFields = normalizationPayload(result);
+		result = executeFindQuery(document, {
+			...(query !== undefined ? { query } : {}),
+			...(hasFormatFilter ? { formatFilter } : {}),
+			regex: Boolean(parsed.values.regex),
+			ignoreCase: Boolean(parsed.values["ignore-case"]),
+			exact: Boolean(parsed.values.exact),
+			view: findView,
+			...(nth !== undefined ? { nth } : {}),
+		});
+	} catch (error) {
+		if (error instanceof FindQueryError) {
+			return fail(error.code, error.message);
 		}
-	} catch (matcherError) {
-		const message =
-			matcherError instanceof Error
-				? matcherError.message
-				: String(matcherError);
-		return fail("USAGE", `Invalid query: ${message}`);
+		throw error;
 	}
-
-	let selected = matches;
-	if (nth !== undefined) {
-		const single = matches[nth];
-		if (!single) {
-			return fail(
-				"MATCH_NOT_FOUND",
-				`Only ${matches.length} match(es); --nth ${nth} is out of range`,
-			);
-		}
-		selected = [single];
-	}
-	// Otherwise every match — returning only the first silently hid the rest; a
-	// weak agent that didn't know to pass --all fell back to one find per item.
-	// `--nth N` selects a single match and `| head -1` still grabs the first.
-	// (`--all` is kept as an accepted no-op.)
 
 	if (parsed.values.json) {
-		await respond({
-			totalMatches: matches.length,
-			query,
-			regex: useRegex,
-			ignoreCase,
-			view: findView,
-			matches: selected,
-			...normalizationFields,
-		});
+		await respond(result);
 		return EXIT.OK;
 	}
-
-	// Text-first default: the locators, one per line, ready to paste into --at.
-	// On zero matches stdout stays empty (so `find … | while read` is clean), but
-	// we print an explicit "no matches" to STDERR — otherwise empty output reads
-	// as "did it even run?" and (weak) agents re-run the query to be sure.
-	if (selected.length > 0) {
-		await writeStdout(`${selected.map((match) => match.locator).join("\n")}\n`);
+	if (result.matches.length > 0) {
+		await writeStdout(
+			`${result.matches.map((match) => match.locator).join("\n")}\n`,
+		);
 	} else {
 		await writeStderr("no matches\n");
 	}
 	return EXIT.OK;
 }
 
-function normalizationPayload(result: {
-	normalizedQuery?: string;
-	normalizationApplied?: string[];
-}): object {
-	return result.normalizedQuery !== undefined
-		? {
-				normalizedQuery: result.normalizedQuery,
-				normalizationApplied: result.normalizationApplied,
-			}
-		: {};
+function readFormatFilter(values: Record<string, unknown>): RunFormatFilter {
+	const filter: RunFormatFilter = {};
+	if (values.highlight !== undefined)
+		filter.highlight = values.highlight as string;
+	if (values.color !== undefined) filter.color = values.color as string;
+	if (values.bold) filter.bold = true;
+	if (values.italic) filter.italic = true;
+	if (values.underline) filter.underline = true;
+	return filter;
 }
+
+const BATCH_ENTRY_ONLY_FLAGS = [
+	"regex",
+	"ignore-case",
+	"all",
+	"nth",
+	"current",
+	"baseline",
+	"exact",
+	"highlight",
+	"color",
+	"bold",
+	"italic",
+	"underline",
+] as const;

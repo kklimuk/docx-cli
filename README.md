@@ -145,6 +145,7 @@ docx read    FILE [--from LOC] [--to LOC] [--accepted | --baseline | --current] 
 docx read    FILE --ast                  # JSON-AST instead of Markdown (disables the markdown-only flags)
 docx find    FILE QUERY [--regex] [--ignore-case] [--all] [--nth N] [--current | --baseline] [--exact] [--json]
 docx find    FILE (--highlight COLOR|any | --color HEX | --bold | --italic | --underline) [--all] [--json]   # find by formatting (no QUERY)
+docx find    FILE --batch queries.jsonl [--json]   # many independent text/format queries, one read; --batch - reads stdin
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
 docx diff    FILE --against SRC [--from LOC] [--to LOC] [--comments] [--json]   # what changed vs another version
@@ -168,6 +169,12 @@ docx track-changes list FILE
 docx info schema   [--ts]
 docx info locators [--json]
 ```
+
+`find --batch` reads one JSON object per line: either `{"query":"…"}` with
+optional `regex`/`ignoreCase`/`nth`/view fields, or a formatting filter such as
+`{"highlight":"yellow"}` / `{"bold":true}`. Plain output flattens locators in
+entry order; `--json` preserves each query's `totalMatches` and `matches` inside
+a `batch` array. It opens the document once and never mutates it.
 
 `docx diff` shows **what you changed** as a git-style unified diff — it renders both
 the current file and a baseline to their `read` markdown and diffs them, so `+` lines
@@ -228,10 +235,12 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   at the new width, so page setup converts each to a RIGHT tab flush at the new
   margin and reports how many it fixed — no second `--tabs right` step needed.
 - **Tables** carry a leading `<!-- docx:table t0 widths="1,2,3in" borders="double" -->`
-  when columns are uneven or borders deviate from the default, plus a per-cell
-  `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699" -->`
-  note on merged/shaded cells — so structure invisible in GFM is visible
-  (`Table.borders` / `TableCell.shading` in `read --ast`).
+  when columns are uneven or borders deviate from the default. Within each cell,
+  a trailing `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699" -->`
+  note follows the cell content and its paragraph locators — so structure invisible in GFM is visible
+  (`Table.borders` / `TableCell.shading` in `read --ast`). A plain empty cell emits
+  `<!-- t0:r0c0 -->`: pass that bare handle directly to `edit --at` or `insert --at`
+  to fill its mandatory empty paragraph without creating a blank extra line.
 - **Images** trail a `<!-- docx:image img0 size="6.2x4.1in" float="yes" wrap="square" align="center" overflow="yes" -->`
   note: `size` always (the `![](hash)` alone doesn't say "6in wide"), and
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds
@@ -262,15 +271,19 @@ headers`/`docx footers`.
 
 ```sh
 docx create FILE [--title T] [--author A] [--text "..." | --text-file PATH | --from PATH.md | --from -] [--orientation O] [--size SIZE] [--margins M] [--header "..."] [--footer "..." | --page-numbers] [--force]
-docx insert FILE (--after | --before) LOCATOR <content>   # LOCATOR = pN | tN | sN | tN:rRcC:pK
+docx insert FILE --at LOCATOR <content>                  # after a block; INTO a bare simple cell (fills/reuses blank p0)
+docx insert FILE (--after | --before) LOCATOR <content>   # explicit block side or bare-cell end/start boundary
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
-docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | tN:rRcC:pK[:S-E]  (sections → docx sections, equations → docx equations edit)
+docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | tN:rRcC | tN:rRcC:pK[:S-E]; bare CELL requires one direct paragraph
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN | tN:rRcC:pK (cell paragraph)
 docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
-docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--track] [--dry-run]
-#   Keeps the run's formatting (bold/font) and any tabs — the no-rebuild way to fill a
+docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--clear ATTRS] [run-formatting] [--track] [--dry-run]
+#   Keeps the run's formatting (bold/font) and any tabs by default — the no-rebuild way to fill a
 #   formatted/tabbed template line (e.g. "**Org Name**⇥Date"); don't hand-build --runs to refill it.
+#   Add --bold/--italic/--color/--highlight/--font/--size/… to format ONLY the replacement text;
+#   --clear highlight (or a comma list / all) strips inherited properties first. Clear runs before set,
+#   so an explicit format flag wins. The same fields work per-entry under replace --batch.
 #   A TAB matches as one character (pattern "City State Zip" fills a tab-separated line), and
 #   TAB/NBSP/bullet-glyph variants match their plain equivalents unless --exact.
 #   --at pN (or a cell paragraph tT:rRcC:pN) CONFINES the replace to one paragraph — use it when the
@@ -282,12 +295,15 @@ docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all
 #   formatting governs), "\n" in the replacement inserts a paragraph mark (splits). Untracked
 #   only: refuses under tracking rather than skip the journal. Block ids shift; re-read after.
 
-# Batch — apply many changes from ONE read (no re-reading between edits). Keys
-# on each JSONL line mirror the command's flags; all locators address the doc as
-# read. insert/edit also accept --batch - to read JSONL from stdin.
+# Query batch — many independent searches against ONE immutable read.
+docx find    FILE --batch queries.jsonl      # { query, regex?, ignoreCase?, nth?, … } OR { highlight|color|bold|italic|underline }; --json preserves per-query results
+
+# Mutation batch — apply many changes from ONE read. Keys on each JSONL line
+# mirror the command's flags; all locators address the doc as read. Every batch
+# surface accepts --batch - to read JSONL from stdin.
 docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown|runs>, style?, … }
-docx insert  FILE --batch additions.jsonl   # { after|before, <content>, style?, color?, … }
-docx replace FILE --batch script.jsonl      # { pattern, replacement, at?, regex?, all?, limit?, … } applied in order ("at" scopes that entry to one paragraph)
+docx insert  FILE --batch additions.jsonl   # { at|after|before, <content>, style?, color?, … }
+docx replace FILE --batch script.jsonl      # { pattern, replacement, at?, regex?, all?, limit?, clear?, bold?, color?, … } applied in order
 docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (pN/tN/cell), resolved live-first
 
 # All four of insert/edit/delete/replace accept --track to record that one
@@ -430,7 +446,7 @@ are verbatim; raw changes are never tracked. Details and examples:
 `docx raw --help`.
 
 > **One rule to memorize: addressing an existing thing is always `--at`.**
-> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, and `delete` all take `--at LOCATOR`. The exceptions are positional or directional by nature: `insert` uses `--after`/`--before LOCATOR` (or `--at-start`/`--at-end` for the document boundaries, no locator); `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to _confine_ the substitution to one paragraph). `images extract --to DIR` is an _output directory_, not a locator.
+> `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, `delete`, and `insert` all take `--at LOCATOR`. For insert, `--at` means after an ordinary block and into a bare cell; use `--before`/`--after` when the side matters, or `--at-start`/`--at-end` for document boundaries. The remaining exceptions are positional by nature: `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to _confine_ the substitution to one paragraph). `images extract --to DIR` is an _output directory_, not a locator.
 
 ## Output contract
 
@@ -454,7 +470,7 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 | `find`                                                                                                                                                                                                                                                                     | matched span locators, one per line (no matches → nothing, exit `0`)                                                                                                                        | `--json` → `{ totalMatches, query, view, matches:[…], normalizedQuery? }` |
 | `wc`                                                                                                                                                                                                                                                                       | the bare count (whole-doc adds a tab-separated `sections` column, like `wc`)                                                                                                                | `--json` → `{ words, scope, view, sections? }`                            |
 | `outline`                                                                                                                                                                                                                                                                  | indented `LOCATOR⇥TEXT` tree (two spaces per level)                                                                                                                                         | `--json` → nested `[{ id, locator, level, style, text, children }]`       |
-| `read`                                                                                                                                                                                                                                                                     | GFM Markdown; each paragraph carries its `pN` locator once — a trailing bare `<!-- pN -->` on plain paragraphs, or the leading token of its `<!-- docx:p pN … -->` note when one is emitted | `--ast` → the JSON AST body (`docx info schema`)                          |
+| `read`                                                                                                                                                                                                                                                                     | GFM Markdown; each paragraph carries its `pN` locator once, while a plain empty table cell carries one bare `<!-- tN:rRcC -->` fill handle | `--ast` → the JSON AST body (`docx info schema`)                          |
 | `render`                                                                                                                                                                                                                                                                   | image paths, one per line                                                                                                                                                                   | `--verbose` → `{ok, operation, path, engine, output, pages}`              |
 | `* list` (all eight `list` verbs)                                                                                                                                                                                                                                          | a **bare JSON array**; each item's `id` is its `--at` handle                                                                                                                                | —                                                                         |
 
@@ -485,7 +501,7 @@ Each `list` verb prints a bare JSON array where every item's `id` is exactly the
 pN              paragraph N                  pN:S-E          chars S..E within paragraph N
 pN-pM           whole-paragraph range        pN:S-pM:E       cross-paragraph character range
 sN              section break N              tN              table N
-tN:rRcC         cell at row R, col C         tN:rRcC:pK      paragraph K of that cell (chainable)
+tN:rRcC         cell — direct fill target    tN:rRcC:pK      paragraph K of that cell (chainable)
 tN:rR / tN:cC   table row R / column C       tN:rR1cC1-rR2cC2  rectangular cell region (merge)
 cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyperlink /
                                              footnote / endnote / tracked-change / equation)
@@ -495,11 +511,14 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
 
 **Nested tables chain the same syntax** arbitrarily deep — `t0:r2c1:t0:r0c0:p0` is the first paragraph of the (0,0) cell of the first table nested inside the (2,1) cell of the document's first table.
 
+**Bare cell content targets are conservative.** `edit --at CELL` requires exactly one direct paragraph. `insert --at CELL` fills/reuses a normal blank cell and otherwise appends; `--before CELL`/`--after CELL` use its start/end boundary. Merged or grid-shifted bare cells are rejected — use `CELL:pK` for precise paragraph targeting.
+
 **Not every command accepts every form** — each command's `--at`/`--from`/positional help lists exactly what it takes. The shapes:
 
 | Form                                                                 | Accepted by                                                                         |
 | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks)                              | `read --from/--to`, `insert --after/--before`, `wc`, `comments add`                 |
+| `pN`, `tN`, `sN`, `tN:rRcC:pK` (blocks)                              | `read --from/--to`, `insert --at/--after/--before`, `wc`, `comments add`             |
+| `tN:rRcC` (bare simple cell)                                          | `insert --at/--after/--before`; `edit --at` when the cell has one direct paragraph  |
 | `pN`, `pN:S-E`, `pN-pM`, `tN:rRcC:pK`, `tN:rRcC:pK:S-E` | `edit --at` (span/cell forms strip or replace just that range; sections → `docx sections`, equations → `docx equations edit`) |
 | `pN`, `pN-pM`, `tN`, `sN`, `tN:rRcC:pK`                              | `delete --at`                                                                       |
 | `pN:S-E`, `pN:S-pM:E`, `tN:rRcC:pK:S-E` (spans)                      | `comments add --at`, `hyperlinks add --at` (single paragraph), `find`/`wc` results  |

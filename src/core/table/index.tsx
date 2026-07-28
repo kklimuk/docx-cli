@@ -4,6 +4,14 @@ import { type JsxChild, w } from "../jsx";
 import type { NullableXmlNode, XmlNode } from "../parser";
 
 export {
+	applyCellInsertion,
+	cellInsertionAnchor,
+	directCellBlocks,
+	ensureCellEndsWithParagraph,
+	reusableEmptyCellParagraph,
+	soleCellParagraph,
+} from "./cell-content";
+export {
 	buildGrid,
 	cellAt,
 	type Grid,

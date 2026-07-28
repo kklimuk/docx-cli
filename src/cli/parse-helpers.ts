@@ -1,8 +1,10 @@
 import {
+	CLEARABLE_ATTRS,
 	isSectionType,
 	type PageGeometry,
 	type Run,
 	type RunFormat,
+	resolveClearTags,
 	type SectionType,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
@@ -10,7 +12,7 @@ import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
 } from "@core/run-formatting";
-import { fail } from "./respond";
+import { EntryError, fail } from "./respond";
 
 /** Detect the signature of a currency amount whose leading digits were eaten by
  *  the shell. A weak agent double-quotes a `$`-bearing value in bash, and the
@@ -508,6 +510,37 @@ const RUN_FORMAT_FLAGS = [
 	"shade",
 ] as const;
 
+/** Input key → `RunFormat` boolean field. Both the CLI and the batch parser walk
+ *  this table, so a new toggle is one row here instead of a hand-written block in
+ *  each — the drift these two parsers exist to prevent. */
+const BOOLEAN_FORMAT_FIELDS: ReadonlyArray<
+	readonly [
+		key: string,
+		field: "bold" | "italic" | "strike" | "allCaps" | "smallCaps",
+	]
+> = [
+	["bold", "bold"],
+	["italic", "italic"],
+	["strike", "strike"],
+	["caps", "allCaps"],
+	["smallcaps", "smallCaps"],
+];
+
+/** Input key → `RunFormat` string field plus the normalizer its value goes
+ *  through (hex fields drop a leading `#` and upper-case; the rest pass through). */
+const STRING_FORMAT_FIELDS: ReadonlyArray<
+	readonly [
+		key: string,
+		field: "color" | "font" | "highlight" | "shade",
+		normalize: (value: string) => string,
+	]
+> = [
+	["color", "color", normalizeHexColor],
+	["font", "font", (value) => value],
+	["highlight", "highlight", (value) => value],
+	["shade", "shade", normalizeHexColor],
+];
+
 /** True when the invocation carries any run-formatting flag. Booleans default to
  *  `false` from parseArgs (not undefined), so we test against both. */
 export function hasRunFormatFlags(values: Record<string, unknown>): boolean {
@@ -525,19 +558,14 @@ export function parseRunFormat(
 	values: Record<string, unknown>,
 ): RunFormat | null | { error: string; hint?: string } {
 	const format: RunFormat = {};
-	if (values.bold) format.bold = true;
-	if (values.italic) format.italic = true;
-	if (values.strike) format.strike = true;
-	if (values.caps) format.allCaps = true;
-	if (values.smallcaps) format.smallCaps = true;
+	for (const [key, field] of BOOLEAN_FORMAT_FIELDS) {
+		if (values[key]) format[field] = true;
+	}
+	for (const [key, field, normalize] of STRING_FORMAT_FIELDS) {
+		const value = values[key];
+		if (value !== undefined) format[field] = normalize(value as string);
+	}
 	if (values.underline) format.underline = "single";
-	if (values.color !== undefined)
-		format.color = normalizeHexColor(values.color as string);
-	if (values.font !== undefined) format.font = values.font as string;
-	if (values.highlight !== undefined)
-		format.highlight = values.highlight as string;
-	if (values.shade !== undefined)
-		format.shade = normalizeHexColor(values.shade as string);
 
 	if (values.superscript && values.subscript) {
 		return { error: "--superscript and --subscript are mutually exclusive" };
@@ -566,6 +594,222 @@ export function parseRunFormat(
 
 	if (Object.keys(format).length === 0) return null;
 	return format;
+}
+
+/** Reject a single-shot CLI flag passed alongside `--batch`. Every batch surface
+ *  reads its per-entry fields from the JSONL, so a CLI flag that duplicates one
+ *  is always a mistake — and one sentence teaches the rule everywhere instead of
+ *  a slightly different one per command. The `!== false` guard keeps a boolean
+ *  flag that merely PARSED as `false` from counting as passed. Returns a fail()
+ *  exit code, or undefined when nothing conflicts. */
+export async function rejectBatchOnlyFlags(
+	values: Record<string, unknown>,
+	flags: readonly string[],
+	what: string,
+	hint: string,
+): Promise<number | undefined> {
+	const conflicting = flags.find(
+		(flag) => values[flag] !== undefined && values[flag] !== false,
+	);
+	if (conflicting === undefined) return undefined;
+	return fail(
+		"USAGE",
+		`--batch reads each ${what} from the JSONL file; don't also pass --${conflicting} on the CLI`,
+		hint,
+	);
+}
+
+export type BatchValueError = { error: string; hint?: string };
+
+/** Throwing form of `parseBatchBoolean`, for the entry validators that run
+ *  inside one try/catch and translate `EntryError` at the top. */
+export function requireBatchBoolean(
+	raw: Record<string, unknown>,
+	index: number,
+	field: string,
+): boolean {
+	const parsed = parseBatchBoolean(raw, index, field);
+	if (typeof parsed !== "boolean") {
+		throw new EntryError("USAGE", parsed.error, parsed.hint);
+	}
+	return parsed;
+}
+
+/** Read one optional JSONL boolean without truthy coercion. Batch input is a
+ * machine format: `"false"` must fail, not silently turn a flag on. */
+export function parseBatchBoolean(
+	raw: Record<string, unknown>,
+	index: number,
+	field: string,
+): boolean | BatchValueError {
+	const value = raw[field];
+	if (value === undefined) return false;
+	if (typeof value !== "boolean") {
+		return { error: `entry ${index}: "${field}" must be a boolean` };
+	}
+	return value;
+}
+
+/** Build a `RunFormat` from a JSONL entry. This is the batch-input twin of
+ *  `parseRunFormat`: values are type-checked before use, underline accepts either
+ *  `true` (single) or an explicit style string, and errors carry the entry index.
+ *  Shared by edit and replace so their batch formatting vocabularies can't drift. */
+export function parseBatchRunFormat(
+	raw: Record<string, unknown>,
+	index: number,
+): RunFormat | null | BatchValueError {
+	const format: RunFormat = {};
+	for (const [key, field] of BOOLEAN_FORMAT_FIELDS) {
+		const parsed = parseBatchBoolean(raw, index, key);
+		if (typeof parsed !== "boolean") return parsed;
+		if (parsed) format[field] = true;
+	}
+	for (const [key, field, normalize] of STRING_FORMAT_FIELDS) {
+		const parsed = batchString(raw, index, key);
+		if ("error" in parsed) return parsed;
+		if (parsed.value !== undefined) format[field] = normalize(parsed.value);
+	}
+	if (typeof raw.underline === "string") format.underline = raw.underline;
+	else {
+		const underline = parseBatchBoolean(raw, index, "underline");
+		if (typeof underline !== "boolean") return underline;
+		if (underline) format.underline = "single";
+	}
+
+	const underlineColor = batchString(raw, index, "underlineColor");
+	if ("error" in underlineColor) return underlineColor;
+	if (underlineColor.value !== undefined) {
+		if (format.underline === undefined) {
+			return {
+				error: `entry ${index}: "underlineColor" requires "underline"`,
+			};
+		}
+		format.underlineColor = normalizeHexColor(underlineColor.value);
+	}
+
+	const superscript = parseBatchBoolean(raw, index, "superscript");
+	if (typeof superscript !== "boolean") return superscript;
+	const subscript = parseBatchBoolean(raw, index, "subscript");
+	if (typeof subscript !== "boolean") return subscript;
+	if (superscript && subscript) {
+		return {
+			error: `entry ${index}: "superscript" and "subscript" are mutually exclusive`,
+		};
+	}
+	if (superscript) format.vertAlign = "superscript";
+	if (subscript) format.vertAlign = "subscript";
+	if (raw.size !== undefined) {
+		const points =
+			typeof raw.size === "number"
+				? raw.size
+				: typeof raw.size === "string" && raw.size.trim().length > 0
+					? Number(raw.size)
+					: Number.NaN;
+		if (!Number.isFinite(points) || points <= 0) {
+			return {
+				error: `entry ${index}: "size" must be a positive point size (e.g. 12 or 11.5)`,
+			};
+		}
+		format.sizeHalfPoints = Math.round(points * 2);
+	}
+
+	const invalid = firstInvalidRunFormat(format);
+	if (invalid) {
+		return {
+			error: `entry ${index}: invalid ${invalid.field} "${invalid.value}"`,
+			hint: `Use ${invalid.valid}.`,
+		};
+	}
+	if (Object.keys(format).length === 0) return null;
+	return format;
+}
+
+/** Parse one `--clear` value into rPr tags. Accepts one name, a comma list,
+ * or an array (the shape produced by repeated CLI flags and JSONL entries).
+ * `label` names the surface in the error text — a JSONL reader passes the KEY
+ * (`"clear"`), because telling an agent editing a batch file about a `--clear`
+ * FLAG sends it looking for the wrong thing. */
+export function parseClearTags(
+	value: unknown,
+	label = "--clear",
+): Set<string> | BatchValueError {
+	const raw =
+		typeof value === "string"
+			? [value]
+			: Array.isArray(value) &&
+					value.every((entry) => typeof entry === "string")
+				? (value as string[])
+				: null;
+	if (!raw) {
+		return {
+			error: `${label} must be an attribute name, a comma list, or an array of names (or "all")`,
+		};
+	}
+	const names = raw
+		.flatMap((entry) => entry.split(","))
+		.map((name) => name.trim().toLowerCase())
+		.filter(Boolean);
+	if (names.length === 0) {
+		return { error: `${label} needs an attribute name, or "all"` };
+	}
+	const tags = resolveClearTags(names);
+	if (!tags) {
+		return {
+			error: `Unknown ${label} attribute in "${raw.join(",")}"`,
+			hint: `Valid: ${CLEARABLE_ATTRS.join(", ")}, all.`,
+		};
+	}
+	return tags;
+}
+
+/** Add JSONL entry context to the shared `--clear` parser. */
+export function parseBatchClearTags(
+	value: unknown,
+	index: number,
+): Set<string> | BatchValueError {
+	const parsed = parseClearTags(value, '"clear"');
+	if (parsed instanceof Set) return parsed;
+	return { ...parsed, error: `entry ${index}: ${parsed.error}` };
+}
+
+/** Read one optional JSONL integer. Coerces exactly like `size` above (a real
+ *  number, or a numeric string — never a boolean or null), so every numeric
+ *  batch field agrees on what it accepts and a `{"limit":"3"}` an agent copied
+ *  from the `--limit` flag doesn't hard-fail on one surface and work on
+ *  another. */
+export function parseBatchInteger(
+	raw: Record<string, unknown>,
+	index: number,
+	field: string,
+	minimum: number,
+): number | undefined | BatchValueError {
+	const value = raw[field];
+	if (value === undefined) return undefined;
+	const parsed =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
+	if (!Number.isInteger(parsed) || parsed < minimum) {
+		return {
+			error: `entry ${index}: "${field}" must be an integer >= ${minimum}`,
+		};
+	}
+	return parsed;
+}
+
+function batchString(
+	raw: Record<string, unknown>,
+	index: number,
+	field: string,
+): { value?: string } | BatchValueError {
+	const value = raw[field];
+	if (value === undefined) return {};
+	if (typeof value !== "string") {
+		return { error: `entry ${index}: "${field}" must be a string` };
+	}
+	return { value };
 }
 
 const TWIPS_PER_POINT = 20;

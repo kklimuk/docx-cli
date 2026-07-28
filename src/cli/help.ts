@@ -15,9 +15,9 @@ Usage:
 Commands (each one-liner names capabilities you'd otherwise miss; see <command> --help):
   create    FILE  Create a new .docx (--from PATH.md | --from - builds from Markdown; --text-file for literal text; --force to overwrite)
   read      FILE  Render as Markdown with pN locators; --from/--to to slice; --comments for comment bodies; --current shows tracked changes inline; --ast for lossless JSON.
-  insert    FILE  Insert content at a locator (--after/--before LOCATOR; --track; --batch for many inserts in one read). ${NOUN_REDIRECTS}
-  find      FILE [QUERY]  Find content by text, OR by formatting; returns locators for \`insert\`, \`replace\`, \`edit\`, \`delete\`.
-  replace   FILE PATTERN REPL  Replace content, sed-style. KEEPS the run's formatting and any tabs (--regex, --track to redline, --dry-run to preview, --batch for a multi-pattern fill).
+  insert    FILE  Insert content at a locator (--at LOCATOR appends; --before/--after for an explicit side; bare cells fill directly; --track; --batch). ${NOUN_REDIRECTS}
+  find      FILE [QUERY]  Find content by text OR formatting; returns locators for \`insert\`/\`replace\`/\`edit\`/\`delete\`; --batch runs many independent queries from one read.
+  replace   FILE PATTERN REPL  Replace the FIRST match sed-style (--all for every match). KEEPS formatting/tabs and can format the replacement (--bold/--color/--clear; --track; --batch).
   edit      FILE  Replace or strip content/formatting at a locator (--clear to strip formatting, --track to redline, --batch for many edits in one read). ${NOUN_REDIRECTS}
   delete    FILE  Remove content at a locator (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)

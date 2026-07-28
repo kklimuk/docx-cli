@@ -50,10 +50,10 @@ Options:
 
 Output:
   Default: GitHub-flavored Markdown. Each paragraph is trailed by an HTML
-  comment with its locator (<!-- p3 -->) so an agent can recover ids from the
-  rendered text. --ast: the bare JSON AST (the body object: blocks, comments,
-  footnotes, endnotes; no envelope) — see \`docx info schema\`. Errors print
-  {code, error, hint?} with a nonzero exit.
+  comment with its locator (<!-- p3 -->); a plain empty table cell exposes one
+  bare <!-- t0:r0c0 --> handle for direct edit/insert. --ast: the bare JSON AST
+  (the body object: blocks, comments, footnotes, endnotes; no envelope) — see
+  \`docx info schema\`. Errors print {code, error, hint?} with a nonzero exit.
 `;
 
 export async function run(args: string[]): Promise<number> {

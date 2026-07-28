@@ -35,3 +35,26 @@ export async function freshFixture(
 	await Bun.write(docPath, Bun.file(fixturePath));
 	return docPath;
 }
+
+/** Build a fresh document with one paragraph followed by a blank table. */
+export async function newTableDoc(
+	label: string,
+	rows = 1,
+	cols = 2,
+	initialText = "Before",
+): Promise<string> {
+	const docPath = join(tempWorkspace(label), "out.docx");
+	await runCli("create", docPath, "--text", initialText);
+	await runCli(
+		"tables",
+		"create",
+		docPath,
+		"--after",
+		"p0",
+		"--rows",
+		String(rows),
+		"--cols",
+		String(cols),
+	);
+	return docPath;
+}

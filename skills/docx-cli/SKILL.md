@@ -49,12 +49,14 @@ Then `docx <command> --help` for any verb before you use it.
 - Entities: `cN` comment, `imgN` image, `linkN` hyperlink, `fnN`/`enN`
   foot/endnote, `tcN` tracked change, `eqN` equation.
 - Get them from `docx read FILE` (locators ride the Markdown as `<!-- pN -->`
-  comments) or `docx read FILE --ast` (lossless JSON).
+  comments; a plain empty cell appears as `<!-- tN:rRcC -->`) or `docx read
+  FILE --ast` (lossless JSON).
 - **Ids are positional and SHIFT after structural edits.** Re-read between
   mutations — OR apply many changes from ONE read with `--batch` (below).
-- Pass a locator with `--at` (edit / delete / comments / footnotes / images /
-  hyperlinks / tables / track-changes), `--after`/`--before` (insert), or
-  `--from`/`--to` (read a slice).
+- Pass a locator with `--at` (including insert: after a block, into a bare cell),
+  `--after`/`--before` when insert's side matters, or `--from`/`--to`
+  (read a slice). A bare cell edit requires one direct paragraph; merged/complex
+  cells need an explicit `tN:rRcC:pK`.
 - Don't hand-count character offsets: `docx find FILE "phrase"` returns the exact
   span locator (e.g. `p3:5-20`) to paste into `--at`.
 
@@ -66,8 +68,14 @@ stops — so it fills bold, tabbed template lines without rebuilding runs.
 ```sh
 docx read contract.docx                                  # see content + locators
 docx replace contract.docx "[Client Name]" "Acme, Inc."  # one field
+docx replace contract.docx "[Status]" "Approved" --bold --clear highlight
+docx edit contract.docx --at t2:r2c1 --text "Charlie Darwin" # fill a blank cell
 docx replace contract.docx --batch fills.jsonl           # many fields, one read/write
 ```
+Replacement text inherits the matched run's formatting unless you overlay
+`--bold`/`--color`/`--font`/… or strip inherited properties with `--clear`.
+A replacement defaults to the first match; pass `--all` (or `"all":true` in
+its JSONL entry) when every occurrence should change.
 
 ### Redline with tracked changes
 ```sh
@@ -91,6 +99,7 @@ docx comments resolve contract.docx --at c0
 ```sh
 docx read FILE            # Markdown (default; tracked changes shown accepted-clean)
 docx read FILE --ast      # lossless JSON AST
+docx find FILE --batch queries.jsonl --json   # many text/format queries, one read
 docx wc FILE              # word count (whole doc or a slice)
 docx outline FILE         # headings as a locator tree
 docx diff FILE --against OLD.docx   # what changed vs another version (snapshot OLD first)

@@ -1,5 +1,9 @@
-import { applyParagraphOptionsInPlace } from "../blocks";
+import {
+	applyParagraphOptionsInPlace,
+	isInheritableRunProperty,
+} from "../blocks";
 import type { XmlNode } from "../parser";
+import { paragraphMarkRunRpr } from "../track-changes/preserve-formatting";
 
 /** Paragraph styles whose look must NOT bleed onto inserted body content:
  * inserting after a heading/title should produce body text, not another
@@ -71,8 +75,11 @@ function hasListMembership(paragraph: XmlNode): boolean {
  * explicit formatting to inherit. */
 function firstRunProperties(paragraph: XmlNode): XmlNode | null {
 	const run = firstRun(paragraph);
-	const properties = run?.findChild("w:rPr");
-	return properties ? properties.clone() : null;
+	const source = run?.findChild("w:rPr") ?? paragraphMarkRunRpr(paragraph);
+	if (!source) return null;
+	const properties = source.clone();
+	properties.children = properties.children.filter(isInheritableRunProperty);
+	return properties.children.length > 0 ? properties : null;
 }
 
 function firstRun(node: XmlNode): XmlNode | undefined {

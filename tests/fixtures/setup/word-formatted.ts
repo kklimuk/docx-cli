@@ -32,6 +32,9 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *       subscript, small/all caps, custom font, custom size). Absorbed from
  *       the former run-formatting.docx fixture; appended last so p0-p3 stay
  *       byte-stable. This is the run-formatting LibreOffice round-trip surface.
+ *   p5: "Replacement: Approved" — authored as a highlighted TODO, then dogfoods
+ *       `replace --clear highlight --bold --color` so replacement-only formatting
+ *       survives the LibreOffice round-trip.
  *
  * Authoring channel — dogfoods the `edit` SET-run-formatting verbs (the inverse
  * of `--clear`): p1 and p2 are authored as PLAIN text via `create`/`insert
@@ -154,7 +157,38 @@ const p4Runs = JSON.stringify([
 ]);
 await cli("insert", out, "--after", "p3", "--runs", p4Runs);
 
+// p5: replacement formatting dogfood. Seed a yellow-highlighted placeholder,
+// then replace only its text while clearing highlight and setting bold/green.
+await cli("insert", out, "--after", "p4", "--text", "Replacement: TODO");
+await setFormat("p5:13-17", "--highlight", "yellow", "--font", "Courier New");
+await cli(
+	"replace",
+	out,
+	"TODO",
+	"Approved",
+	"--at",
+	"p5",
+	"--clear",
+	"highlight",
+	"--bold",
+	"--color",
+	"008000",
+);
+
 const verifyJson = await cli("read", out, "--ast");
+const findBatchJson = await cli(
+	"find",
+	out,
+	"--batch",
+	'{"query":"Approved"}\n{"bold":true}\n',
+	"--json",
+);
+const findBatch = JSON.parse(findBatchJson) as {
+	batch: Array<{ totalMatches: number }>;
+};
+if (findBatch.batch.some((entry) => entry.totalMatches === 0)) {
+	throw new Error("find --batch fixture verification missed expected content");
+}
 const doc = JSON.parse(verifyJson) as {
 	blocks: Array<{
 		id: string;

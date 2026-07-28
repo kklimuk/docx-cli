@@ -1,6 +1,7 @@
 import type { Document } from "../ast/document";
 import type { BlockReference } from "../ast/document/body";
 import { XmlNode } from "../parser";
+import { ensureCellEndsWithParagraph } from "../table";
 import { checkElementOrder } from "./element-order";
 import { RawError } from "./error";
 import { ensureFragmentNamespaces, stampRawMarkers } from "./namespaces";
@@ -135,8 +136,10 @@ export class Raw {
 			const at = action === "after" ? index + 1 : index;
 			target.parent.splice(at, 0, ...prepared.nodes);
 		}
-		if (options.cellScoped) {
-			ensureCellEndsWithParagraph(target.parent, warnings);
+		if (options.cellScoped && ensureCellEndsWithParagraph(target.parent)) {
+			warnings.push(
+				"appended an empty paragraph after the table — Word requires a cell to end with a paragraph",
+			);
 		}
 		warnOnAdjacentTables(target.parent, prepared.nodes, warnings);
 		return warnings;
@@ -216,23 +219,6 @@ export class Raw {
 }
 
 export type PreparedFragment = { nodes: XmlNode[]; warnings: string[] };
-
-/** Word requires a table cell's LAST child to be a paragraph; a raw splice
- *  that leaves a `<w:tbl>` in final position would corrupt the cell, so the
- *  cure is deterministic — append an empty `<w:p>` (fix, don't hint). Applies
- *  only when the splice happened inside a cell. */
-function ensureCellEndsWithParagraph(
-	parent: XmlNode[],
-	warnings: string[],
-): void {
-	const elements = parent.filter((node) => !node.isText);
-	const last = elements[elements.length - 1];
-	if (!last || last.tag !== "w:tbl") return;
-	parent.push(XmlNode.element("w:p"));
-	warnings.push(
-		"appended an empty paragraph after the table — Word requires a cell to end with a paragraph",
-	);
-}
 
 /** Two `<w:tbl>` siblings with nothing between them MERGE into one table when
  *  Word opens the file — legal XML, surprising result. Warn, don't block. */

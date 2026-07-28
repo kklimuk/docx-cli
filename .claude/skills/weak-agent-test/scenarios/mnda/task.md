@@ -38,7 +38,10 @@ document should otherwise look untouched. Edit the file directly.
 | Date (both signature blocks) | **June 8, 2026**                                                               |
 
 The signature table needs Print Name, Title, Company, Notice Address, and Date filled
-in for **both** parties.
+in for **both** parties. Put each value in the blank area beside its label, keeping the
+label cells, narrow divider column, signature lines, and row layout untouched — don't
+add extra lines to neighboring cells. The date appears in both signature blocks, so make
+sure both occurrences are filled rather than stopping after the first one.
 
 ## What "done" looks like
 

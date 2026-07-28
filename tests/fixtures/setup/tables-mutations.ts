@@ -25,10 +25,12 @@ import { $ } from "bun";
  *
  * Table t2 (clean, unmerged 2×3 autofit): the equation-in-cell regression
  * host absorbed from the former tables.docx fixture — a stable, unmerged
- * `t2:r0c0:p0` for inserting an equation and toggling --display. Inserted
- * while track-changes is OFF (before t1's tracked edits) so it carries no
- * revision markers, and the generator turns track-changes back OFF at the
- * end so the untracked equation edit in equations.test.ts applies directly.
+ * `t2:r0c0:p0` for inserting an equation and toggling --display. Its other
+ * cells dogfood bare-cell `edit --at CELL` and insert `--at`/`--before`/`--after`,
+ * including mandatory-empty-paragraph reuse. Inserted while track-changes is OFF
+ * (before t1's tracked edits) so it carries no revision markers, and the generator
+ * turns track-changes back OFF at the end so the untracked equation edit in
+ * equations.test.ts applies directly.
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -145,6 +147,10 @@ await cli(
 	"--cols",
 	"3",
 ); // t2 (clean autofit)
+await cli("edit", out, "--at", "t2:r0c1", "--text", "Bare-cell edit");
+await cli("insert", out, "--at", "t2:r1c1", "--text", "Bare-cell insert");
+await cli("insert", out, "--before", "t2:r1c2", "--text", "Cell start");
+await cli("insert", out, "--after", "t2:r1c2", "--text", "Cell end");
 
 await cli("track-changes", out, "on");
 await cli("tables", "insert-row", out, "--at", "t1", "--cells", "added,row"); // rowIns

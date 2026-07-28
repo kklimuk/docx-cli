@@ -42,7 +42,7 @@ A few `.docx` fixtures intentionally have **no** `setup/<name>.ts` builder becau
 
 ## Notes on a couple of fixtures whose consumers are non-obvious
 
-- **`tables-mutations.docx`** — despite the name, `tables.test.ts` builds all its docs inline and never reads it. Its only consumer is `equations.test.ts` (the cell-resident-equation `--display` regression).
+- **`tables-mutations.docx`** — despite the name, `tables.test.ts` builds all its docs inline and never reads it. Its behavioral consumer is `equations.test.ts` (the cell-resident-equation `--display` regression); its builder also dogfoods bare-cell edit/insert placement for LibreOffice round-trip coverage.
 - **`images.docx`** — read by **no** behavioral test; only referenced in `CORE_FIXTURES` for the LibreOffice round-trip, where `large-mixed.docx` already exercises inserted media + inline `<w:drawing>`. Retire candidate — but confirm it doesn't isolate a minimal single-image package shape that `large-mixed.docx` lacks before dropping it.
 
 ## Round-trip coverage

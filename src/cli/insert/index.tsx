@@ -21,14 +21,14 @@ import { runInsertBatch } from "./batch";
 import { parseTargetPlacement, placeSpec, type TargetPlacement } from "./place";
 
 const ANCHOR_FORMS = describeForms(
-	["paragraph", "table", "section", "cellParagraph"],
+	["paragraph", "table", "section", "cell", "cellParagraph"],
 	"                      ",
 );
 
 const INSERT_HELP = `docx insert — insert content at a locator
 
 Usage:
-  docx insert FILE (--after | --before) LOCATOR <content> [options]
+  docx insert FILE (--after | --before | --at) LOCATOR <content> [options]
   docx insert FILE (--at-start | --at-end) <content> [options]
   docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read
   docx insert FILE --batch -          [options]   # read JSONL from stdin
@@ -36,11 +36,13 @@ Usage:
 Examples:
 ${batchExampleIntro("Insert several blocks")}
   #   adds.jsonl:
-  #     {"after":"p3","text":"New clause.","style":"Heading2"}
-  #     {"before":"p0","text":"ALERT","color":"CC0000","bold":true}
+  #     {"after":"p3","text":"New clause."}
+  #     {"at":"t0:r2c1","text":"Charlie Darwin"}
+  #     {"before":"p0","text":"ALERT","color":"CC0000","bold":true,"style":"Heading2"}
   #     {"after":"p5","markdown":"## Summary"}
   docx insert doc.docx --batch adds.jsonl
   # …or one at a time:
+  docx insert doc.docx --at t0:r2c1 --text "Charlie Darwin"   # fill a blank cell
   docx insert doc.docx --after p3 --text "Section header" --style Heading2
   docx insert doc.docx --after p3 --text "click here" --url https://example.com
   docx insert doc.docx --after p3 --page-break
@@ -50,12 +52,17 @@ ${batchExampleIntro("Insert several blocks")}
 
 Ordering: batch entries apply in file order; several anchored after the SAME
 block stack in that order (three "after":"p0" land as p1, p2, p3, not reversed).
+Bare-cell start/end entries likewise keep file order at their boundary.
 
 Placement (exactly one required) — where to put the new block:
-  --after LOCATOR   Insert after the block at LOCATOR
-  --before LOCATOR  Insert before the block at LOCATOR
+  --at LOCATOR      Insert after an ordinary block; for a bare table cell,
+                    insert into it (fill/reuse a normal blank cell, otherwise append).
+  --after LOCATOR   Insert after a block, or at the END of a bare cell
+  --before LOCATOR  Insert before a block, or at the START of a bare cell
                     LOCATOR is one of:
 ${ANCHOR_FORMS}
+                    Bare-cell forms reject merged/grid-shifted cells. Use
+                    CELL:pK for precise placement around a complex cell paragraph.
   --at-start        Insert at the very top (before the first block) — no locator.
   --at-end          Insert at the very end (after the last block, before the
                     trailing section properties) — no locator.
@@ -91,8 +98,8 @@ Formatting options (incompatible with --markdown / --markdown-file):
 Batch (--batch PATH | -):
   Apply many inserts from one read — the preferred way to add several blocks
   (locators do not shift between entries). Each JSONL line is one insert whose
-  keys mirror the flags: {"after" or "before": LOCATOR, one content field,
-  ...options}, e.g. {"after":"p3","text":"Hi","style":"Heading2"}.
+  keys mirror the flags: {"at" or "after" or "before": LOCATOR, one content
+  field, ...options}, e.g. {"at":"p3","text":"Hi","style":"Heading2"}.
   (--at-start/--at-end don't work in a batch.) Don't pass --after/--text/…
   alongside --batch.
 
@@ -115,10 +122,13 @@ Output:
 const INSERT_TEXT_HELP = `docx insert --text — insert new text content and format it
 
 Usage:
+  docx insert FILE --at LOCATOR --text "New paragraph" [options]
   docx insert FILE (--after | --before) LOCATOR --text "New paragraph" [options]
   docx insert FILE --at-start --text "Title" --style Title
 
 Examples:
+  docx insert doc.docx --at t0:r2c1 --text "Charlie Darwin"
+  docx insert doc.docx --at p3 --text "Paragraph after p3" --style Heading2
   docx insert doc.docx --after p3 --text "Section header" --style Heading2
   docx insert doc.docx --before p0 --text "ALERT" --color CC0000 --bold
   docx insert doc.docx --after p3 --text "click here" --url https://example.com
@@ -208,7 +218,9 @@ async function buildSingleShotOptions(
 	filePath: string,
 	values: RawValues,
 ): Promise<ValidatedOptions | number> {
-	const placement = await parseTargetPlacement(values, INSERT_HELP);
+	const placement = await parseTargetPlacement(values, INSERT_HELP, {
+		allowAt: true,
+	});
 	if (typeof placement === "number") return placement;
 
 	const spec = await chooseContentSpec(values);
@@ -250,10 +262,12 @@ async function buildSingleShotOptions(
 		trackFlag: Boolean(values.track),
 		outputPath: values.output as string | undefined,
 		dryRun: Boolean(values["dry-run"]),
+		allowCellTarget: true,
 	};
 }
 
 const OPTION_SPEC = {
+	at: { type: "string" },
 	after: { type: "string" },
 	before: { type: "string" },
 	"at-start": { type: "boolean" },
@@ -316,6 +330,7 @@ type ValidatedOptions = {
 	trackFlag: boolean;
 	outputPath?: string;
 	dryRun: boolean;
+	allowCellTarget: true;
 };
 
 export type RawValues = ReturnType<typeof parseArgs>["values"];

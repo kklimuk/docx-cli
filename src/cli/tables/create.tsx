@@ -24,7 +24,7 @@ Examples:
   docx tables create doc.docx --after p3 --rows 2 --cols 2 --table-width 50%
   docx tables create doc.docx --at-end --rows 4 --cols 3 --borders double
   # then fill cells from one read (batchable):
-  docx edit doc.docx --at t0:r0c0:p0 --text "Item"
+  docx edit doc.docx --at t0:r0c0 --text "Item"
 
 Placement (exactly one required):
   --after LOCATOR   Insert after the block at LOCATOR (a pN / tN / cell paragraph)
@@ -58,9 +58,10 @@ Options:
   -v, --verbose     Print the success ack JSON (default: the minted locator)
   -h, --help        Show this help
 
-The new table starts empty; fill cells with \`docx edit --at tN:rRcC:pK --text "…"\`
-(batchable), and reshape it with the other \`docx tables\` verbs (insert-row,
-merge, set-widths, format, …).
+The new table starts empty; fill each ordinary cell directly with \`docx edit
+--at tN:rRcC --text "…"\` (batchable). Use \`:pK\` only for a complex cell or
+exact paragraph targeting, then reshape with the other \`docx tables\` verbs
+(insert-row, merge, set-widths, format, …).
 
 AGENT VERIFICATION: \`docx read\` shows the grid but NOT how it lands on the
 page. After adding a table, render and READ the images:

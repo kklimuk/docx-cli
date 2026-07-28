@@ -5,13 +5,17 @@ the request in `task.md`. Judge the finished document against these checks.
 
 ## Pass conditions
 
-- **Cover-page placeholders filled** with the values from `brief.md`: both party
+- **Cover-page placeholders filled** with the values from `task.md`: both party
   names, the signatories + titles, notice emails, the purpose, Effective Date
   (June 8, 2026), MNDA term (2 years), confidentiality term (3 years), Delaware
   governing law, New Castle County jurisdiction, and the signature-block dates. No
   `[ ... ]` bracket placeholders remain anywhere.
-- **Signature table populated** for BOTH parties — Print Name, Title, Company,
-  Notice Address, and Date.
+- **Signature table populated in the intended blank cells** for BOTH parties — in
+  table `t2`, Party 1 values occupy `c1` and Party 2 values occupy `c3`: Print Name
+  (`r2`), Title (`r3`), Company (`r4`), Notice Address (`r5`), and Date (`r6`).
+  The narrow spacer column `c2`, label column `c0`, and blank signature row `r1`
+  remain untouched. Each destination stays a single paragraph (`p0`); extra `p1`
+  lines or values placed in neighboring cells fail.
 - **Zero yellow highlight** anywhere in the document. The placeholders were
   highlighted; once filled, no highlight may remain (check the runs, not just the
   visual — a filled value that kept its `<w:highlight>` fails).
@@ -23,6 +27,9 @@ the request in `task.md`. Judge the finished document against these checks.
 ## How to verify
 
 - `docx read FILE` (and `--ast` for run-level detail) — confirm the values landed and
-  no `[...]` or highlight survives.
+  no `[...]` or highlight survives. The direct form-fill path is `docx edit FILE --at
+  CELL --text ...` against bare cells `t2:r2c1` through `t2:r6c1` and their `c3`
+  counterparts; explicit `:p0` is an equivalent fallback, but the result must still
+  have exactly one paragraph per destination cell.
 - Compare the BASELINE render against the OUTPUT render: only the intended cells
   changed; all other formatting is intact.

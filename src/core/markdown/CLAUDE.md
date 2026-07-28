@@ -30,7 +30,7 @@ When `<w:trackChanges/>` is on, `criticInsert` wraps its (now possibly multi-run
 
 ## Run-formatting encoding: hybrid HTML (the read↔import contract)
 
-Run-level formatting with no native markdown syntax is emitted as **HTML a markdown reader actually renders** — not Pandoc `[text]{…}` spans, which show literal brackets in GitHub / VS Code / Obsidian. `read --markdown` emits it (via `wrapRunFormatting` in [cli/read/markdown.ts](../../cli/read/markdown.ts)) and the import walker parses it back (via `gatherHtmlSpans` in [inline-surgery.ts](inline-surgery.ts), which converts each tag to a `bracketedSpan` the inline walker already overlays). **The tag → property mapping is the contract; keep `wrapRunFormatting` and `gatherHtmlSpans`/`applyCssStyle` in sync.** `read --ast` is the lossless format; markdown is the human/agent comprehension format.
+Run-level formatting with no native markdown syntax is emitted as **HTML a markdown reader actually renders** — not Pandoc `[text]{…}` spans, which show literal brackets in GitHub / VS Code / Obsidian. `read --markdown` emits it (via `htmlFormattingWrappers` in [cli/read/markdown.ts](../../cli/read/markdown.ts)) and the import walker parses it back (via `gatherHtmlSpans` in [inline-surgery.ts](inline-surgery.ts), which converts each tag to a `bracketedSpan` the inline walker already overlays). **The tag → property mapping is the contract; keep `htmlFormattingWrappers` and `gatherHtmlSpans`/`applyCssStyle` in sync.** `read --ast` is the lossless format; markdown is the human/agent comprehension format.
 
 Three carriers — semantic tags (render everywhere, incl. GitHub), `<span style>` (CSS-expressible props; render in editors/browsers; GitHub strips `style`), and `data-*` attributes (OOXML-only props CSS can't say; ignored by renderers, kept in source so markdown stays lossless too):
 
@@ -46,7 +46,7 @@ Three carriers — semantic tags (render everywhere, incl. GitHub), `<span style
 | size | `<span style="font-size:12pt">` | `<w:sz>` half-points; **omitted when it equals the document baseline** (see below) |
 | smallCaps / allCaps | `<span style="font-variant:small-caps">` / `text-transform:uppercase` | |
 
-bold/italic/strike/links/code stay native markdown (`**`/`*`/`~~`/`[](…)`/`` ` ``). Wrappers nest innermost→outermost `<span>` → `<u>` → `<sup>`/`<sub>` → `<mark>`, a fixed order `gatherHtmlSpans` reverses. The `<w:rPr>` emitter is still duplicated across `core/blocks.tsx::RunProperties` (AST→XML) and `inline.tsx::RunProperties` (markdown→XML); both MUST emit identical child order (CT_RPr §17.3.2.28) — enforced by the two-emitter convergence test in [tests/cli/markdown.test.ts](../../../tests/cli/markdown.test.ts).
+bold/italic/strike/links/code stay native markdown (`**`/`*`/`~~`/`[](…)`/`` ` ``). Wrappers nest innermost→outermost `<span>` → `<u>` → `<sup>`/`<sub>` → `<mark>`, a fixed order `gatherHtmlSpans` reverses. Adjacent runs KEEP their exact formatting boundaries but share identical safe outer HTML carriers: highlight-only `[` + highlighted/underlined `x` + highlight-only `]` reads as `<mark>[<u>x</u>]</mark>`, not three repeated `<mark>` pairs. `renderRuns` transitions the wrapper stack without crossing hyperlinks, code, comments, tracked-change envelopes, non-text runs, or incompatible native Markdown decoration; never relax `sameDecoration` to achieve this (that would apply one run's formatting to its neighbors). The `<w:rPr>` emitter is still duplicated across `core/blocks.tsx::RunProperties` (AST→XML) and `inline.tsx::RunProperties` (markdown→XML); both MUST emit identical child order (CT_RPr §17.3.2.28) — enforced by the two-emitter convergence test in [tests/cli/markdown.test.ts](../../../tests/cli/markdown.test.ts).
 
 **Document baseline note.** A leading `<!-- docx:base font="Arial" size="8pt" -->` (`formatBaseNote`) declares the dominant font/size across the doc; `read` then omits those from every matching run so the body reads clean instead of repeating `font-family:Arial` on every span, AND so an agent can see the doc's baseline to match new content. The declared value is the per-run majority (a >50%-of-text dominant), **else the document default** (`docDefaults`/Normal, via `StylesView.defaultFont`/`defaultSizeHalfPoints`) when it DEVIATES from the canonical template (Calibri 11pt) — i.e. someone ran `styles set-default-font`. The universal template default is suppressed as noise (a `docx:base` on every plain doc would be useless); a deviation is the meaningful signal, and surfacing it is what makes `set-default-font` observable on read (the write-read loop) — it has no other agent-visible read-back (`read --ast` doesn't model docDefaults, `styles --at Normal` reads the Normal style's rPr, not docDefaults). Deviation-only suppression is computed in `renderMarkdown`'s `noteBaseline` (the `deviation()` helper); a theme-only docDefaults (no explicit `w:ascii`) stays unsurfaced (we don't resolve the theme), but `set-default-font` always writes explicit ascii so its effect is caught. It is a **visibility hint, not parse-back** (per "comments are never anything but hints" in the root CLAUDE.md): the importer DROPS it (the leading note flows through as a block `html` node and `walkBlock` drops it), so a full `read → create` rebuild falls back to the template `docDefaults` for the dominant font/size — which is exactly why declaring the deviating default in the note is safe (it can't drift the round-trip). `read --ast` stays lossless (every run's font/size is there) and in-place `edit` never touches runs, so only the from-scratch rebuild is lossy. black (`000000`/`auto`) and the `text1`/`dark1` theme are dropped as noise (the universal default).
 
@@ -68,9 +68,9 @@ comments shaped `<!-- docx:TYPE [bareId] key="value" … -->` (emitted via
 `formatNote` in [cli/read/annotations.ts](../../cli/read/annotations.ts), escaped
 with `htmlAttr`): `docx:section` (section breaks), `docx:page` (page geometry),
 `docx:table` (uneven column widths + border summary), `docx:cell` (per-cell
-merge/shading, carrying the cell address — emitted LEADING the cell, ahead of the
-content and its per-paragraph locators, like `docx:section`/`docx:table` lead
-their scope), `docx:image` (size always +
+merge/shading, carrying the cell address — emitted at the END of the cell, after
+its content and per-paragraph locators; an empty metadata-bearing cell emits this
+note alone), `docx:image` (size always +
 float/wrap/align/overflow deviation-only, carrying the `imgN` id), and `docx:list`
 (a numbered list's first-run `start`/`format`/`renders`/`continues`, carrying the
 `pN` — the glyph + continue link the GFM ordinal can't show, PLUS a
@@ -88,7 +88,8 @@ created vanishes rather than corrupting into a border paragraph) — but the age
 SAW it in the read output. Re-emitted fresh each read, so they never accrete.
 
 **Naming rule — bare = locator, `docx:` = metadata.** A bare comment is a
-LOCATOR (an address: `<!-- p0 -->`, `<!-- t0:r0c0:p0 -->`). Anything docx-cli adds
+LOCATOR (an address: `<!-- p0 -->`, `<!-- t0:r0c0:p0 -->`; a plain empty cell is
+`<!-- t0:r0c0 -->`, its direct edit/insert fill handle). Anything docx-cli adds
 BEYOND addressing is a `docx:TYPE` annotation (`docx:section`, `docx:page`,
 `docx:table`, `docx:cell`, `docx:list`, `docx:base`), which may carry the relevant
 locator as a bare leading token (`<!-- docx:cell t0:r0c0 gridSpan="2" shading="FFE699" -->`).

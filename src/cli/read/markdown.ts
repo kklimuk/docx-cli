@@ -1295,6 +1295,8 @@ function renderRuns(
 
 	let out = "";
 	let cursor = 0;
+	let openFormattingWrappers: HtmlFormattingWrapper[] = [];
+	let previousTransitionRun: TextRun | null = null;
 	// Where the next non-code text run sits in the escape `mask` (which spans the
 	// whole pairing scope — the paragraph, or for a cell, every paragraph in it).
 	// Code runs and non-text runs aren't in the parsed content, so they don't
@@ -1317,21 +1319,51 @@ function renderRuns(
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
 			const segmentRuns = segment.map((entry) => entry.run as TextRun);
-			out += renderTextSegment(
-				segmentRuns,
-				view,
-				ctx.baseline,
-				mask,
-				contentCursor,
+			const first = segmentRuns[0];
+			const text = segmentRuns.map((segmentRun) => segmentRun.text).join("");
+			const commentEndings = commentEndingsFor(
+				paragraphId,
+				segment,
+				ctx.commentIndex,
 			);
-			// Inline code is excluded from the parsed content (literal in backticks),
-			// so only non-code segments advance the mask cursor.
-			if (segmentRuns[0]?.runStyle !== "Code") {
-				contentCursor += segmentRuns.reduce(
-					(sum, segmentRun) => sum + segmentRun.text.length,
-					0,
+			// `needsHtmlWrap` is the cheap predicate for "this run has non-native
+			// formatting"; when it's false `htmlFormattingWrappers` provably returns
+			// [] (every property it emits on is one this tests), so skip building it.
+			const wrappers =
+				first && needsHtmlWrap(first, ctx.baseline)
+					? htmlFormattingWrappers(first, ctx.baseline)
+					: [];
+			const canTransition =
+				first !== undefined &&
+				canTransitionFormattingWrappers(first, text, commentEndings, wrappers);
+			const continuesTransition =
+				canTransition &&
+				previousTransitionRun !== null &&
+				sameNativeMarkdownDecoration(previousTransitionRun, first);
+
+			if (!continuesTransition) {
+				out += transitionFormattingWrappers(openFormattingWrappers, []);
+				openFormattingWrappers = [];
+				previousTransitionRun = null;
+			}
+			if (canTransition) {
+				out += transitionFormattingWrappers(openFormattingWrappers, wrappers);
+				openFormattingWrappers = wrappers;
+				out += renderTextBody(segmentRuns, text, mask, contentCursor);
+				previousTransitionRun = first;
+			} else {
+				out += renderTextSegment(
+					segmentRuns,
+					text,
+					wrappers,
+					view,
+					mask,
+					contentCursor,
 				);
 			}
+			// Inline code is excluded from the parsed content (literal in backticks),
+			// so only non-code segments advance the mask cursor.
+			if (first?.runStyle !== "Code") contentCursor += text.length;
 			if (view === "current") {
 				for (const segmentRun of segmentRuns) {
 					if (segmentRun.trackedChange) {
@@ -1342,10 +1374,14 @@ function renderRuns(
 					}
 				}
 			}
-			out += commentEndingsFor(paragraphId, segment, ctx.commentIndex);
+			out += commentEndings;
 			cursor = lookahead;
 			continue;
 		}
+
+		out += transitionFormattingWrappers(openFormattingWrappers, []);
+		openFormattingWrappers = [];
+		previousTransitionRun = null;
 		if (run.type === "image") {
 			const alt = sanitizeAltText(run.alt ?? run.id);
 			// Content-addressed URL: `<sha256>.<ext>`. The walker on the
@@ -1393,6 +1429,7 @@ function renderRuns(
 		}
 		cursor++;
 	}
+	out += transitionFormattingWrappers(openFormattingWrappers, []);
 	return out;
 }
 
@@ -1458,14 +1495,53 @@ function sameCommentSet(
 	return true;
 }
 
+type HtmlFormattingWrapper = {
+	open: string;
+	close: string;
+};
+
+/** The self-contained (non-transitioning) segment render. `wrappers` is the
+ * stack the caller already built to decide whether the segment could share its
+ * carriers with a neighbor — passed in rather than rebuilt, since deriving it
+ * twice per segment is pure waste. */
 function renderTextSegment(
 	runs: TextRun[],
+	text: string,
+	wrappers: HtmlFormattingWrapper[],
 	view: MarkdownView,
-	baseline: RunFormatBaseline,
 	mask: boolean[],
 	offset: number,
 ): string {
-	const text = runs.map((run) => run.text).join("");
+	const first = runs[0];
+	if (!first) return "";
+	let out = renderTextBody(runs, text, mask, offset);
+	if (out.length === 0) return "";
+	// Everything else (color, highlight, shading, underline, super/sub, caps,
+	// font, size, theme color) rides in HTML so a real markdown reader renders
+	// it: semantic tags where they exist (<mark>/<sup>/<sub>/<u>), a `<span
+	// style>` for the CSS-expressible props, and `data-*` attributes for the
+	// OOXML-only bits CSS can't say. The import side parses these back;
+	// `read --ast` is the lossless format. See `htmlFormattingWrappers`.
+	out = wrapInFormattingWrappers(out, wrappers);
+	if (first.hyperlink) {
+		const target = first.hyperlink.url ?? `#${first.hyperlink.anchor ?? ""}`;
+		out = `[${out}](${target})`;
+	}
+	if (view === "current" && first.trackedChange) {
+		const marker = criticMarkerFor(first.trackedChange.kind);
+		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
+	}
+	return out;
+}
+
+/** `text` is the segment's runs concatenated — passed in rather than re-joined
+ * because the caller already needed it to decide the wrapper transition. */
+function renderTextBody(
+	runs: TextRun[],
+	text: string,
+	mask: boolean[],
+	offset: number,
+): string {
 	if (text.length === 0) return "";
 	const first = runs[0];
 	if (!first) return "";
@@ -1475,7 +1551,6 @@ function renderTextSegment(
 	// which both renders correctly AND round-trips (consistent with the
 	// underline/highlight/color a blank run already keeps via the wrapper below).
 	const isBlank = text.trim().length === 0;
-	const wrap = needsHtmlWrap(first, baseline) || isBlank;
 	// Escape only the characters the importer's parser would CONSUME as markup —
 	// `mask` is the per-character verdict from `inlineEscapeMask`, so a paired `$`
 	// or a link-forming `[` is escaped while an inert `[ x ]` checkbox or a lone
@@ -1500,22 +1575,63 @@ function renderTextSegment(
 		if (first.italic) out = `*${out}*`;
 		if (first.strike) out = `~~${out}~~`;
 	}
-	// Everything else (color, highlight, shading, underline, super/sub, caps,
-	// font, size, theme color) rides in HTML so a real markdown reader renders
-	// it: semantic tags where they exist (<mark>/<sup>/<sub>/<u>), a `<span
-	// style>` for the CSS-expressible props, and `data-*` attributes for the
-	// OOXML-only bits CSS can't say. The import side parses these back;
-	// `read --ast` is the lossless format. See `wrapRunFormatting`.
-	if (wrap) out = wrapRunFormatting(out, first, baseline);
-	if (first.hyperlink) {
-		const target = first.hyperlink.url ?? `#${first.hyperlink.anchor ?? ""}`;
-		out = `[${out}](${target})`;
+	return out;
+}
+
+function canTransitionFormattingWrappers(
+	run: TextRun,
+	text: string,
+	commentEndings: string,
+	wrappers: HtmlFormattingWrapper[],
+): boolean {
+	return (
+		wrappers.length > 0 &&
+		text.length > 0 &&
+		text.trim().length > 0 &&
+		run.runStyle !== "Code" &&
+		!run.hyperlink &&
+		!run.trackedChange &&
+		(run.comments?.length ?? 0) === 0 &&
+		commentEndings.length === 0
+	);
+}
+
+function sameNativeMarkdownDecoration(left: TextRun, right: TextRun): boolean {
+	return (
+		(left.bold ?? false) === (right.bold ?? false) &&
+		(left.italic ?? false) === (right.italic ?? false) &&
+		(left.strike ?? false) === (right.strike ?? false) &&
+		(left.runStyle ?? "") === (right.runStyle ?? "")
+	);
+}
+
+function transitionFormattingWrappers(
+	current: HtmlFormattingWrapper[],
+	next: HtmlFormattingWrapper[],
+): string {
+	let commonLength = 0;
+	while (
+		commonLength < current.length &&
+		commonLength < next.length &&
+		sameFormattingWrapper(current[commonLength], next[commonLength])
+	) {
+		commonLength++;
 	}
-	if (view === "current" && first.trackedChange) {
-		const marker = criticMarkerFor(first.trackedChange.kind);
-		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
+	let out = "";
+	for (let index = current.length - 1; index >= commonLength; index--) {
+		out += current[index]?.close ?? "";
+	}
+	for (let index = commonLength; index < next.length; index++) {
+		out += next[index]?.open ?? "";
 	}
 	return out;
+}
+
+function sameFormattingWrapper(
+	left: HtmlFormattingWrapper | undefined,
+	right: HtmlFormattingWrapper | undefined,
+): boolean {
+	return left?.open === right?.open && left?.close === right?.close;
 }
 
 /** CriticMarkup doesn't have a native "moved" marker, so we render moveTo
@@ -1549,18 +1665,66 @@ function needsHtmlWrap(run: TextRun, baseline: RunFormatBaseline): boolean {
 }
 
 /** Wrap already-markdown-formatted text in the HTML that carries a run's
- * non-native formatting, innermost → outermost: `<span style + data-*>` (color,
- * font, size, caps, shade, theme color) → `<u>` (underline) → `<sup>`/`<sub>`
- * (vertical align) → `<mark>` (highlight). The nesting order is fixed so the
- * importer (`gatherHtmlSpans` in `core/markdown/inline-surgery.ts`) reverses it
- * deterministically — this pairing is the read↔import contract. CSS-expressible
- * props go in `style`; OOXML-only ones (theme color, underline style) ride as
- * `data-*` attributes a renderer ignores but the importer reads. */
-function wrapRunFormatting(
+ * non-native formatting. `htmlFormattingWrappers` returns the canonical stack
+ * outermost → innermost: `<mark>` → `<sup>`/`<sub>` → `<u>` → `<span style +
+ * data-*>`. The fixed nesting lets adjacent runs retain common outer wrappers
+ * while the importer (`gatherHtmlSpans` in `core/markdown/inline-surgery.ts`)
+ * deterministically overlays each nested property. CSS-expressible props go in
+ * `style`; OOXML-only ones ride as `data-*` attributes. */
+function wrapInFormattingWrappers(
 	body: string,
+	wrappers: HtmlFormattingWrapper[],
+): string {
+	if (wrappers.length === 0) return body;
+	return (
+		wrappers.map((wrapper) => wrapper.open).join("") +
+		body +
+		wrappers
+			.toReversed()
+			.map((wrapper) => wrapper.close)
+			.join("")
+	);
+}
+
+function htmlFormattingWrappers(
 	run: TextRun,
 	baseline: RunFormatBaseline,
-): string {
+): HtmlFormattingWrapper[] {
+	const wrappers: HtmlFormattingWrapper[] = [];
+	if (run.highlight) {
+		// `<mark>` defaults to yellow; carry any other named highlight in a
+		// data attribute (the importer reads it back to the exact OOXML name).
+		const named =
+			run.highlight === "yellow"
+				? ""
+				: ` ${htmlAttr("data-highlight", run.highlight)}`;
+		wrappers.push({ open: `<mark${named}>`, close: "</mark>" });
+	}
+	if (run.vertAlign === "superscript") {
+		wrappers.push({ open: "<sup>", close: "</sup>" });
+	} else if (run.vertAlign === "subscript") {
+		wrappers.push({ open: "<sub>", close: "</sub>" });
+	}
+	if (run.underline === "single") {
+		wrappers.push({ open: "<u>", close: "</u>" });
+	} else if (run.underline) {
+		const color = run.underlineColor
+			? ` ${htmlAttr("data-underline-color", run.underlineColor)}`
+			: "";
+		wrappers.push({
+			open: `<u ${htmlAttr("data-underline", run.underline)}${color}>`,
+			close: "</u>",
+		});
+	}
+	const span = spanFormattingWrapper(run, baseline);
+	if (span) wrappers.push(span);
+	return wrappers;
+}
+
+function spanFormattingWrapper(
+	run: TextRun,
+	baseline: RunFormatBaseline,
+): HtmlFormattingWrapper | null {
 	const styles: string[] = [];
 	const attrs: string[] = [];
 	// Black / "auto" is the universal default — emitting it says nothing.
@@ -1590,36 +1754,14 @@ function wrapRunFormatting(
 			attrs.push(htmlAttr("data-color-theme-shade", run.colorThemeShade));
 		}
 	}
-	let out = body;
-	if (styles.length > 0 || attrs.length > 0) {
-		// `style` and `data-*` values are HTML-attribute-escaped so a crafted font
-		// name (e.g. one containing `"`) can't close the attribute early and inject
-		// a sibling attribute — the importer decodes the entity back verbatim.
-		const stylePart =
-			styles.length > 0 ? ` ${htmlAttr("style", styles.join(";"))}` : "";
-		const attrPart = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
-		out = `<span${stylePart}${attrPart}>${out}</span>`;
-	}
-	if (run.underline === "single") {
-		out = `<u>${out}</u>`;
-	} else if (run.underline) {
-		const color = run.underlineColor
-			? ` ${htmlAttr("data-underline-color", run.underlineColor)}`
-			: "";
-		out = `<u ${htmlAttr("data-underline", run.underline)}${color}>${out}</u>`;
-	}
-	if (run.vertAlign === "superscript") out = `<sup>${out}</sup>`;
-	else if (run.vertAlign === "subscript") out = `<sub>${out}</sub>`;
-	if (run.highlight) {
-		// `<mark>` defaults to yellow; carry any other named highlight in a
-		// data attribute (the importer reads it back to the exact OOXML name).
-		const named =
-			run.highlight === "yellow"
-				? ""
-				: ` ${htmlAttr("data-highlight", run.highlight)}`;
-		out = `<mark${named}>${out}</mark>`;
-	}
-	return out;
+	if (styles.length === 0 && attrs.length === 0) return null;
+	// `style` and `data-*` values are HTML-attribute-escaped so a crafted font
+	// name (e.g. one containing `"`) can't close the attribute early and inject
+	// a sibling attribute — the importer decodes the entity back verbatim.
+	const stylePart =
+		styles.length > 0 ? ` ${htmlAttr("style", styles.join(";"))}` : "";
+	const attrPart = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+	return { open: `<span${stylePart}${attrPart}>`, close: "</span>" };
 }
 
 /** Black (`000000`) or `auto` — the universal default text color, which carries
@@ -1697,7 +1839,9 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 		const cells: string[] = [];
 		for (let columnIndex = 0; columnIndex < colCount; columnIndex++) {
 			const cell = row.cells[columnIndex];
-			cells.push(cell ? renderCell(cell, ctx) : "");
+			cells.push(
+				cell ? renderCell(cell, ctx, isBareCellTarget(row, cell)) : "",
+			);
 		}
 		return cells;
 	});
@@ -1787,7 +1931,23 @@ function rowToLine(cells: string[]): string {
 	return `| ${cells.join(" | ")} |`;
 }
 
-function renderCell(cell: TableCell, ctx: RenderContext): string {
+/** Whether a bare `tN:rRcC` address really is an `edit --at` / `insert --at`
+ * target, mirroring `resolveCellReference`'s conservative gate: it rejects the
+ * cell itself when merged, AND every cell of a row that carries a horizontal
+ * merge (a spanned row's physical cells no longer line up with logical grid
+ * columns). Read must not advertise a handle the mutation surface refuses.
+ * (`<w:trPr><w:gridBefore/>`/`<w:gridAfter/>` also reject there but aren't in
+ * the AST — those rows keep the pre-handle rendering only by luck.) */
+function isBareCellTarget(row: TableRow, cell: TableCell): boolean {
+	if (cell.vMerge || (cell.gridSpan ?? 1) > 1) return false;
+	return !row.cells.some((sibling) => (sibling.gridSpan ?? 1) > 1);
+}
+
+function renderCell(
+	cell: TableCell,
+	ctx: RenderContext,
+	bareTargetable: boolean,
+): string {
 	const parts: string[] = [];
 	// A cell renders as ONE line, its paragraphs joined by `<br>`, so a pair can
 	// straddle paragraphs — a `$` alone in its own paragraph partnered across the
@@ -1813,7 +1973,10 @@ function renderCell(cell: TableCell, ctx: RenderContext): string {
 		if (block.type === "paragraph") {
 			const rendered = renderRuns(block.id, block.runs, ctx, mask, baseOffset);
 			baseOffset += paragraphContent(block.runs, view).length + 1;
-			if (rendered.length === 0) continue;
+			if (rendered.length === 0) {
+				if (cell.blocks.length > 1) parts.push(`<!-- ${block.id} -->`);
+				continue;
+			}
 			// Trim trailing spaces/tabs so the locator separator doesn't grow
 			// each round-trip (newlines become <br> via escapeCell).
 			parts.push(`${rendered.replace(/[ \t]+$/, "")} <!-- ${block.id} -->`);
@@ -1829,12 +1992,23 @@ function renderCell(cell: TableCell, ctx: RenderContext): string {
 	// this is its own `docx:cell` annotation, NOT riding the bare cell locator. A
 	// DROPPED read-time hint. A merged/shaded cell is often EMPTY (a
 	// vMerge="continue" cell carries no content) — surface the note regardless.
-	// The note LEADS the cell (like `docx:section`/`docx:table` lead their scope),
-	// so the cell-level metadata reads before the content and the per-paragraph
-	// locators that follow it — kept SEPARATE from those bare locators, not merged.
+	// The note TRAILS the cell, after the content and per-paragraph locators, so
+	// an agent reads the human-facing value first and then its cell-level metadata.
+	// It stays SEPARATE from those bare locators, not merged into one comment.
 	const note = cellNote(cell);
+	if (body.length === 0) {
+		if (note) return escapeCell(note);
+		// The bare fill handle is only emitted for a cell a bare `--at` can
+		// actually address (see `isBareCellTarget`) — otherwise the agent would
+		// paste an address `resolveCellReference` rejects with TABLE_STRUCTURE.
+		if (!bareTargetable) return "";
+		const soleBlock = cell.blocks[0];
+		if (cell.blocks.length !== 1 || soleBlock?.type !== "paragraph") return "";
+		const address = cellAddress(cell);
+		return escapeCell(address ? `<!-- ${address} -->` : "");
+	}
 	if (!note) return escapeCell(body);
-	return escapeCell(body ? `${note} ${body}` : note);
+	return escapeCell(`${body} ${note}`);
 }
 
 /** The `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699"
@@ -1884,7 +2058,9 @@ function cellAddress(cell: TableCell): string | undefined {
 
 function renderNestedTable(table: Table, ctx: RenderContext): string {
 	const rows = table.rows.map((row) =>
-		row.cells.map((cell) => renderCell(cell, ctx)).join(" / "),
+		row.cells
+			.map((cell) => renderCell(cell, ctx, isBareCellTarget(row, cell)))
+			.join(" / "),
 	);
 	return rows.join(" // ");
 }

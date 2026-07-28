@@ -1,7 +1,7 @@
 import {
 	type BlockRangeReference,
 	type BlockReference,
-	CLEARABLE_ATTRS,
+	CellTargetError,
 	type Document,
 	describeForms,
 	Edit,
@@ -11,19 +11,22 @@ import {
 	MarkdownImport,
 	MarkdownImportError,
 	type ParagraphContentSpec,
+	parseCellAt,
 	parseLocator,
 	type Run,
 	type RunFormat,
-	resolveClearTags,
+	resolveCellParagraphReference,
 	type XmlNode,
 } from "@core";
 import type { ParagraphOptions, TabStop } from "@core/blocks";
+import { ensureCellEndsWithParagraph } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
 	batchExampleIntro,
 	decodeInlineEscapes,
 	hasRunFormatFlags,
+	parseClearTags,
 	parseRunFormat,
 	parseRunsArg,
 	parseSpacingIndentFlags,
@@ -52,7 +55,7 @@ import {
 } from "./tabs";
 
 const AT_FORMS = describeForms(
-	["paragraph", "span", "blockRange", "cellParagraph", "cellSpan"],
+	["paragraph", "span", "blockRange", "cell", "cellParagraph", "cellSpan"],
 	"                      ",
 );
 
@@ -78,13 +81,17 @@ ${batchExampleIntro("Edit several blocks")}
   docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
   docx edit doc.docx --at p3 --markdown "## Revised heading"
   docx edit doc.docx --at p4 --text "Title" --bold     # fill + format in one call
+  docx edit doc.docx --at t0:r2c1 --text "Charlie Darwin" # fill a blank cell
   docx edit doc.docx --at p9-p38 --tabs right          # fix every wrapping tab line
 
 Locator (required):
   --at LOCATOR      What to edit. One of:
 ${AT_FORMS}
-                    A character span (pN:S-E, or tN:rRcC:pK:S-E in a cell)
-                    replaces just those characters. More: \`docx info locators\`.
+                    A bare CELL aliases its sole direct paragraph; use CELL:pK
+                    when the cell has multiple blocks or a nested table. Merged
+                    bare cells are rejected. A character span (pN:S-E, or
+                    tN:rRcC:pK:S-E) replaces just those characters. More:
+                    \`docx info locators\`.
 
 Content (required, UNLESS you pass only the formatting options below):
   --markdown TEXT   Replace with parsed GFM markdown (headings, lists, tables,
@@ -125,7 +132,8 @@ Batch (--batch PATH | -):
   (locators do not shift between entries). Each JSONL line is one edit whose
   keys mirror the flags: {"at": LOCATOR, ...} with at most one content field
   ("text"/"markdown"/"runs"). "style"/"alignment"/"clear"/"bold"/"color"/…
-  can ride along with content, or stand alone to format existing text.
+  can ride along with content, or stand alone to format existing text. A bare
+  CELL is valid when it contains exactly one direct paragraph.
   \`"text": ""\` or \`"delete": true\` removes the line. One entry per paragraph —
   to fill AND format the same paragraph, put both fields in that one entry.
   Ranges (pN-pM) aren't batchable; sections (sN) and equations (eqN) aren't
@@ -156,9 +164,11 @@ const EDIT_TEXT_HELP = `docx edit --text — replace a line's text and format it
 
 Usage:
   docx edit FILE --at pN --text "New text" [formatting]
+  docx edit FILE --at CELL --text "Cell value" [formatting]
   docx edit FILE --at pN:S-E --text "New text" [formatting]   # just a span
 
 Examples:
+  docx edit doc.docx --at t0:r2c1 --text "Charlie Darwin"
   docx edit doc.docx --at p4 --text "Delaware"
   docx edit doc.docx --at p4 --text "Title" --bold --color C00000
   docx edit doc.docx --at p4:4-13 --text "flawless" --italic
@@ -270,6 +280,25 @@ export async function run(args: string[]): Promise<number> {
 			opts.spec,
 			resolveTabsDirective(opts.tabsDirective, document),
 		);
+	}
+
+	// Bare cell locator (`tN:rRcC`): an unmerged cell with exactly one direct
+	// paragraph is an unambiguous shorthand for that paragraph. This is the form-
+	// fill path for Word's mandatory empty cell paragraph; richer cells require
+	// their explicit `:pK` locator.
+	if (parseCellAt(opts.locator)) {
+		try {
+			const { cell, paragraph } = resolveCellParagraphReference(
+				document,
+				opts.locator,
+			);
+			return commitBlockEdit(document, paragraph, opts, cell.parent);
+		} catch (error) {
+			if (error instanceof CellTargetError) {
+				return fail(error.code, error.message, error.hint);
+			}
+			throw error;
+		}
 	}
 
 	// Range locator (`pN-pM`): replaces a span of paragraphs as a unit.
@@ -398,6 +427,7 @@ async function commitBlockEdit(
 	document: Document,
 	blockRef: BlockReference,
 	opts: ValidatedOptions,
+	cellParent?: XmlNode[],
 ): Promise<number> {
 	if (opts.dryRun) return respondDryRun(opts);
 
@@ -463,6 +493,7 @@ async function commitBlockEdit(
 		throw error;
 	}
 
+	if (cellParent) ensureCellEndsWithParagraph(cellParent);
 	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
@@ -951,28 +982,9 @@ type RawValues = ReturnType<typeof parseArgs>["values"];
 async function parseClearTagsOrFail(
 	clearFlag: string | string[],
 ): Promise<Set<string> | number> {
-	// Accept a single value, a comma list, repeated --clear flags, or any mix.
-	const raw = Array.isArray(clearFlag) ? clearFlag : [clearFlag];
-	const names = raw
-		.flatMap((entry) => entry.split(","))
-		.map((name) => name.trim().toLowerCase())
-		.filter(Boolean);
-	if (names.length === 0) {
-		return fail(
-			"USAGE",
-			"--clear needs an attribute name, or 'all'",
-			EDIT_HELP,
-		);
-	}
-	const tags = resolveClearTags(names);
-	if (!tags) {
-		return fail(
-			"USAGE",
-			`--clear: unknown attribute in "${raw.join(",")}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
-			EDIT_HELP,
-		);
-	}
-	return tags;
+	const parsed = parseClearTags(clearFlag);
+	if (parsed instanceof Set) return parsed;
+	return fail("USAGE", parsed.error, parsed.hint ?? EDIT_HELP);
 }
 
 async function validateParagraphEdit(

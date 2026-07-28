@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { trackedKinds } from "./helpers";
+import { newTableDoc, trackedKinds } from "./helpers";
 
 type AstParagraph = {
 	id: string;
@@ -756,6 +756,149 @@ describe("insert --at-start / --at-end (boundary placement)", () => {
 		// Top-level paragraph after the table — no cell-scoped (":") locator.
 		expect(locators).toEqual(["p1"]);
 		expect(locators.some((l) => l.includes(":"))).toBe(false);
+	});
+});
+
+describe("insert into a bare table-cell locator", () => {
+	test("--at fills the mandatory empty paragraph and reports canonical p0", async () => {
+		const docPath = await newTableDoc("cell-at-empty");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"Dana Okafor",
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { locators: string[] }).locators).toEqual([
+			"t0:r0c0:p0",
+		]);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("Dana Okafor <!-- t0:r0c0:p0 -->");
+		expect(read.stdout).not.toContain("<!-- t0:r0c0:p0 --><br>Dana Okafor");
+	});
+
+	test("inherits run formatting from an empty cell's paragraph mark", async () => {
+		const docPath = await newTableDoc("cell-at-styled");
+		expect(
+			(
+				await runCli(
+					"raw",
+					"replace",
+					docPath,
+					"--at",
+					"t0:r0c0:p0",
+					"--xml",
+					'<w:p><w:pPr><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="18"/></w:rPr></w:pPr></w:p>',
+				)
+			).exitCode,
+		).toBe(0);
+		await runCli("insert", docPath, "--at", "t0:r0c0", "--text", "Styled");
+
+		const read = await runCli("read", docPath, "--ast");
+		const table = (
+			read.parsed as {
+				blocks: Array<{
+					type: string;
+					rows?: Array<{
+						cells: Array<{
+							blocks: Array<{
+								runs?: Array<{
+									text?: string;
+									font?: string;
+									sizeHalfPoints?: number;
+								}>;
+							}>;
+						}>;
+					}>;
+				}>;
+			}
+		).blocks.find((candidate) => candidate.type === "table");
+		const run = table?.rows?.[0]?.cells[0]?.blocks[0]?.runs?.[0];
+		expect(run).toMatchObject({
+			text: "Styled",
+			font: "Arial",
+			sizeHalfPoints: 18,
+		});
+	});
+
+	test("--before, --at, and --after use stable cell start/end boundaries", async () => {
+		const docPath = await newTableDoc("cell-boundaries");
+		await runCli("insert", docPath, "--at", "t0:r0c0", "--text", "A");
+		await runCli("insert", docPath, "--at", "t0:r0c0", "--text", "B");
+		await runCli("insert", docPath, "--before", "t0:r0c0", "--text", "C");
+		await runCli("insert", docPath, "--after", "t0:r0c0", "--text", "D");
+
+		const read = await runCli("read", docPath);
+		const cell = read.stdout.match(/\| C [^|]+\|/)?.[0] ?? "";
+		expect(cell).toContain("C <!-- t0:r0c0:p0 -->");
+		expect(cell).toContain("A <!-- t0:r0c0:p1 -->");
+		expect(cell).toContain("B <!-- t0:r0c0:p2 -->");
+		expect(cell).toContain("D <!-- t0:r0c0:p3 -->");
+	});
+
+	test("tracked empty-cell fill rejects back to one valid blank paragraph", async () => {
+		const docPath = await newTableDoc("cell-track-reject");
+		expect(
+			(
+				await runCli(
+					"insert",
+					docPath,
+					"--at",
+					"t0:r0c0",
+					"--text",
+					"Tracked",
+					"--track",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(await trackedKinds(docPath)).toEqual(["ins"]);
+
+		expect(
+			(await runCli("track-changes", "reject", docPath, "--all")).exitCode,
+		).toBe(0);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("<!-- t0:r0c0 -->");
+		expect(read.stdout).not.toContain("Tracked");
+	});
+
+	test("--at appends after an ordinary block and rejects merged bare cells", async () => {
+		const docPath = await newTableDoc("cell-rejections");
+		const blockTarget = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"After block",
+		);
+		expect(blockTarget.exitCode).toBe(0);
+		expect((blockTarget.parsed as { placement: string }).placement).toBe("at");
+		expect((blockTarget.parsed as { locators: string[] }).locators).toEqual([
+			"p1",
+		]);
+		expect(paragraphText((await readParagraphs(docPath))[1])).toBe(
+			"After block",
+		);
+
+		expect(
+			(await runCli("tables", "merge", docPath, "--at", "t0:r0c0-r0c1"))
+				.exitCode,
+		).toBe(0);
+		const mergedTarget = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"Nope",
+		);
+		expect(mergedTarget.exitCode).not.toBe(0);
+		expect((mergedTarget.parsed as { code: string }).code).toBe(
+			"TABLE_STRUCTURE",
+		);
 	});
 });
 

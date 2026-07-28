@@ -2,6 +2,7 @@ import {
 	type AcrossReplaceResult,
 	applyAcrossReplace,
 	type FindView,
+	type ReplacementFormatting,
 } from "@core/find";
 import { spanLocator } from "../parse-helpers";
 import {
@@ -37,6 +38,7 @@ export async function runReplaceAcross(
 		all: boolean;
 		limit?: number;
 		view: FindView;
+		formatting?: ReplacementFormatting;
 		track: boolean;
 		output?: string;
 		dryRun: boolean;
@@ -62,6 +64,7 @@ export async function runReplaceAcross(
 				all: options.all,
 				...(options.limit !== undefined ? { limit: options.limit } : {}),
 				view: options.view,
+				...(options.formatting ? { formatting: options.formatting } : {}),
 			},
 			{ dryRun: options.dryRun },
 		);

@@ -38,7 +38,7 @@ Verbs:
 "create" mints a fresh table; the other verbs restructure an existing one. The
 rest of the table lifecycle uses the standard verbs:
   delete (all)  docx delete FILE --at tN
-  edit a cell   docx edit FILE --at tN:rRcC:pK --text "..."
+  edit a cell   docx edit FILE --at tN:rRcC --text "..."  (simple cell; use :pK for precision)
   inspect       docx read FILE --ast   (grid widths, gridSpan, vMerge per cell)
   verify        docx render FILE --out pages/   (see how it lands on the page)
 

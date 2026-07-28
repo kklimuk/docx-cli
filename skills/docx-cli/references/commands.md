@@ -16,7 +16,7 @@ docx info skill        # this skill, regenerated from the binary
 | Command             | What it does                                                                                                                                                                |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read FILE`         | Render as Markdown with `pN` locators. `--from/--to` slice; `--accepted` (default)/`--current`/`--baseline` tracked views; `--comments`; `--ast` for the lossless JSON AST. |
-| `find FILE [QUERY]` | Find spans by text OR by formatting (`--highlight/--color/--bold/--italic/--underline`); returns locators to feed `--at`.                                                   |
+| `find FILE [QUERY]` | Find spans by text OR formatting; returns locators to feed `--at`. `--batch queries.jsonl` evaluates many independent queries in one read (`--json` preserves per-query results). |
 | `wc FILE [LOCATOR]` | Word count for the whole doc or a slice.                                                                                                                                    |
 | `outline FILE`      | Headings as a locator tree.                                                                                                                                                 |
 | `render FILE`       | Render each page to PNG/JPG via Word or LibreOffice — for verifying LAYOUT only.                                                                                            |
@@ -29,10 +29,10 @@ docx info skill        # this skill, regenerated from the binary
 | Command                              | What it does                                                                                                                      |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `create FILE`                        | Create a new `.docx` (`--from PATH.md` / `--from -`; `--text-file` for literal text).                                             |
-| `edit FILE`                          | Replace/strip text or formatting at a locator (`--clear`, `--track`, `--batch`).                                                  |
-| `insert FILE`                        | Insert a paragraph, image, table, equation, code, markdown, or page break (`--after/--before`, `--track`, `--batch`).             |
+| `edit FILE`                          | Replace/strip text or formatting at a locator; a bare simple cell fills its sole paragraph (`--clear`, `--track`, `--batch`).    |
+| `insert FILE`                        | Insert content with `--at LOCATOR` (after a block, into a bare cell) or explicit `--before/--after` (`--track`, `--batch`).       |
 | `delete FILE`                        | Remove a paragraph, range, table, or section break (`--at`, `--track`, `--batch`).                                                |
-| `replace FILE PATTERN REPL`          | Substitute text spans sed-style — KEEPS the run's formatting and tabs (`--regex`, `--track`, `--batch`). The form-fill workhorse. |
+| `replace FILE PATTERN REPL`          | Substitute spans; defaults to the first match (`--all` for every match), preserves formatting/tabs, and can format or clear formatting on the replacement (`--bold`, `--color`, `--clear`, `--batch`). |
 | `sections FILE`                      | Multi-column layout, section breaks, and page setup (margins/orientation/size). The only way to do columns.                       |
 | `styles set/create/set-default-font` | Restyle every heading at once, mint a style, or set the document font.                                                            |
 | `comments`                           | `add` (`--at` / `--anchor PHRASE` / `--batch`), `reply`, `resolve` (`--unset`), `delete`, `list`.                                 |

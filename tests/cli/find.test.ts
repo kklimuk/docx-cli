@@ -584,6 +584,130 @@ describe("docx find — views", () => {
 // --underline (and their intersection) were untested. Spans of the seeded
 // paragraph p1: "plain "(0-6) "bolded"(6-12,b) " mid "(12-17,i)
 // "under"(17-22,u) " both"(22-27,b+i).
+describe("docx find — batch queries", () => {
+	async function batchDoc(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "out.docx");
+		await runCli("create", docPath, "--text", "Alpha TODO");
+		await runCli("insert", docPath, "--after", "p0", "--text", "Beta TODO");
+		await runCli("edit", docPath, "--at", "p1:5-9", "--bold");
+		return docPath;
+	}
+
+	test("evaluates mixed text, formatting, and multi-line entries in one read", async () => {
+		const docPath = await batchDoc("find-batch-mixed");
+		const batchPath = join(
+			tempWorkspace("find-batch-mixed-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			batchPath,
+			`${[
+				'{"query":"TODO","nth":1}',
+				'{"query":"alpha","ignoreCase":true}',
+				'{"bold":true}',
+				'{"query":"TODO\\nBeta"}',
+			].join("\n")}\n`,
+		);
+		const before = new Uint8Array(await Bun.file(docPath).arrayBuffer());
+		const result = await runCli("find", docPath, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		const batch = (
+			result.parsed as {
+				batch: Array<{
+					totalMatches: number;
+					query?: string;
+					filter?: { bold?: boolean };
+					matches: Array<{ locator: string }>;
+				}>;
+			}
+		).batch;
+		expect(batch).toHaveLength(4);
+		expect(batch[0]).toMatchObject({
+			totalMatches: 2,
+			query: "TODO",
+			matches: [{ locator: "p1:5-9" }],
+		});
+		expect(batch[1]).toMatchObject({
+			totalMatches: 1,
+			matches: [{ locator: "p0:0-5" }],
+		});
+		expect(batch[2]).toMatchObject({
+			filter: { bold: true },
+			totalMatches: 1,
+			matches: [{ locator: "p1:5-9" }],
+		});
+		expect(batch[3]).toMatchObject({
+			totalMatches: 1,
+			matches: [{ locator: "p0:6-p1:4" }],
+		});
+		const after = new Uint8Array(await Bun.file(docPath).arrayBuffer());
+		expect(after).toEqual(before);
+	});
+
+	test("text output flattens locators in entry order and names misses on stderr", async () => {
+		const docPath = await batchDoc("find-batch-text");
+		const batchPath = join(
+			tempWorkspace("find-batch-text-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(
+			batchPath,
+			'{"query":"TODO","nth":1}\n{"query":"absent"}\n{"bold":true}\n',
+		);
+		const result = await spawnCli("find", docPath, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim().split("\n")).toEqual(["p1:5-9", "p1:5-9"]);
+		expect(result.stderr.trim()).toBe("entry 1: no matches");
+	});
+
+	test("entry validation and nth errors identify the failing entry", async () => {
+		const docPath = await batchDoc("find-batch-errors");
+		const invalidPath = join(
+			tempWorkspace("find-batch-invalid-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(invalidPath, '{"query":"TODO","bold":true}\n');
+		const invalid = await runCli("find", docPath, "--batch", invalidPath);
+		expect(invalid.exitCode).toBe(2);
+		expect(invalid.parsed).toMatchObject({ code: "USAGE" });
+		expect((invalid.parsed as { error: string }).error).toContain("entry 0");
+
+		const nullNthPath = join(
+			tempWorkspace("find-batch-null-nth-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(nullNthPath, '{"query":"TODO","nth":null}\n');
+		const nullNth = await runCli("find", docPath, "--batch", nullNthPath);
+		expect(nullNth.exitCode).toBe(2);
+		expect(nullNth.parsed).toMatchObject({ code: "USAGE" });
+
+		const nthPath = join(tempWorkspace("find-batch-nth-jsonl"), "batch.jsonl");
+		await Bun.write(nthPath, '{"query":"TODO","nth":9}\n');
+		const nth = await runCli("find", docPath, "--batch", nthPath);
+		expect(nth.exitCode).toBe(3);
+		expect(nth.parsed).toMatchObject({ code: "MATCH_NOT_FOUND" });
+		expect((nth.parsed as { error: string }).error).toContain("entry 0");
+	});
+
+	test("batch rejects command-level query options", async () => {
+		const docPath = await batchDoc("find-batch-conflict");
+		const batchPath = join(
+			tempWorkspace("find-batch-conflict-jsonl"),
+			"batch.jsonl",
+		);
+		await Bun.write(batchPath, '{"query":"TODO"}\n');
+		const result = await runCli(
+			"find",
+			docPath,
+			"--batch",
+			batchPath,
+			"--ignore-case",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.parsed).toMatchObject({ code: "USAGE" });
+	});
+});
+
 describe("docx find — bold / italic / underline formatting filters", () => {
 	async function formattedDoc(label: string): Promise<string> {
 		const docPath = join(tempWorkspace(label), "out.docx");

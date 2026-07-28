@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml, readMarkdown, trackedKinds } from "./helpers";
+import {
+	newTableDoc,
+	readDocumentXml,
+	readMarkdown,
+	trackedKinds,
+} from "./helpers";
 
 async function tableLayout(docPath: string): Promise<string | null> {
 	const pkg = await Pkg.open(docPath);
@@ -361,28 +366,6 @@ async function table(docPath: string): Promise<MutTableBlock> {
 
 function cellText(cell: MutCell): string {
 	return cell.blocks[0]?.runs?.[0]?.text ?? "";
-}
-
-async function newTableDoc(
-	label: string,
-	rows: number,
-	cols: number,
-): Promise<string> {
-	const workspace = tempWorkspace(label);
-	const docPath = join(workspace, "out.docx");
-	await runCli("create", docPath, "--text", "Before");
-	await runCli(
-		"tables",
-		"create",
-		docPath,
-		"--after",
-		"p0",
-		"--rows",
-		String(rows),
-		"--cols",
-		String(cols),
-	);
-	return docPath;
 }
 
 describe("docx tables insert-row", () => {

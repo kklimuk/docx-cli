@@ -1,18 +1,20 @@
 import {
 	type BlockReference,
-	CLEARABLE_ATTRS,
+	CellTargetError,
 	type Document,
 	Edit,
 	EditError,
+	type Locator,
 	LocatorParseError,
 	LocatorResolveError,
 	locatorToBlockTarget,
 	MarkdownImport,
 	MarkdownImportError,
+	parseCellAt,
 	parseLocator,
 	type Run,
 	type RunFormat,
-	resolveClearTags,
+	resolveCellParagraphReference,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
@@ -20,14 +22,17 @@ import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
 } from "@core/run-formatting";
+import { ensureCellEndsWithParagraph, type Grid } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import {
-	normalizeHexColor,
+	parseBatchClearTags,
+	parseBatchRunFormat,
 	parseSpacingIndentFlags,
 	readJsonlObjects,
+	rejectBatchOnlyFlags,
 } from "../parse-helpers";
 import {
-	type ErrorCode,
+	EntryError,
 	EXIT,
 	fail,
 	openOrFail,
@@ -60,16 +65,13 @@ export async function runEditBatch(
 	batchSource: string,
 	values: RawValues,
 ): Promise<number> {
-	const conflicting = SINGLE_SHOT_FLAGS.find(
-		(flag) => values[flag] !== undefined && values[flag] !== false,
+	const conflict = await rejectBatchOnlyFlags(
+		values,
+		SINGLE_SHOT_FLAGS,
+		"edit",
+		"Put per-entry fields (at, text, clear, markdown, runs, style, …) on each JSONL line.",
 	);
-	if (conflicting) {
-		return fail(
-			"USAGE",
-			`--batch reads each edit from the JSONL file; don't also pass --${conflicting} on the CLI`,
-			"Put per-entry fields (at, text, clear, markdown, runs, style, …) on each JSONL line.",
-		);
-	}
+	if (conflict !== undefined) return conflict;
 
 	const authorFlag = values.author as string | undefined;
 	const trackFlag = Boolean(values.track);
@@ -92,6 +94,10 @@ export async function runEditBatch(
 	const track = resolveTracked(document, trackFlag);
 
 	let resolved: ResolvedEntry[];
+	// One grid per table for the whole resolve phase: nothing mutates the tree
+	// until every entry is resolved, so a many-cell form-fill of one table
+	// rebuilds its grid once instead of once per entry.
+	const gridCache = new Map<XmlNode, Grid>();
 	try {
 		resolved = [];
 		for (let index = 0; index < rawEntries.length; index++) {
@@ -102,6 +108,7 @@ export async function runEditBatch(
 					authorFlag,
 					noFormatting,
 					track,
+					gridCache,
 				}),
 			);
 		}
@@ -136,6 +143,7 @@ export async function runEditBatch(
 	for (const entry of ordered) {
 		try {
 			entry.apply();
+			if (entry.cellParent) ensureCellEndsWithParagraph(entry.cellParent);
 		} catch (error) {
 			if (error instanceof EditError) {
 				return fail(
@@ -247,6 +255,8 @@ type EntryOptions = {
 	authorFlag?: string;
 	noFormatting: boolean;
 	track: boolean;
+	/** One grid per table, shared across the whole resolve phase. */
+	gridCache: Map<XmlNode, Grid>;
 };
 
 type ResolvedEntry = {
@@ -256,6 +266,8 @@ type ResolvedEntry = {
 	 *  conflicting edits on one paragraph and to order same-paragraph spans. */
 	node: XmlNode;
 	span: { start: number; end: number } | null;
+	/** Bare-cell targets repair Word's mandatory terminal paragraph after apply. */
+	cellParent?: XmlNode[];
 	/** Performs the mutation via the `Edit` lens. Throws `EditError`. */
 	apply: () => void;
 };
@@ -307,8 +319,9 @@ async function resolveEntry(
 			"Edit equations individually with `docx equations edit --at eqN`.",
 		);
 	}
+	let parsedLocator: Locator;
 	try {
-		parseLocator(at);
+		parsedLocator = parseLocator(at);
 	} catch (error) {
 		if (error instanceof LocatorParseError) {
 			throw new EntryError(
@@ -318,29 +331,52 @@ async function resolveEntry(
 		}
 		throw error;
 	}
-	const target = locatorToBlockTarget(parseLocator(at));
-	if (!target) {
-		throw new EntryError(
-			"INVALID_LOCATOR",
-			`entry ${index}: "${at}" is not a paragraph, span, or cell-paragraph locator`,
-			"Batch edits address pN, pN:S-E, or tN:rRcC:pK[:S-E]. Edit ranges (pN-pM) one at a time; sections → `docx sections`, equations → `docx equations edit`.",
-		);
-	}
 
 	let blockRef: BlockReference;
-	try {
-		blockRef = document.body.resolveBlock(target.blockId);
-	} catch (error) {
-		if (error instanceof LocatorResolveError) {
+	let span: { start: number; end: number } | null;
+	let cellParent: XmlNode[] | undefined;
+	if (parseCellAt(at)) {
+		try {
+			const resolved = resolveCellParagraphReference(
+				document,
+				at,
+				opts.gridCache,
+			);
+			blockRef = resolved.paragraph;
+			cellParent = resolved.cell.parent;
+		} catch (error) {
+			if (error instanceof CellTargetError) {
+				throw new EntryError(
+					error.code,
+					`entry ${index}: ${error.message}`,
+					error.hint,
+				);
+			}
+			throw error;
+		}
+		span = null;
+	} else {
+		const target = locatorToBlockTarget(parsedLocator);
+		if (!target) {
 			throw new EntryError(
-				"BLOCK_NOT_FOUND",
-				`entry ${index}: ${error.message}`,
+				"INVALID_LOCATOR",
+				`entry ${index}: "${at}" is not a paragraph, span, cell, or cell-paragraph locator`,
+				"Batch edits address pN, pN:S-E, tN:rRcC, or tN:rRcC:pK[:S-E]. Edit ranges (pN-pM) one at a time; sections → `docx sections`, equations → `docx equations edit`.",
 			);
 		}
-		throw error;
+		try {
+			blockRef = document.body.resolveBlock(target.blockId);
+		} catch (error) {
+			if (error instanceof LocatorResolveError) {
+				throw new EntryError(
+					"BLOCK_NOT_FOUND",
+					`entry ${index}: ${error.message}`,
+				);
+			}
+			throw error;
+		}
+		span = target.span ?? null;
 	}
-
-	const span = target.span ?? null;
 	const present = CONTENT_KEYS.filter((key) => raw[key] !== undefined);
 	const hasClear = raw.clear !== undefined;
 	const hasSet = SET_KEYS.some((key) => raw[key] !== undefined);
@@ -386,7 +422,14 @@ async function resolveEntry(
 				track: opts.track,
 				author,
 			});
-		return { index, locatorString: at, node: blockRef.node, span: null, apply };
+		return {
+			index,
+			locatorString: at,
+			node: blockRef.node,
+			span: null,
+			...(cellParent ? { cellParent } : {}),
+			apply,
+		};
 	}
 
 	if (present.length === 0 && !hasClear && !hasSet && !hasProps) {
@@ -427,7 +470,14 @@ async function resolveEntry(
 		span,
 		opts,
 	);
-	return { index, locatorString: at, node: blockRef.node, span, apply };
+	return {
+		index,
+		locatorString: at,
+		node: blockRef.node,
+		span,
+		...(cellParent ? { cellParent } : {}),
+		apply,
+	};
 }
 
 /** Build the mutation closure for an entry once its locator is resolved. Spans
@@ -690,70 +740,16 @@ function rejectSpanParagraphFlags(
 }
 
 /** Build a `RunFormat` from an entry's set-formatting keys (the inverse of
- *  `clear`). Throws `EntryError` on a bad value. Returns null if none are set.
- *  `underline` accepts a style string (e.g. "double") or a boolean (→ "single"). */
+ *  `clear`). Throws `EntryError` on a bad value. Returns null if none are set. */
 function readRunFormat(
 	raw: Record<string, unknown>,
 	index: number,
 ): RunFormat | null {
-	const format: RunFormat = {};
-	// Boolean toggles only turn a property ON (matching single-shot parseRunFormat);
-	// a falsy value (false/0/null) is ignored — turning a property OFF is `clear`'s
-	// job, not set's.
-	if (raw.bold) format.bold = true;
-	if (raw.italic) format.italic = true;
-	if (raw.strike) format.strike = true;
-	if (raw.caps) format.allCaps = true;
-	if (raw.smallcaps) format.smallCaps = true;
-	// `underline` accepts a style string (e.g. "double") or `true` (→ "single");
-	// a falsy non-string is ignored (so `underline:false` doesn't turn it ON).
-	if (typeof raw.underline === "string") format.underline = raw.underline;
-	else if (raw.underline === true) format.underline = "single";
-	if (raw.underlineColor !== undefined) {
-		format.underlineColor = normalizeHexColor(
-			requireString(raw.underlineColor, index, "underlineColor"),
-		);
+	const parsed = parseBatchRunFormat(raw, index);
+	if (parsed && "error" in parsed) {
+		throw new EntryError("USAGE", parsed.error, parsed.hint);
 	}
-	if (raw.color !== undefined)
-		format.color = normalizeHexColor(requireString(raw.color, index, "color"));
-	if (raw.font !== undefined)
-		format.font = requireString(raw.font, index, "font");
-	if (raw.highlight !== undefined) {
-		format.highlight = requireString(raw.highlight, index, "highlight");
-	}
-	if (raw.shade !== undefined)
-		format.shade = normalizeHexColor(requireString(raw.shade, index, "shade"));
-	if (raw.superscript && raw.subscript) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: "superscript" and "subscript" are mutually exclusive`,
-		);
-	}
-	if (raw.superscript) format.vertAlign = "superscript";
-	if (raw.subscript) format.vertAlign = "subscript";
-	if (raw.size !== undefined) {
-		const points =
-			typeof raw.size === "number"
-				? raw.size
-				: Number.parseFloat(String(raw.size));
-		if (!Number.isFinite(points) || points <= 0) {
-			throw new EntryError(
-				"USAGE",
-				`entry ${index}: "size" must be a positive point size (e.g. 12 or 11.5)`,
-			);
-		}
-		format.sizeHalfPoints = Math.round(points * 2);
-	}
-	const invalid = firstInvalidRunFormat(format);
-	if (invalid) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: invalid ${invalid.field} "${invalid.value}"`,
-			`Use ${invalid.valid}.`,
-		);
-	}
-	if (Object.keys(format).length === 0) return null;
-	return format;
+	return parsed;
 }
 
 /** The set-formatting that rides along with a content edit. `excludeBasic` drops
@@ -877,48 +873,9 @@ function readRuns(value: unknown, index: number): Run[] {
 }
 
 function resolveClearOrThrow(value: unknown, index: number): Set<string> {
-	// Accept "highlight", "highlight,underline", or ["highlight","underline"].
-	const raw =
-		typeof value === "string"
-			? [value]
-			: Array.isArray(value) && value.every((v) => typeof v === "string")
-				? (value as string[])
-				: null;
-	if (!raw) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: "clear" must be an attribute name, a comma list, or an array of names (or "all")`,
-		);
+	const parsed = parseBatchClearTags(value, index);
+	if ("error" in parsed) {
+		throw new EntryError("USAGE", parsed.error, parsed.hint);
 	}
-	const names = raw
-		.flatMap((entry) => entry.split(","))
-		.map((name) => name.trim().toLowerCase())
-		.filter(Boolean);
-	if (names.length === 0) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: "clear" needs an attribute name, or "all"`,
-		);
-	}
-	const tags = resolveClearTags(names);
-	if (!tags) {
-		throw new EntryError(
-			"USAGE",
-			`entry ${index}: unknown attribute in "${raw.join(",")}". Valid: ${CLEARABLE_ATTRS.join(", ")}, all`,
-		);
-	}
-	return tags;
-}
-
-/** Per-entry validation failure. `code` is a CLI `ErrorCode` so the caller can
- *  `fail(err.code, …)` directly, matching the `comments add --batch` pattern. */
-class EntryError extends Error {
-	constructor(
-		public code: ErrorCode,
-		message: string,
-		public hint?: string,
-	) {
-		super(message);
-		this.name = "EntryError";
-	}
+	return parsed;
 }

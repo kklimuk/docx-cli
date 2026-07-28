@@ -6,11 +6,11 @@ import {
 	ensureParagraphProperties,
 	hasParagraphProperties,
 	injectPprChange,
-	insertPprChildInOrder,
 	insertRprChildInOrder,
 	isInheritableRunProperty,
 	Paragraph,
 	type ParagraphOptions,
+	priorPprChildren,
 	wrapPprChange,
 } from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
@@ -33,6 +33,10 @@ import {
 import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
 import { readListContext } from "../insert";
 import { w } from "../jsx";
+import {
+	inheritParagraphFormattingIfPlain,
+	paragraphOwnsBlockStructure,
+} from "../paragraph-inheritance";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import {
 	applyColumns,
@@ -198,16 +202,9 @@ export class Edit {
 				hasParagraphProperties(spec.paragraphOptions) &&
 				anchorTarget?.tag === "w:p"
 			) {
-				const priorPpr = blockRef.node.findChild("w:pPr");
-				const priorChildren = priorPpr
-					? priorPpr.children.filter(
-							(child) =>
-								child.tag !== "w:pPrChange" && child.tag !== "w:sectPr",
-						)
-					: [];
 				injectPprChange(
 					ensureParagraphProperties(anchorTarget),
-					priorChildren,
+					priorPprChildren(blockRef.node.findChild("w:pPr")),
 					new TrackChanges(this.document).mintMeta(opts.authorFlag),
 				);
 			}
@@ -577,92 +574,6 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 		return spec.blocks;
 	}
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
-}
-
-/** A replacement paragraph that brings its OWN block structure — a markdown `#`
- *  heading (`<w:pStyle>`) or a list item (`<w:numPr>`) — owns its look and must
- *  NOT inherit the replaced paragraph's pPr/rPr. The single "is this plain?" cut
- *  both inheritance passes below share, so they can't disagree on what "plain"
- *  means. */
-function paragraphOwnsBlockStructure(paragraph: XmlNode): boolean {
-	const ownPpr = paragraph.findChild("w:pPr");
-	return Boolean(ownPpr?.findChild("w:pStyle") || ownPpr?.findChild("w:numPr"));
-}
-
-/** Decision 2 (style preservation): when a whole-paragraph edit replaces a
- *  paragraph with PLAIN paragraphs (no explicit `--style`, and the new content
- *  didn't set its own `<w:pStyle>`/`<w:numPr>` — e.g. `--markdown "Q3 Title"`
- *  on a Heading, or `--runs`/`--text --bold`), inherit the old paragraph's
- *  properties so re-titling a heading keeps it a heading. Applies to EVERY
- *  plain paragraph of a multi-paragraph markdown split — a split used to leave
- *  paragraphs 2..N flush-left with no spacing (the §9 "make it legible" trap),
- *  which reads as corruption and sends weak agents into destructive undo
- *  spirals. `--text` without overrides already preserves style via the
- *  formatting-preserving path; this covers the other paths. Markdown that
- *  carries its own block structure (a `#` heading, a list item) owns its
- *  `<w:pPr>` and is left alone. */
-function inheritParagraphFormattingIfPlain(
-	oldParagraph: XmlNode,
-	newParagraphs: XmlNode[],
-	explicitStyle: string | undefined,
-): void {
-	const oldPpr = oldParagraph.findChild("w:pPr");
-	if (!oldPpr) return;
-	for (const newParagraph of newParagraphs) {
-		if (newParagraph.tag !== "w:p") continue;
-		// Content that brings its own block structure (a markdown `#` heading, a
-		// list item) owns its <w:pPr> — don't overwrite it with the old paragraph's.
-		if (paragraphOwnsBlockStructure(newParagraph)) continue;
-		mergeInheritedPpr(oldPpr, newParagraph, explicitStyle);
-	}
-}
-
-/** Clone the old `<w:pPr>` onto one replacement paragraph, letting anything the
- *  new paragraph already set win over the inherited values. */
-function mergeInheritedPpr(
-	oldPpr: XmlNode,
-	newParagraph: XmlNode,
-	explicitStyle: string | undefined,
-): void {
-	// Base the replacement's paragraph properties on the OLD <w:pPr> (a clone, in
-	// its valid child order) so DIRECT formatting survives a fresh-run replace —
-	// alignment (w:jc), spacing, indent, keepNext, list membership, etc. Only the
-	// style was carried before, which silently dropped centering on `edit --text`.
-	const merged = oldPpr.clone();
-	// Never propagate section structure or a tracked-revision marker across a
-	// split: an inline `<w:sectPr>` cloned onto each new paragraph mints a
-	// phantom section break per paragraph (verified: a 2-paragraph markdown
-	// replace of a section-ending paragraph took the doc from 3 sectPrs to 4),
-	// and a `<w:pPrChange>` would duplicate one revision id N times. The tracked
-	// path filters the same two tags from its pPrChange snapshot.
-	merged.children = merged.children.filter(
-		(child) => child.tag !== "w:sectPr" && child.tag !== "w:pPrChange",
-	);
-	// If the caller passed an explicit --style, applyParagraphOptions will set it;
-	// drop the inherited one so it doesn't fight.
-	if (explicitStyle) {
-		merged.children = merged.children.filter(
-			(child) => child.tag !== "w:pStyle",
-		);
-	}
-	// Overlay any pPr children the new paragraph already set (explicit --alignment
-	// etc.) so caller options win over the inherited ones.
-	const newPpr = newParagraph.findChild("w:pPr");
-	if (newPpr) {
-		for (const child of newPpr.children) {
-			const index = merged.children.findIndex((own) => own.tag === child.tag);
-			// Replace a same-tag inherited child in place (keeps its valid slot), or
-			// splice a new one at its canonical CT_PPr position — never push to the
-			// end, where it would land AFTER the paragraph-mark <w:rPr> the clone
-			// carries and trip Word's "unreadable content" repair (e.g. <w:jc> from
-			// --alignment).
-			if (index >= 0) merged.children[index] = child;
-			else insertPprChildInOrder(merged, child);
-		}
-		newParagraph.children[newParagraph.children.indexOf(newPpr)] = merged;
-	} else {
-		newParagraph.children.unshift(merged);
-	}
 }
 
 /** Replacement runs inherit the run formatting COMMON to every visible run of

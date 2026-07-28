@@ -1005,6 +1005,7 @@ type RunAst = {
 	bold?: boolean;
 	italic?: boolean;
 	strike?: boolean;
+	runStyle?: string;
 	font?: string;
 	sizeHalfPoints?: number;
 	color?: string;
@@ -1012,6 +1013,7 @@ type RunAst = {
 	highlight?: string;
 	vertAlign?: string;
 	underline?: string;
+	underlineColor?: string;
 };
 type BaselineBlock = { id: string; type: string; runs?: RunAst[] };
 
@@ -1166,6 +1168,109 @@ describe("read — default formatting dropped as noise", () => {
 		expect(md).not.toContain("000000");
 		expect(md).not.toContain("data-color-theme");
 		expect(md).toContain('<span style="color:#107087">teal</span>');
+	});
+});
+
+describe("read — shared HTML formatting wrappers consolidate", () => {
+	test("a common highlight wraps brackets around differently underlined text", async () => {
+		const path = await docWith("shared-mark", [
+			{ type: "text", text: "[", highlight: "yellow" },
+			{
+				type: "text",
+				text: "1 year(s)",
+				highlight: "yellow",
+				underline: "single",
+			},
+			{ type: "text", text: "]", highlight: "yellow" },
+		]);
+		const markdown = await read(path);
+		expect(markdown).toContain("<mark>[<u>1 year(s)</u>]</mark>");
+		expect(markdown).not.toContain("</mark><mark>");
+
+		const workspace = tempWorkspace("shared-mark-rt");
+		const markdownPath = join(workspace, "doc.md");
+		await Bun.write(markdownPath, markdown);
+		const rebuilt = join(workspace, "out.docx");
+		await runCli("create", rebuilt, "--from", markdownPath);
+		const formatted = (await allRuns(rebuilt)).filter((run) =>
+			["[", "1 year(s)", "]"].includes(run.text ?? ""),
+		);
+		expect(formatted).toEqual([
+			{ type: "text", text: "[", highlight: "yellow" },
+			{
+				type: "text",
+				text: "1 year(s)",
+				highlight: "yellow",
+				underline: "single",
+			},
+			{ type: "text", text: "]", highlight: "yellow" },
+		]);
+	});
+
+	test("named highlight and styled underline attributes survive consolidation", async () => {
+		const path = await docWith("shared-mark-attrs", [
+			{ type: "text", text: "[", highlight: "green" },
+			{
+				type: "text",
+				text: "choice",
+				highlight: "green",
+				underline: "wave",
+				underlineColor: "FF0000",
+			},
+			{ type: "text", text: "]", highlight: "green" },
+		]);
+		const markdown = await read(path);
+		expect(markdown).toContain(
+			'<mark data-highlight="green">[<u data-underline="wave" data-underline-color="FF0000">choice</u>]</mark>',
+		);
+	});
+
+	test("different highlights and native emphasis remain hard boundaries", async () => {
+		const highlightPath = await docWith("different-marks", [
+			{ type: "text", text: "a", highlight: "yellow" },
+			{ type: "text", text: "b", highlight: "green" },
+		]);
+		expect(await read(highlightPath)).toContain(
+			'<mark>a</mark><mark data-highlight="green">b</mark>',
+		);
+
+		const emphasisPath = await docWith("mark-emphasis-boundary", [
+			{ type: "text", text: "a", highlight: "yellow" },
+			{ type: "text", text: "b", highlight: "yellow", bold: true },
+		]);
+		expect(await read(emphasisPath)).toContain(
+			"<mark>a</mark><mark>**b**</mark>",
+		);
+	});
+
+	test("inline code, non-text runs, and hyperlinks close shared wrappers", async () => {
+		const mixedPath = await docWith("mark-hard-boundaries", [
+			{ type: "text", text: "a", highlight: "yellow" },
+			{
+				type: "text",
+				text: "code",
+				runStyle: "Code",
+				highlight: "yellow",
+			},
+			{ type: "text", text: "b", highlight: "yellow" },
+			{ type: "tab" },
+			{ type: "text", text: "c", highlight: "yellow" },
+		]);
+		expect(await read(mixedPath)).toContain(
+			"<mark>a</mark><mark>`code`</mark><mark>b</mark>\t<mark>c</mark>",
+		);
+
+		const linkWorkspace = tempWorkspace("mark-link-boundary");
+		const linkMarkdown = join(linkWorkspace, "source.md");
+		await Bun.write(
+			linkMarkdown,
+			"[<mark>a</mark>](https://example.com)[<mark>b</mark>](https://example.com)",
+		);
+		const linkPath = join(linkWorkspace, "out.docx");
+		await runCli("create", linkPath, "--from", linkMarkdown);
+		expect(await read(linkPath)).toContain(
+			"[<mark>a</mark>](https://example.com)[<mark>b</mark>](https://example.com)",
+		);
 	});
 });
 

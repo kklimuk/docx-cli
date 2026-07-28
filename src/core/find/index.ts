@@ -1,8 +1,10 @@
 import { type Body, iterateBlocks } from "../ast/document/body";
 import type { Block, Paragraph, TrackedChange } from "../ast/types";
 import { replaceAcrossParagraphs } from "./replace-across";
+import type { ReplacementFormatting } from "./replace-span";
 
 export {
+	type ReplacementFormatting,
 	replaceSpanInParagraph,
 	type Span,
 	type TrackedReplaceOptions,
@@ -221,6 +223,7 @@ export type AcrossReplaceSpec = {
 	all: boolean;
 	limit?: number;
 	view: FindView;
+	formatting?: ReplacementFormatting;
 };
 
 export type AcrossReplaceResult = {
@@ -258,7 +261,13 @@ export function applyAcrossReplace(
 	if (!dryRun) {
 		const expand = replacementExpander(spec);
 		for (const match of [...replaced].reverse()) {
-			replaceAcrossParagraphs(doc, match, expand(match.text), spec.view);
+			replaceAcrossParagraphs(
+				doc,
+				match,
+				expand(match.text),
+				spec.view,
+				spec.formatting,
+			);
 		}
 	}
 	return { totalMatches: matches.length, replaced, ...normalization };

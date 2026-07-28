@@ -367,16 +367,28 @@ export function ensureParagraphProperties(paragraph: XmlNode): XmlNode {
  *  matches Word for Mac's shape
  *  (`<w:pPrChange w:id w:author w:date><w:pPr>…prior…</w:pPr></w:pPrChange>`). */
 export function wrapPprChange(pPr: XmlNode, meta: TrackedMeta): void {
-	// The snapshot's inner `<w:pPr>` is CT_PPrChange's pPr — type CT_PPrBase,
-	// which does NOT permit `<w:sectPr>` (a section break is tracked via a
-	// separate `<w:sectPrChange>`, never inside a pPrChange). Cloning an inline
-	// sectPr here would make Word reject the file ("unreadable content") AND
-	// duplicate the section break. Filter it out of the snapshot; the live sectPr
-	// stays put. Keep the paragraph-mark `<w:rPr>` — Word includes it.
-	const prior = pPr.children.filter(
+	injectPprChange(pPr, priorPprChildren(pPr), meta);
+}
+
+/** The prior-pPr snapshot children for a `<w:pPrChange>`, given a paragraph's
+ *  `<w:pPr>` (or nothing, for a paragraph that has none).
+ *
+ *  The snapshot's inner `<w:pPr>` is CT_PPrChange's pPr — type CT_PPrBase, which
+ *  does NOT permit `<w:sectPr>` (a section break is tracked via a separate
+ *  `<w:sectPrChange>`, never inside a pPrChange). Cloning an inline sectPr here
+ *  would make Word reject the file ("unreadable content") AND duplicate the
+ *  section break, so it's filtered out; the live sectPr stays put. A pre-existing
+ *  `<w:pPrChange>` goes too (a snapshot never nests one). The paragraph-mark
+ *  `<w:rPr>` stays — Word includes it.
+ *
+ *  This is the one place that rule is written down: `wrapPprChange` and every
+ *  `injectPprChange` caller that supplies an explicit prior snapshot goes
+ *  through here rather than re-deriving the filter. */
+export function priorPprChildren(pPr: XmlNode | null | undefined): XmlNode[] {
+	if (!pPr) return [];
+	return pPr.children.filter(
 		(child) => child.tag !== "w:pPrChange" && child.tag !== "w:sectPr",
 	);
-	injectPprChange(pPr, prior, meta);
 }
 
 /** Inject a `<w:pPrChange>` carrying an EXPLICIT prior-pPr snapshot into `pPr`,
@@ -384,8 +396,8 @@ export function wrapPprChange(pPr: XmlNode, meta: TrackedMeta): void {
  *  node's CURRENT children), this takes the prior children directly — used when
  *  the live pPr already holds the NEW properties (a freshly-built paragraph for a
  *  content+props ride-along edit), so the prior state must be supplied separately.
- *  The caller is responsible for excluding a pre-existing pPrChange and an inline
- *  `<w:sectPr>` from `priorChildren` (CT_PPrBase forbids sectPr in the snapshot). */
+ *  Build `priorChildren` with `priorPprChildren` — it applies the exclusions
+ *  CT_PPrBase requires (no pre-existing pPrChange, no inline `<w:sectPr>`). */
 export function injectPprChange(
 	pPr: XmlNode,
 	priorChildren: XmlNode[],

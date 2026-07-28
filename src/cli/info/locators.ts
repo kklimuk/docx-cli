@@ -90,8 +90,9 @@ ${sections}
 How a locator is passed:
   --at LOCATOR            address an existing thing to act on (edit, delete,
                          comments, footnotes/endnotes, images, hyperlinks,
-                         tables, track-changes)
-  --after / --before     where to place a new block (insert)
+                         tables, track-changes); insert --at accepts a bare cell
+  --after / --before     where to place a new block, or a block at a cell's
+                         start/end boundary (insert)
   --from / --to          a top-level block slice to render (read)
   --anchor PHRASE        find text, then anchor to it (comments add)
   positional [LOCATOR]   an optional slice to scope (wc)
@@ -106,13 +107,17 @@ Notation:
   table-structural revisions, and paragraph-mark ins/del.
   Cell locators chain to any depth: t0:r2c1:t0:r0c0:p0 is the first paragraph of
   cell (0,0) of the first table nested inside cell (2,1) of table t0.
+  A bare CELL content target is conservative: edit requires exactly one direct
+  paragraph; insert rejects merged/grid-shifted cells. Use CELL:pK for a complex
+  cell or exact paragraph targeting.
 
 Table locators are one family — each "docx tables" verb takes the shape that
 matches what it reshapes (they look different because they address different
 things, not because the grammar is inconsistent):
   tN:rR              a whole row     (insert-row position, delete-row)
   tN:cC              a whole column  (insert-column position, delete-column)
-  tN:rRcC            a single cell   (unmerge, edit a cell's paragraph via :pK)
+  tN:rRcC            a single cell   (unmerge; edit --at CELL; insert --at,
+                                      --before, or --after CELL when simple/unmerged)
   tN:rR1cC1-rR2cC2   a rectangular region, top-left (R1,C1) → bottom-right
                      (R2,C2)  (merge)
   tN                 the whole table (set-widths, borders, insert-row/column)
@@ -162,8 +167,10 @@ function renderJson(): unknown {
 			offsets: "Character offsets are 0-based, start inclusive, end exclusive.",
 		},
 		flags: {
-			"--at": "address an existing thing to act on",
-			"--after / --before": "where to place a new block (insert)",
+			"--at":
+				"address an existing thing to act on; insert --at accepts a bare simple cell",
+			"--after / --before":
+				"where to place a new block, or at a bare cell's start/end boundary (insert)",
 			"--from / --to": "a top-level block slice to render (read)",
 			"--anchor": "find text, then anchor to it (comments add)",
 			"positional [LOCATOR]": "an optional slice to scope (wc)",
@@ -182,6 +189,7 @@ function renderJson(): unknown {
 			"Block ids are positional and shift after structural edits.",
 			"Re-read between non-trivial mutations.",
 			"Commands that mint a new id print it (one per line) so you can chain.",
+			"Bare-cell edit requires one direct paragraph; bare-cell insert rejects merged/grid-shifted cells. Use CELL:pK for precision.",
 		],
 	};
 }

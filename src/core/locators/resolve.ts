@@ -1,7 +1,12 @@
+import type { Document } from "../ast/document";
 import {
 	type BlockRangeReference,
+	type BlockReference,
 	LocatorResolveError,
 } from "../ast/document/body";
+import type { XmlNode } from "../parser";
+import { directCellBlocks, soleCellParagraph } from "../table/cell-content";
+import { buildGrid, cellAt, type Grid, resolveTableNode } from "../table/grid";
 import { type Locator, LocatorParseError, parseLocator } from "./parse";
 
 export { type BlockRangeReference, LocatorResolveError };
@@ -34,6 +39,160 @@ export function locatorToBlockTarget(locator: Locator): BlockTarget | null {
 		};
 	}
 	return null;
+}
+
+export type CellReference = {
+	id: string;
+	tableId: string;
+	row: number;
+	col: number;
+	node: XmlNode;
+	parent: XmlNode[];
+	blocks: XmlNode[];
+	paragraphs: BlockReference[];
+};
+
+export type CellTargetErrorCode =
+	| "INVALID_LOCATOR"
+	| "BLOCK_NOT_FOUND"
+	| "TABLE_STRUCTURE";
+
+export class CellTargetError extends Error {
+	constructor(
+		public code: CellTargetErrorCode,
+		message: string,
+		public hint?: string,
+	) {
+		super(message);
+		this.name = "CellTargetError";
+	}
+}
+
+/** Resolve a bare `tN:rRcC` (including nested chains) to its physical cell.
+ * Bare-cell content mutation deliberately rejects merged/grid-shifted rows:
+ * GFM cannot faithfully show their logical grid and writing to a vMerge
+ * continuation may succeed invisibly. Explicit `:pK` locators retain their
+ * existing behavior for callers that intentionally address such structures.
+ *
+ * `gridCache` is for callers that resolve MANY cells against one unmutated tree
+ * (`insert`/`edit --batch`): `buildGrid` walks every row and cell of the table,
+ * so a 40-entry form-fill of one table would otherwise rebuild the same grid 40
+ * times. A single-shot resolve passes nothing and builds once, as before. */
+export function resolveCellReference(
+	document: Document,
+	at: string,
+	gridCache?: Map<XmlNode, Grid>,
+): CellReference {
+	const target = parseCellAt(at);
+	if (!target) {
+		throw new CellTargetError(
+			"INVALID_LOCATOR",
+			`"${at}" is not a bare table-cell locator`,
+			"Use a cell locator such as t0:r1c2. Paragraph locators still use --before/--after or edit --at t0:r1c2:p0.",
+		);
+	}
+	const table = resolveTableNode(document, target.tableId);
+	if (!table) {
+		throw new CellTargetError(
+			"BLOCK_NOT_FOUND",
+			`Table not found: ${target.tableId}`,
+		);
+	}
+	const grid = cachedGrid(table, gridCache);
+	const row = grid.rows[target.row];
+	if (!row) {
+		throw new CellTargetError(
+			"BLOCK_NOT_FOUND",
+			`Row r${target.row} does not exist in ${target.tableId}`,
+		);
+	}
+	const trPr = row.node.findChild("w:trPr");
+	if (
+		trPr?.findChild("w:gridBefore") ||
+		trPr?.findChild("w:gridAfter") ||
+		row.cells.some((cell) => cell.colSpan !== 1)
+	) {
+		throw mergedCellTargetError(at);
+	}
+	const cell = cellAt(row, target.col);
+	if (!cell) {
+		throw new CellTargetError(
+			"BLOCK_NOT_FOUND",
+			`Cell r${target.row}c${target.col} does not exist in ${target.tableId}`,
+		);
+	}
+	if (cell.vMerge || cell.colSpan !== 1) throw mergedCellTargetError(at);
+	const unsupported = cell.node.children.find(
+		(child) =>
+			!child.isText &&
+			child.tag !== "w:tcPr" &&
+			child.tag !== "w:p" &&
+			child.tag !== "w:tbl",
+	);
+	if (unsupported) {
+		throw new CellTargetError(
+			"TABLE_STRUCTURE",
+			`Cell ${at} contains unsupported direct ${unsupported.tag} content`,
+			"Target an explicit paragraph locator inside the cell instead.",
+		);
+	}
+	const id = `${target.tableId}:r${target.row}c${cell.colStart}`;
+	const paragraphs = cell.node.findChildren("w:p").map((paragraph) => ({
+		node: paragraph,
+		parent: cell.node.children,
+	}));
+	return {
+		id,
+		tableId: target.tableId,
+		row: target.row,
+		col: cell.colStart,
+		node: cell.node,
+		parent: cell.node.children,
+		blocks: directCellBlocks(cell.node),
+		paragraphs,
+	};
+}
+
+function cachedGrid(
+	table: XmlNode,
+	cache: Map<XmlNode, Grid> | undefined,
+): Grid {
+	if (!cache) return buildGrid(table);
+	const cached = cache.get(table);
+	if (cached) return cached;
+	const grid = buildGrid(table);
+	cache.set(table, grid);
+	return grid;
+}
+
+/** Resolve the unambiguous cell shape accepted by `edit --at CELL`: exactly one
+ * direct paragraph and no nested/direct sibling blocks. */
+export function resolveCellParagraphReference(
+	document: Document,
+	at: string,
+	gridCache?: Map<XmlNode, Grid>,
+): { cell: CellReference; paragraph: BlockReference } {
+	const cell = resolveCellReference(document, at, gridCache);
+	const paragraph = soleCellParagraph(cell.node);
+	if (!paragraph) {
+		throw new CellTargetError(
+			"TABLE_STRUCTURE",
+			`Cell ${at} has multiple blocks; a bare cell edit would be ambiguous`,
+			`Re-read the document and target an explicit paragraph such as ${cell.id}:p0.`,
+		);
+	}
+	return {
+		cell,
+		paragraph: { node: paragraph, parent: cell.parent },
+	};
+}
+
+function mergedCellTargetError(at: string): CellTargetError {
+	return new CellTargetError(
+		"TABLE_STRUCTURE",
+		`Bare-cell content mutation is not supported for merged or grid-shifted cell ${at}`,
+		"Use `docx read FILE` and target the explicit tN:rRcC:pK paragraph locator shown for the merge anchor.",
+	);
 }
 
 /** Parse an `--at`-shaped string for a table-scoped verb. Returns the fully

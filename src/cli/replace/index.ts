@@ -1,6 +1,7 @@
 import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
 	findTextSpans,
+	type ReplacementFormatting,
 	replacementExpander,
 	replaceSpanInParagraph,
 	selectMatches,
@@ -8,6 +9,8 @@ import {
 } from "@core/find";
 import {
 	decodeInlineEscapes,
+	parseClearTags,
+	parseRunFormat,
 	resolveView,
 	spanLocator,
 } from "../parse-helpers";
@@ -45,6 +48,7 @@ Examples:
   docx replace doc.docx --batch subs.jsonl
   # …or one at a time:
   docx replace doc.docx "fox" "cat" --all
+  docx replace doc.docx "TODO" "Done" --bold --color 008000 --clear highlight
   docx replace doc.docx "TODO|FIXME" "DONE" --regex --all
   docx replace doc.docx "(\\w+) (\\w+)" "$2 $1" --regex --all
   docx replace doc.docx "wordy phrase" "tighter phrase" --all --dry-run
@@ -70,6 +74,13 @@ Options:
                     "docx find" / "docx read")
   --exact           disable pattern normalization (no markdown-emphasis stripping,
                     no smart/straight quote or em/en-dash equivalence)
+  --clear ATTRS     strip inherited formatting from the replacement (comma list or
+                    "all"; repeatable), then apply any set flags below
+  --bold / --italic / --underline / --strike
+  --color HEX / --highlight NAME / --shade HEX / --font NAME / --size PT
+  --caps / --smallcaps / --superscript / --subscript
+                    format only the newly inserted replacement text; unspecified
+                    properties still inherit from the first matched run
   -o, --output PATH write to PATH instead of overwriting FILE
   --dry-run         report what would change without writing the file
   -v, --verbose     print the success ack JSON (default: a one-line confirmation)
@@ -79,17 +90,20 @@ Batch (--batch PATH | -):
   A sed-script from one read — the preferred way to run several substitutions.
   Each JSONL line is one substitution whose keys mirror the flags:
   {"pattern": …, "replacement": …} plus optional "regex"/"ignoreCase"/"all"/
-  "limit"/"exact"/"at". Entries apply in order, each seeing the previous
-  entry's edits (like running replace repeatedly). Don't pass the PATTERN/
-  REPLACEMENT positionals or --at alongside --batch.
+  "limit"/"exact"/"at" and formatting keys ("bold"/"color"/"clear"/…).
+  Entries apply in order, each seeing the previous entry's edits (like running
+  replace repeatedly). All query/format options are per-entry; don't pass them
+  or PATTERN/REPLACEMENT positionals alongside --batch.
 
 Matching:
   By default the PATTERN is normalized so text copied from \`docx read\`
   matches the real document text: markdown emphasis is stripped (**X**
   matches X), smart quotes match straight quotes, em/en dashes match "-".
-  The REPLACEMENT is always literal — whatever you pass goes in as-is, and it
-  inherits the formatting of the matched span (bold text stays bold).
-  --exact matches the raw pattern verbatim; --regex is always verbatim.
+  The REPLACEMENT is always literal — whatever you pass goes in as-is. It
+  inherits the first matched run's formatting by default; --clear strips named
+  inherited properties and the formatting flags overlay new values on only the
+  replacement text. --exact matches the raw pattern verbatim; --regex is always
+  verbatim.
   If PATTERN or REPLACEMENT begins with a dash ("-$500.00", "--TODO"), put a
   bare "--" before the positionals: docx replace doc.docx -- "Total" "-$500.00"
   With --regex, REPLACEMENT supports $1, $2, … (capture groups), $& (the
@@ -134,6 +148,20 @@ export async function run(args: string[]): Promise<number> {
 			current: { type: "boolean" },
 			baseline: { type: "boolean" },
 			exact: { type: "boolean" },
+			clear: { type: "string", multiple: true },
+			bold: { type: "boolean" },
+			italic: { type: "boolean" },
+			underline: { type: "boolean" },
+			strike: { type: "boolean" },
+			caps: { type: "boolean" },
+			smallcaps: { type: "boolean" },
+			superscript: { type: "boolean" },
+			subscript: { type: "boolean" },
+			color: { type: "string" },
+			font: { type: "string" },
+			size: { type: "string" },
+			highlight: { type: "string" },
+			shade: { type: "string" },
 			...SAVE_FLAGS,
 		},
 		HELP,
@@ -195,6 +223,10 @@ export async function run(args: string[]): Promise<number> {
 			`--limit must be a positive integer, got "${limitRaw}"`,
 		);
 	}
+	const formatting = parseReplacementFormatting(parsed.values);
+	if (formatting && "error" in formatting) {
+		return fail("USAGE", formatting.error, formatting.hint);
+	}
 
 	// A "\n" in the pattern spans lines (line break or paragraph boundary); a
 	// "\n" in the replacement inserts a paragraph mark. Either routes to the
@@ -214,6 +246,7 @@ export async function run(args: string[]): Promise<number> {
 			all: wantAll,
 			...(limit !== undefined ? { limit } : {}),
 			view: findView,
+			...(formatting ? { formatting } : {}),
 			track: Boolean(parsed.values.track),
 			...(parsed.values.output !== undefined
 				? { output: parsed.values.output as string }
@@ -345,6 +378,7 @@ export async function run(args: string[]): Promise<number> {
 			expand(match.text),
 			tracked,
 			findView,
+			formatting ?? undefined,
 		);
 	}
 
@@ -371,4 +405,24 @@ export async function run(args: string[]): Promise<number> {
 		partialHint,
 	);
 	return EXIT.OK;
+}
+
+function parseReplacementFormatting(
+	values: Record<string, unknown>,
+): ReplacementFormatting | null | { error: string; hint?: string } {
+	const parsedFormat = parseRunFormat(values);
+	if (parsedFormat && "error" in parsedFormat) return parsedFormat;
+
+	let clearTags: Set<string> | undefined;
+	if (values.clear !== undefined) {
+		const parsed = parseClearTags(values.clear);
+		if (!(parsed instanceof Set)) return parsed;
+		clearTags = parsed;
+	}
+
+	if (!parsedFormat && !clearTags) return null;
+	return {
+		...(clearTags ? { clearTags } : {}),
+		...(parsedFormat ? { format: parsedFormat } : {}),
+	};
 }

@@ -19,6 +19,7 @@ Five files behind the `@core/track-changes` barrel ([index.tsx](index.tsx)):
 - `accept(target)` / `reject(target)` — apply; returns `ChangeRecord[]`. Caller saves.
 - `apply(accepts, rejects)` — the `track-changes apply` finalize: accept one handle list AND reject another in ONE pre-mutation-resolved pass (no inter-call renumbering, no half-finalized file). Returns the combined `ChangeRecord[]`. Caller saves.
 - `applyInsertion(paragraph, authorFlag?)` / `applyDeletion(paragraph, authorFlag?)` — wrap a freshly-built paragraph's trackable children (`w:r`, `m:oMath`, `m:oMathPara`) in `<w:ins>` / `<w:del>` and mark its paragraph break. Used by `Insert.paragraph` and `delete --at pN` under tracking. Non-trackable siblings (e.g. `<w:pPr>`) pass through at their existing positions via `wrapContiguousTrackable`.
+- `applyContentInsertion(paragraph, authorFlag?)` — `applyInsertion` WITHOUT the paragraph-mark ins. Used when bare-cell insert reuses Word's mandatory empty paragraph: reject removes the new content but preserves the valid `<w:p>` container.
 - `applyContentDeletion(paragraph, authorFlag?)` — `applyDeletion` WITHOUT the paragraph-mark del: wraps content in `<w:del>` but keeps the `<w:p>`. Used by `removeParagraphLine` (replace.tsx) for a table cell's last paragraph, where accept-all must leave a valid empty paragraph rather than merge the cell away.
 
 ## The reader is the single source of `tcN` ids

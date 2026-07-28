@@ -9,6 +9,7 @@ import {
 import type { FindView, ParagraphSpanMatch } from "./index";
 import {
 	isWrapperVisibleInView,
+	type ReplacementFormatting,
 	replacementRuns,
 	sumVisibleTextLength,
 } from "./replace-span";
@@ -44,6 +45,7 @@ export function replaceAcrossParagraphs(
 	match: ParagraphSpanMatch,
 	replacement: string,
 	view: FindView = "accepted",
+	formatting?: ReplacementFormatting,
 ): void {
 	const startRef = body.resolveBlock(match.startBlockId);
 	const endRef = body.resolveBlock(match.endBlockId);
@@ -105,7 +107,7 @@ export function replaceAcrossParagraphs(
 		firstVisibleRun(cut, view)?.findChild("w:rPr")?.clone() ?? null;
 	const salvaged = salvageNonContent(cut, view);
 	const segmentRuns = (segment: string): XmlNode[] =>
-		segment.length === 0 ? [] : replacementRuns(inherited, segment);
+		segment.length === 0 ? [] : replacementRuns(inherited, segment, formatting);
 
 	const firstSegment = segments[0] ?? "";
 	const startChildren = [...head, ...segmentRuns(firstSegment), ...salvaged];
