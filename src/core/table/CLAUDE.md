@@ -1,8 +1,36 @@
 # src/core/table — table emit, grid model, mutation primitives
 
-Four files behind the `@core/table` barrel ([index.tsx](index.tsx)): the file itself holds the `<BlankTable>` / `<Table>` / `<TableRow>` / `<TableCell>` emitters; [grid.ts](grid.ts) is the pure merge-aware read-model (`buildGrid`, `cellAt`, `resolveTableNode`); [cell-content.ts](cell-content.ts) owns direct-cell block invariants (sole/empty paragraph detection, empty-paragraph reuse, start/end insertion, mandatory trailing paragraph repair); [mutate.tsx](mutate.tsx) is the `<w:tcPr>` / `<w:trPr>` / `<w:tblPr>` surgery (`setGridSpan`, `setVMerge`, `setCellWidth`, `setCellShading`, `setCellVAlign`, `setCellBorders`, `setRowHeight`, `setRepeatHeader`, `setTableLayout`, `setTableJustification`, `setTableStyle`, `setTablePropertiesChild`, `emptyCell`, `gridColElement`, `appendTblGridChange`, `appendTcPrChange`, `markRowTracked`, `markCellTracked`, `clearCellContent`). The three `set*Child` splice helpers keep CT_TcPr / CT_TrPr / CT_TblPr child order.
+Four files behind the `@core/table` barrel ([index.tsx](index.tsx)): the file itself holds the `<BlankTable>` / `<Table>` / `<TableRow>` / `<TableCell>` emitters; [grid.ts](grid.ts) is the pure merge-aware read-model (`buildGrid`, `cellAt`, `resolveTableNode`); [cell-content.ts](cell-content.ts) owns direct-cell block invariants (sole/empty paragraph detection, empty-paragraph reuse, start/end insertion via `applyCellInsertion`, the multi-insert `CellInsertionCursor`, `cellInsertionAnchor`, mandatory trailing paragraph repair); [mutate.tsx](mutate.tsx) is the `<w:tcPr>` / `<w:trPr>` / `<w:tblPr>` surgery (`setGridSpan`, `setVMerge`, `setCellWidth`, `setCellShading`, `setCellVAlign`, `setCellBorders`, `setRowHeight`, `setRepeatHeader`, `setTableLayout`, `setTableJustification`, `setTableStyle`, `setTablePropertiesChild`, `emptyCell`, `gridColElement`, `appendTblGridChange`, `appendTcPrChange`, `markRowTracked`, `markCellTracked`, `clearCellContent`). The three `set*Child` splice helpers keep CT_TcPr / CT_TrPr / CT_TblPr child order.
 
 `@core/table` is what `cli/tables/` (including `tables create`) builds on. The CLI verbs there are thin glue — arg-parse + merge-correctness gates — over this folder's primitives.
+
+## One insert vs. many: `applyCellInsertion` and `CellInsertionCursor`
+
+`applyCellInsertion` places blocks at a cell boundary by re-deriving that
+boundary from the cell's CURRENT blocks. That is already right for a single
+insert (`docx insert --at CELL`), for every APPEND in a batch (the cell's last
+block IS the one the previous entry appended), and for the FIRST prepend. It is
+wrong in exactly one case: a SECOND prepend, which would re-derive to the block
+the first one just placed and land ahead of it, reversing JSONL order.
+
+So `CellInsertionCursor` carries the one piece of state that case needs — a start
+cursor — and delegates everything else back to `applyCellInsertion`. **That rule
+lives here, not in the CLI**: `cli/insert/batch.ts` opens one cursor per cell and
+calls `insert`. The cursor is a live `XmlNode` ref into the cell's child list, so
+an instance is valid only during the splice phase that owns that list; a detached
+ref raises a stale-reference `CellTargetError` rather than silently
+repositioning. Call `ensureTerminalParagraph()` once the cell's whole batch is in
+— deferred so a synthetic paragraph isn't appended and then repositioned by a
+later entry.
+
+Resist re-adding an end cursor: `tests/cli/batch.test.ts` pins both orderings
+(stacked prepends, and a reuse-prepend followed by an append), and the end
+boundary is derivable by construction.
+
+`CellTargetError` sits in its own [../locators/cell-target-error.ts](../locators/cell-target-error.ts)
+because both sides raise it — `locators/resolve.ts` for a refused locator,
+`cell-content.ts` for a stale boundary — and `resolve.ts` already value-imports
+`cell-content.ts`; homing the class in either would close an import cycle.
 
 ## Grid is the foundation; never index `<w:tc>` positionally
 

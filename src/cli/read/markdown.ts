@@ -2,6 +2,7 @@ import {
 	type Block,
 	type Body,
 	type Comment,
+	type ContentControl,
 	type Footnote,
 	flattenParagraphs,
 	type ImageRun,
@@ -1052,11 +1053,29 @@ function formatParagraphNote(paragraph: Paragraph): string {
 		if (indent.hanging !== undefined)
 			pairs.push(["hanging", `${twipsToInches(indent.hanging)}in`]);
 	}
-	if (pairs.length === 0 && !paragraph.rawXml) return "";
+	// A block inside a Word content control says so: the edit lands inside the
+	// control (`<w:sdtContent>`), and Word may LOCK a control against edit or
+	// deletion — so a change that succeeds here can still be refused in the UI.
+	// Value is the control's alias, else its tag; a control with neither still
+	// emits the bare `content-control` token, since the fact is what matters.
+	const control = contentControlToken(paragraph.contentControl);
+	if (pairs.length === 0 && !paragraph.rawXml && !control) return "";
 	// A raw-authored block flags itself with a bare `raw` token so the agent
 	// knows this block came from `docx raw` (and can `raw get` it for the truth).
 	const bareTokens = paragraph.rawXml ? [paragraph.id, "raw"] : [paragraph.id];
-	return ` ${formatNote("p", pairs, bareTokens)}`;
+	return ` ${formatNote("p", control ? [...pairs, control] : pairs, bareTokens)}`;
+}
+
+/** The `content-control` note pair for a block sitting inside a Word `<w:sdt>`,
+ * or null when it isn't in one. Prefers the control's UI label (`alias`) over
+ * its programmatic `tag`; a control carrying neither still reports the bare fact
+ * — that a block is inside a control is what the agent needs to know, since
+ * Word may lock it. */
+function contentControlToken(
+	control: ContentControl | undefined,
+): NotePair | null {
+	if (!control) return null;
+	return ["content-control", control.alias ?? control.tag ?? "yes"];
 }
 
 /** Styles already conveyed by the Markdown construct itself (so annotating them
@@ -1835,12 +1854,15 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 	if (rows.length === 0) return null;
 	const colCount = Math.max(...rows.map((row) => row.cells.length));
 	if (colCount === 0) return null;
+	const gridWidth = logicalColumnCount(rows, table.grid);
 	const renderedRows = rows.map((row) => {
 		const cells: string[] = [];
 		for (let columnIndex = 0; columnIndex < colCount; columnIndex++) {
 			const cell = row.cells[columnIndex];
 			cells.push(
-				cell ? renderCell(cell, ctx, isBareCellTarget(row, cell)) : "",
+				cell
+					? renderCell(cell, ctx, isBareCellTarget(row, cell, gridWidth))
+					: "",
 			);
 		}
 		return cells;
@@ -1889,6 +1911,8 @@ function formatTableNote(table: Table): string {
 		)
 		.filter((value): value is string => value !== null);
 	if (rowHeights.length > 0) pairs.push(["row-heights", rowHeights.join(",")]);
+	const control = contentControlToken(table.contentControl);
+	if (control) pairs.push(control);
 	if (pairs.length === 0 && !table.rawXml) return "";
 	const bareTokens = table.rawXml ? [table.id, "raw"] : [table.id];
 	return formatNote("table", pairs, bareTokens);
@@ -1933,14 +1957,34 @@ function rowToLine(cells: string[]): string {
 
 /** Whether a bare `tN:rRcC` address really is an `edit --at` / `insert --at`
  * target, mirroring `resolveCellReference`'s conservative gate: it rejects the
- * cell itself when merged, AND every cell of a row that carries a horizontal
- * merge (a spanned row's physical cells no longer line up with logical grid
- * columns). Read must not advertise a handle the mutation surface refuses.
- * (`<w:trPr><w:gridBefore/>`/`<w:gridAfter/>` also reject there but aren't in
- * the AST — those rows keep the pre-handle rendering only by luck.) */
-function isBareCellTarget(row: TableRow, cell: TableCell): boolean {
+ * cell itself when merged, every cell of a row that carries a horizontal merge
+ * (a spanned row's physical cells no longer line up with logical grid columns),
+ * AND every cell of a row that doesn't span the table's full logical width.
+ * That last one is the `<w:trPr><w:gridBefore/>`/`<w:gridAfter/>` case, which
+ * `resolveCellReference` rejects too but which the AST carries no field for — a
+ * SHORT row is the signal those elements leave behind, and treating it as
+ * grid-shifted only ever costs the longer `:pK` address, which works anywhere.
+ * Read must not advertise a handle the mutation surface refuses. */
+function isBareCellTarget(
+	row: TableRow,
+	cell: TableCell,
+	gridWidth: number,
+): boolean {
 	if (cell.vMerge || (cell.gridSpan ?? 1) > 1) return false;
-	return !row.cells.some((sibling) => (sibling.gridSpan ?? 1) > 1);
+	if (row.cells.some((sibling) => (sibling.gridSpan ?? 1) > 1)) return false;
+	return rowLogicalWidth(row) === gridWidth;
+}
+
+/** The table's logical column count: the widest row's span total, or the
+ * declared `<w:tblGrid>` width when that's wider (a table whose every row is
+ * grid-shifted still declares the full grid). Computed once per table — a
+ * per-cell recompute would make a large table's render quadratic. */
+function logicalColumnCount(rows: TableRow[], grid: number[]): number {
+	return Math.max(grid.length, ...rows.map(rowLogicalWidth));
+}
+
+function rowLogicalWidth(row: TableRow): number {
+	return row.cells.reduce((total, cell) => total + (cell.gridSpan ?? 1), 0);
 }
 
 function renderCell(
@@ -1997,15 +2041,30 @@ function renderCell(
 	// It stays SEPARATE from those bare locators, not merged into one comment.
 	const note = cellNote(cell);
 	if (body.length === 0) {
-		if (note) return escapeCell(note);
-		// The bare fill handle is only emitted for a cell a bare `--at` can
+		const soleBlock = cell.blocks[0];
+		const soleParagraph =
+			cell.blocks.length === 1 && soleBlock?.type === "paragraph"
+				? soleBlock
+				: null;
+		// The SHORT bare handle is only emitted for a cell a bare `--at` can
 		// actually address (see `isBareCellTarget`) — otherwise the agent would
 		// paste an address `resolveCellReference` rejects with TABLE_STRUCTURE.
-		if (!bareTargetable) return "";
-		const soleBlock = cell.blocks[0];
-		if (cell.blocks.length !== 1 || soleBlock?.type !== "paragraph") return "";
-		const address = cellAddress(cell);
-		return escapeCell(address ? `<!-- ${address} -->` : "");
+		// A cell it refuses still needs SOME address, or an empty cell in a
+		// merged/grid-shifted row is unreachable from the read (and the rejection
+		// hint would name a locator nothing printed), so it falls back to the
+		// paragraph locator itself — which `edit --at` accepts for ANY cell.
+		// That applies to a NOTED empty cell too: the `docx:cell` note leads with
+		// the bare address, which is exactly the one `--at` refuses here, so the
+		// paragraph locator rides in front of it the way it would in front of
+		// real content.
+		if (note) {
+			if (bareTargetable || !soleParagraph) return escapeCell(note);
+			return escapeCell(`<!-- ${soleParagraph.id} --> ${note}`);
+		}
+		if (!soleParagraph) return "";
+		return escapeCell(
+			`<!-- ${bareTargetable ? cellAddress(soleParagraph.id) : soleParagraph.id} -->`,
+		);
 	}
 	if (!note) return escapeCell(body);
 	return escapeCell(`${body} ${note}`);
@@ -2030,8 +2089,12 @@ function cellNote(cell: TableCell): string {
 	const halign = uniformCellAlignment(cell);
 	if (halign) pairs.push(["halign", halign]);
 	if (pairs.length === 0) return "";
-	const address = cellAddress(cell);
-	return formatNote("cell", pairs, address ? [address] : []);
+	const firstBlockId = cell.blocks[0]?.id;
+	return formatNote(
+		"cell",
+		pairs,
+		firstBlockId ? [cellAddress(firstBlockId)] : [],
+	);
 }
 
 /** The horizontal alignment shared by every paragraph in a cell, when it's a
@@ -2047,19 +2110,22 @@ function uniformCellAlignment(cell: TableCell): string | undefined {
 	return aligns.every((align) => align === first) ? first : undefined;
 }
 
-/** A cell's locator address (`t0:r0c0`), derived from its first block's locator
+/** A cell's locator address (`t0:r0c0`), derived from a block locator inside it
  * by dropping the trailing positional segment. A cell's first block is a
  * paragraph (`t0:r0c0:p0` → `t0:r0c0`) or a nested table (`t0:r0c0:t0` →
  * `t0:r0c0`) — keying on paragraphs alone would drop the address of a cell whose
  * only content is a nested table, leaving the `docx:cell` note unaddressable. */
-function cellAddress(cell: TableCell): string | undefined {
-	return cell.blocks[0]?.id.replace(/:(?:p|t)\d+$/, "");
+function cellAddress(blockId: string): string {
+	return blockId.replace(/:(?:p|t)\d+$/, "");
 }
 
 function renderNestedTable(table: Table, ctx: RenderContext): string {
+	const gridWidth = logicalColumnCount(table.rows, table.grid);
 	const rows = table.rows.map((row) =>
 		row.cells
-			.map((cell) => renderCell(cell, ctx, isBareCellTarget(row, cell)))
+			.map((cell) =>
+				renderCell(cell, ctx, isBareCellTarget(row, cell, gridWidth)),
+			)
 			.join(" / "),
 	);
 	return rows.join(" // ");

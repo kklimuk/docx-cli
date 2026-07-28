@@ -11,9 +11,8 @@ import {
 } from "@core";
 import type { XmlNode } from "@core/parser";
 import {
-	applyCellInsertion,
+	CellInsertionCursor,
 	cellInsertionAnchor,
-	ensureCellEndsWithParagraph,
 	type Grid,
 	reusableEmptyCellParagraph,
 } from "@core/table";
@@ -188,6 +187,7 @@ export async function runInsertBatch(
 			}
 			built.push({
 				kind: "cell",
+				index,
 				cell,
 				mode,
 				requestedPlacement: placement.mode,
@@ -238,6 +238,7 @@ export async function runInsertBatch(
 		}
 		built.push({
 			kind: "block",
+			index,
 			anchorRef,
 			mode,
 			requestedPlacement: placement.mode,
@@ -260,16 +261,38 @@ export async function runInsertBatch(
 		return EXIT.OK;
 	}
 
-	// Splice phase: recompute block-anchor indexes fresh and keep one start/end
-	// cursor per cell. Cell cursors preserve JSONL order independently at each
-	// boundary while all targets still refer to the document as originally read.
+	// Splice phase: recompute block-anchor indexes fresh and keep one
+	// CellInsertionCursor per cell (it carries the start cursor; the end boundary
+	// re-derives). Cursors preserve JSONL order at each cell boundary while all
+	// targets still refer to the document as originally read.
 	const afterOffset = new Map<XmlNode, number>();
-	const cellStates = new Map<XmlNode, CellInsertionState>();
+	const cellCursors = new Map<XmlNode, CellInsertionCursor>();
 	const insertedNodes = new Set<XmlNode>();
 	for (const entry of built) {
 		if (entry.kind === "cell") {
-			const failure = await spliceCellEntry(entry, cellStates, insertedNodes);
-			if (failure !== null) return failure;
+			// Scoped to the entry so the failure names the JSONL line that caused
+			// it, the way every build-phase rejection does.
+			try {
+				const cursor =
+					cellCursors.get(entry.cell.node) ??
+					CellInsertionCursor.open(entry.cell);
+				cellCursors.set(entry.cell.node, cursor);
+				const inserted = cursor.insert(
+					entry.blocks,
+					entry.mode,
+					entry.reuseParagraph,
+				);
+				for (const block of inserted) insertedNodes.add(block);
+			} catch (error) {
+				if (error instanceof CellTargetError) {
+					return fail(
+						error.code,
+						`entry ${entry.index}: ${error.message}`,
+						error.hint,
+					);
+				}
+				throw error;
+			}
 			continue;
 		}
 
@@ -277,7 +300,7 @@ export async function runInsertBatch(
 		if (baseIndex === -1) {
 			return fail(
 				"BLOCK_NOT_FOUND",
-				"Anchor reference is stale (parent does not contain it)",
+				`entry ${entry.index}: Anchor reference is stale (parent does not contain it)`,
 			);
 		}
 		let insertIndex: number;
@@ -291,9 +314,7 @@ export async function runInsertBatch(
 		entry.anchorRef.parent.splice(insertIndex, 0, ...entry.blocks);
 		for (const block of entry.blocks) insertedNodes.add(block);
 	}
-	for (const state of cellStates.values()) {
-		ensureCellEndsWithParagraph(state.parent);
-	}
+	for (const cursor of cellCursors.values()) cursor.ensureTerminalParagraph();
 
 	await document.save(outputPath);
 
@@ -316,92 +337,6 @@ export async function runInsertBatch(
 	return EXIT.OK;
 }
 
-/** Splice one bare-cell entry, advancing that cell's cursors. Returns null on
- *  success, or a `fail()` exit code — the two insertion strategies (reuse Word's
- *  mandatory empty paragraph vs. append at a cursor) are the whole reason this
- *  is its own function rather than a branch in the splice loop. */
-async function spliceCellEntry(
-	entry: Extract<BuiltEntry, { kind: "cell" }>,
-	cellStates: Map<XmlNode, CellInsertionState>,
-	insertedNodes: Set<XmlNode>,
-): Promise<number | null> {
-	let state = cellStates.get(entry.cell.node);
-	if (!state) {
-		const firstBlock = entry.cell.blocks[0];
-		const lastBlock = entry.cell.blocks[entry.cell.blocks.length - 1];
-		if (!firstBlock || !lastBlock) {
-			return fail(
-				"TABLE_STRUCTURE",
-				`Cell ${entry.cell.id} has no direct block content`,
-			);
-		}
-		state = {
-			parent: entry.cell.parent,
-			beforeAnchor: firstBlock,
-			beforeCursor: null,
-			endCursor: lastBlock,
-		};
-		cellStates.set(entry.cell.node, state);
-	}
-
-	if (entry.reuseParagraph) {
-		const applied = applyCellInsertion(
-			entry.cell.node,
-			entry.blocks,
-			entry.mode,
-			entry.reuseParagraph,
-		);
-		const firstResult = applied[0];
-		const lastResult = applied[applied.length - 1];
-		if (!firstResult || !lastResult) {
-			return fail(
-				"TABLE_STRUCTURE",
-				`Insertion into ${entry.cell.id} produced no addressable blocks`,
-			);
-		}
-		state.beforeAnchor = firstResult;
-		state.endCursor = lastResult;
-		if (entry.mode === "before") state.beforeCursor = lastResult;
-		for (const block of applied) insertedNodes.add(block);
-		return null;
-	}
-
-	const lastInserted = entry.blocks[entry.blocks.length - 1];
-	if (!lastInserted) {
-		return fail(
-			"TABLE_STRUCTURE",
-			`Insertion into ${entry.cell.id} produced no addressable blocks`,
-		);
-	}
-	if (entry.mode === "before") {
-		const cursor = state.beforeCursor;
-		const boundary = cursor ?? state.beforeAnchor;
-		const boundaryIndex = state.parent.indexOf(boundary);
-		if (boundaryIndex === -1) {
-			return fail(
-				"BLOCK_NOT_FOUND",
-				`Cell boundary reference is stale for ${entry.cell.id}`,
-			);
-		}
-		const extendedCellEnd = cursor !== null && state.endCursor === cursor;
-		state.parent.splice(boundaryIndex + (cursor ? 1 : 0), 0, ...entry.blocks);
-		state.beforeCursor = lastInserted;
-		if (extendedCellEnd) state.endCursor = lastInserted;
-	} else {
-		const boundaryIndex = state.parent.indexOf(state.endCursor);
-		if (boundaryIndex === -1) {
-			return fail(
-				"BLOCK_NOT_FOUND",
-				`Cell boundary reference is stale for ${entry.cell.id}`,
-			);
-		}
-		state.parent.splice(boundaryIndex + 1, 0, ...entry.blocks);
-		state.endCursor = lastInserted;
-	}
-	for (const block of entry.blocks) insertedNodes.add(block);
-	return null;
-}
-
 function mixedCellTargetFailure(
 	cellEntryIndex: number,
 	cellLocator: string,
@@ -414,9 +349,13 @@ function mixedCellTargetFailure(
 	);
 }
 
+/** `index` is the 0-based JSONL line the entry came from, carried through the
+ *  build phase so a splice-phase failure names the same `entry N` a build-phase
+ *  one does. */
 type BuiltEntry =
 	| {
 			kind: "block";
+			index: number;
 			anchorRef: BlockReference;
 			mode: "after" | "before";
 			requestedPlacement: "after" | "before" | "at";
@@ -425,6 +364,7 @@ type BuiltEntry =
 	  }
 	| {
 			kind: "cell";
+			index: number;
 			cell: CellReference;
 			mode: "after" | "before";
 			requestedPlacement: "after" | "before" | "at";
@@ -432,13 +372,6 @@ type BuiltEntry =
 			blocks: XmlNode[];
 			locator: string;
 	  };
-
-type CellInsertionState = {
-	parent: XmlNode[];
-	beforeAnchor: XmlNode;
-	beforeCursor: XmlNode | null;
-	endCursor: XmlNode;
-};
 
 /** CLI flags that have no meaning under `--batch` (each entry carries its own
  *  anchor, content, and per-entry options). Passing any of these alongside

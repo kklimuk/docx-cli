@@ -369,6 +369,45 @@ describe("insert --batch", () => {
 		expect(await blockText(path, "t0:r0c1:p0")).toBe("D");
 	});
 
+	// The reason a cell keeps CURSORS instead of re-deriving its boundary per
+	// entry (`CellInsertionCursor` in @core/table): re-deriving would make each
+	// prepend land ahead of the previous one, reversing JSONL order at the start
+	// boundary. One `before` entry can't tell the two apart — two can.
+	test("stacked before-entries into one cell keep JSONL order", async () => {
+		const path = await newTableDoc("insert-cell-stacked-before");
+		const batch = await writeJsonl("insert-cell-stacked-before", [
+			{ at: "t0:r0c0", text: "A" },
+			{ before: "t0:r0c0", text: "B" },
+			{ before: "t0:r0c0", text: "C" },
+			{ after: "t0:r0c0", text: "D" },
+		]);
+		const result = await runCli("insert", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(0);
+		expect(await blockText(path, "t0:r0c0:p0")).toBe("B");
+		expect(await blockText(path, "t0:r0c0:p1")).toBe("C");
+		expect(await blockText(path, "t0:r0c0:p2")).toBe("A");
+		expect(await blockText(path, "t0:r0c0:p3")).toBe("D");
+	});
+
+	// The first entry REUSES the cell's mandatory blank paragraph, so the cell's
+	// only block is both its start and its end. A later append must still land
+	// behind what the prepends wrote, not between them.
+	test("a reused blank paragraph keeps both cell boundaries straight", async () => {
+		const path = await newTableDoc("insert-cell-reuse-boundaries");
+		const batch = await writeJsonl("insert-cell-reuse-boundaries", [
+			{ before: "t0:r0c0", text: "A" },
+			{ before: "t0:r0c0", text: "B" },
+			{ after: "t0:r0c0", text: "D" },
+		]);
+		const result = await runCli("insert", path, "--batch", batch);
+
+		expect(result.exitCode).toBe(0);
+		expect(await blockText(path, "t0:r0c0:p0")).toBe("A");
+		expect(await blockText(path, "t0:r0c0:p1")).toBe("B");
+		expect(await blockText(path, "t0:r0c0:p2")).toBe("D");
+	});
+
 	test("rejects a bare-cell plus explicit paragraph target before writing", async () => {
 		const path = await newTableDoc("insert-cell-conflict");
 		const before = await Bun.file(path).bytes();

@@ -7,6 +7,7 @@ import {
 import type { XmlNode } from "../parser";
 import { directCellBlocks, soleCellParagraph } from "../table/cell-content";
 import { buildGrid, cellAt, type Grid, resolveTableNode } from "../table/grid";
+import { CellTargetError } from "./cell-target-error";
 import { type Locator, LocatorParseError, parseLocator } from "./parse";
 
 export { type BlockRangeReference, LocatorResolveError };
@@ -51,22 +52,6 @@ export type CellReference = {
 	blocks: XmlNode[];
 	paragraphs: BlockReference[];
 };
-
-export type CellTargetErrorCode =
-	| "INVALID_LOCATOR"
-	| "BLOCK_NOT_FOUND"
-	| "TABLE_STRUCTURE";
-
-export class CellTargetError extends Error {
-	constructor(
-		public code: CellTargetErrorCode,
-		message: string,
-		public hint?: string,
-	) {
-		super(message);
-		this.name = "CellTargetError";
-	}
-}
 
 /** Resolve a bare `tN:rRcC` (including nested chains) to its physical cell.
  * Bare-cell content mutation deliberately rejects merged/grid-shifted rows:
@@ -191,7 +176,7 @@ function mergedCellTargetError(at: string): CellTargetError {
 	return new CellTargetError(
 		"TABLE_STRUCTURE",
 		`Bare-cell content mutation is not supported for merged or grid-shifted cell ${at}`,
-		"Use `docx read FILE` and target the explicit tN:rRcC:pK paragraph locator shown for the merge anchor.",
+		"Run `docx read FILE` and use the tN:rRcC:pK paragraph locator EXACTLY as printed for that cell — in a merged or grid-shifted row the printed cell ids don't line up with logical column numbers, so don't derive one by counting columns.",
 	);
 }
 

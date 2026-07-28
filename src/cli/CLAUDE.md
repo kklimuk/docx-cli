@@ -52,7 +52,26 @@ row slot so they ride the table note keyed by `rR`), per-cell `docx:cell` hints
 uniform non-default cell-paragraph alignment — cell text alignment is otherwise
 invisible in a GFM cell). A PLAIN EMPTY cell emits exactly one bare `<!-- tN:rRcC -->`
 handle so `edit --at CELL` / `insert --at CELL` can fill it; an empty cell WITH
-metadata emits its `docx:cell` note alone, never a duplicate bare handle. The
+metadata emits its `docx:cell` note alone, never a duplicate bare handle.
+**The bare handle is a PROMISE that a bare `--at` works, so it is emitted only for
+a cell `resolveCellReference` would accept** (`isBareCellTarget` mirrors that gate:
+no vMerge, no gridSpan, no spanning sibling anywhere in the row — in a merged row
+physical cells stop lining up with logical columns — and the row must span the
+table's full logical width, which is how a `<w:trPr><w:gridBefore/>`/`<w:gridAfter/>`
+row is detected; those reject there too but the AST carries no field for them, so a
+SHORT row is the signal they leave behind). An empty cell it refuses still gets an
+address, or it would be unreachable from the read and the rejection hint would name
+a locator nothing printed: it falls back to the explicit `<!-- tN:rRcC:pK -->`
+paragraph locator, which `edit --at`/`insert --at` accept for ANY cell — including
+a NOTED empty cell, where the paragraph locator rides in FRONT of the `docx:cell`
+note (whose own leading token is the bare address `--at` just refused). So the
+SHAPE of the printed locator tells the agent which form to use. A cell holding a
+block-level `<w:sdt>` content control is no longer a hole here: the reader
+descends into it, so the cell has real blocks and never reaches the bare-handle
+branch (a cell holding `<w:customXml>`/`<w:altChunk>` still would — those stay
+unmodeled). A block inside a content control also carries a
+`content-control="<alias>"` pair on its `docx:p`/`docx:table` note, so an agent
+editing there knows the change lands inside a control Word may have LOCKED. The
 remaining annotations include a head `docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
 its default — a weak agent reads "no hint" as "unknown," not "off," and a wrong
 tracking guess is high-cost, so the state is stated outright),

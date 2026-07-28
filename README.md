@@ -240,7 +240,17 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   note follows the cell content and its paragraph locators — so structure invisible in GFM is visible
   (`Table.borders` / `TableCell.shading` in `read --ast`). A plain empty cell emits
   `<!-- t0:r0c0 -->`: pass that bare handle directly to `edit --at` or `insert --at`
-  to fill its mandatory empty paragraph without creating a blank extra line.
+  to fill its mandatory empty paragraph without creating a blank extra line. Where a
+  bare cell target is refused — a merged cell, or any cell of a merged/grid-shifted
+  row — the empty cell emits the explicit `<!-- t0:r0c1:p0 -->` paragraph locator
+  instead (in front of its `docx:cell` note, when it has one). Pass back whichever
+  form you see rather than deriving one by counting columns: in a merged row the
+  printed cell ids no longer line up with logical column numbers.
+- **Content controls** (Word's `<w:sdt>` — template placeholders, form fields,
+  data-bound regions) are transparent: the paragraphs and tables inside one read
+  as ordinary `pN`/`tN` blocks and edits land inside the control, with a
+  `content-control="Governing Law"` pair on the block's note so you know Word may
+  have locked it.
 - **Images** trail a `<!-- docx:image img0 size="6.2x4.1in" float="yes" wrap="square" align="center" overflow="yes" -->`
   note: `size` always (the `![](hash)` alone doesn't say "6in wide"), and
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds

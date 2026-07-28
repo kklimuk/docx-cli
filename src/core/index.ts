@@ -28,6 +28,7 @@ export type {
 	ChartRun,
 	Comment,
 	CommentAnchor,
+	ContentControl,
 	DocProperties,
 	EquationRun,
 	Hyperlink,

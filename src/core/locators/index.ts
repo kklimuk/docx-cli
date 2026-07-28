@@ -1,4 +1,8 @@
 export {
+	CellTargetError,
+	type CellTargetErrorCode,
+} from "./cell-target-error";
+export {
 	describeForms,
 	LOCATOR_FORMS,
 	type LocatorForm,
@@ -16,8 +20,6 @@ export {
 	type BlockRangeReference,
 	type BlockTarget,
 	type CellReference,
-	CellTargetError,
-	type CellTargetErrorCode,
 	LocatorResolveError,
 	locatorToBlockTarget,
 	parseCellAt,

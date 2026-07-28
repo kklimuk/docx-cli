@@ -130,14 +130,22 @@ export async function placeSpec(opts: PlaceSpecOptions): Promise<number> {
 			opts,
 			{ locator: resolved.locator, placement: resolved.requestedPlacement },
 			async () => {
-				const inserted = applyCellInsertion(
-					resolved.cell.node,
-					blocks,
-					resolved.mode,
-					reusable,
-				);
-				ensureCellEndsWithParagraph(resolved.cell.parent);
-				return inserted;
+				try {
+					const inserted = applyCellInsertion(
+						resolved.cell.node,
+						blocks,
+						resolved.mode,
+						reusable,
+					);
+					ensureCellEndsWithParagraph(resolved.cell.parent);
+					return inserted;
+				} catch (error) {
+					// A stale cell ref is a normal failure payload, not a crash.
+					if (error instanceof CellTargetError) {
+						return fail(error.code, error.message, error.hint);
+					}
+					throw error;
+				}
 			},
 		);
 	}

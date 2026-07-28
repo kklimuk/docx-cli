@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
+import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
 
 // Shared building blocks for the CLI tests. Verb-specific assertions stay in the
@@ -55,6 +58,53 @@ export async function newTableDoc(
 		String(rows),
 		"--cols",
 		String(cols),
+	);
+	return docPath;
+}
+
+/** A minimal .docx whose `<w:body>` is exactly `bodyXml` — for shapes no CLI
+ * verb can author (raw content controls, grid-shifted rows, unmodeled cell
+ * children). Returns the path. */
+export async function buildRawDoc(
+	bodyXml: string,
+	label: string,
+): Promise<string> {
+	const docPath = join(
+		mkdtempSync(join(tmpdir(), `docx-cli-${label}-`)),
+		"out.docx",
+	);
+	const zip = new JSZip();
+	zip.file(
+		"[Content_Types].xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+	<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+	<Default Extension="xml" ContentType="application/xml"/>
+	<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+	);
+	zip.file(
+		"_rels/.rels",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+	<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+	);
+	zip.file(
+		"word/document.xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>${bodyXml}<w:sectPr/></w:body>
+</w:document>`,
+	);
+	zip.file(
+		"word/_rels/document.xml.rels",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`,
+	);
+	await Bun.write(
+		docPath,
+		await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }),
 	);
 	return docPath;
 }

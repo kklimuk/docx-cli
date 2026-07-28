@@ -5,6 +5,7 @@ import type { NullableXmlNode, XmlNode } from "../parser";
 
 export {
 	applyCellInsertion,
+	CellInsertionCursor,
 	cellInsertionAnchor,
 	directCellBlocks,
 	ensureCellEndsWithParagraph,

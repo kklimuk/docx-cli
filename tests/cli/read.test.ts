@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
+import { buildRawDoc, readDocumentXml, readMarkdown } from "./helpers";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const fixture = (name: string): string => join(FIXTURES, name);
@@ -12,47 +10,6 @@ const fixture = (name: string): string => join(FIXTURES, name);
  *  asserting how `read` renders run properties we can't author through the CLI
  *  emitter (e.g. a `<w:b w:val="false"/>` toggle that turns OFF an inherited
  *  bold). Mirrors the raw-fixture builder in invariants.test.ts. */
-async function buildRawDoc(bodyXml: string, label: string): Promise<string> {
-	const docPath = join(
-		mkdtempSync(join(tmpdir(), `docx-cli-${label}-`)),
-		"out.docx",
-	);
-	const zip = new JSZip();
-	zip.file(
-		"[Content_Types].xml",
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-	<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-	<Default Extension="xml" ContentType="application/xml"/>
-	<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>`,
-	);
-	zip.file(
-		"_rels/.rels",
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-	<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>`,
-	);
-	zip.file(
-		"word/document.xml",
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-	<w:body>${bodyXml}<w:sectPr/></w:body>
-</w:document>`,
-	);
-	zip.file(
-		"word/_rels/document.xml.rels",
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`,
-	);
-	await Bun.write(
-		docPath,
-		await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }),
-	);
-	return docPath;
-}
-
 async function render(...args: string[]): Promise<string> {
 	const result = await runCli("read", ...args);
 	expect(result.exitCode).toBe(0);
@@ -138,9 +95,17 @@ describe("docx read (markdown)", () => {
 		);
 		const out = await render(docPath);
 
-		expect(out).toContain('<!-- docx:cell t0:r0c0 gridSpan="2" -->');
 		expect(out).not.toContain("<!-- t0:r0c1 -->");
-		// The unmerged row below still gets its fill handles.
+		// But it still needs SOME address, or the cell is unreachable from the
+		// read and the rejection hint names a locator nothing printed. The
+		// explicit paragraph form is what `edit --at` accepts for any cell.
+		expect(out).toContain("<!-- t0:r0c1:p0 -->");
+		// Including the MERGED cell itself: its docx:cell note leads with the bare
+		// address `--at` refuses, so the paragraph locator rides in front of it.
+		expect(out).toContain(
+			'<!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 gridSpan="2" -->',
+		);
+		// The unmerged row below still gets its short fill handles.
 		expect(out).toContain("<!-- t0:r1c0 -->");
 		expect(out).toContain("<!-- t0:r1c2 -->");
 
@@ -153,6 +118,25 @@ describe("docx read (markdown)", () => {
 			"x",
 		);
 		expect(rejected.exitCode).not.toBe(0);
+		// Following the printed locator works — the loop the hint points at.
+		const viaParagraph = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c1:p0",
+			"--text",
+			"x",
+		);
+		expect(viaParagraph.exitCode).toBe(0);
+		const viaMergedParagraph = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--text",
+			"x",
+		);
+		expect(viaMergedParagraph.exitCode).toBe(0);
 		const accepted = await runCli(
 			"edit",
 			docPath,
@@ -162,6 +146,48 @@ describe("docx read (markdown)", () => {
 			"x",
 		);
 		expect(accepted.exitCode).toBe(0);
+	});
+
+	// `<w:trPr><w:gridBefore/>`/`<w:gridAfter/>` reject in `resolveCellReference`
+	// exactly like a merged row, but the AST carries no field for them — a SHORT
+	// row (one that doesn't span the table's logical width) is the signal they
+	// leave behind, and read must key off it or it advertises a handle `--at`
+	// refuses.
+	test("a grid-shifted row advertises no bare-cell handle either", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>
+				<w:trPr><w:gridAfter w:val="1"/></w:trPr>
+				<w:tc><w:p/></w:tc>
+			</w:tr><w:tr>
+				<w:tc><w:p/></w:tc>
+				<w:tc><w:p/></w:tc>
+			</w:tr></w:tbl>`,
+			"grid-shifted-row-no-handle",
+		);
+		const out = await render(docPath);
+
+		expect(out).not.toContain("<!-- t0:r0c0 -->");
+		expect(out).toContain("<!-- t0:r0c0:p0 -->");
+		expect(out).toContain("<!-- t0:r1c0 -->");
+
+		const rejected = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"x",
+		);
+		expect(rejected.exitCode).not.toBe(0);
+		const viaParagraph = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0:p0",
+			"--text",
+			"x",
+		);
+		expect(viaParagraph.exitCode).toBe(0);
 	});
 
 	test("table placeholders share an outer highlight while preserving escaped pipes", async () => {
@@ -1017,5 +1043,108 @@ describe("adjacent same-format runs coalesce across a tracked boundary (accepted
 		const current = (await runCli("read", docPath, "--current")).stdout;
 		expect(current).toContain("{--");
 		expect(current).toContain("{++");
+	});
+});
+
+// A Word content control (`<w:sdt>`) is a template placeholder / form field /
+// data-bound region. Block-level ones used to be dropped by the reader, so an
+// entire clause was ABSENT from `read` and uncounted by `wc` while its bytes sat
+// on disk — an agent asked to redline it would report the text doesn't exist.
+describe("block-level content controls are transparent to the reader", () => {
+	const CLAUSE = "Confidentiality survives termination.";
+	const controlled = (inner: string) =>
+		`<w:p><w:r><w:t>before</w:t></w:r></w:p>` +
+		`<w:sdt><w:sdtPr><w:alias w:val="Governing Law"/><w:tag w:val="gov"/></w:sdtPr>` +
+		`<w:sdtContent>${inner}</w:sdtContent></w:sdt>`;
+
+	test("content inside a control is readable, counted, and addressable", async () => {
+		const docPath = await buildRawDoc(
+			controlled(`<w:p><w:r><w:t>${CLAUSE}</w:t></w:r></w:p>`),
+			"sdt-visible",
+		);
+
+		const out = await readMarkdown(docPath);
+		expect(out).toContain(CLAUSE);
+		// It gets an ordinary pN, numbered in document order across the boundary.
+		expect(out).toContain('<!-- docx:p p1 content-control="Governing Law" -->');
+
+		// `wc` counts it too — the AST is the single source both views read.
+		// "before" (1) + the 3-word clause; before this change it counted 1.
+		const counted = await runCli("wc", docPath);
+		expect((counted.parsed as { words: number }).words).toBe(4);
+	});
+
+	test("an edit lands INSIDE <w:sdtContent>, leaving the control intact", async () => {
+		const docPath = await buildRawDoc(
+			controlled(`<w:p><w:r><w:t>${CLAUSE}</w:t></w:r></w:p>`),
+			"sdt-edit",
+		);
+
+		expect(
+			(await runCli("edit", docPath, "--at", "p1", "--text", "redlined"))
+				.exitCode,
+		).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		const control = xml.match(/<w:sdt>[\s\S]*?<\/w:sdt>/)?.[0] ?? "";
+		expect(control).toContain("redlined");
+		expect(control).toContain('<w:alias w:val="Governing Law"/>');
+		expect(xml).not.toContain(CLAUSE);
+	});
+
+	test("a control wrapping a table exposes it as an ordinary tN", async () => {
+		const docPath = await buildRawDoc(
+			controlled(
+				`<w:tbl><w:tblGrid><w:gridCol w:w="4680"/></w:tblGrid>` +
+					`<w:tr><w:tc><w:p><w:r><w:t>celltext</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`,
+			),
+			"sdt-table",
+		);
+
+		const out = await readMarkdown(docPath);
+		expect(out).toContain("celltext");
+		expect(out).toContain("t0:r0c0:p0");
+	});
+
+	// The gap this closed: a cell holding a control looked like a plain
+	// single-paragraph cell, so read advertised a bare handle `--at` refuses.
+	test("a cell holding a control no longer advertises a bare fill handle", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tblGrid><w:gridCol w:w="4680"/></w:tblGrid><w:tr><w:tc>` +
+				`<w:p/><w:sdt><w:sdtPr/><w:sdtContent>` +
+				`<w:p><w:r><w:t>June 8, 2026</w:t></w:r></w:p>` +
+				`</w:sdtContent></w:sdt></w:tc></w:tr></w:tbl>`,
+			"sdt-cell",
+		);
+
+		const out = await readMarkdown(docPath);
+		expect(out).toContain("June 8, 2026");
+		expect(out).not.toContain("<!-- t0:r0c0 -->");
+		const rejected = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"x",
+		);
+		expect(rejected.exitCode).not.toBe(0);
+	});
+
+	// Comments are never parse-back — the importer drops every docx: annotation.
+	test("the content-control hint does not survive a read → create rebuild", async () => {
+		const docPath = await buildRawDoc(
+			controlled(`<w:p><w:r><w:t>${CLAUSE}</w:t></w:r></w:p>`),
+			"sdt-roundtrip",
+		);
+		const markdown = await readMarkdown(docPath);
+		const rebuilt = join(tempWorkspace("sdt-rebuild"), "out.docx");
+		const from = join(tempWorkspace("sdt-rebuild-src"), "in.md");
+		await Bun.write(from, markdown);
+
+		expect((await runCli("create", rebuilt, "--from", from)).exitCode).toBe(0);
+		const out = await readMarkdown(rebuilt);
+		expect(out).toContain(CLAUSE);
+		expect(out).not.toContain("content-control");
 	});
 });

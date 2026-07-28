@@ -1,4 +1,5 @@
 import type { BlockReference } from "../ast/document/body";
+import { CellTargetError } from "../locators/cell-target-error";
 import type { CellReference } from "../locators/resolve";
 import { XmlNode } from "../parser";
 
@@ -90,7 +91,13 @@ export function applyCellInsertion(
 		const first = blocks[0] as XmlNode;
 		const anchorIndex = parent.indexOf(reuseParagraph);
 		if (anchorIndex === -1) {
-			throw new Error("Empty cell paragraph reference is stale");
+			// A `CellTargetError`, not a bare Error: every cell-insertion caller
+			// already translates this class into a `{code, error}` payload, so a
+			// detached ref reports as a normal failure instead of a stack trace.
+			throw new CellTargetError(
+				"BLOCK_NOT_FOUND",
+				"Empty cell paragraph reference is stale",
+			);
 		}
 		if (first.tag === "w:p") {
 			reuseParagraph.attributes = {
@@ -117,6 +124,87 @@ export function applyCellInsertion(
 		resultNodes.push(...blocks);
 	}
 	return resultNodes;
+}
+
+/** Where successive inserts land inside ONE cell.
+ *
+ * {@link applyCellInsertion} re-derives the boundary from the cell's CURRENT
+ * blocks. That is already right for every append (the cell's last block IS the
+ * one the previous entry appended) and for the FIRST prepend. It is wrong in
+ * exactly one case: a SECOND prepend, which would re-derive to the block the
+ * first one just placed and land ahead of it, reversing JSONL order.
+ *
+ * So the only state a batch actually needs is a start cursor, and this class
+ * owns that rule rather than each batch surface re-deriving it. The cursor is a
+ * live `XmlNode` ref into the cell's child list, so an instance is valid only
+ * while that list is the one being spliced (the batch splice phase). A detached
+ * ref raises a stale-reference `CellTargetError` rather than silently
+ * repositioning. */
+export class CellInsertionCursor {
+	/** The last block a `before` entry placed; null until one has. */
+	private beforeCursor: XmlNode | null = null;
+
+	private constructor(private readonly cell: CellReference) {}
+
+	/** Open a cursor over a cell's direct blocks. Refuses a cell with none —
+	 * Word always leaves one mandatory paragraph, so that shape is malformed
+	 * rather than one we should invent a boundary for. */
+	static open(cell: CellReference): CellInsertionCursor {
+		if (cell.blocks.length === 0) {
+			throw new CellTargetError(
+				"TABLE_STRUCTURE",
+				`Cell ${cell.id} has no direct block content`,
+			);
+		}
+		return new CellInsertionCursor(cell);
+	}
+
+	/** Place already-built blocks at this cell's start or end boundary. Returns
+	 * the nodes now in the tree — for a `reuseParagraph` insert that includes the
+	 * REUSED node, which keeps its identity (and so its canonical `:p0` handle). */
+	insert(
+		blocks: XmlNode[],
+		mode: "before" | "after",
+		reuseParagraph: XmlNode | null,
+	): XmlNode[] {
+		if (blocks.length === 0) {
+			throw new CellTargetError(
+				"TABLE_STRUCTURE",
+				`Insertion into ${this.cell.id} produced no addressable blocks`,
+			);
+		}
+		// Everything but a repeat prepend can re-derive its own boundary.
+		if (mode === "after" || reuseParagraph || !this.beforeCursor) {
+			const applied = applyCellInsertion(
+				this.cell.node,
+				blocks,
+				mode,
+				reuseParagraph,
+			);
+			if (mode === "before") {
+				this.beforeCursor = applied[applied.length - 1] ?? null;
+			}
+			return applied;
+		}
+		// Repeat prepend: stack forward from the last one so entry order survives.
+		const index = this.cell.parent.indexOf(this.beforeCursor);
+		if (index === -1) {
+			throw new CellTargetError(
+				"BLOCK_NOT_FOUND",
+				`Cell boundary reference is stale for ${this.cell.id}`,
+			);
+		}
+		this.cell.parent.splice(index + 1, 0, ...blocks);
+		this.beforeCursor = blocks[blocks.length - 1] ?? null;
+		return blocks;
+	}
+
+	/** Apply Word's terminal-paragraph rule once the cell's whole batch is in.
+	 * Deferred to the end so a synthetic paragraph isn't appended and then
+	 * repositioned by a later entry. */
+	ensureTerminalParagraph(): void {
+		ensureCellEndsWithParagraph(this.cell.parent);
+	}
 }
 
 /** The paragraph a cell insert inherits its formatting from: the reused

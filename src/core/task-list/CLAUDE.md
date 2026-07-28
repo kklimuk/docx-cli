@@ -32,6 +32,16 @@ When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:
 
 `flipCheckboxUntracked(paragraph, checked)` updates the SDT in place (attribute + glyph). `flipCheckboxTracked(paragraph, checked, mintMeta)` writes Word's tracked-toggle shape: replaces `sdtContent`'s children with `<w:ins>new</w:ins><w:del>old</w:del>` and flips the attribute. Each side of the pair gets a fresh revision id from `mintMeta` (Word emits distinct ids — the meta-minter pattern is shared with `core/track-changes/replace.tsx`). Both return `false` on no-op (no SDT, or already in the target state) so callers can produce a clean ack. The CLI reaches these through `Edit.taskToggle`, exposed as `docx tasks check` / `docx tasks uncheck` (authoring a NEW task item is `docx tasks add`); all three live in [src/cli/tasks](../../cli/tasks).
 
+## Block-level SDTs are NOT this file's concern
+
+`detectTaskListState` handles the RUN-level checkbox SDT. A BLOCK-level `<w:sdt>`
+(a content control wrapping whole paragraphs/tables — template placeholder, form
+field, data-bound region) is unwrapped by the AST reader's `collectBlocks`
+instead, which reads its contents as ordinary blocks and stamps them with
+`Paragraph.contentControl`. The run-level skip documented below stays: it's what
+keeps nested `<w:ins>`/`<w:del>` inside an inline control from minting phantom
+`tcN` ids.
+
 ## Structural inserts/deletes — known gap
 
 Adding/removing an entire checkbox SDT (Word wraps the SDT in `<w:customXmlDel/InsRangeStart/End>` brackets) round-trips through the XmlNode tree but isn't enumerated as a dedicated tracked-change kind. The reader's `walkRunContainer` skips checkbox-SDTs whose only tracking is structural so no phantom `tcN` is minted for them; `accept --all` won't honor them. Bounded gap — toggle and edit-task-text cover the common cases.

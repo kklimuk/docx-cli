@@ -7,6 +7,24 @@ export type DocProperties = {
 
 export type Block = Paragraph | Table | SectionBreak;
 
+/** A Word content control (`<w:sdt>`, "structured document tag") wrapping a
+ * block — a template placeholder, a form field, a locked region, or a region
+ * bound to a custom XML part.
+ *
+ * A block-level control is TRANSPARENT to the reader: the `<w:p>`/`<w:tbl>`
+ * inside its `<w:sdtContent>` are read as ordinary blocks with ordinary
+ * `pN`/`tN` ids, and carry this field so `read` can still say "you're editing
+ * inside a control." Word may LOCK a control against edit or deletion, so an
+ * edit that succeeds here can still be refused in the UI — that's why it's
+ * surfaced rather than silently flattened. */
+export type ContentControl = {
+	/** `<w:sdtPr><w:alias w:val="…"/>` — the control's label in Word's UI. */
+	alias?: string;
+	/** `<w:sdtPr><w:tag w:val="…"/>` — its programmatic tag, which is what a
+	 * data-bound template keys on. */
+	tag?: string;
+};
+
 export type Paragraph = {
 	id: string;
 	type: "paragraph";
@@ -36,6 +54,9 @@ export type Paragraph = {
 	 * Word/LibreOffice. Markdown surfaces it as a bare `raw` token on the
 	 * block's `docx:p` note. */
 	rawXml?: true;
+	/** The Word content control (`<w:sdt>`) this block sits inside, when it sits
+	 * inside one. See {@link ContentControl}. */
+	contentControl?: ContentControl;
 	/** Markdown blockquote depth (1 = single `>`, 2 = `> >`, etc.). Detected
 	 * by the AST reader from `pStyle="Quote"` / `pStyle="QuoteListParagraph"`
 	 * combined with the paragraph's `<w:ind w:left>` value (each 720-twip
@@ -111,6 +132,9 @@ export type Table = {
 	 * `Paragraph.rawXml`. Surfaces as a bare `raw` token on the `docx:table`
 	 * note. */
 	rawXml?: true;
+	/** The Word content control (`<w:sdt>`) this table sits inside, when it sits
+	 * inside one. See {@link ContentControl}. */
+	contentControl?: ContentControl;
 	rows: TableRow[];
 };
 

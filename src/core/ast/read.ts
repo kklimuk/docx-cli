@@ -17,6 +17,7 @@ import type {
 	BreakRun,
 	ChartRun,
 	CommentAnchor,
+	ContentControl,
 	EquationRun,
 	Hyperlink,
 	ImageRun,
@@ -121,21 +122,41 @@ function readBlocks(
 	state: WalkState,
 ): Block[] {
 	const blocks: Block[] = [];
-	let paragraphIndex = 0;
-	let tableIndex = 0;
-	let sectionIndex = 0;
+	collectBlocks(
+		document,
+		body.children,
+		blocks,
+		{ paragraph: 0, table: 0, section: 0 },
+		state,
+	);
+	return blocks;
+}
 
-	for (const child of body.children) {
+type BlockCounters = { paragraph: number; table: number; section: number };
+
+/** Walk one block-level child list, appending to `blocks` and minting ids from
+ * the SHARED `counters` so `pN`/`tN`/`sN` stay sequential in document order
+ * across a content-control boundary. `children` is also the `parent` every
+ * `BlockReference` records, so a splice lands in the list the node actually
+ * lives in — inside `<w:sdtContent>` for a controlled block. */
+function collectBlocks(
+	document: Document,
+	children: XmlNode[],
+	blocks: Block[],
+	counters: BlockCounters,
+	state: WalkState,
+	control?: ContentControl,
+): void {
+	for (const child of children) {
 		if (child.tag === "w:p") {
-			const id = `p${paragraphIndex++}`;
-			blocks.push(readParagraph(document, child, id, state));
-			document.body.blockReferences.set(id, {
-				node: child,
-				parent: body.children,
-			});
+			const id = `p${counters.paragraph++}`;
+			const paragraph = readParagraph(document, child, id, state);
+			if (control) paragraph.contentControl = control;
+			blocks.push(paragraph);
+			document.body.blockReferences.set(id, { node: child, parent: children });
 			const inlineSectPr = findInlineSectPr(child);
 			if (inlineSectPr) {
-				const sectionId = `s${sectionIndex++}`;
+				const sectionId = `s${counters.section++}`;
 				blocks.push(buildSectionBreak(sectionId, inlineSectPr.node));
 				document.body.blockReferences.set(sectionId, inlineSectPr);
 				registerSectPrChange(document, inlineSectPr.node, state, sectionId);
@@ -145,25 +166,62 @@ function readBlocks(
 			continue;
 		}
 		if (child.tag === "w:tbl") {
-			const id = `t${tableIndex++}`;
-			blocks.push(readTable(document, child, id, state));
-			document.body.blockReferences.set(id, {
-				node: child,
-				parent: body.children,
-			});
+			const id = `t${counters.table++}`;
+			const table = readTable(document, child, id, state);
+			if (control) table.contentControl = control;
+			blocks.push(table);
+			document.body.blockReferences.set(id, { node: child, parent: children });
+			continue;
+		}
+		if (child.tag === "w:sdt") {
+			const inner = contentControlContent(child);
+			if (inner) {
+				collectBlocks(
+					document,
+					inner.children,
+					blocks,
+					counters,
+					state,
+					inner.control,
+				);
+			}
 			continue;
 		}
 		if (child.tag === "w:sectPr") {
-			const id = `s${sectionIndex++}`;
+			const id = `s${counters.section++}`;
 			blocks.push(buildSectionBreak(id, child));
-			document.body.blockReferences.set(id, {
-				node: child,
-				parent: body.children,
-			});
+			document.body.blockReferences.set(id, { node: child, parent: children });
 			registerSectPrChange(document, child, state, id);
 		}
 	}
-	return blocks;
+}
+
+/** Unwrap a BLOCK-level `<w:sdt>` (Word content control) into the child list
+ * inside its `<w:sdtContent>` plus the control's identity.
+ *
+ * Block-level controls are TRANSPARENT to the block walk: without descending,
+ * an entire control — a clause, a form field, a data-bound region — is absent
+ * from the AST, so `read` can't show it and `wc` can't count it while the bytes
+ * sit happily on disk. (Our own raw gate already refuses to WRITE a block-level
+ * `<w:sdt>` for exactly that reason; inbound Word files carry them anyway.)
+ *
+ * Only the BLOCK level is transparent. A RUN-level `<w:sdt>` inside a paragraph
+ * stays skipped by `walkRunContainer` — descending there would surface nested
+ * `<w:ins>`/`<w:del>` as run-level `tcN` ids with no sensible accept/reject
+ * scope, and the checkbox shape has its own recognizer (see
+ * [core/task-list/CLAUDE.md](../task-list/CLAUDE.md)). */
+function contentControlContent(
+	node: XmlNode,
+): { children: XmlNode[]; control: ContentControl } | null {
+	const content = node.findChild("w:sdtContent");
+	if (!content) return null;
+	const properties = node.findChild("w:sdtPr");
+	const alias = properties?.findChild("w:alias")?.getAttribute("w:val");
+	const tag = properties?.findChild("w:tag")?.getAttribute("w:val");
+	const control: ContentControl = {};
+	if (alias) control.alias = alias;
+	if (tag) control.tag = tag;
+	return { children: content.children, control };
 }
 
 /** Register paragraph-mark `<w:ins>` / `<w:del>` markers (lives inside
@@ -1490,16 +1548,53 @@ function readCellBlocks(
 	state: WalkState,
 ): Block[] {
 	const blocks: Block[] = [];
-	let paragraphIndex = 0;
-	let nestedTableIndex = 0;
 	const cellPrefix = `${tableId}:r${rowIndex}c${columnIndex}`;
-	for (const child of cell.children) {
+	collectCellBlocks(
+		document,
+		cell.children,
+		blocks,
+		{ paragraph: 0, table: 0, section: 0 },
+		cellPrefix,
+		state,
+	);
+	return blocks;
+}
+
+/** The cell-scoped twin of {@link collectBlocks}: same shared counters and same
+ * transparent `<w:sdt>` descent, but ids are chained under the cell's prefix. */
+function collectCellBlocks(
+	document: Document,
+	children: XmlNode[],
+	blocks: Block[],
+	counters: BlockCounters,
+	cellPrefix: string,
+	state: WalkState,
+	control?: ContentControl,
+): void {
+	for (const child of children) {
+		if (child.tag === "w:sdt") {
+			const inner = contentControlContent(child);
+			if (inner) {
+				collectCellBlocks(
+					document,
+					inner.children,
+					blocks,
+					counters,
+					cellPrefix,
+					state,
+					inner.control,
+				);
+			}
+			continue;
+		}
 		if (child.tag === "w:p") {
-			const id = `${cellPrefix}:p${paragraphIndex++}`;
-			blocks.push(readParagraph(document, child, id, state));
+			const id = `${cellPrefix}:p${counters.paragraph++}`;
+			const paragraph = readParagraph(document, child, id, state);
+			if (control) paragraph.contentControl = control;
+			blocks.push(paragraph);
 			document.body.blockReferences.set(id, {
 				node: child,
-				parent: cell.children,
+				parent: children,
 			});
 			// Cell paragraphs can carry a tracked paragraph-property change and a
 			// paragraph-mark too; register both here (top-level paragraphs do this in
@@ -1513,13 +1608,14 @@ function readCellBlocks(
 		// `t0:r2c1:t0:r0c0:p0` resolve via the existing locator parser's
 		// recursive `cell.inner`.
 		if (child.tag === "w:tbl") {
-			const id = `${cellPrefix}:t${nestedTableIndex++}`;
-			blocks.push(readTable(document, child, id, state));
+			const id = `${cellPrefix}:t${counters.table++}`;
+			const table = readTable(document, child, id, state);
+			if (control) table.contentControl = control;
+			blocks.push(table);
 			document.body.blockReferences.set(id, {
 				node: child,
-				parent: cell.children,
+				parent: children,
 			});
 		}
 	}
-	return blocks;
 }

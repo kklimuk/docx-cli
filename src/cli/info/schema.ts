@@ -82,6 +82,7 @@ const JSON_SCHEMA = {
 				},
 				taskState: { enum: ["checked", "unchecked"] },
 				rawXml: { const: true },
+				contentControl: { $ref: "#/$defs/ContentControl" },
 				tabStops: {
 					type: "array",
 					items: {
@@ -280,6 +281,7 @@ const JSON_SCHEMA = {
 				style: { type: "string" },
 				align: { enum: ["left", "center", "right"] },
 				rawXml: { const: true },
+				contentControl: { $ref: "#/$defs/ContentControl" },
 				rows: {
 					type: "array",
 					items: {
@@ -343,6 +345,13 @@ const JSON_SCHEMA = {
 			properties: {
 				value: { type: "number" },
 				unit: { enum: ["dxa", "pct", "auto", "nil"] },
+			},
+		},
+		ContentControl: {
+			type: "object",
+			properties: {
+				alias: { type: "string" },
+				tag: { type: "string" },
 			},
 		},
 		SectionBreak: {
