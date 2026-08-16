@@ -72,6 +72,7 @@ scripts/                      # repo utilities (move.ts, word-redlines.sh, smoke
 skills/docx-cli/              # the published Agent Skill — SKILL.md (generated), references/
                               #   scripts/install.sh   the ONE installer (also published as a release asset)
                               #   scripts/bootstrap.sh session-start version check; delegates to install.sh
+install.sh                    # byte-identical deprecation shim for bootstraps <= v0.22.0 (see CLAUDE.md)
 .claude-plugin/               # Claude Code: marketplace.json + plugin.json (skills/ auto-discovered)
 .codex-plugin/                # Codex: plugin.json skill-only manifest ("skills": "./skills/")
 ```

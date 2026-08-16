@@ -47,7 +47,7 @@ curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install
 sh install.sh
 ```
 
-`install.sh` is a release asset, not a file served from a moving branch — so it is immutable per release and listed in that release's `SHA256SUMS`. To verify it before running it:
+`install.sh` is a release asset, not a file served from a moving branch — so it is immutable per release and listed in that release's `SHA256SUMS`. (Published from v0.23.0 onward; on earlier releases use the npm path above.) To verify it before running it:
 
 ```sh
 curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/SHA256SUMS
