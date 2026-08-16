@@ -60,12 +60,19 @@ jobs:
         # NOTICES is the canonical attribution surface for PDFium (BSD-3),
         # jpeg-js (BSD-3), highlight.js (BSD-3), and libheif (LGPL).
         run: cp LICENSE LGPL-3.0.txt NOTICES ./artifacts/
-      - name: Generate SHA256SUMS for the binaries
+      - name: Stage install.sh for release
+        # install.sh ships as a release ASSET rather than being served from the moving
+        # `main` branch, so the documented install command is pinned to a tag, immutable
+        # per release, and covered by the SHA256SUMS manifest below — which means the
+        # installer itself can be verified before it is run.
+        run: cp install.sh ./artifacts/
+      - name: Generate SHA256SUMS for the release assets
         # Published as a release asset so install.sh / bootstrap.sh can verify the
-        # downloaded binary's integrity (supply-chain hardening).
+        # downloaded binary's integrity, and so install.sh itself can be verified
+        # before it is run (supply-chain hardening).
         run: |
           cd ./artifacts
-          sha256sum docx-* > SHA256SUMS
+          sha256sum docx-* install.sh > SHA256SUMS
           cat SHA256SUMS
       - name: List artifacts
         run: ls -la ./artifacts

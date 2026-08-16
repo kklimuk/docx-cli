@@ -4,9 +4,15 @@
 # Downloads the latest pre-built binary for your platform and drops it into
 # $PREFIX (default: $HOME/.local/bin) as `docx`.
 #
+# This script is published as a RELEASE ASSET and listed in that release's SHA256SUMS,
+# so fetch it from a release (never from a branch) and run it from a file — that way it
+# is immutable per release and you can verify it before running it.
+#
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh | sh
-#   PREFIX=/usr/local sh -c "$(curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh)"
+#   curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
+#   sh install.sh
+#
+#   PREFIX=/usr/local VERSION=v1.2.3 sh install.sh
 #
 # POSIX sh, no bashisms. Tested under bash, dash, busybox sh.
 

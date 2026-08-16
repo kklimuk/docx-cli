@@ -40,13 +40,22 @@ bun add -g bun-docx
 bunx bun-docx read doc.docx
 ```
 
-**Standalone binary** (no Bun required). Every release publishes prebuilt binaries plus a `SHA256SUMS` manifest, and the installer **verifies the binary's SHA-256** before installing:
+**Standalone binary** (no Bun required). Every release publishes prebuilt binaries, the installer, and a `SHA256SUMS` manifest covering all of them; the installer **verifies the binary's SHA-256** before installing:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kklimuk/docx-cli/main/install.sh | sh
+curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
+sh install.sh
 ```
 
-Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64. Prefer to inspect first? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
+`install.sh` is a release asset, not a file served from a moving branch — so it is immutable per release and listed in that release's `SHA256SUMS`. To verify it before running it:
+
+```sh
+curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing   # or: sha256sum -c …
+sh install.sh
+```
+
+Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64. Prefer to skip the script entirely? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
 
 ## Quick example: filling out an NDA
 
