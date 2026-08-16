@@ -69,7 +69,9 @@ tests/
   fixtures/                   # .docx files
     setup/                    # builders: setup/<name>.{ts,tsx} writes ../<name>.docx (helpers/ for canonical parts; inspect.ts audit)
 scripts/                      # repo utilities (move.ts, word-redlines.sh, smoke probes)
-skills/docx-cli/              # the published Agent Skill — SKILL.md (generated), references/, scripts/bootstrap.sh
+skills/docx-cli/              # the published Agent Skill — SKILL.md (generated), references/
+                              #   scripts/install.sh   the ONE installer (also published as a release asset)
+                              #   scripts/bootstrap.sh session-start version check; delegates to install.sh
 .claude-plugin/               # Claude Code: marketplace.json + plugin.json (skills/ auto-discovered)
 .codex-plugin/                # Codex: plugin.json skill-only manifest ("skills": "./skills/")
 ```
