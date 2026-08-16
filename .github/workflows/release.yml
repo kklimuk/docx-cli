@@ -61,14 +61,10 @@ jobs:
         # jpeg-js (BSD-3), highlight.js (BSD-3), and libheif (LGPL).
         run: cp LICENSE LGPL-3.0.txt NOTICES ./artifacts/
       - name: Stage install.sh for release
-        # install.sh ships as a release ASSET rather than being served from the moving
-        # `main` branch, so the documented install command is pinned to a tag, immutable
-        # per release, and covered by the SHA256SUMS manifest below — which means the
-        # installer itself can be verified before it is run.
-        #
-        # It lives in the skill folder because that folder ships standalone (to npm and
-        # skills.sh) and its bootstrap.sh delegates to this file as a local sibling —
-        # so there is exactly ONE copy of the install logic, published two ways.
+        # Shipped as a release asset (not served from a branch) so the documented install
+        # command pins to a tag and is covered by SHA256SUMS below. It lives in the skill
+        # folder because bootstrap.sh delegates to it as a local sibling — one copy of
+        # the logic, published two ways. See the installer invariant in CLAUDE.md.
         run: cp skills/docx-cli/scripts/install.sh ./artifacts/
       - name: Generate SHA256SUMS for the release assets
         # Published as a release asset so install.sh / bootstrap.sh can verify the

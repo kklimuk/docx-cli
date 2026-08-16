@@ -12,7 +12,7 @@
 #   curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
 #   sh install.sh
 #
-#   PREFIX=/usr/local VERSION=v1.2.3 sh install.sh
+#   PREFIX=/usr/local/bin VERSION=v1.2.3 sh install.sh
 #
 # Environment:
 #   PREFIX            where to install (default: $HOME/.local/bin)
@@ -33,21 +33,32 @@ REPO="kklimuk/docx-cli"
 # ${HOME-} (not $HOME) so `set -u` doesn't abort before an error path can explain itself
 # in a HOME-less environment (containers, cron). An unusable default surfaces at mkdir.
 PREFIX="${PREFIX:-${HOME-}/.local/bin}"
+# A trailing slash would break the PATH-membership test at the end (":$PREFIX:" never
+# matches a PATH entry written without one).
+PREFIX="${PREFIX%/}"
 VERSION="${VERSION:-latest}"
 REQUIRE_CHECKSUM="${REQUIRE_CHECKSUM:-0}"
 
+npm_hint() { echo "  Install from the npm registry instead:  bun add -g bun-docx" >&2; }
+prefix_hint() { echo "  Pick a writable location:  PREFIX=/usr/local/bin sh install.sh" >&2; }
+
+os="$(uname -s)"
+arch="$(uname -m)"
+
 # ─── Platform → release asset name. Nonzero when we publish no binary for it. ───
+# These names must match the `name:` column of the build matrix in
+# .github/workflows/release.yml; tests/cli/installer.test.ts asserts that they do.
 detect_target() {
-  case "$(uname -s)" in
+  case "$os" in
     Linux)
-      case "$(uname -m)" in
+      case "$arch" in
         x86_64|amd64) echo "docx-linux-x64" ;;
         aarch64|arm64) echo "docx-linux-arm64" ;;
         *) return 1 ;;
       esac
       ;;
     Darwin)
-      case "$(uname -m)" in
+      case "$arch" in
         x86_64) echo "docx-darwin-x64" ;;
         arm64) echo "docx-darwin-arm64" ;;
         *) return 1 ;;
@@ -65,6 +76,7 @@ elif command -v wget >/dev/null 2>&1; then
   download() { wget -qO "$2" "$1"; }
 else
   echo "Error: need curl or wget to install." >&2
+  npm_hint
   exit 1
 fi
 
@@ -74,30 +86,32 @@ fi
 # dgst` puts it LAST ("SHA256(file)= <hash>" on LibreSSL, "SHA2-256(file)= <hash>" on
 # OpenSSL 3.x). openssl is the third fallback because it is a native binary: on macOS,
 # /usr/bin/shasum is a PERL script, and Apple has deprecated the bundled scripting
-# runtimes, so shasum disappears whenever Perl does. Left UNDEFINED when no tool is
-# present — the policy check below decides what that means.
+# runtimes, so shasum disappears whenever Perl does.
+verify=1
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null 2>&1; then
   sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
 elif command -v openssl >/dev/null 2>&1; then
   sha256_of() { openssl dgst -sha256 "$1" | awk '{print $NF}'; }
+else
+  verify=0
 fi
 
 target="$(detect_target)" || {
-  echo "Error: unsupported platform: $(uname -s) $(uname -m)" >&2
+  echo "Error: unsupported platform: ${os} ${arch}" >&2
   echo "  Supported: linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64." >&2
-  echo "  Install from the npm registry instead:  bun add -g bun-docx" >&2
+  npm_hint
   exit 1
 }
 binary_name="docx"
 case "$target" in *.exe) binary_name="docx.exe" ;; esac
 
-if ! command -v sha256_of >/dev/null 2>&1; then
+if [ "$verify" = 0 ]; then
   if [ "$REQUIRE_CHECKSUM" = "1" ]; then
     echo "Error: no sha256sum, shasum, or openssl on this system — refusing to install a" >&2
     echo "  binary whose integrity cannot be verified." >&2
-    echo "  Install from the npm registry instead:  bun add -g bun-docx" >&2
+    npm_hint
     exit 1
   fi
   echo "Warning: no sha256sum/shasum/openssl found — installing WITHOUT integrity verification." >&2
@@ -109,32 +123,32 @@ else
   base="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
 
+# Get a release asset or die. $3, when given, is an extra line of context.
+fetch_asset() {
+  download "${base}/$1" "$2" && [ -s "$2" ] || {
+    echo "Error: could not download ${base}/$1." >&2
+    [ -z "${3-}" ] || echo "  $3" >&2
+    exit 1
+  }
+}
+
 # Stage both downloads INSIDE $PREFIX: the final step is then a same-directory rename
 # rather than a cross-device copy of ~100 MB, and an unwritable destination fails here —
 # before the transfer — instead of after it.
-mkdir -p "$PREFIX" 2>/dev/null || {
-  echo "Error: could not create ${PREFIX}." >&2
-  echo "  Pick a writable location:  PREFIX=/usr/local/bin sh install.sh" >&2
-  exit 1
-}
 bin_tmp="${PREFIX}/.docx-download.$$"
 sums_tmp="${PREFIX}/.docx-sums.$$"
+mkdir -p "$PREFIX" || { echo "Error: could not create ${PREFIX}." >&2; prefix_hint; exit 1; }
+# Sweep leftovers from a run killed by a signal the trap below cannot catch (SIGKILL,
+# power loss). Each stray file is a ~100 MB binary sitting in a bin directory.
+rm -f "$PREFIX"/.docx-download.* "$PREFIX"/.docx-sums.* 2>/dev/null || true
 trap 'rm -f "$bin_tmp" "$sums_tmp"' EXIT INT TERM
-touch "$bin_tmp" 2>/dev/null || {
-  echo "Error: ${PREFIX} is not writable." >&2
-  echo "  Pick a writable location:  PREFIX=/usr/local/bin sh install.sh" >&2
-  exit 1
-}
+touch "$bin_tmp" 2>/dev/null || { echo "Error: ${PREFIX} is not writable." >&2; prefix_hint; exit 1; }
 
 # Manifest first: if this release carries no checksum for our asset, we find out before
 # spending the binary download on it.
 expected=""
-if command -v sha256_of >/dev/null 2>&1; then
-  download "${base}/SHA256SUMS" "$sums_tmp" && [ -s "$sums_tmp" ] || {
-    echo "Error: could not download ${base}/SHA256SUMS — refusing to install an" >&2
-    echo "  unverified binary." >&2
-    exit 1
-  }
+if [ "$verify" = 1 ]; then
+  fetch_asset SHA256SUMS "$sums_tmp" "Refusing to install an unverified binary."
   expected="$(awk -v f="$target" '$2 == f || $2 == "*"f { print $1; exit }' "$sums_tmp")"
   [ -n "$expected" ] || {
     echo "Error: no checksum for ${target} in SHA256SUMS — refusing to install." >&2
@@ -143,10 +157,7 @@ if command -v sha256_of >/dev/null 2>&1; then
 fi
 
 echo "→ Downloading ${target} from ${base}/${target}"
-download "${base}/${target}" "$bin_tmp" && [ -s "$bin_tmp" ] || {
-  echo "Error: could not download ${base}/${target}." >&2
-  exit 1
-}
+fetch_asset "$target" "$bin_tmp"
 
 if [ -n "$expected" ]; then
   actual="$(sha256_of "$bin_tmp")"
@@ -175,7 +186,5 @@ case ":${PATH}:" in
 esac
 
 # ─── Confirm it actually runs here (a checksum proves bytes, not compatibility) ───
-if [ -x "${PREFIX}/${binary_name}" ]; then
-  echo
-  "${PREFIX}/${binary_name}" --version || true
-fi
+echo
+"${PREFIX}/${binary_name}" --version || true
