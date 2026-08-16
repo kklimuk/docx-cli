@@ -69,11 +69,11 @@ registry — no shell piping, and the package runs no install scripts:
 bun add -g bun-docx      # or: npm install -g bun-docx   (needs Bun >= 1.3)
 \`\`\`
 
-No Bun? From this skill folder run \`bash scripts/bootstrap.sh\`: it resolves the
-latest release, downloads the prebuilt binary **pinned to that release tag**, and
+No Bun? From this skill folder run \`sh scripts/bootstrap.sh\`. It **downloads no
+scripts and runs no remote code** — it resolves the latest release tag from the
+GitHub API, downloads that release's prebuilt binary **pinned to the tag**, and
 **verifies its SHA-256** against the release's published \`SHA256SUMS\` before
-installing — it never pipes a remote script into a shell. (By hand: download
-\`docx-<platform>\` + \`SHA256SUMS\` from
+installing. (By hand: download \`docx-<platform>\` + \`SHA256SUMS\` from
 https://github.com/kklimuk/docx-cli/releases/latest, verify, \`chmod +x\`, put it on
 PATH.) Every verb works against the \`.docx\` zip directly; only \`docx render\` needs
 Word (macOS/Windows) or LibreOffice installed.

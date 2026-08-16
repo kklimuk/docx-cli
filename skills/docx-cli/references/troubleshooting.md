@@ -8,9 +8,15 @@ The binary isn't on PATH. Install it — prefer npm (no shell piping):
 bun add -g bun-docx      # or: npm install -g bun-docx   (needs Bun >= 1.3)
 ```
 
-No Bun? Run `scripts/bootstrap.sh` — it pins to the latest release, downloads the
-prebuilt binary, and verifies its SHA-256 before installing (and self-updates a
-stale install).
+No Bun? Run `sh scripts/bootstrap.sh` — it pins to the latest release, downloads
+the prebuilt binary, and verifies its SHA-256 against the release's published
+`SHA256SUMS` before installing (and self-updates a stale install).
+
+It **refuses to install** rather than skip verification, so it aborts if the
+machine has no `sha256sum`, `shasum`, or `openssl`, if the release publishes no
+`SHA256SUMS`, or if the digest doesn't match. Use `bun add -g bun-docx` in that
+case. It also aborts — loudly, naming the culprit — when the install lands but
+`docx` on PATH still resolves elsewhere.
 
 It installs to `~/.local/bin/docx` by default. Make sure that directory is on
 your `PATH` (`export PATH="$HOME/.local/bin:$PATH"`). Set `PREFIX=/usr/local/bin`
