@@ -31,6 +31,7 @@ const COMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	tables: () => import("./tables"),
 	tasks: () => import("./tasks"),
 	"track-changes": () => import("./track-changes"),
+	upgrade: () => import("./upgrade"),
 	validate: () => import("./validate"),
 	wc: () => import("./wc"),
 };

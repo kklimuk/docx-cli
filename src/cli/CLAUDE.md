@@ -36,6 +36,45 @@ fails if the committed copy diverges, so regenerate (`docx info skill > skills/d
 after any change to `skill.ts`. Keep the skill thin and deferring to `<command> --help`
 at runtime — like the other `info` verbs it needs only a unit test, no fixture/scenario.
 
+## `upgrade` — the installer, embedded
+
+[upgrade/index.ts](upgrade/index.ts) does NOT reimplement installation. It imports
+`skills/docx-cli/scripts/install.sh` with `{ type: "text" }`, so Bun inlines the script
+into `dist/index.js` AND into the `bun build --compile` executable; `upgrade` pipes that
+embedded copy to `sh -s` (no temp file in a PATH directory, and install.sh's own
+PREFIX-writability error survives instead of an EACCES from staging) with `PREFIX`,
+`VERSION`, and `REQUIRE_CHECKSUM=1`. That keeps ONE implementation of the platform table,
+download, and checksum logic (see the installer invariant in the root CLAUDE.md), and
+means no network code lives in TypeScript. **Fetching a script and executing it is the
+forbidden pattern; executing one compiled into the artifact is not** — never "improve"
+this by downloading `install.sh` at runtime. `tests/cli/upgrade.test.ts` asserts the
+embedded text equals the file on disk.
+
+Install-method detection is `import.meta.path.startsWith("/$bunfs/")` (Bun's virtual FS
+for a compiled single-file executable; `~BUN` on Windows). Standalone → self-replace via
+install.sh's rename, which works over a running binary on POSIX. Package-manager install
+→ print `bun add -g bun-docx` and change nothing. Windows → print the release URL, since
+a running `.exe` cannot be replaced. A standalone binary the user RENAMED is refused
+too: install.sh owns the platform→name rule and always writes `${PREFIX}/docx`, so
+"upgrading" a `mydocx` would drop a SECOND file beside it (clobbering any unrelated
+`docx` there) and leave the command the user actually runs stale — while we reported
+success. The suite always runs from source, so only the package-manager branch is
+reachable in-process; the standalone paths are covered by the compiled-binary test.
+
+`upgrade` takes NO positionals. `docx upgrade v0.23.0` is the shape an agent reaches
+for, and parseArgs would file it as a positional and silently upgrade to `latest` at
+exit 0 — so a stray positional is a USAGE error pointing at `--to`.
+
+`--to` is validated against a release-tag pattern before it reaches the installer: it is
+interpolated into the release URL and curl NORMALIZES `..`, so an unconstrained value
+would redirect both the binary and the `SHA256SUMS` it is checked against to another
+repo — the checksum gate would then bless the attacker's own manifest. A bare `0.23.0`
+(what `docx --version` prints) is normalized to `v0.23.0` rather than 404ing.
+
+[install-script.d.ts](upgrade/install-script.d.ts) declares the `*.sh` module shape for
+tsc (Bun itself needs nothing), colocated with its only consumer the way
+`core/render/assets.d.ts` is.
+
 ## read-markdown structural annotations
 
 `read` surfaces structural facts the GFM body can't show as `<!-- docx:TYPE … -->`

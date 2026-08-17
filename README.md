@@ -55,7 +55,11 @@ shasum -a 256 -c SHA256SUMS --ignore-missing   # or: sha256sum -c …
 sh install.sh
 ```
 
-Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64. Prefer to skip the script entirely? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
+Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64.
+
+Once installed, **`docx upgrade`** updates a standalone binary — it replaces the binary wherever it already lives (`PREFIX` does not apply), running the same installer embedded in the binary at build time rather than fetched, so the download stays pinned to a release tag and SHA-256-verified. `--to v0.23.0` pins a version, `--dry-run` reports what would change. On an npm/bun install it tells you to use the package manager instead.
+
+Prefer to skip the script entirely? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
 
 ## Quick example: filling out an NDA
 
@@ -165,6 +169,7 @@ docx styles  --catalog [--json]                      # built-in styles you can a
 docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
 docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [--next STYLEID] [formatting]   # define a new custom style
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
+docx upgrade [--to TAG] [--dry-run]                                        # update the installed binary in place (no FILE)
 
 docx comments      list FILE [--open] [--thread cN]
 docx footnotes     list FILE
@@ -602,7 +607,7 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 
 **Run formatting beyond bold/italic.** Properties markdown has no native syntax for — text color, theme color, highlight, shading, underline (all 18 styles + color), super/subscript, small/all caps, font, and size — are emitted as the **HTML a markdown reader actually renders**, so the output looks right in GitHub, VS Code, Obsidian, and browsers (Pandoc `[text]{…}` spans render as literal brackets in all of those). `read` emits semantic tags where they exist — `<mark>overdue</mark>`, `<sup>x</sup>`, `<sub>2</sub>` — a `<span style="color:#C00000">…</span>` for the CSS-expressible properties, and `data-*` attributes for the OOXML-only ones CSS can't express (theme colors, underline styles); `insert/edit --markdown` parses them back losslessly, and a leading `<!-- docx:base font="Arial" size="8pt" -->` note declares the document's dominant font/size once so the body isn't buried in per-run repetition. Bold/italic/strike/code/links stay native (`**`/`*`/`~~`/`` ` ``/`[](…)`). Because the inline-surgery transform scans whole sibling sequences, a CriticMarkup marker or span can straddle other formatting — `{++**bold insertion**++}` is tracked correctly. An invalid enum value (e.g. a bogus highlight name) fails with a clear error rather than silently vanishing. Inserted plain content inherits the surrounding paragraph's font/size so it blends in.
 
-**Visual verification.** `docx render` is the only command that needs an external runtime: it drives Microsoft Word (macOS via `osascript`, Windows via PowerShell COM — the ground-truth renderer) or LibreOffice (`soffice`, cross-platform) to produce a PDF, then rasterizes in-process via the bundled `@hyzyla/pdfium` WASM package — no poppler/pdftoppm/ImageMagick needed. Agents that consume PNGs use this to verify edits, diff accept/reject before-vs-after, or generate screenshots.
+**Visual verification.** `docx render` is the only command that needs an external application installed: it drives Microsoft Word (macOS via `osascript`, Windows via PowerShell COM — the ground-truth renderer) or LibreOffice (`soffice`, cross-platform) to produce a PDF, then rasterizes in-process via the bundled `@hyzyla/pdfium` WASM package — no poppler/pdftoppm/ImageMagick needed. Agents that consume PNGs use this to verify edits, diff accept/reject before-vs-after, or generate screenshots.
 
 ## Stack
 

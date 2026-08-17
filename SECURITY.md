@@ -18,7 +18,7 @@ bun add -g bun-docx
 # or: npm install -g bun-docx
 ```
 
-On a standalone-binary install, re-run the same installer you used, or fetch the newest release asset from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest). The skill's `scripts/bootstrap.sh` self-updates a stale binary.
+On a standalone-binary install, run **`docx upgrade`** — it replaces the binary in place, pinned and checksum-verified. (Or re-run the installer by hand from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest).) The skill's `scripts/bootstrap.sh` self-updates a stale binary at session start.
 
 ## Install integrity
 
@@ -44,9 +44,16 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 
 ## Scope and data handling
 
-docx-cli runs entirely **locally** against `.docx` files on disk and transmits no document content anywhere. The only network activity is:
+docx-cli runs entirely **locally** against `.docx` files on disk. **No command sends document content anywhere** — there is no telemetry and no external API.
 
-- **`docx render`** — shells out to a locally installed Word (macOS/Windows) or LibreOffice to produce a PDF; no data leaves the machine.
-- **`skills/docx-cli/scripts/install.sh`** (also published as the release asset) — fetches the prebuilt `docx` binary and its `SHA256SUMS` manifest from this repo's GitHub Releases over HTTPS. **`scripts/bootstrap.sh`** additionally reads the releases API to learn the latest tag.
+**`docx render` does no network I/O.** It shells out to a locally installed Word (macOS/Windows) or LibreOffice to produce a PDF, then rasterizes in-process via a bundled WASM package. It leaves the docx-cli process, but not the machine.
 
-Mutating commands overwrite the target file in place (git is the history); there is no telemetry and no external API.
+Network access happens in three places, and none of them uploads anything:
+
+- **`skills/docx-cli/scripts/install.sh`** (also published as the release asset) — fetches the prebuilt `docx` binary and its `SHA256SUMS` manifest from this repo's GitHub Releases over HTTPS. **`scripts/bootstrap.sh`** additionally reads the releases page to learn the latest tag.
+- **`docx upgrade`** — downloads a release binary, and only when you run it. It carries `install.sh` **embedded at build time** (never fetched) and executes that copy with `REQUIRE_CHECKSUM=1`, so the new binary is pinned to a tag and SHA-256-verified before it replaces anything. It refuses to touch a package-manager-owned install. Note the installer it runs is the one embedded in the release you are *currently on*, not the target's — so an installer bug shipped in vN can't be fixed by upgrading from vN; fetch that release's `install.sh` by hand instead (see above).
+- **`docx images add --image https://…`** — the one verb that fetches *content* you asked for, when and only when you pass an `http(s)` source (a local path or `--markdown` with a local ref never does). It is guarded against SSRF: private/link-local addresses are blocked, redirects are walked manually and re-checked, capped at 5 hops.
+
+Your document content is never sent anywhere by any of them.
+
+Mutating commands overwrite the target file in place (git is the history).

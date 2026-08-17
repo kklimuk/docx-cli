@@ -42,6 +42,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   raw       …     LAST-RESORT escape hatch for OOXML no verb above covers. DO NOT USE THIS unless you've tried everything else.
   validate  FILE  Schema-check the document against the bundled ECMA-376 transitional XSDs (per-part errors; exit 0 = clean)
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
+  upgrade   —     Update the installed docx binary to the latest release (no FILE). Pinned + SHA-256 verified; --to TAG, --dry-run. On an npm/bun install it prints the package-manager command instead
 
 It is HIGHLY RECOMMENDED to run \`docx info locators\` to understand the addressing model.
 Run "docx <command> --help" for command-specific help.
