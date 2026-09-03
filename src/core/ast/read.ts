@@ -491,7 +491,7 @@ function walkRunContainer(
 	trackedChange: TrackedChange | undefined,
 	hyperlink: Hyperlink | undefined,
 ): void {
-	for (const child of container.children) {
+	for (const child of resolveAlternateContent(container.children)) {
 		if (child.tag === "w:pPr") continue;
 		if (context.skipNodes.has(child)) continue;
 		// Skip ALL `<w:sdt>` content control bodies, not just leading checkbox
@@ -812,6 +812,30 @@ function intAttr(node: XmlNode, attr: string): number | undefined {
 	return Number.isFinite(value) ? value : undefined;
 }
 
+/** Resolve `<mc:AlternateContent>` (ECMA-376 Part 3) to the branch we read.
+ *
+ * Word writes every modern shape and text box this way: an `<mc:Choice
+ * Requires="wps">` holding the `<w:drawing>`, beside an `<mc:Fallback>`
+ * holding a legacy `<w:pict>`. Neither tag is matched by the walkers, so
+ * without this the whole subtree — the `ChartRun` placeholder included — never
+ * reaches the AST, and a document's text boxes are invisible to `read`,
+ * `find`, `replace` and `comments` with nothing said about it.
+ *
+ * Choice is preferred because it is what Word itself reads; Fallback is taken
+ * when a producer wrote only that. Returns the input unchanged when there is
+ * no wrapper, which is the overwhelmingly common case. */
+function resolveAlternateContent(children: XmlNode[]): XmlNode[] {
+	if (!children.some((child) => child.tag === "mc:AlternateContent")) {
+		return children;
+	}
+	return children.flatMap((child) => {
+		if (child.tag !== "mc:AlternateContent") return [child];
+		const branch =
+			child.findChild("mc:Choice") ?? child.findChild("mc:Fallback");
+		return branch ? resolveAlternateContent(branch.children) : [];
+	});
+}
+
 /** A single <w:r> can contain a mix of <w:t>, <w:tab>, <w:br>, <w:drawing>,
  * footnote/endnote refs in any order. We emit one AST Run per child in
  * document order; consecutive <w:t>/<w:delText> siblings fold into one
@@ -840,7 +864,7 @@ function readRun(
 		pendingText = "";
 	}
 
-	for (const child of node.children) {
+	for (const child of resolveAlternateContent(node.children)) {
 		if (child.tag === "w:rPr") continue;
 		if (child.tag === "w:t" || child.tag === "w:delText") {
 			pendingText += child.collectText();

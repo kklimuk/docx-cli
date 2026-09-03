@@ -243,3 +243,55 @@ describe("walkRunContainer — paragraph-level wrappers", () => {
 		expect(run.trackedChange?.kind).toBe("moveTo");
 	});
 });
+
+describe("mc:AlternateContent", () => {
+	const shape = (inner: string) =>
+		buildSyntheticView(
+			`<w:p><w:r><mc:AlternateContent>${inner}</mc:AlternateContent></w:r></w:p>`,
+		);
+
+	test("a Choice branch reaches the run walker", () => {
+		// What Word writes for every modern shape and text box: the drawing
+		// lives under mc:Choice, and nothing below it was being read.
+		const doc = shape(
+			`<mc:Choice Requires="wps"><w:drawing><wp:anchor><a:graphic><a:graphicData><wps:wsp>` +
+				`<wps:txbx><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx>` +
+				`</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>` +
+				`<mc:Fallback><w:pict/></mc:Fallback>`,
+		);
+		const runs = firstParagraph(doc).runs;
+		expect(runs).toHaveLength(1);
+		const run = runs[0];
+		if (!run || run.type !== "chart") throw new Error("expected a chart run");
+		expect(run.kind).toBe("shape");
+	});
+
+	test("a Fallback-only wrapper is read too", () => {
+		const doc = shape(`<mc:Fallback><w:pict/></mc:Fallback>`);
+		const runs = firstParagraph(doc).runs;
+		expect(runs).toHaveLength(1);
+		expect(runs[0]?.type).toBe("chart");
+	});
+
+	test("Choice wins when both branches are present", () => {
+		// Fallback holds a <w:pict>, which reads as kind "drawing"; Choice holds
+		// a shape. Taking the wrong branch is silent, so pin which one wins.
+		const doc = shape(
+			`<mc:Choice Requires="wps"><w:drawing><wps:wsp/></w:drawing></mc:Choice>` +
+				`<mc:Fallback><w:pict/></mc:Fallback>`,
+		);
+		const run = firstParagraph(doc).runs[0];
+		if (!run || run.type !== "chart") throw new Error("expected a chart run");
+		expect(run.kind).toBe("shape");
+	});
+
+	test("text outside the wrapper is unaffected", () => {
+		const doc = buildSyntheticView(
+			`<w:p><w:r><w:t>before</w:t><mc:AlternateContent><mc:Choice Requires="wps">` +
+				`<w:drawing><wps:wsp/></w:drawing></mc:Choice></mc:AlternateContent>` +
+				`<w:t>after</w:t></w:r></w:p>`,
+		);
+		const runs = firstParagraph(doc).runs;
+		expect(runs.map((r) => r.type)).toEqual(["text", "chart", "text"]);
+	});
+});
