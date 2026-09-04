@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
 	isMarginalLocator,
 	LocatorParseError,
+	locatorToBlockTarget,
+	parseCellAt,
 	parseLocator,
+	parseRowAt,
+	parseTableAt,
 } from "@core/locators";
 
 describe("parseLocator", () => {
@@ -161,5 +165,71 @@ describe("parseLocator", () => {
 		expect(() => parseLocator("p3:5-")).toThrow(LocatorParseError);
 		expect(() => parseLocator("p3:20-5")).toThrow(LocatorParseError);
 		expect(() => parseLocator("p3:-5-20")).toThrow(LocatorParseError);
+	});
+});
+
+describe("parseLocator — text boxes (tbxN)", () => {
+	test("a bare tbxN names the whole story", () => {
+		expect(parseLocator("tbx0")).toEqual({
+			kind: "textBox",
+			textBoxId: "tbx0",
+		});
+	});
+
+	test("chains any inner block/span/cell form", () => {
+		expect(parseLocator("tbx0:p1")).toEqual({
+			kind: "textBox",
+			textBoxId: "tbx0",
+			inner: { kind: "block", blockId: "p1" },
+		});
+		expect(parseLocator("tbx2:p1:3-7")).toEqual({
+			kind: "textBox",
+			textBoxId: "tbx2",
+			inner: { kind: "blockSpan", blockId: "p1", start: 3, end: 7 },
+		});
+		expect(parseLocator("tbx0:t0:r1c2:p0")).toMatchObject({
+			kind: "textBox",
+			textBoxId: "tbx0",
+			inner: { kind: "cell", tableId: "t0", row: 1, col: 2 },
+		});
+	});
+
+	test("locatorToBlockTarget composes the registered id", () => {
+		expect(locatorToBlockTarget(parseLocator("tbx0:p1"))).toEqual({
+			blockId: "tbx0:p1",
+			span: undefined,
+		});
+		expect(locatorToBlockTarget(parseLocator("tbx0:p1:3-7"))).toEqual({
+			blockId: "tbx0:p1",
+			span: { start: 3, end: 7 },
+		});
+		expect(locatorToBlockTarget(parseLocator("tbx0:t0:r1c2:p0"))).toEqual({
+			blockId: "tbx0:t0:r1c2:p0",
+			span: undefined,
+		});
+		// The whole story is not a single block.
+		expect(locatorToBlockTarget(parseLocator("tbx0"))).toBeNull();
+	});
+
+	test("a cross-paragraph range inside one box parses; mixed containers reject", () => {
+		expect(parseLocator("tbx0:p0:2-tbx0:p1:3")).toEqual({
+			kind: "range",
+			start: { blockId: "tbx0:p0", offset: 2 },
+			end: { blockId: "tbx0:p1", offset: 3 },
+		});
+		expect(() => parseLocator("p0:2-tbx0:p1:3")).toThrow(LocatorParseError);
+		expect(() => parseLocator("tbx0:p0:2-tbx1:p1:3")).toThrow(
+			LocatorParseError,
+		);
+	});
+
+	test("table verbs unwrap a text-box prefix like a cell chain", () => {
+		expect(parseTableAt("tbx0:t1")).toBe("tbx0:t1");
+		expect(parseRowAt("tbx0:t1:r2")).toEqual({ tableId: "tbx0:t1", row: 2 });
+		expect(parseCellAt("tbx0:t1:r2c0")).toEqual({
+			tableId: "tbx0:t1",
+			row: 2,
+			col: 0,
+		});
 	});
 });

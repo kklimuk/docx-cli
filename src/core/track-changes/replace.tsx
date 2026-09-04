@@ -6,6 +6,7 @@ import {
 	type ParagraphOptions,
 	wrapPprChange,
 } from "../blocks";
+import { isAlternateContent } from "../mc";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import { Ins, markParagraphMarkAs } from "./emit";
 import {
@@ -51,7 +52,14 @@ export function applyFormattingPreservingEdit(
 		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag), fallbackRpr)
 		: buildUntrackedRuns(ops, fallbackRpr);
 
-	const { nonRuns } = partitionParagraphRuns(paragraph);
+	const { runs, nonRuns } = partitionParagraphRuns(paragraph);
+	// The text diff rebuilds runs from TOKENS, which sees no drawing — so the
+	// runs carrying a text box, image, or legacy embed are lifted out first and
+	// put back around the new text (anchors that led the paragraph lead it
+	// again; anything else trails). Otherwise `edit --at pN --text` on a box's
+	// anchor paragraph silently deleted the box — with no `<w:del>` under
+	// tracking, so reject couldn't bring it back.
+	const objects = extractObjectRuns(runs);
 	// Paragraph properties riding along with the text edit (`--style`/`--alignment`/
 	// `--space-*`/`--line-spacing`/`--indent-*`/`--tabs`) are a real tracked
 	// revision under tracking: snapshot the prior `<w:pPr>` into a `<w:pPrChange>`
@@ -67,8 +75,56 @@ export function applyFormattingPreservingEdit(
 		wrapPprChange(pPr, makeMetaMinter(document, authorFlag)());
 	}
 	applyParagraphOptionsInPlace(nonRuns, paragraphOptions);
-	nonRuns.push(...runChildren);
+	nonRuns.push(...objects.leading, ...runChildren, ...objects.trailing);
 	paragraph.children = nonRuns;
+}
+
+const OBJECT_TAGS: ReadonlySet<string> = new Set([
+	"w:drawing",
+	"w:pict",
+	"w:object",
+]);
+
+function isObjectChild(child: XmlNode): boolean {
+	return OBJECT_TAGS.has(child.tag) || isAlternateContent(child);
+}
+
+/** The non-text payload of a paragraph's runs, as runs of their own (each keeps
+ *  its `<w:rPr>`): those met before any text character are `leading`, the rest
+ *  `trailing`. A run mixing text and an object is split — the text half feeds
+ *  the diff, the object half is preserved. */
+function extractObjectRuns(runs: XmlNode[]): {
+	leading: XmlNode[];
+	trailing: XmlNode[];
+} {
+	const leading: XmlNode[] = [];
+	const trailing: XmlNode[] = [];
+	let sawText = false;
+	for (const run of runs) {
+		const objects = run.children.filter(isObjectChild);
+		if (objects.length === 0) {
+			if (
+				run.children.some((child) => !child.isText && child.tag !== "w:rPr")
+			) {
+				sawText = true;
+			}
+			continue;
+		}
+		const carrier = new XmlNode("w:r", { ...run.attributes });
+		const rPr = run.findChild("w:rPr");
+		if (rPr) carrier.children.push(rPr.clone());
+		carrier.children.push(...objects);
+		(sawText ? trailing : leading).push(carrier);
+		if (
+			run.children.some(
+				(child) =>
+					!child.isText && child.tag !== "w:rPr" && !isObjectChild(child),
+			)
+		) {
+			sawText = true;
+		}
+	}
+	return { leading, trailing };
 }
 
 /** Replace a contiguous span of paragraphs with new paragraphs, tracking the

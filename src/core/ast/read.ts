@@ -3,6 +3,11 @@ import { ommlToLatex } from "../equation";
 
 import { enumerateMarginalRefs } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
+import {
+	alternateContentBranch,
+	collectTextBoxContents,
+	isAlternateContent,
+} from "../mc";
 import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
 import { RAW_MARKER_ATTRIBUTE } from "../raw/namespaces";
@@ -30,6 +35,7 @@ import type {
 	TableRow,
 	TableWidth,
 	TabRun,
+	TextBoxRun,
 	TextRun,
 	TrackedChange,
 } from "./types";
@@ -39,6 +45,11 @@ type WalkState = {
 	hyperlinkIndex: number;
 	trackedChangeIndex: number;
 	equationIndex: number;
+	textBoxIndex: number;
+	/** The paragraph being walked — what a text box read from one of its runs
+	 * records as its anchor. Saved/restored around a story walk, since the
+	 * story's own paragraphs re-enter `readParagraph`. */
+	currentBlockId: string;
 	commentAnchors: Map<string, CommentAnchor>;
 	openComments: Map<string, { blockId: string; offset: number }>;
 };
@@ -74,6 +85,8 @@ export function buildBody(document: Document, path: string): Body {
 		hyperlinkIndex: 0,
 		trackedChangeIndex: 0,
 		equationIndex: 0,
+		textBoxIndex: 0,
+		currentBlockId: "",
 		commentAnchors: new Map(),
 		openComments: new Map(),
 	};
@@ -183,6 +196,23 @@ function collectBlocks(
 					counters,
 					state,
 					inner.control,
+				);
+			}
+			continue;
+		}
+		// A BLOCK-level markup-compatibility wrapper (MCE allows one anywhere):
+		// walk its chosen branch with the branch's own child list as `parent`, so
+		// a splice lands inside the branch the way it does inside `<w:sdtContent>`.
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch) {
+				collectBlocks(
+					document,
+					branch.children,
+					blocks,
+					counters,
+					state,
+					control,
 				);
 			}
 			continue;
@@ -470,7 +500,10 @@ function readParagraph(
 		offsetRef: { value: 0 },
 		skipNodes,
 	};
+	const outerBlockId = state.currentBlockId;
+	state.currentBlockId = id;
 	walkRunContainer(context, node, undefined, undefined);
+	state.currentBlockId = outerBlockId;
 
 	return paragraph;
 }
@@ -611,6 +644,16 @@ function walkRunContainer(
 				context.state,
 			);
 			walkRunContainer(context, child, trackedChange, link);
+			continue;
+		}
+
+		// A PARAGRAPH-level markup-compatibility wrapper: descend its chosen
+		// branch as the container, so any tracked change / equation registered
+		// inside records the branch's child list as its parent. `mc:Choice` is in
+		// `RUN_BEARING_WRAPPER_TAGS` so the XML offset walkers take the same path.
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch) walkRunContainer(context, branch, trackedChange, hyperlink);
 			continue;
 		}
 
@@ -840,98 +883,165 @@ function readRun(
 		pendingText = "";
 	}
 
-	for (const child of node.children) {
-		if (child.tag === "w:rPr") continue;
-		if (child.tag === "w:t" || child.tag === "w:delText") {
-			pendingText += child.collectText();
-			continue;
-		}
-		// Single-character text equivalents — fold into pendingText so they
-		// share the surrounding rPr/tracking decoration. Each contributes
-		// exactly one character to the AST text and to offset accounting.
-		if (child.tag === "w:noBreakHyphen") {
-			pendingText += "‑";
-			continue;
-		}
-		if (child.tag === "w:softHyphen") {
-			pendingText += "­";
-			continue;
-		}
-		if (child.tag === "w:sym") {
-			const font = child.getAttribute("w:font") ?? "";
-			const charHex = child.getAttribute("w:char") ?? "";
-			pendingText += decodeSym(font, charHex);
-			continue;
-		}
-		if (child.tag === "w:drawing") {
-			flushText();
-			const drawing = readDrawing(document, child, state);
-			if (drawing) {
-				if (trackedChange && drawing.type === "image") {
-					drawing.trackedChange = trackedChange;
-				}
-				out.push(drawing);
-			}
-			continue;
-		}
-		// Legacy embeds — surface as ChartRun placeholders so callers know
-		// "something visual lives here." Underlying XML is preserved.
-		if (child.tag === "w:pict" || child.tag === "w:object") {
-			flushText();
-			out.push({ type: "chart", kind: "drawing" });
-			continue;
-		}
-		if (child.tag === "w:br" || child.tag === "w:cr") {
-			flushText();
-			// <w:cr> is an in-paragraph carriage return — semantically a line
-			// break, same shape as <w:br w:type="line"/>.
-			const kind =
-				child.tag === "w:cr"
-					? "line"
-					: ((child.getAttribute("w:type") ?? "line") as
-							| "page"
-							| "line"
-							| "column");
-			const breakRun: BreakRun = { type: "break", kind };
-			// A LINE break is one offset character; carry the surrounding revision
-			// so find/replace can hide it in the accepted/baseline view.
-			if (trackedChange) breakRun.trackedChange = trackedChange;
-			out.push(breakRun);
-			continue;
-		}
-		if (child.tag === "w:tab" || child.tag === "w:ptab") {
-			flushText();
-			const tabRun: TabRun = { type: "tab" };
-			if (trackedChange) tabRun.trackedChange = trackedChange;
-			out.push(tabRun);
-			continue;
-		}
-		if (child.tag === "w:footnoteReference") {
-			flushText();
-			const id = child.getAttribute("w:id");
-			if (id) out.push({ type: "noteRef", kind: "footnote", id: `fn${id}` });
-			continue;
-		}
-		if (child.tag === "w:endnoteReference") {
-			flushText();
-			const id = child.getAttribute("w:id");
-			if (id) out.push({ type: "noteRef", kind: "endnote", id: `en${id}` });
-		}
-	}
-
+	// `visit` (hoisted below) walks one child list; a run-level
+	// `<mc:AlternateContent>` — how Word writes EVERY modern shape and text box —
+	// re-enters it with the chosen branch's children, so the wrapper is
+	// transparent at any nesting depth.
+	visit(node.children);
 	flushText();
 	return out;
+
+	function visit(children: XmlNode[]): void {
+		for (const child of children) {
+			if (child.tag === "w:rPr") continue;
+			if (isAlternateContent(child)) {
+				const branch = alternateContentBranch(child);
+				if (branch) visit(branch.children);
+				continue;
+			}
+			if (child.tag === "w:t" || child.tag === "w:delText") {
+				pendingText += child.collectText();
+				continue;
+			}
+			// Single-character text equivalents — fold into pendingText so they
+			// share the surrounding rPr/tracking decoration. Each contributes
+			// exactly one character to the AST text and to offset accounting.
+			if (child.tag === "w:noBreakHyphen") {
+				pendingText += "‑";
+				continue;
+			}
+			if (child.tag === "w:softHyphen") {
+				pendingText += "­";
+				continue;
+			}
+			if (child.tag === "w:sym") {
+				const font = child.getAttribute("w:font") ?? "";
+				const charHex = child.getAttribute("w:char") ?? "";
+				pendingText += decodeSym(font, charHex);
+				continue;
+			}
+			if (child.tag === "w:drawing") {
+				flushText();
+				// A drawing can hold a picture AND text boxes (a group shape, or a
+				// shape with a picture fill): the picture registers first so `imgN`
+				// ids stay stable, then each story. Only a drawing with neither
+				// falls back to the chart/shape placeholder.
+				const image = readImageFromDrawing(document, child, state);
+				const textBoxes = readTextBoxes(document, child, state, trackedChange);
+				if (image) {
+					if (trackedChange) image.trackedChange = trackedChange;
+					out.push(image);
+				}
+				out.push(...textBoxes);
+				if (!image && textBoxes.length === 0) out.push(classifyDrawing(child));
+				continue;
+			}
+			// Legacy embeds — a VML text box surfaces as its story; anything else
+			// as a ChartRun placeholder so callers know "something visual lives
+			// here." Underlying XML is preserved.
+			if (child.tag === "w:pict" || child.tag === "w:object") {
+				flushText();
+				const textBoxes = readTextBoxes(document, child, state, trackedChange);
+				if (textBoxes.length > 0) {
+					out.push(...textBoxes);
+					continue;
+				}
+				out.push({ type: "chart", kind: "drawing" });
+				continue;
+			}
+			if (child.tag === "w:br" || child.tag === "w:cr") {
+				flushText();
+				// <w:cr> is an in-paragraph carriage return — semantically a line
+				// break, same shape as <w:br w:type="line"/>.
+				const kind =
+					child.tag === "w:cr"
+						? "line"
+						: ((child.getAttribute("w:type") ?? "line") as
+								| "page"
+								| "line"
+								| "column");
+				const breakRun: BreakRun = { type: "break", kind };
+				// A LINE break is one offset character; carry the surrounding revision
+				// so find/replace can hide it in the accepted/baseline view.
+				if (trackedChange) breakRun.trackedChange = trackedChange;
+				out.push(breakRun);
+				continue;
+			}
+			if (child.tag === "w:tab" || child.tag === "w:ptab") {
+				flushText();
+				const tabRun: TabRun = { type: "tab" };
+				if (trackedChange) tabRun.trackedChange = trackedChange;
+				out.push(tabRun);
+				continue;
+			}
+			if (child.tag === "w:footnoteReference") {
+				flushText();
+				const id = child.getAttribute("w:id");
+				if (id) out.push({ type: "noteRef", kind: "footnote", id: `fn${id}` });
+				continue;
+			}
+			if (child.tag === "w:endnoteReference") {
+				flushText();
+				const id = child.getAttribute("w:id");
+				if (id) out.push({ type: "noteRef", kind: "endnote", id: `en${id}` });
+			}
+		}
+	}
 }
 
-/** A <w:drawing> may wrap a picture (rendered as ImageRun) or a chart/shape/
- * SmartArt/etc. (rendered as ChartRun placeholder). */
-function readDrawing(
+/** Every text box story under a `<w:drawing>` / `<w:pict>` (one per
+ * `<w:txbxContent>`, in document order — a group shape can hold several), each
+ * read as its own block container under a fresh `tbxN` id. The story's blocks
+ * get chained ids (`tbx0:p0`) and `blockReferences` entries whose `parent` is
+ * the `<w:txbxContent>` child list, so `edit`/`insert`/`delete`/`replace`/
+ * `comments` splice into the story exactly as they do into a table cell. The
+ * anchor paragraph's id is recorded so `read` can say where the box hangs. */
+function readTextBoxes(
 	document: Document,
-	drawing: XmlNode,
+	shape: XmlNode,
 	state: WalkState,
-): ImageRun | ChartRun | null {
-	const image = readImageFromDrawing(document, drawing, state);
-	if (image) return image;
+	trackedChange: TrackedChange | undefined,
+): TextBoxRun[] {
+	const stories = collectTextBoxContents(shape);
+	if (stories.length === 0) return [];
+	// The shape's OWN placement — `findChild`, not a descendant search, so a
+	// box nested inside an inline/VML box doesn't borrow the inner anchor.
+	const anchor =
+		shape.tag === "w:drawing" ? shape.findChild("wp:anchor") : undefined;
+	return stories.map((story) => {
+		const id = `tbx${state.textBoxIndex++}`;
+		const blocks: Block[] = [];
+		// Registered BEFORE the story walk so the map stays in id order when a
+		// box nests inside another (the inner one would otherwise land first).
+		document.body.textBoxReferences.set(id, {
+			node: story,
+			anchorBlockId: state.currentBlockId,
+			blocks,
+		});
+		collectScopedBlocks(
+			document,
+			story.children,
+			blocks,
+			{ paragraph: 0, table: 0, section: 0 },
+			id,
+			state,
+		);
+		const run: TextBoxRun = { type: "textBox", id, blocks };
+		if (trackedChange) run.trackedChange = trackedChange;
+		if (anchor) {
+			run.floating = true;
+			const wrap = readImageWrap(anchor);
+			if (wrap) run.wrap = wrap;
+			const align = readImageAlign(anchor);
+			if (align) run.align = align;
+		}
+		return run;
+	});
+}
+
+/** The placeholder for a <w:drawing> that is neither a picture nor a text
+ * box: chart / SmartArt / plain shape / anything else. */
+function classifyDrawing(drawing: XmlNode): ChartRun {
 	if (drawing.findDescendant("c:chart"))
 		return { type: "chart", kind: "chart" };
 	if (drawing.findDescendant("dgm:relIds"))
@@ -1549,7 +1659,7 @@ function readCellBlocks(
 ): Block[] {
 	const blocks: Block[] = [];
 	const cellPrefix = `${tableId}:r${rowIndex}c${columnIndex}`;
-	collectCellBlocks(
+	collectScopedBlocks(
 		document,
 		cell.children,
 		blocks,
@@ -1560,14 +1670,16 @@ function readCellBlocks(
 	return blocks;
 }
 
-/** The cell-scoped twin of {@link collectBlocks}: same shared counters and same
- * transparent `<w:sdt>` descent, but ids are chained under the cell's prefix. */
-function collectCellBlocks(
+/** The scoped twin of {@link collectBlocks} for a nested block container — a
+ * table cell (`t0:r1c2`) or a text box story (`tbx0`): same shared counters,
+ * same transparent `<w:sdt>` / `<mc:AlternateContent>` descent, but ids are
+ * chained under the container's prefix. */
+function collectScopedBlocks(
 	document: Document,
 	children: XmlNode[],
 	blocks: Block[],
 	counters: BlockCounters,
-	cellPrefix: string,
+	prefix: string,
 	state: WalkState,
 	control?: ContentControl,
 ): void {
@@ -1575,20 +1687,35 @@ function collectCellBlocks(
 		if (child.tag === "w:sdt") {
 			const inner = contentControlContent(child);
 			if (inner) {
-				collectCellBlocks(
+				collectScopedBlocks(
 					document,
 					inner.children,
 					blocks,
 					counters,
-					cellPrefix,
+					prefix,
 					state,
 					inner.control,
 				);
 			}
 			continue;
 		}
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch) {
+				collectScopedBlocks(
+					document,
+					branch.children,
+					blocks,
+					counters,
+					prefix,
+					state,
+					control,
+				);
+			}
+			continue;
+		}
 		if (child.tag === "w:p") {
-			const id = `${cellPrefix}:p${counters.paragraph++}`;
+			const id = `${prefix}:p${counters.paragraph++}`;
 			const paragraph = readParagraph(document, child, id, state);
 			if (control) paragraph.contentControl = control;
 			blocks.push(paragraph);
@@ -1608,7 +1735,7 @@ function collectCellBlocks(
 		// `t0:r2c1:t0:r0c0:p0` resolve via the existing locator parser's
 		// recursive `cell.inner`.
 		if (child.tag === "w:tbl") {
-			const id = `${cellPrefix}:t${counters.table++}`;
+			const id = `${prefix}:t${counters.table++}`;
 			const table = readTable(document, child, id, state);
 			if (control) table.contentControl = control;
 			blocks.push(table);

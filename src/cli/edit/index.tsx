@@ -55,7 +55,15 @@ import {
 } from "./tabs";
 
 const AT_FORMS = describeForms(
-	["paragraph", "span", "blockRange", "cell", "cellParagraph", "cellSpan"],
+	[
+		"paragraph",
+		"span",
+		"blockRange",
+		"cell",
+		"cellParagraph",
+		"cellSpan",
+		"textBoxParagraph",
+	],
 	"                      ",
 );
 

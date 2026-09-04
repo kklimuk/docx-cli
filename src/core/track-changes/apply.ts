@@ -577,6 +577,9 @@ function deleteNode(node: XmlNode, parent: XmlNode[]): void {
 }
 
 function renameDelTextToText(node: XmlNode): void {
+	// A text box's story is never rewritten by a tracked delete of its anchor
+	// (see `mutateTextToDelText`), so it isn't renamed back either.
+	if (node.tag === "w:txbxContent") return;
 	if (node.tag === "w:delText") node.tag = "w:t";
 	for (const child of node.children) renameDelTextToText(child);
 }

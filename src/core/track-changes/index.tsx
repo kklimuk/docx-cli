@@ -340,8 +340,14 @@ function walkXml(nodes: XmlNode[], visit: (node: XmlNode) => void): void {
 	}
 }
 
+/** Rewrite `<w:t>` → `<w:delText>` under a tracked deletion. A text box's
+ *  story (`<w:txbxContent>`) is NOT descended: the anchor run's `<w:del>`
+ *  already deletes the whole shape as one unit (what Word records), and
+ *  rewriting the story would leave bare delText outside any `<w:del>` that
+ *  still reads as live content. `renameDelTextToText` in apply.ts mirrors it. */
 function mutateTextToDelText(nodes: XmlNode[]): void {
 	for (const node of nodes) {
+		if (node.tag === "w:txbxContent") continue;
 		if (node.tag === "w:t") node.tag = "w:delText";
 		mutateTextToDelText(node.children);
 	}

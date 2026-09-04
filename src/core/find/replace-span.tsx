@@ -4,8 +4,11 @@ import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
+	rewrapSplitHalf,
 	runTextLength,
 	sliceRun,
+	wrapperContent,
+	wrapperContentNode,
 	XmlNode,
 } from "../parser";
 import type { RevisionAllocator, TrackedMeta } from "../track-changes";
@@ -49,7 +52,7 @@ export function sumVisibleTextLength(
 			continue;
 		}
 		if (isWrapperVisibleInView(child.tag, view)) {
-			total += sumVisibleTextLength(child.children, view);
+			total += sumVisibleTextLength(wrapperContent(child), view);
 		}
 	}
 	return total;
@@ -156,7 +159,8 @@ function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
 				continue;
 			}
 			if (isWrapperVisibleInView(child.tag, view)) {
-				walk(child, child.children);
+				const content = wrapperContentNode(child);
+				walk(content, content.children);
 			}
 		}
 	}
@@ -224,7 +228,7 @@ function rebuildContainer(
 			continue;
 		}
 		if (isParagraph && isWrapperVisibleInView(child.tag, view)) {
-			offset += sumVisibleTextLength(child.children, view);
+			offset += sumVisibleTextLength(wrapperContent(child), view);
 			newChildren.push(child);
 			continue;
 		}
@@ -313,7 +317,7 @@ function rebuildAcrossBoundaries(
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const innerLength = sumVisibleTextLength(child.children, view);
+			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -340,7 +344,7 @@ function rebuildAcrossBoundaries(
 		}
 
 		if (child.tag === "w:hyperlink") {
-			const innerLength = sumVisibleTextLength(child.children, view);
+			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -380,7 +384,7 @@ function rebuildAcrossBoundaries(
 		// Word re-evaluates fields on next render and any other behavior
 		// would silently drop the user's replacement intent.
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumVisibleTextLength(child.children, view);
+			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -495,7 +499,10 @@ function splitTransparentWrapperAcrossSpan(
 	const postInner: XmlNode[] = [];
 	let innerOffset = wrapperStart;
 
-	for (const inner of wrapper.children) {
+	// `wrapperContent`: for an `<mc:AlternateContent>` this is its chosen
+	// branch's runs — the halves come back BARE (`rewrapSplitHalf`), since a
+	// wrapper can't be split into two valid Choice/Fallback pairs.
+	for (const inner of wrapperContent(wrapper)) {
 		if (inner.tag !== "w:r") {
 			preInner.push(inner);
 			continue;
@@ -522,17 +529,9 @@ function splitTransparentWrapperAcrossSpan(
 			postInner.push(sliceRun(inner, sliceEndInRun, length));
 	}
 
-	if (preInner.length > 0) {
-		const preWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
-		preWrapper.children = preInner;
-		out.push(preWrapper);
-	}
+	out.push(...rewrapSplitHalf(wrapper, preInner));
 	placeReplacement();
-	if (postInner.length > 0) {
-		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
-		postWrapper.children = postInner;
-		out.push(postWrapper);
-	}
+	out.push(...rewrapSplitHalf(wrapper, postInner));
 }
 
 function splitHyperlinkAcrossSpan(

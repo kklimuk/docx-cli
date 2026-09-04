@@ -59,13 +59,18 @@ export function countSectionsInBlocks(blocks: Block[]): number {
 	return total;
 }
 
+/** Count the words of `blocks` — descending into table cells AND text-box
+ * stories, so `wc` counts exactly what `read` shows (Word's Word Count dialog
+ * with "include text boxes" on; its status bar leaves them out). */
 export function countWordsInBlocks(
 	blocks: Block[],
 	options: CountOptions = {},
 ): number {
 	const text = textFor(options);
 	let total = 0;
-	for (const block of iterateBlocks(blocks)) {
+	for (const block of iterateBlocks(blocks, {
+		view: options.view ?? "accepted",
+	})) {
 		if (block.type === "paragraph") total += countWords(text(block));
 	}
 	return total;

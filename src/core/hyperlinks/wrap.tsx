@@ -4,6 +4,7 @@ import {
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	wrapperContent,
 	type XmlNode,
 } from "../parser";
 
@@ -77,7 +78,7 @@ export function wrapSpanInHyperlink(
 		}
 
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumRunBearingTextLength(wrapperContent(child));
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;

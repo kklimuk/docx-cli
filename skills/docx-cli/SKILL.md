@@ -45,7 +45,10 @@ Then `docx <command> --help` for any verb before you use it.
 ## 2. Locators — how you address things
 
 - `pN` paragraph, `tN` table, `sN` section; `p3:5-20` = characters 5..19 of `p3`;
-  `pN-pM` a block range; `tN:rRcC` a table cell.
+  `pN-pM` a block range; `tN:rRcC` a table cell; `tbxN:pK` paragraph K inside
+  text box N (a floating stamp / pull quote / letterhead box — `read` prints its
+  story right after the anchor paragraph between `docx:textbox tbxN` hints, and
+  `find` / `replace --all` include it).
 - Entities: `cN` comment, `imgN` image, `linkN` hyperlink, `fnN`/`enN`
   foot/endnote, `tcN` tracked change, `eqN` equation.
 - Get them from `docx read FILE` (locators ride the Markdown as `<!-- pN -->`

@@ -39,6 +39,12 @@ The agent never sees this file. It is the ground-truth definition of "correct" f
 - Verify via `docx images list FILE`: two entries, and the logo entry's dimensions / source match `assets/logo.svg`.
 - Footer payment mark is preserved: the footer image relationship is still present and unreferenced relationships were not dropped.
 
+### Stamp text box rewritten (issue #4 — text boxes are addressable)
+- The document has a floating text box (an `<mc:AlternateContent>` wps shape anchored in the "Thank you for your business." Notes paragraph) whose story was the template warning `TEMPLATE — DO NOT SEND`. It must now read exactly `Thank you for your business!` and the strings `TEMPLATE` / `DO NOT SEND` must appear nowhere — `docx find FILE "DO NOT SEND"` returns no matches, `docx find FILE "Thank you for your business!"` returns a `tbx0:p0:…` locator.
+- The box itself still exists: `docx read FILE` shows a `<!-- docx:textbox tbx0 anchor="pN" … -->` … `<!-- docx:textbox-end tbx0 -->` block containing the new text, and `read --ast` shows a `textBox` run on the Notes paragraph. Deleting the box, or writing the new wording as a flow paragraph instead of inside the box, is a fail.
+- The expected path is the ordinary verbs on the box's `tbxN:pK` locator — `docx find FILE "TEMPLATE"` → `tbx0:p0:0-8`, then `docx edit FILE --at tbx0:p0 --text "Thank you for your business!"` (or `replace` on the full phrase). A `raw` edit of the shape XML also passes as long as the result is the same story text in both the `mc:Choice` and `mc:Fallback` copies (the CLI syncs the Fallback on save; a hand-rolled raw edit that leaves the Fallback stale is a fail — check `docx raw get FILE --at pN` for the anchor paragraph).
+- Run formatting inside the box (bold, red `C00000`, centered) is preserved — verify via `read` (`<span style="color:#C00000">**…**</span>` with `docx:p tbx0:p0 align="center"`) or `--ast`.
+
 ### Formatting preserved
 - Font, size, bold/italic on existing cells are unchanged (check a sample run via `--ast`).
 - Table borders and shading are intact.
@@ -50,5 +56,6 @@ The agent never sees this file. It is the ground-truth definition of "correct" f
 - `docx read FILE` — scan for remaining placeholder strings; check Notes text; confirm four line items visible.
 - `docx read FILE --ast` — inspect table row counts, `w:tcW` column widths, run-level formatting on sample cells.
 - `docx images list FILE` — confirm exactly two images; confirm logo image index/rId is different from the original.
+- `docx find FILE "DO NOT SEND"` (expect no matches) and `docx find FILE "Thank you for your business!"` (expect a `tbx0:p0:…` hit) — confirm the stamp box was rewritten in place, not deleted or replaced by a body paragraph.
 - Render before/after with `docx render FILE` and compare pages: logo changed, column widths visible, no wrapping dollar values, footer mark intact.
 - Check that `tables insert-row` (not an overwrite) was used: the totals row must still exist below the four item rows.

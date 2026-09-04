@@ -2,9 +2,11 @@ import type { Body } from "../ast/document/body";
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
+	rewrapSplitHalf,
 	runTextLength,
 	sliceRun,
-	XmlNode,
+	wrapperContent,
+	type XmlNode,
 } from "../parser";
 import type { FindView, ParagraphSpanMatch } from "./index";
 import {
@@ -188,23 +190,19 @@ function splitChildrenAt(
 			isRunBearingWrapper(child.tag) &&
 			isWrapperVisibleInView(child.tag, view)
 		) {
-			const length = sumVisibleTextLength(child.children, view);
+			const length = sumVisibleTextLength(wrapperContent(child), view);
 			if (cursor + length <= offset) {
 				before.push(child);
 			} else if (cursor >= offset) {
 				after.push(child);
 			} else {
-				const inner = splitChildrenAt(child.children, offset - cursor, view);
-				if (inner.before.length > 0) {
-					const preWrapper = new XmlNode(child.tag, { ...child.attributes });
-					preWrapper.children = inner.before;
-					before.push(preWrapper);
-				}
-				if (inner.after.length > 0) {
-					const postWrapper = new XmlNode(child.tag, { ...child.attributes });
-					postWrapper.children = inner.after;
-					after.push(postWrapper);
-				}
+				const inner = splitChildrenAt(
+					wrapperContent(child),
+					offset - cursor,
+					view,
+				);
+				before.push(...rewrapSplitHalf(child, inner.before));
+				after.push(...rewrapSplitHalf(child, inner.after));
 			}
 			cursor += length;
 			continue;
@@ -224,7 +222,7 @@ function firstVisibleRun(children: XmlNode[], view: FindView): XmlNode | null {
 			isRunBearingWrapper(child.tag) &&
 			isWrapperVisibleInView(child.tag, view)
 		) {
-			const nested = firstVisibleRun(child.children, view);
+			const nested = firstVisibleRun(wrapperContent(child), view);
 			if (nested) return nested;
 		}
 	}
@@ -243,7 +241,7 @@ function salvageNonContent(children: XmlNode[], view: FindView): XmlNode[] {
 		if (child.tag === "w:r" || child.tag === "w:pPr") continue;
 		if (isRunBearingWrapper(child.tag)) {
 			if (isWrapperVisibleInView(child.tag, view)) {
-				out.push(...salvageNonContent(child.children, view));
+				out.push(...salvageNonContent(wrapperContent(child), view));
 			} else {
 				out.push(child);
 			}

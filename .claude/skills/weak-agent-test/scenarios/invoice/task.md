@@ -53,10 +53,14 @@ A few quick polish touches on the line-items table so it reads cleanly for the c
 
 Replace the "Notes" body with: *Payment due within 30 days. Wire details on request.*
 
+## The "do not send" stamp
+
+There's a red-bordered stamp box near the bottom of the page that reads "TEMPLATE — DO NOT SEND". Keep the box — it's a nice call-out — but change its wording to **Thank you for your business!** so it reads as a client-facing note instead of a template warning. Nothing about the box's look (fill, border, position) should change; only the words.
+
 ## Logo
 
 Replace the placeholder logo in the **top-left corner** with the new company mark at `assets/logo.svg`. Swap that one image only — don't add a second logo, and **don't touch the small payment mark in the footer** (it must stay). The document should still have two embedded images when you're done (the new logo + the footer mark).
 
 ## What done looks like
 
-All `Item 1/2/3`, `$0.00`, `Customer name`, `Your Company Name`, and similar placeholder text is replaced with the values above. Before finishing, do one consolidated sweep for every placeholder family named here — item labels, description lines, customer/company names, address prompts, and zero-dollar template amounts — rather than checking just one kind and assuming the rest are gone. Leftover placeholder lines (the extra address line, the per-item sub-lines) are removed, not left dangling. The three tables are still present and unbroken. The line-items table has four filled rows, the Description column is the widest, and no dollar value wraps to a second line. Its header row has a light grey fill, the Price and Amount columns are right-aligned, and the header is set to repeat on a second page. The top-left logo is the new mark from `assets/logo.svg`, and the footer's payment mark is untouched.
+All `Item 1/2/3`, `$0.00`, `Customer name`, `Your Company Name`, and similar placeholder text is replaced with the values above. Before finishing, do one consolidated sweep for every placeholder family named here — item labels, description lines, customer/company names, address prompts, and zero-dollar template amounts — rather than checking just one kind and assuming the rest are gone. Leftover placeholder lines (the extra address line, the per-item sub-lines) are removed, not left dangling. The three tables are still present and unbroken. The line-items table has four filled rows, the Description column is the widest, and no dollar value wraps to a second line. Its header row has a light grey fill, the Price and Amount columns are right-aligned, and the header is set to repeat on a second page. The top-left logo is the new mark from `assets/logo.svg`, and the footer's payment mark is untouched. The stamp box near the bottom still exists and now reads "Thank you for your business!" — no "TEMPLATE" or "DO NOT SEND" wording anywhere in the document.

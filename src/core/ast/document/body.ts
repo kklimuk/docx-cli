@@ -25,6 +25,7 @@ export class Body {
 	imageById: Map<string, ImageReference> = new Map();
 	hyperlinkById: Map<string, HyperlinkReference> = new Map();
 	equationReferences: Map<string, EquationReference> = new Map();
+	textBoxReferences: Map<string, TextBoxReference> = new Map();
 
 	constructor(init: {
 		path: string;
@@ -52,6 +53,17 @@ export class Body {
 		yield* iterateBlocks(this.blocks);
 	}
 
+	resolveTextBox(textBoxId: string): TextBoxReference {
+		const reference = this.textBoxReferences.get(textBoxId);
+		if (!reference) {
+			throw new LocatorResolveError(
+				{ kind: "textBox", textBoxId },
+				`Text box not found: ${textBoxId}`,
+			);
+		}
+		return reference;
+	}
+
 	findBlockById(blockId: string): Block | null {
 		for (const block of this.iterateBlocks()) {
 			if (block.id === blockId) return block;
@@ -62,6 +74,16 @@ export class Body {
 	resolveBlock(blockId: string): BlockReference {
 		const reference = this.blockReferences.get(blockId);
 		if (!reference) {
+			// A whole text box is a container, not a block — say so, rather than
+			// sending a weak agent off to re-read for a "stale" id that isn't.
+			const box = this.textBoxReferences.get(blockId);
+			if (box) {
+				const first = box.blocks[0]?.id ?? `${blockId}:p0`;
+				throw new LocatorResolveError(
+					{ kind: "textBox", textBoxId: blockId },
+					`${blockId} names a whole text box (anchored in ${box.anchorBlockId}), not a block — address a paragraph inside it, e.g. ${first}`,
+				);
+			}
 			throw new LocatorResolveError(
 				{ kind: "block", blockId },
 				`Block not found: ${blockId}`,
@@ -147,16 +169,39 @@ export class Body {
 	}
 }
 
-/** Recursive block iterator that descends into table cells. Stand-alone helper
- *  so callers with just `Block[]` (no `Body` instance) can share the walker. */
-export function* iterateBlocks(blocks: Block[]): IterableIterator<Block> {
+/** Recursive block iterator that descends into table cells AND into the story
+ *  of every text box anchored in a paragraph it visits — so `find`/`replace`/
+ *  `wc`/`styles --used`/… see a text box's paragraphs the way a reader sees
+ *  them on the page. Stand-alone helper so callers with just `Block[]` (no
+ *  `Body` instance) can share the walker. `view` hides a box whose anchor run
+ *  is tracked-deleted (accepted) or tracked-inserted (baseline); the default
+ *  `current` walks every story. */
+export function* iterateBlocks(
+	blocks: Block[],
+	options: { view?: "current" | "accepted" | "baseline" } = {},
+): IterableIterator<Block> {
+	const view = options.view ?? "current";
 	for (const block of blocks) {
 		yield block;
 		if (block.type === "table") {
 			for (const row of block.rows) {
 				for (const cell of row.cells) {
-					yield* iterateBlocks(cell.blocks);
+					yield* iterateBlocks(cell.blocks, options);
 				}
+			}
+			continue;
+		}
+		if (block.type === "paragraph") {
+			for (const run of block.runs) {
+				if (run.type !== "textBox") continue;
+				const kind = run.trackedChange?.kind;
+				if (view === "accepted" && (kind === "del" || kind === "moveFrom")) {
+					continue;
+				}
+				if (view === "baseline" && (kind === "ins" || kind === "moveTo")) {
+					continue;
+				}
+				yield* iterateBlocks(run.blocks, options);
 			}
 		}
 	}
@@ -204,6 +249,15 @@ export type EquationReference = {
 	 *  equations inside table cells too — walking `view.doc.blocks` to find
 	 *  the run's `latex` field misses cell paragraphs. */
 	latex: string;
+};
+
+/** A text box's story: the `<w:txbxContent>` the reader walked (the Choice
+ *  copy when Word wrote a Choice/Fallback pair — the Fallback twin is re-synced
+ *  from it on save), the paragraph it is anchored in, and its AST blocks. */
+export type TextBoxReference = {
+	node: XmlNode;
+	anchorBlockId: string;
+	blocks: Block[];
 };
 
 // Exported here (not on `CommentsView`) so `Body` types don't depend on

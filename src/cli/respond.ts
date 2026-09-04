@@ -38,6 +38,7 @@ export type ErrorCode =
 	| "RENDER_ENGINE"
 	| "RENDER_FAILED"
 	| "UPGRADE_FAILED"
+	| "UNSUPPORTED"
 	| "UNHANDLED";
 
 // Output sinks. Production leaves these null and writes straight to the real
@@ -265,6 +266,7 @@ function exitCodeFor(code: ErrorCode): number {
 		case "RENDER_ENGINE":
 		case "RENDER_FAILED":
 		case "UPGRADE_FAILED":
+		case "UNSUPPORTED":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
 	}

@@ -124,6 +124,7 @@ const JSON_SCHEMA = {
 				{ $ref: "#/$defs/EquationRun" },
 				{ $ref: "#/$defs/FootnoteRefRun" },
 				{ $ref: "#/$defs/ChartRun" },
+				{ $ref: "#/$defs/TextBoxRun" },
 			],
 		},
 		TextRun: {
@@ -248,6 +249,18 @@ const JSON_SCHEMA = {
 			properties: {
 				type: { const: "chart" },
 				kind: { enum: ["chart", "shape", "smartart", "drawing"] },
+			},
+		},
+		TextBoxRun: {
+			type: "object",
+			required: ["type", "id", "blocks"],
+			properties: {
+				type: { const: "textBox" },
+				id: { type: "string" },
+				floating: { type: "boolean" },
+				wrap: { type: "string" },
+				align: { type: "string" },
+				blocks: { type: "array", items: { $ref: "#/$defs/Block" } },
 			},
 		},
 		Footnote: {

@@ -16,6 +16,7 @@ import {
 	type Table,
 	type TableCell,
 	type TableRow,
+	type TextBoxRun,
 	type TextRun,
 	type TrackedChange,
 } from "@core";
@@ -233,11 +234,13 @@ export function renderMarkdown(
 			}
 			const group = blocks.slice(cursor, lookahead) as Paragraph[];
 			parts.push(renderCodeBlockGroup(group, ctx));
+			for (const member of group) parts.push(...renderTextBoxes(member, ctx));
 			cursor = lookahead;
 			continue;
 		}
 		const rendered = renderBlock(block, ctx);
 		if (rendered !== null) parts.push(rendered);
+		parts.push(...renderTextBoxes(block, ctx));
 		cursor++;
 	}
 	const definitions: string[] = [];
@@ -429,6 +432,74 @@ function runComments(run: Run): string[] | undefined {
 
 function slotKey(paragraphId: string, runIndex: number): string {
 	return `${paragraphId}#${runIndex}`;
+}
+
+/** Render every text box anchored in `block` (a paragraph's runs, or any cell
+ * paragraph of a table — GFM cells can't hold a nested block), each as its own
+ * bracketed story right after the block it hangs on:
+ *
+ *     <!-- docx:textbox tbx0 anchor="p1" wrap="square" align="right" -->
+ *     **CONFIDENTIAL** <!-- tbx0:p0 -->
+ *     Internal use only. <!-- tbx0:p1 -->
+ *     <!-- docx:textbox-end tbx0 -->
+ *
+ * The story's paragraphs carry their real `tbxN:pK` locators, so an agent
+ * edits/replaces/comments on them like any other paragraph; the bracketing
+ * `docx:` hints are dropped by the importer like every other annotation
+ * (a `read → create` rebuild flattens the box into flow paragraphs — the AST is
+ * the lossless view). `anchor` names the paragraph the box floats over, which
+ * is also why that paragraph's `pN` may look "skipped" when it has no text of
+ * its own. A box nested inside another box renders inside its parent's story. */
+function renderTextBoxes(block: Block, ctx: RenderContext): string[] {
+	const out: string[] = [];
+	const view = ctx.options.view ?? "accepted";
+	for (const { run, anchorId } of collectTextBoxRuns(block)) {
+		// A box whose anchor run is tracked-deleted is gone in the accepted view
+		// (and a tracked-inserted one absent from the baseline) — same rule as
+		// `isRunVisible` for text.
+		if (!isTextBoxVisible(run, view)) continue;
+		const pairs: NotePair[] = [["anchor", anchorId]];
+		if (run.wrap) pairs.push(["wrap", run.wrap]);
+		if (run.align) pairs.push(["align", run.align]);
+		const story: string[] = [formatNote("textbox", pairs, [run.id])];
+		// A box ends any list run in the flow, and its own list starts fresh.
+		ctx.prevListNumId = null;
+		for (const inner of run.blocks) {
+			const rendered = renderBlock(inner, ctx);
+			if (rendered !== null) story.push(rendered);
+			story.push(...renderTextBoxes(inner, ctx));
+		}
+		story.push(formatNote("textbox-end", [], [run.id]));
+		ctx.prevListNumId = null;
+		out.push(story.join("\n\n"));
+	}
+	return out;
+}
+
+function isTextBoxVisible(run: TextBoxRun, view: MarkdownView): boolean {
+	const kind = run.trackedChange?.kind;
+	if (view === "current" || !kind) return true;
+	if (view === "accepted") return kind !== "del" && kind !== "moveFrom";
+	return kind !== "ins" && kind !== "moveTo";
+}
+
+/** The text-box runs anchored DIRECTLY in `block` (its own runs, or its cells'
+ * paragraphs' runs for a table) — not the ones inside those boxes' stories,
+ * which `renderTextBoxes` reaches recursively. */
+function collectTextBoxRuns(
+	block: Block,
+): { run: TextBoxRun; anchorId: string }[] {
+	if (block.type === "paragraph") {
+		return block.runs
+			.filter((run): run is TextBoxRun => run.type === "textBox")
+			.map((run) => ({ run, anchorId: block.id }));
+	}
+	if (block.type === "table") {
+		return block.rows.flatMap((row) =>
+			row.cells.flatMap((cell) => cell.blocks.flatMap(collectTextBoxRuns)),
+		);
+	}
+	return [];
 }
 
 function renderBlock(block: Block, ctx: RenderContext): string | null {
@@ -1446,6 +1517,8 @@ function renderRuns(
 		} else if (run.type === "chart") {
 			out += `\`[${run.kind}]\``;
 		}
+		// A text box contributes nothing inline: its story renders as its own
+		// block right after the anchor (see `renderTextBoxes`).
 		cursor++;
 	}
 	out += transitionFormattingWrappers(openFormattingWrappers, []);
@@ -2294,6 +2367,7 @@ function blockIdForLocator(input: string, position: "from" | "to"): string {
 		case "footnote":
 		case "endnote":
 		case "marginal":
+		case "textBox":
 		case "tableRow":
 		case "tableColumn":
 		case "cellRange":

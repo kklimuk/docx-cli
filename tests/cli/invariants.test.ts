@@ -6,7 +6,7 @@ import { Pkg } from "@core/ast/document/package";
 import type { XmlNode } from "@core/parser";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml } from "./helpers";
+import { freshFixture, readDocumentXml, readMarkdown } from "./helpers";
 
 /**
  * Pillar invariant tests: any element we don't actively model survives every
@@ -960,3 +960,116 @@ function relsPartNameFor(partName: string): string {
 	const base = partName.slice(slash + 1);
 	return `${dir}/_rels/${base}.rels`;
 }
+
+describe("markup-compatibility wrappers at the paragraph level — offsets bridge", () => {
+	// MCE lets a producer wrap a paragraph's RUNS in <mc:AlternateContent>. The
+	// AST reads the first <mc:Choice>; `mc:AlternateContent` + `mc:Choice` sit in
+	// RUN_BEARING_WRAPPER_TAGS so the XML-side walkers take the same branch and
+	// the Fallback (holding the same text again) never double-counts.
+	const wrapped =
+		`<w:p><w:r><w:t xml:space="preserve">Dear </w:t></w:r>` +
+		`<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="w14"><w:r><w:t>Acme</w:t></w:r></mc:Choice>` +
+		`<mc:Fallback><w:r><w:t>Acme</w:t></w:r></mc:Fallback></mc:AlternateContent>` +
+		`<w:r><w:t xml:space="preserve"> team, welcome.</w:t></w:r></w:p>`;
+
+	test("find offsets count the Choice text once", async () => {
+		const docPath = await buildFixture(wrapped, "mce-para-find");
+		const result = await runCli("find", docPath, "team");
+		const parsed = JSON.parse(result.stdout) as {
+			matches: { locator: string }[];
+		};
+		expect(parsed.matches.map((match) => match.locator)).toEqual(["p0:10-14"]);
+	});
+
+	test("replace inside the Choice branch lands there; the Fallback survives untouched", async () => {
+		const docPath = await buildFixture(wrapped, "mce-para-replace");
+		const result = await runCli("replace", docPath, "Acme", "Globex");
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(/<mc:Choice[^>]*>.*Globex.*<\/mc:Choice>/s);
+		expect(xml).toMatch(/<mc:Fallback>.*Acme.*<\/mc:Fallback>/s);
+		expect(xml).not.toMatch(/<mc:Fallback>.*Globex.*<\/mc:Fallback>/s);
+	});
+
+	test("comments add spanning past the wrapper anchors with the right length", async () => {
+		const docPath = await buildFixture(wrapped, "mce-para-comment");
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0:5-14",
+			"--text",
+			"who?",
+		);
+		expect(result.exitCode).toBe(0);
+		const listed = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		) as { anchor: { startOffset: number; endOffset: number } }[];
+		expect(listed[0]?.anchor).toMatchObject({ startOffset: 5, endOffset: 14 });
+	});
+});
+
+describe("markup-compatibility wrappers — multiple Choices and spanning replaces", () => {
+	const twoChoices =
+		`<w:p><w:r><w:t xml:space="preserve">Dear </w:t></w:r>` +
+		`<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+		`<mc:Choice Requires="w15"><w:r><w:t>Acme</w:t></w:r></mc:Choice>` +
+		`<mc:Choice Requires="w14"><w:r><w:t>Acme</w:t></w:r></mc:Choice>` +
+		`<mc:Fallback><w:r><w:t>Acme</w:t></w:r></mc:Fallback></mc:AlternateContent>` +
+		`<w:r><w:t xml:space="preserve"> team, welcome.</w:t></w:r></w:p>`;
+
+	test("only the FIRST Choice counts toward offsets — find, replace and comments agree", async () => {
+		const docPath = await buildFixture(twoChoices, "mce-two-choices");
+		const found = JSON.parse(
+			(await runCli("find", docPath, "team")).stdout,
+		) as {
+			matches: { locator: string }[];
+		};
+		expect(found.matches.map((match) => match.locator)).toEqual(["p0:10-14"]);
+		expect((await runCli("replace", docPath, "team", "crew")).exitCode).toBe(0);
+		expect(await readMarkdown(docPath)).toContain(
+			"Dear Acme crew, welcome. <!-- p0 -->",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					docPath,
+					"--at",
+					"p0:5-14",
+					"--text",
+					"who?",
+				)
+			).exitCode,
+		).toBe(0);
+		const listed = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		) as {
+			anchor: { startOffset: number; endOffset: number };
+		}[];
+		expect(listed[0]?.anchor).toMatchObject({ startOffset: 5, endOffset: 14 });
+		const xml = await readDocumentXml(docPath);
+		// A boundary exactly at the wrapper's start sits OUTSIDE it (same rule as
+		// every wrapper); the second Choice and the Fallback are untouched.
+		expect(xml).toMatch(/commentRangeStart[^>]*\/><mc:AlternateContent/);
+		expect(xml).toMatch(
+			/<mc:Choice Requires="w14"><w:r><w:t>Acme<\/w:t><\/w:r><\/mc:Choice>/,
+		);
+		expect(xml).toMatch(
+			/<mc:Fallback><w:r><w:t>Acme<\/w:t><\/w:r><\/mc:Fallback>/,
+		);
+	});
+
+	test("a replace that starts before and ends inside a wrapper cuts the wrapper's text once", async () => {
+		const docPath = await buildFixture(twoChoices, "mce-span-into");
+		expect(
+			(await runCli("replace", docPath, "Dear Acme", "Hi Globex")).exitCode,
+		).toBe(0);
+		expect(await readMarkdown(docPath)).toContain(
+			"Hi Globex team, welcome. <!-- p0 -->",
+		);
+		expect(await readDocumentXml(docPath)).not.toContain("Acme");
+	});
+});

@@ -39,6 +39,14 @@ export function locatorToBlockTarget(locator: Locator): BlockTarget | null {
 			span: inner.span,
 		};
 	}
+	if (locator.kind === "textBox" && locator.inner) {
+		const inner = locatorToBlockTarget(locator.inner);
+		if (!inner) return null;
+		return {
+			blockId: `${locator.textBoxId}:${inner.blockId}`,
+			span: inner.span,
+		};
+	}
 	return null;
 }
 
@@ -245,6 +253,11 @@ function composeChainedBlockId(
 		if (innerId === null) return null;
 		return `${locator.tableId}:r${locator.row}c${locator.col}:${innerId}`;
 	}
+	if (locator.kind === "textBox" && locator.inner) {
+		const innerId = composeChainedBlockId(locator.inner, leafRe);
+		if (innerId === null) return null;
+		return `${locator.textBoxId}:${innerId}`;
+	}
 	return null;
 }
 
@@ -262,6 +275,11 @@ function composeRowTarget(
 			row: inner.row,
 		};
 	}
+	if (locator.kind === "textBox" && locator.inner) {
+		const inner = composeRowTarget(locator.inner);
+		if (!inner) return null;
+		return { tableId: `${locator.textBoxId}:${inner.tableId}`, row: inner.row };
+	}
 	return null;
 }
 
@@ -278,6 +296,11 @@ function composeColumnTarget(
 			tableId: `${locator.tableId}:r${locator.row}c${locator.col}:${inner.tableId}`,
 			col: inner.col,
 		};
+	}
+	if (locator.kind === "textBox" && locator.inner) {
+		const inner = composeColumnTarget(locator.inner);
+		if (!inner) return null;
+		return { tableId: `${locator.textBoxId}:${inner.tableId}`, col: inner.col };
 	}
 	return null;
 }
@@ -303,12 +326,30 @@ function composeCellRangeTarget(locator: Locator): {
 			end: inner.end,
 		};
 	}
+	if (locator.kind === "textBox" && locator.inner) {
+		const inner = composeCellRangeTarget(locator.inner);
+		if (!inner) return null;
+		return {
+			tableId: `${locator.textBoxId}:${inner.tableId}`,
+			start: inner.start,
+			end: inner.end,
+		};
+	}
 	return null;
 }
 
 function composeCellTarget(
 	locator: Locator,
 ): { tableId: string; row: number; col: number } | null {
+	if (locator.kind === "textBox" && locator.inner) {
+		const inner = composeCellTarget(locator.inner);
+		if (!inner) return null;
+		return {
+			tableId: `${locator.textBoxId}:${inner.tableId}`,
+			row: inner.row,
+			col: inner.col,
+		};
+	}
 	if (locator.kind !== "cell") return null;
 	if (!locator.inner) {
 		return { tableId: locator.tableId, row: locator.row, col: locator.col };

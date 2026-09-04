@@ -175,6 +175,13 @@ function consecutiveParagraphGroups(blocks: Block[]): Paragraph[][] {
 	for (const block of blocks) {
 		if (block.type === "paragraph") {
 			current.push(block);
+			// A text box is its own story: its paragraphs form their own runs,
+			// never joined to the flow around the anchor.
+			for (const run of block.runs) {
+				if (run.type === "textBox") {
+					groups.push(...consecutiveParagraphGroups(run.blocks));
+				}
+			}
 			continue;
 		}
 		flush();
@@ -320,7 +327,7 @@ export function findFormattedSpans(
 	view: FindView = "accepted",
 ): TextMatch[] {
 	const out: TextMatch[] = [];
-	for (const block of iterateBlocks(doc.blocks)) {
+	for (const block of iterateBlocks(doc.blocks, { view })) {
 		if (block.type !== "paragraph") continue;
 		let offset = 0;
 		let spanStart: number | null = null;
@@ -441,7 +448,7 @@ function collectMatches(
 	view: FindView,
 	out: TextMatch[],
 ): void {
-	for (const block of iterateBlocks(blocks)) {
+	for (const block of iterateBlocks(blocks, { view })) {
 		if (block.type !== "paragraph") continue;
 		const paragraphText = paragraphTextForView(block, view);
 		for (const span of matcher(paragraphText)) {

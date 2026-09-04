@@ -40,6 +40,7 @@ export type {
 	TableCell,
 	TableRow,
 	TabRun,
+	TextBoxRun,
 	TextRun,
 	TrackedChange,
 	TrackedChangeKind,

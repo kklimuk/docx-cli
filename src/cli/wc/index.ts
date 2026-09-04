@@ -5,11 +5,14 @@ import {
 	flattenParagraphs,
 	type Locator,
 	LocatorParseError,
+	LocatorResolveError,
+	locatorToBlockTarget,
 	type Paragraph,
 	paragraphText,
 	paragraphTextAccepted,
 	paragraphTextBaseline,
 	parseLocator,
+	parseTableAt,
 } from "@core";
 import { resolveView } from "../parse-helpers";
 import {
@@ -55,6 +58,8 @@ ${describeForms([
 	"cellParagraph",
 	"cellSpan",
 	"section",
+	"textBox",
+	"textBoxParagraph",
 ])}
   cellParagraph chains to any nesting depth (a table inside a cell:
   tN:rRcC:tN:rR2cC2:pK …). Notation: uppercase letters are numeric indices;
@@ -248,6 +253,53 @@ export async function run(args: string[]): Promise<number> {
 			),
 			{ scope: "range", view },
 		);
+	}
+
+	if (locator.kind === "textBox") {
+		if (!locator.inner) {
+			try {
+				const box = docView.body.resolveTextBox(locator.textBoxId);
+				return emitWc(json, countWordsInBlocks(box.blocks, { view }), {
+					scope: "textBox",
+					view,
+				});
+			} catch (error) {
+				if (error instanceof LocatorResolveError) {
+					return fail("BLOCK_NOT_FOUND", error.message);
+				}
+				throw error;
+			}
+		}
+		const target = locatorToBlockTarget(locator);
+		if (!target) {
+			// A table inside the box (`tbx0:t0`), or a cell of one.
+			const tableId = parseTableAt(locatorInput);
+			const table = tableId ? findBlockById(blocks, tableId) : null;
+			if (table && table.type === "table") {
+				return emitWc(json, countWordsInBlocks([table], { view }), {
+					scope: "table",
+					view,
+				});
+			}
+			return fail(
+				"USAGE",
+				`Unsupported text-box locator: ${locatorInput}`,
+				"Inside a text box, wc accepts tbxN:pK, tbxN:pK:S-E, tbxN:tM (or the whole box as tbxN).",
+			);
+		}
+		const block = findBlockById(blocks, target.blockId);
+		if (!block || block.type !== "paragraph") {
+			return fail("BLOCK_NOT_FOUND", `Paragraph not found: ${target.blockId}`);
+		}
+		const words = target.span
+			? countWordsInParagraphSpan(block, target.span.start, target.span.end, {
+					view,
+				})
+			: countWords(pickText(block));
+		return emitWc(json, words, {
+			scope: target.span ? "paragraphSpan" : "paragraph",
+			view,
+		});
 	}
 
 	if (locator.kind === "cell") {

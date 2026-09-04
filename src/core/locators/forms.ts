@@ -25,7 +25,9 @@ export type LocatorFormKey =
 	| "footnote"
 	| "endnote"
 	| "header"
-	| "footer";
+	| "footer"
+	| "textBox"
+	| "textBoxParagraph";
 
 export type LocatorForm = {
 	syntax: string;
@@ -116,6 +118,17 @@ export const LOCATOR_FORMS: Record<LocatorFormKey, LocatorForm> = {
 		syntax: "ftrN",
 		example: "ftr0",
 		summary: "page footer id (footers list / raw get / footers set/clear --at)",
+	},
+	textBox: {
+		syntax: "tbxN",
+		example: "tbx0",
+		summary: "text box N (document order) — its whole story, as one unit",
+	},
+	textBoxParagraph: {
+		syntax: "tbxN:pK",
+		example: "tbx0:p1",
+		summary:
+			"paragraph K inside text box N (chainable: tbxN:pK:S-E spans, tbxN:tM:rRcC:pK cells)",
 	},
 };
 

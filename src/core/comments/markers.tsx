@@ -7,6 +7,8 @@ import {
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	wrapperContent,
+	wrapperContentNode,
 	XmlNode,
 } from "../parser";
 
@@ -34,7 +36,7 @@ function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
 			continue;
 		}
 		if (isWrapperVisibleInView(child.tag, view)) {
-			total += sumVisibleTextLength(child.children, view);
+			total += sumVisibleTextLength(wrapperContent(child), view);
 		}
 	}
 	return total;
@@ -166,7 +168,7 @@ export function addCommentMarkersAroundRun(
 				return true;
 			}
 			if (child && isRunBearingWrapper(child.tag)) {
-				if (walk(child)) return true;
+				if (walk(wrapperContentNode(child))) return true;
 			}
 		}
 		return false;
@@ -198,7 +200,7 @@ export function findElementOffsetsInParagraph(
 				continue;
 			}
 			if (isRunBearingWrapper(child.tag)) {
-				if (walk(child.children)) return true;
+				if (walk(wrapperContent(child))) return true;
 			}
 		}
 		return false;
@@ -365,7 +367,20 @@ function walkAndPlace(
 			// descending so they sit outside the wrapper when offsets align.
 			flushAtCurrentOffset(result, pending, state);
 
-			const innerChildren = walkAndPlace(child.children, pending, state, view);
+			// An `<mc:AlternateContent>` keeps its shell (Choice/Fallback pair);
+			// markers land inside the chosen branch, in place.
+			const content = wrapperContentNode(child);
+			const innerChildren = walkAndPlace(
+				content.children,
+				pending,
+				state,
+				view,
+			);
+			if (content !== child) {
+				content.children = innerChildren;
+				result.push(child);
+				continue;
+			}
 			const wrapper = new XmlNode(child.tag, { ...child.attributes });
 			wrapper.children = innerChildren;
 			result.push(wrapper);
@@ -430,7 +445,7 @@ export function extractCommentMarkers(
 				continue;
 			}
 			if (child.tag === "w:r" && runHasCommentReference(child)) continue;
-			if (isRunBearingWrapper(child.tag)) walk(child);
+			if (isRunBearingWrapper(child.tag)) walk(wrapperContentNode(child));
 			kept.push(child);
 		}
 		node.children = kept;

@@ -35,7 +35,7 @@ import {
 } from "../respond";
 
 const ANCHOR_FORMS = describeForms(
-	["paragraph", "cellParagraph"],
+	["paragraph", "cellParagraph", "textBoxParagraph"],
 	"                       ",
 );
 
@@ -231,6 +231,13 @@ export async function runAddNote(
 		anchorLabel = atInput as string;
 	}
 
+	if (blockId.startsWith("tbx")) {
+		return fail(
+			"UNSUPPORTED",
+			`Word does not allow ${kind}s inside a text box (${blockId}) — it discards the reference on the next save`,
+			'Anchor the note in the paragraph that anchors the box instead (anchor="pN" on the docx:textbox hint in `docx read`).',
+		);
+	}
 	const paragraphRef = await resolveBlockOrFail(document, blockId);
 	if (typeof paragraphRef === "number") return paragraphRef;
 
@@ -472,9 +479,10 @@ function parseAnchor(
 		};
 	}
 
-	// Cell-nested paragraph anchors: tN:rRcC:pK or tN:rRcC:pK:offset. We pull a
-	// trailing `:offset` (a single integer point) off the end if present, then
-	// hand the remainder to `resolveBlockOrFail` as a cell-paragraph locator.
+	// Cell-nested (tN:rRcC:pK[:offset]) and text-box (tbxN:pK[:offset]) anchors.
+	// We pull a trailing `:offset` (a single integer point) off the end if
+	// present, then hand the remainder to `resolveBlockOrFail` (a text-box
+	// anchor is then refused — Word drops notes inside a box).
 	if (!trimmed.startsWith("t")) return null;
 	const cellOffsetMatch = trimmed.match(/^(.*:p\d+):(\d+)$/);
 	if (cellOffsetMatch?.[1]) {

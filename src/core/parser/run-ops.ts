@@ -1,3 +1,4 @@
+import { alternateContentBranch, isAlternateContent } from "../mc";
 import { XmlNode } from "./xml-node";
 
 /** Wrappers whose contents store text as `<w:delText>` rather than `<w:t>`.
@@ -9,15 +10,18 @@ export function isSubtractiveTrackedChangeWrapper(tag: string): boolean {
 }
 
 export function runTextLength(run: XmlNode): number {
+	return runChildrenTextWidth(run.children);
+}
+
+/** Offset width of a run's child list. `<w:delText>` is text content too —
+ *  runs inside `<w:del>` / `<w:moveFrom>` carry their text in delText, and
+ *  the AST reader surfaces it in `TextRun.text`, so counting only `<w:t>`
+ *  would break every caller that walks XML offsets in the current view
+ *  (find → replace, find → comments add). Everything else is an inline
+ *  marker (see `inlineMarkerWidth`). */
+function runChildrenTextWidth(children: XmlNode[]): number {
 	let total = 0;
-	for (const child of run.children) {
-		// `<w:delText>` is text content too — runs inside `<w:del>` /
-		// `<w:moveFrom>` carry their text in delText. Counting only `<w:t>`
-		// here under-reports length for those runs and breaks any caller
-		// that walks XML offsets in current view (e.g. find → replace,
-		// find → comments add). The AST reader (core/ast/read.ts) already
-		// surfaces delText in TextRun.text, so XML-side accounting must
-		// agree.
+	for (const child of children) {
 		if (child.tag === "w:t" || child.tag === "w:delText") {
 			total += child.collectText().length;
 		} else {
@@ -25,6 +29,15 @@ export function runTextLength(run: XmlNode): number {
 		}
 	}
 	return total;
+}
+
+/** The offset width of an `<mc:AlternateContent>` INSIDE a run: the text
+ *  length of its chosen branch (see `alternateContentBranch`). Word only ever
+ *  puts a drawing there (width 0), but MCE allows text, and `readRun` reads it
+ *  — so the XML side counts it too or `find` → `replace` drifts. */
+function alternateContentWidth(node: XmlNode): number {
+	const branch = alternateContentBranch(node);
+	return branch ? runChildrenTextWidth(branch.children) : 0;
 }
 
 /**
@@ -43,6 +56,14 @@ export function runTextLength(run: XmlNode): number {
  */
 export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
 	const sliced = new XmlNode("w:r", { ...run.attributes });
+	// A zero-width marker sitting AFTER the last character (offset == the
+	// run's length — a trailing text box anchor, image, or note reference)
+	// has no `start <= offset < end` slice; it belongs to the slice that
+	// reaches the run's end. Without this a replace of the run's text silently
+	// dropped the whole shape (Choice and Fallback) with exit 0.
+	const total = runTextLength(run);
+	const ownsMarkerAt = (offset: number): boolean =>
+		offset >= start && (offset < end || (offset === end && end === total));
 	let offset = 0;
 	for (const child of run.children) {
 		if (child.tag === "w:rPr") {
@@ -70,9 +91,23 @@ export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
 			offset += 1;
 			continue;
 		}
+		// A text-bearing `<mc:AlternateContent>` (MCE-legal, never Word-written)
+		// moves as ONE unit — owned by the slice covering its first offset, its
+		// width advanced past. Cutting through the Choice/Fallback pair would
+		// desynchronize the twins; keeping it atomic keeps the file honest.
+		const alternateWidth = isAlternateContent(child)
+			? alternateContentWidth(child)
+			: 0;
+		if (alternateWidth > 0) {
+			if (offset >= start && offset < end) {
+				sliced.children.push(child.clone());
+			}
+			offset += alternateWidth;
+			continue;
+		}
 		// Zero-width positional markers (drawings, legacy embeds, note refs, a
 		// page/column break): owned by the slice whose range covers this offset.
-		if (offset >= start && offset < end) {
+		if (ownsMarkerAt(offset)) {
 			sliced.children.push(child.clone());
 		}
 	}
@@ -101,6 +136,8 @@ function inlineMarkerWidth(child: XmlNode): number {
 			const type = child.getAttribute("w:type");
 			return type === "page" || type === "column" ? 0 : 1;
 		}
+		case "mc:AlternateContent":
+			return alternateContentWidth(child);
 		default:
 			return 0;
 	}
@@ -116,6 +153,11 @@ function inlineMarkerWidth(child: XmlNode): number {
  *  - `w:hyperlink`: hyperlink span (own a relationship, runs are visible text).
  *  - `w:fldSimple`: self-contained field; runs render the cached field result.
  *  - `w:smartTag`: semantic annotation around runs (person names, dates).
+ *  - `mc:AlternateContent`: a markup-compatibility wrapper at the paragraph
+ *    level. Its content is ONE branch — the first `<mc:Choice>`, else the
+ *    `<mc:Fallback>` — never the union, so every walker reaches a wrapper's
+ *    runs through `wrapperContent(node)` rather than `node.children`; that is
+ *    what keeps a multi-Choice wrapper counted exactly as the reader reads it.
  */
 export const RUN_BEARING_WRAPPER_TAGS: ReadonlySet<string> = new Set([
 	"w:ins",
@@ -125,10 +167,37 @@ export const RUN_BEARING_WRAPPER_TAGS: ReadonlySet<string> = new Set([
 	"w:hyperlink",
 	"w:fldSimple",
 	"w:smartTag",
+	"mc:AlternateContent",
 ]);
 
 export function isRunBearingWrapper(tag: string): boolean {
 	return RUN_BEARING_WRAPPER_TAGS.has(tag);
+}
+
+/** The node whose child list holds a run-bearing wrapper's runs: the wrapper
+ *  itself, or for `<mc:AlternateContent>` its chosen branch (the SAME
+ *  `XmlNode` the reader walked, so an in-place splice lands where the AST
+ *  looked). Every offset walker descends through this, never `node.children`. */
+export function wrapperContentNode(wrapper: XmlNode): XmlNode {
+	if (!isAlternateContent(wrapper)) return wrapper;
+	return alternateContentBranch(wrapper) ?? wrapper;
+}
+
+export function wrapperContent(wrapper: XmlNode): XmlNode[] {
+	return wrapperContentNode(wrapper).children;
+}
+
+/** Re-wrap a split-off half of a wrapper's runs. A plain wrapper keeps its tag
+ *  and attributes on both halves. An `<mc:AlternateContent>` can't be halved
+ *  (each half would need its own Choice/Fallback pair, and only the chosen
+ *  branch was ever read) — its runs come back BARE, which is the content Word
+ *  rendered anyway. Empty input yields nothing. */
+export function rewrapSplitHalf(wrapper: XmlNode, inner: XmlNode[]): XmlNode[] {
+	if (inner.length === 0) return [];
+	if (isAlternateContent(wrapper)) return inner;
+	const half = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+	half.children = inner;
+	return [half];
 }
 
 /** Sum the text lengths of all `<w:r>` reachable from `children`, descending
@@ -143,7 +212,7 @@ export function sumRunBearingTextLength(children: XmlNode[]): number {
 			continue;
 		}
 		if (isRunBearingWrapper(child.tag)) {
-			total += sumRunBearingTextLength(child.children);
+			total += sumRunBearingTextLength(wrapperContent(child));
 		}
 	}
 	return total;
@@ -179,7 +248,7 @@ export function partitionParagraphRuns(paragraph: XmlNode): {
 }
 
 function collectInnerRuns(wrapper: XmlNode, out: XmlNode[]): void {
-	for (const child of wrapper.children) {
+	for (const child of wrapperContent(wrapper)) {
 		if (child.tag === "w:r") {
 			out.push(child);
 			continue;

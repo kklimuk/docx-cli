@@ -23,7 +23,13 @@ const GROUPS: { title: string; jsonKey: string; keys: LocatorFormKey[] }[] = [
 	{
 		title: "Block locators",
 		jsonKey: "blockLocators",
-		keys: ["paragraph", "table", "section", "cellParagraph"],
+		keys: [
+			"paragraph",
+			"table",
+			"section",
+			"cellParagraph",
+			"textBoxParagraph",
+		],
 	},
 	{
 		title: "Span locators (characters within a single paragraph)",
@@ -49,6 +55,7 @@ const GROUPS: { title: string; jsonKey: string; keys: LocatorFormKey[] }[] = [
 			"header",
 			"footer",
 			"cell",
+			"textBox",
 		],
 	},
 	{

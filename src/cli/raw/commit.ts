@@ -1,5 +1,6 @@
 import { type Document, isCellScopedLocator } from "@core";
 import { Pkg } from "@core/ast/document/package";
+import { syncTextBoxFallbacks } from "@core/mc";
 import { XmlNode } from "@core/parser";
 import { type FragmentRoots, Raw, RawError } from "@core/raw";
 import { requireDocumentRoot } from "@core/raw/namespaces";
@@ -64,6 +65,11 @@ export async function commitRawMutation(options: {
 
 	if (options.validate) {
 		const { validationXmlFor } = await import("@core/raw/validate");
+		// The gate validates each `<mc:AlternateContent>` by its Fallback (the
+		// branch the transitional XSDs can check), while locators splice into
+		// the Choice — mirror the stories NOW so a fragment inserted into a text
+		// box is what gets validated, not the stale twin. `save` syncs again.
+		syncTextBoxFallbacks(document.documentTree);
 		const gate = await schemaDiffGateOrFail(
 			validationXmlFor(requireDocumentRoot(document)),
 			// The pre-mutation state is still on disk (nothing is written until

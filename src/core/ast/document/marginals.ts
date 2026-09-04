@@ -3,6 +3,7 @@ import {
 	type MarginalKind,
 	marginalConfig,
 } from "../../marginals/config";
+import { syncTextBoxFallbacks } from "../../mc";
 import { XmlNode } from "../../parser";
 import type { Pkg } from "./package";
 import { RelationshipsView, relsPartNameFor } from "./relationships";
@@ -40,6 +41,12 @@ export class MarginalsView {
 	}
 
 	/** Serialize every loaded/created part back into the package (plus rels). */
+	/** Mirror every text box's Choice story into its Fallback twin across all
+	 *  header/footer parts — the marginal side of `Document.save`'s sync. */
+	syncTextBoxFallbacks(): void {
+		for (const part of this.parts.values()) syncTextBoxFallbacks(part.tree);
+	}
+
 	writeTo(pkg: Pkg): void {
 		for (const [name, part] of this.parts) {
 			pkg.writeText(name, XmlNode.serialize(part.tree));

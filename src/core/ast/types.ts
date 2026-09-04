@@ -231,7 +231,8 @@ export type Run =
 	| TabRun
 	| EquationRun
 	| NoteRefRun
-	| ChartRun;
+	| ChartRun
+	| TextBoxRun;
 
 export type TextRun = {
 	type: "text";
@@ -356,6 +357,41 @@ export type NoteRefRun = {
 export type ChartRun = {
 	type: "chart";
 	kind: "chart" | "shape" | "smartart" | "drawing";
+};
+
+/** A text box — a shape whose `<w:txbxContent>` holds its own paragraph story,
+ * floating over (or inline with) the paragraph that ANCHORS it. Word writes
+ * one as `<mc:AlternateContent>` (a `wps` shape under `<mc:Choice>`, a VML
+ * `<w:pict>` twin under `<mc:Fallback>`); older producers write the VML shape
+ * bare. Either way the story is a separate container like a table cell, so its
+ * blocks carry chained ids under the box's positional `tbxN` handle
+ * (`tbx0:p0`, `tbx0:t0:r0c0:p0`) and are reachable by every locator-taking
+ * verb: `find`/`replace`/`wc` cover them by default (a human sees the text on
+ * the page). Two things Word itself refuses inside a box and DISCARDS on its
+ * next save — comments and footnotes/endnotes — are refused at authoring time
+ * (`UNSUPPORTED`, pointing at the anchor paragraph); tracked changes and
+ * hyperlinks inside a box survive Word. The run itself contributes no text to
+ * the anchor paragraph (zero offset width); `read --markdown` renders the
+ * story right after its anchor block, bracketed by `docx:textbox` hints. */
+export type TextBoxRun = {
+	type: "textBox";
+	/** `tbxN`, positional in document order (headers/footers excluded). */
+	id: string;
+	/** True for a `<wp:anchor>` (floating) shape; absent for `<wp:inline>`. */
+	floating?: boolean;
+	/** Text-wrap mode of a floating box (`square` / `tight` / …). */
+	wrap?: string;
+	/** Horizontal placement of a floating box (`left` / `center` / `right` /
+	 * `absolute`). */
+	align?: string;
+	/** The story's blocks, ids chained under `tbxN:`. */
+	blocks: Block[];
+	/** Set when the anchor run sits inside a tracked-change wrapper — a
+	 * tracked delete of the anchor paragraph removes the whole box on accept,
+	 * so the accepted view hides its story and the baseline view hides an
+	 * inserted one. The story's own text is NOT rewritten to `<w:delText>`:
+	 * the shape is deleted as a unit, exactly as Word records it. */
+	trackedChange?: TrackedChange;
 };
 
 export type Note = {

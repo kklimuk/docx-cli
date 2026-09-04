@@ -3,6 +3,8 @@ import {
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	wrapperContent,
+	wrapperContentNode,
 	XmlNode,
 } from "../parser";
 import type { TrackedMeta } from "../track-changes";
@@ -90,17 +92,25 @@ function walkAndPlace(
 			continue;
 		}
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumRunBearingTextLength(wrapperContent(child));
 			const wrapperStart = state.offset;
 			const wrapperEnd = wrapperStart + innerLength;
 			if (targetOffset >= wrapperStart && targetOffset <= wrapperEnd) {
-				const replacement = new XmlNode(child.tag, { ...child.attributes });
-				replacement.children = walkAndPlace(
-					child.children,
+				const content = wrapperContentNode(child);
+				const placed = walkAndPlace(
+					content.children,
 					targetOffset,
 					noteRun,
 					state,
 				);
+				if (content !== child) {
+					// `<mc:AlternateContent>`: place inside the chosen branch, keep the shell.
+					content.children = placed;
+					out.push(child);
+					continue;
+				}
+				const replacement = new XmlNode(child.tag, { ...child.attributes });
+				replacement.children = placed;
 				out.push(replacement);
 				continue;
 			}

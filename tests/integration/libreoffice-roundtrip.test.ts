@@ -34,6 +34,7 @@ const CORE_FIXTURES = [
 	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields
 	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
 	"raw-ooxml.docx", // `docx raw` escape hatch: drop-cap framePr, nested table, sectPr patch loop (lnNumType) + dcx:raw markers
+	"text-boxes.docx", // Word-shaped text box (mc:AlternateContent wps Choice + VML Fallback) edited through tbxN:pK, Fallback re-synced on save
 ] as const;
 
 const EXTRA_FIXTURES = [

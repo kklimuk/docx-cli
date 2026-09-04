@@ -45,6 +45,7 @@ export type {
 	TableRow,
 	TableWidth,
 	TabRun,
+	TextBoxRun,
 	TextRun,
 	TrackedChange,
 	TrackedChangeKind,

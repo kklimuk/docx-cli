@@ -21,7 +21,14 @@ import { runInsertBatch } from "./batch";
 import { parseTargetPlacement, placeSpec, type TargetPlacement } from "./place";
 
 const ANCHOR_FORMS = describeForms(
-	["paragraph", "table", "section", "cell", "cellParagraph"],
+	[
+		"paragraph",
+		"table",
+		"section",
+		"cell",
+		"cellParagraph",
+		"textBoxParagraph",
+	],
 	"                      ",
 );
 

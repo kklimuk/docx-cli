@@ -120,7 +120,13 @@ handle `raw get --at` and `headers`/`footers set/clear --at` accept, the same id
 second bare token, a uniform one rides the head with the id alone. Content in a
 `text` attr — so the importer's `docx:` drop can't re-inject it into the body —
 with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`),
-and `docx:list` on a numbered
+`docx:textbox tbxN anchor="pM" [wrap=… align=…]` … `docx:textbox-end tbxN`
+bracketing a text box's story (rendered by `renderTextBoxes` right AFTER the
+block that anchors it — a paragraph, or the whole table when the anchor sits in a
+cell, since a GFM cell can't hold a nested block; the story's paragraphs carry
+their real `tbxN:pK` locators, so an agent edits them like any paragraph; the
+`anchor` attr explains a `pN` that prints nothing because it holds only the box;
+a box nested in a box renders inside its parent's story), and `docx:list` on a numbered
 list's FIRST run item (the numbering `docx lists set` authors): `start` when ≠ 1
 and `format` when the glyph isn't `decimal` (`upper-roman`/`lower-alpha`/… — GFM
 can't render a non-decimal ordered list, so the body stays `5.` and the hint

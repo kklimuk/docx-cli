@@ -1,3 +1,4 @@
+import { syncTextBoxFallbacks } from "../../mc";
 import { XmlNode } from "../../parser";
 import { buildBody } from "../read";
 import type { Body, TrackedChangeReference } from "./body";
@@ -140,6 +141,11 @@ export class Document {
 	}
 
 	async save(path?: string): Promise<void> {
+		// Word keeps each text box's Choice/Fallback twins in sync on save; our
+		// edits land in the Choice copy, so mirror it before serializing (see
+		// `syncTextBoxFallbacks`). Headers/footers hold text boxes too.
+		syncTextBoxFallbacks(this.documentTree);
+		this.marginals?.syncTextBoxFallbacks();
 		this.pkg.writeText(
 			"word/document.xml",
 			XmlNode.serialize(this.documentTree),

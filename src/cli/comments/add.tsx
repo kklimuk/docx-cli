@@ -30,7 +30,14 @@ import {
 } from "../respond";
 
 const AT_FORMS = describeForms(
-	["paragraph", "span", "crossSpan", "cellParagraph", "cellSpan"],
+	[
+		"paragraph",
+		"span",
+		"crossSpan",
+		"cellParagraph",
+		"cellSpan",
+		"textBoxParagraph",
+	],
 	"                        ",
 );
 
@@ -382,6 +389,7 @@ function resolveLocatorEntry(
 	}
 
 	if (locator.kind === "range") {
+		rejectTextBoxTarget(locator.start.blockId, labelPrefix);
 		return {
 			spec: {
 				kind: "range",
@@ -404,6 +412,7 @@ function resolveLocatorEntry(
 			"A whole table, section, comment, image, or other entity is not a valid anchor.",
 		);
 	}
+	rejectTextBoxTarget(target.blockId, labelPrefix);
 	return {
 		spec: {
 			kind: "single",
@@ -414,6 +423,20 @@ function resolveLocatorEntry(
 		author,
 		locatorString: atValue,
 	};
+}
+
+/** Word does not support comments inside a text box: it silently DROPS one on
+ *  the next open/save (verified against Word for Mac 365 — the markers vanish
+ *  from the story and the comment from comments.xml). Refusing up front beats
+ *  writing something that disappears. Footnotes/endnotes share the rule. */
+function rejectTextBoxTarget(blockId: string, labelPrefix: string): void {
+	if (!blockId.startsWith("tbx")) return;
+	const box = blockId.split(":")[0];
+	throw new EntryError(
+		"UNSUPPORTED",
+		`${labelPrefix}Word does not keep comments inside a text box (${box}) — it discards them on the next save`,
+		'Comment on the paragraph that anchors the box instead: `docx read FILE` shows it as anchor="pN" on the docx:textbox hint.',
+	);
 }
 
 function resolveAnchorEntry(
@@ -427,7 +450,18 @@ function resolveAnchorEntry(
 	findView: FindView,
 ): ResolvedEntry {
 	const result = findTextSpans(document.body, anchor, { view: findView });
-	const matches = result.matches;
+	// Text-box hits can't take a comment (Word discards them) — drop them from
+	// the candidates; an anchor that matches ONLY inside a box says so.
+	const matches = result.matches.filter(
+		(match) => !match.blockId.startsWith("tbx"),
+	);
+	if (matches.length === 0 && result.matches.length > 0) {
+		throw new EntryError(
+			"UNSUPPORTED",
+			`${labelPrefix}anchor ${JSON.stringify(anchor)} occurs only inside a text box (${result.matches[0]?.blockId}), where Word does not keep comments`,
+			'Comment on the paragraph that anchors the box instead (anchor="pN" on the docx:textbox hint in `docx read`).',
+		);
+	}
 	if (matches.length === 0) {
 		throw new EntryError(
 			"MATCH_NOT_FOUND",

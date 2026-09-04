@@ -1,3 +1,8 @@
+import {
+	alternateContentBranch,
+	collectTextBoxContents,
+	isAlternateContent,
+} from "../mc";
 import { XmlNode } from "../parser";
 
 /** Extract a header/footer part's text for the AST `Marginal.text`, with
@@ -33,8 +38,23 @@ function nodeText(node: XmlNode): string {
 			if (child.tag === "w:t") out += child.collectText();
 			else if (child.tag === "w:tab") out += "\t";
 			else if (child.tag === "w:br" || child.tag === "w:cr") out += "\n";
+			// A letterhead text box (Word: `<mc:AlternateContent>` around the
+			// shape; legacy: a bare `<w:pict>`): its story's paragraphs join the
+			// header text on their own lines, so `headers list` shows what the
+			// page shows. Bracketed so the box reads as one unit.
+			else if (
+				isAlternateContent(child) ||
+				child.tag === "w:drawing" ||
+				child.tag === "w:pict"
+			) {
+				out += textBoxText(child);
+			}
 		}
 		return out;
+	}
+	if (isAlternateContent(node)) {
+		const branch = alternateContentBranch(node);
+		return branch ? paragraphText(branch) : "";
 	}
 	// Run-bearing wrappers (a future header hyperlink) — descend.
 	if (node.tag === "w:hyperlink") {
@@ -43,6 +63,19 @@ function nodeText(node: XmlNode): string {
 		return out;
 	}
 	return "";
+}
+
+function textBoxText(shape: XmlNode): string {
+	const stories = collectTextBoxContents(shape);
+	if (stories.length === 0) return "";
+	return stories
+		.map((story) => {
+			const lines = story
+				.findChildren("w:p")
+				.map((paragraph) => paragraphText(paragraph));
+			return `\n[${lines.join("\n")}]`;
+		})
+		.join("");
 }
 
 /** Map a field's `w:instr` to a stable read token. The instruction string is

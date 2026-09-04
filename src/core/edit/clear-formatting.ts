@@ -3,6 +3,8 @@ import {
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	wrapperContent,
+	wrapperContentNode,
 	type XmlNode,
 } from "../parser";
 
@@ -64,7 +66,8 @@ export function clearFormatting(
 function stripAllRuns(node: XmlNode, tags: Set<string>): void {
 	for (const child of node.children) {
 		if (child.tag === "w:r") stripRunProperties(child, tags);
-		else if (isRunBearingWrapper(child.tag)) stripAllRuns(child, tags);
+		else if (isRunBearingWrapper(child.tag))
+			stripAllRuns(wrapperContentNode(child), tags);
 	}
 }
 
@@ -102,13 +105,13 @@ function clearInContainer(
 			continue;
 		}
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(child.children);
+			const innerLength = sumRunBearingTextLength(wrapperContent(child));
 			if (offset + innerLength <= span.start || offset >= span.end) {
 				out.push(child);
 				offset += innerLength;
 				continue;
 			}
-			offset = clearInContainer(child, span, tags, offset);
+			offset = clearInContainer(wrapperContentNode(child), span, tags, offset);
 			out.push(child);
 			continue;
 		}

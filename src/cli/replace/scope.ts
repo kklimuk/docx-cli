@@ -41,7 +41,7 @@ export function validateScopeShape(at: string): string {
 	if (!isParagraphLocator(parsed)) {
 		throw new ScopeError(
 			"INVALID_LOCATOR",
-			`--at scope must be a single paragraph (pN) or cell paragraph (tT:rRcC:pN), got "${at}" — replace targets text within one paragraph`,
+			`--at scope must be a single paragraph (pN), cell paragraph (tT:rRcC:pN), or text-box paragraph (tbxN:pK), got "${at}" — replace targets text within one paragraph`,
 		);
 	}
 	return at;
@@ -54,9 +54,10 @@ export function validateScopeShape(at: string): string {
  *  exactly the ids `find`/`read`/`edit` already address. */
 function isParagraphLocator(parsed: ReturnType<typeof parseLocator>): boolean {
 	if (parsed.kind === "block") return parsed.blockId[0] === "p";
-	// Descend through nested cells to the innermost locator.
+	// Descend through nested cells / a text-box story to the innermost locator.
 	let inner: ReturnType<typeof parseLocator> | undefined = parsed;
-	while (inner?.kind === "cell") inner = inner.inner;
+	while (inner?.kind === "cell" || inner?.kind === "textBox")
+		inner = inner.inner;
 	return inner?.kind === "block" && inner.blockId[0] === "p";
 }
 

@@ -15,6 +15,7 @@ export type Locator =
 	| { kind: "footnote"; footnoteId: string }
 	| { kind: "endnote"; endnoteId: string }
 	| { kind: "marginal"; marginalId: string }
+	| { kind: "textBox"; textBoxId: string; inner?: Locator }
 	| {
 			kind: "cell";
 			tableId: string;
@@ -43,12 +44,15 @@ export class LocatorParseError extends Error {
 
 const BLOCK_RE = /^(p|t|s)(\d+)$/;
 const SPAN_RE = /^p(\d+):(\d+)-(\d+)$/;
-// Each side is a body paragraph (`p3`) or a cell paragraph at any nesting depth
-// (`t0:r1c2:t0:r0c0:p0`) — the form `find` prints for a spanning match, so it
-// pipes into `comments add --at`. Both sides must share a container (validated
-// after the match).
-const RANGE_RE =
-	/^((?:(?:t\d+:r\d+c\d+:)+)?p\d+):(\d+)-((?:(?:t\d+:r\d+c\d+:)+)?p\d+):(\d+)$/;
+// Each side is a body paragraph (`p3`), a cell paragraph at any nesting depth
+// (`t0:r1c2:t0:r0c0:p0`), or a text-box paragraph (`tbx0:p1`, cells inside it
+// too) — the form `find` prints for a spanning match, so it pipes into
+// `comments add --at`. Both sides must share a container (validated after the
+// match).
+const CONTAINER_PREFIX = String.raw`(?:tbx\d+:)?(?:(?:t\d+:r\d+c\d+:)+)?`;
+const RANGE_RE = new RegExp(
+	String.raw`^(${CONTAINER_PREFIX}p\d+):(\d+)-(${CONTAINER_PREFIX}p\d+):(\d+)$`,
+);
 const BLOCK_RANGE_RE = /^p(\d+)-p(\d+)$/;
 const COMMENT_RE = /^c(\d+)$/;
 const IMAGE_RE = /^img(\d+)$/;
@@ -58,6 +62,9 @@ const EQUATION_RE = /^eq(\d+)$/;
 const FOOTNOTE_RE = /^fn(\d+)$/;
 const ENDNOTE_RE = /^en(\d+)$/;
 const MARGINAL_RE = /^(hdr|ftr)(\d+)$/;
+// A text box is its own block container (like a cell): `tbx0` alone names the
+// story, `tbx0:<inner>` chains any block/span/cell form inside it.
+const TEXT_BOX_RE = /^tbx(\d+)(?::(.+))?$/;
 const CELL_RANGE_RE = /^t(\d+):r(\d+)c(\d+)-r(\d+)c(\d+)$/;
 const CELL_RE = /^t(\d+):r(\d+)c(\d+)(?::(.+))?$/;
 
@@ -133,7 +140,7 @@ export function parseLocator(input: string): Locator {
 		return { kind: "marginal", marginalId: trimmed };
 	}
 
-	// Checked before the cell forms: a cell-prefixed cross-paragraph range
+	// Checked before the cell/text-box forms: a prefixed cross-paragraph range
 	// (`t0:r0c0:p0:2-t0:r0c0:p1:3`) would otherwise be swallowed by CELL_RE,
 	// whose recursive inner parse can't read the dashed right-hand side.
 	const rangeMatch = trimmed.match(RANGE_RE);
@@ -146,7 +153,7 @@ export function parseLocator(input: string): Locator {
 		) {
 			throw new LocatorParseError(
 				input,
-				"range endpoints must share a container — both body paragraphs, or paragraphs of the SAME table cell",
+				"range endpoints must share a container — both body paragraphs, or paragraphs of the SAME table cell or text box",
 			);
 		}
 		const startOffset = Number(startCapture);
@@ -157,6 +164,14 @@ export function parseLocator(input: string): Locator {
 			start: { blockId: startBlock ?? "", offset: startOffset },
 			end: { blockId: endBlock ?? "", offset: endOffset },
 		};
+	}
+
+	const textBoxMatch = trimmed.match(TEXT_BOX_RE);
+	if (textBoxMatch) {
+		const [, boxIndex, rest] = textBoxMatch;
+		const result: Locator = { kind: "textBox", textBoxId: `tbx${boxIndex}` };
+		if (rest) result.inner = parseLocator(rest);
+		return result;
 	}
 
 	const cellRangeMatch = trimmed.match(CELL_RANGE_RE);
@@ -236,8 +251,8 @@ export function parseLocator(input: string): Locator {
 	throw new LocatorParseError(input, "unrecognized syntax");
 }
 
-/** The `tN:rRcC` prefix of a cell-paragraph id, `""` for a body paragraph —
- *  the container a cross-paragraph range must not leave. */
+/** The `tN:rRcC` / `tbxN` prefix of a nested paragraph id, `""` for a body
+ *  paragraph — the container a cross-paragraph range must not leave. */
 function cellPrefixOf(blockId: string): string {
 	const lastColon = blockId.lastIndexOf(":");
 	return lastColon === -1 ? "" : blockId.slice(0, lastColon);
