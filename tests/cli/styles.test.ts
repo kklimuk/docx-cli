@@ -827,6 +827,29 @@ describe("docx styles set/create — review hardening", () => {
 		expect(detail.next).toBe("Title");
 	});
 
+	test("set --font-east-asia round-trips through styles --at, independent of --font", async () => {
+		const docPath = await docWithHeading1("rh-font-east-asia-set");
+		await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Heading1",
+			"--font",
+			"Times New Roman",
+			"--font-east-asia",
+			"SimHei",
+		);
+		const detail = (
+			await runCli("styles", docPath, "--at", "Heading1", "--json")
+		).parsed as { font?: string; fontEastAsia?: string };
+		expect(detail.font).toBe("Times New Roman");
+		expect(detail.fontEastAsia).toBe("SimHei");
+
+		const xml = await readStyles(docPath);
+		expect(xml).toContain('w:eastAsia="SimHei"');
+	});
+
 	test("create --next round-trips through styles --at", async () => {
 		const docPath = await docWithHeading1("rh-next-create");
 		await runCli(

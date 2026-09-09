@@ -56,6 +56,7 @@ const BATCH_ENTRY_ONLY_FLAGS = [
 	"subscript",
 	"color",
 	"font",
+	"font-east-asia",
 	"size",
 	"highlight",
 	"shade",

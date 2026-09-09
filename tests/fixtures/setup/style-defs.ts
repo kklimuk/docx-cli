@@ -82,6 +82,9 @@ await appendText("Findings", { style: "Heading1" });
 await appendText("A second section heading, sharing the Heading 1 style.");
 
 // Restyle the built-in Heading 1 definition — both headings update together.
+// Also sets the East-Asian-script font (separate from --font: Word resolves
+// w:eastAsia independently of w:ascii/w:hAnsi) so the round-trip exercises
+// <w:rFonts w:eastAsia="…"> on a style definition.
 await cli(
 	"styles",
 	"set",
@@ -95,6 +98,8 @@ await cli(
 	"--bold",
 	"--space-before",
 	"12",
+	"--font-east-asia",
+	"SimHei",
 );
 
 // Mint a custom paragraph style and apply it to the "Key takeaway" line.

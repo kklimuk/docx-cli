@@ -374,8 +374,12 @@ export class StylesView {
 /** Point a `<w:rFonts>` at `fontName` for the Latin/ASCII script: set
  *  `w:ascii`/`w:hAnsi`/`w:cs` and DROP any `w:asciiTheme`/`w:hAnsiTheme`/
  *  `w:cstheme` reference (an explicit font must beat the theme). East-Asian /
- *  complex-script fallbacks (`w:eastAsia`) are left alone. Shared by
- *  `setDefaultFont`, `overrideStyleFonts`, and the `Fonts` lens's body/note walk. */
+ *  complex-script fallbacks (`w:eastAsia`) are left alone — CJK glyph shaping
+ *  resolves through `w:eastAsia` (or its `w:eastAsiaTheme` fallback) entirely
+ *  independently of `w:ascii`/`w:hAnsi`, so a Latin-only font change is
+ *  invisible on CJK text; call `applyRunFontEastAsia` too when the target
+ *  script includes Chinese/Japanese/Korean. Shared by `setDefaultFont`,
+ *  `overrideStyleFonts`, and the `Fonts` lens's body/note walk. */
 export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 	rFonts.setAttribute("w:ascii", fontName);
 	rFonts.setAttribute("w:hAnsi", fontName);
@@ -383,6 +387,21 @@ export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 	delete rFonts.attributes["w:asciiTheme"];
 	delete rFonts.attributes["w:hAnsiTheme"];
 	delete rFonts.attributes["w:cstheme"];
+}
+
+/** Point a `<w:rFonts>` at `fontName` for the East-Asian script: set
+ *  `w:eastAsia` and DROP any `w:eastAsiaTheme` reference (an explicit font
+ *  must beat the theme, the same rule `applyRunFont` applies to the Latin
+ *  attrs). This is the ONLY thing that changes what font CJK text renders
+ *  in — `applyRunFont`'s `w:ascii`/`w:hAnsi`/`w:cs` have no effect on it.
+ *  Deliberately separate from `applyRunFont` rather than folded into it:
+ *  a Latin-primary document with incidental CJK text usually wants the
+ *  theme's East-Asian font left alone (forcing it to the Latin font name
+ *  can render CJK in an unrelated/unsupported font), so callers opt in via
+ *  `--font-east-asia` explicitly instead of it riding along with `--font`. */
+export function applyRunFontEastAsia(rFonts: XmlNode, fontName: string): void {
+	rFonts.setAttribute("w:eastAsia", fontName);
+	delete rFonts.attributes["w:eastAsiaTheme"];
 }
 
 /** The metadata + formatting a `styles set`/`create` applies onto a `<w:style>`.

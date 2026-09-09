@@ -166,7 +166,7 @@ docx validate FILE [--json]              # ECMA-376 schema check, per WML part (
 docx raw get FILE --at LOCATOR [--json]  # a block's exact XML — the read half of the raw patch loop
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
-docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
+docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --font-east-asia NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
 docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [--next STYLEID] [formatting]   # define a new custom style
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
 docx upgrade [--to TAG] [--dry-run]                                        # update the installed binary in place (no FILE)
@@ -364,6 +364,10 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #       --caps --smallcaps --superscript --subscript   (edit; SET run formatting on EXISTING text —
 #       the inverse of --clear. Alone they format a span/paragraph/range in place; with --text they
 #       fill AND format. Like --clear, applied directly — not recorded as a tracked change.)
+#   --font-east-asia NAME   sets the East-Asian-script font (<w:rFonts w:eastAsia>) — separate from
+#       --font because Word resolves w:eastAsia independently of w:ascii/w:hAnsi; --font alone has no
+#       visible effect on Chinese/Japanese/Korean text. Works everywhere --font does: edit, edit --batch,
+#       replace, replace --batch, styles set, styles create.
 #       NOTE: in a single no-content call (or one --batch entry) these run-format SET flags and the
 #       paragraph properties (--style/--alignment/--space-*/--line-spacing/--indent-*/--first-line/
 #       --hanging/--tabs) can't ride together — use separate calls/entries, or add --text to set both.
