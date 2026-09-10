@@ -1,4 +1,4 @@
-import { applyRunFont } from "../ast/document/styles";
+import { applyRunFont, applyRunFontEastAsia } from "../ast/document/styles";
 import { insertRprChildInOrder } from "../blocks";
 import {
 	isRunBearingWrapper,
@@ -34,6 +34,10 @@ export type RunFormat = {
 	/** Arbitrary hex background fill (no `#`) — distinct from the highlight palette. */
 	shade?: string;
 	font?: string;
+	/** East-Asian-script font family (CJK) — separate from `font` because
+	 *  `w:eastAsia` resolves independently of `w:ascii`/`w:hAnsi`; setting
+	 *  `font` alone has no visible effect on Chinese/Japanese/Korean text. */
+	fontEastAsia?: string;
 	/** Font size in half-points (24 = 12pt). */
 	sizeHalfPoints?: number;
 	/** `superscript` | `subscript`. */
@@ -152,6 +156,14 @@ export function applyRunFormatToRpr(rPr: XmlNode, format: RunFormat): void {
 			insertRprChildInOrder(rPr, rFonts);
 		}
 		applyRunFont(rFonts, format.font);
+	}
+	if (format.fontEastAsia !== undefined) {
+		let rFonts = rPr.findChild("w:rFonts");
+		if (!rFonts) {
+			rFonts = XmlNode.element("w:rFonts");
+			insertRprChildInOrder(rPr, rFonts);
+		}
+		applyRunFontEastAsia(rFonts, format.fontEastAsia);
 	}
 	if (format.bold) putToggle(rPr, "w:b");
 	if (format.italic) putToggle(rPr, "w:i");

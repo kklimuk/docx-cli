@@ -148,6 +148,7 @@ const JSON_SCHEMA = {
 				smallCaps: { type: "boolean" },
 				allCaps: { type: "boolean" },
 				font: { type: "string" },
+				fontEastAsia: { type: "string" },
 				sizeHalfPoints: { type: "number" },
 				runStyle: { type: "string" },
 				comments: { type: "array", items: { type: "string" } },

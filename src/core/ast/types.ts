@@ -260,6 +260,10 @@ export type TextRun = {
 	smallCaps?: boolean;
 	allCaps?: boolean;
 	font?: string;
+	/** East-Asian-script font family (CJK) — `<w:rFonts w:eastAsia>`, resolved
+	 *  independently of `font` (`w:ascii`/`w:hAnsi`). Setting `font` alone has
+	 *  no visible effect on Chinese/Japanese/Korean text. */
+	fontEastAsia?: string;
 	sizeHalfPoints?: number;
 	/** Character style applied via <w:rStyle> (e.g., "Code" for inline code,
 	 *  "Hyperlink", or any user-defined style). Distinct from direct formatting

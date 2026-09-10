@@ -2926,6 +2926,7 @@ type FormatRun = {
 	shade?: string;
 	underline?: string;
 	font?: string;
+	fontEastAsia?: string;
 	sizeHalfPoints?: number;
 	vertAlign?: string;
 	smallCaps?: boolean;
@@ -3016,6 +3017,33 @@ describe("docx edit — set run formatting (the inverse of --clear)", () => {
 		// …while the pre-existing bold/italic survive.
 		expect(run(runs, "Bold")?.bold).toBe(true);
 		expect(run(runs, "italic")?.italic).toBe(true);
+	});
+
+	test("--font-east-asia sets w:eastAsia independently of --font", async () => {
+		const docPath = await freshCopy("set-font-east-asia");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--font",
+			"Times New Roman",
+			"--font-east-asia",
+			"SimSun",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readFormatRuns(docPath, "p2");
+		for (const candidate of runs.filter((entry) => entry.type === "text")) {
+			expect(candidate.font).toBe("Times New Roman");
+			expect(candidate.fontEastAsia).toBe("SimSun");
+		}
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('w:eastAsia="SimSun"');
+		// Setting an explicit east-Asian font must drop any theme fallback so
+		// the explicit family wins, mirroring how --font drops asciiTheme.
+		expect(xml).not.toContain("w:eastAsiaTheme");
 	});
 
 	test("enum + toggle properties: highlight, underline, strike, superscript", async () => {

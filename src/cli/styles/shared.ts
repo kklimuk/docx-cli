@@ -22,6 +22,7 @@ export const STYLE_FORMAT_FLAGS = {
 	subscript: { type: "boolean" },
 	color: { type: "string" },
 	font: { type: "string" },
+	"font-east-asia": { type: "string" },
 	size: { type: "string" },
 	highlight: { type: "string" },
 	shade: { type: "string" },

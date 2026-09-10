@@ -912,6 +912,7 @@ const OPTION_SPEC = {
 	superscript: { type: "boolean" },
 	subscript: { type: "boolean" },
 	font: { type: "string" },
+	"font-east-asia": { type: "string" },
 	size: { type: "string" },
 	highlight: { type: "string" },
 	shade: { type: "string" },

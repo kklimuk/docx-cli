@@ -159,6 +159,7 @@ export async function run(args: string[]): Promise<number> {
 			subscript: { type: "boolean" },
 			color: { type: "string" },
 			font: { type: "string" },
+			"font-east-asia": { type: "string" },
 			size: { type: "string" },
 			highlight: { type: "string" },
 			shade: { type: "string" },
