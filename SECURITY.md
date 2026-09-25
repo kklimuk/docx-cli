@@ -24,6 +24,11 @@ On a standalone-binary install, run **`docx upgrade`** — it replaces the binar
 
 Every release publishes a `SHA256SUMS` manifest alongside the prebuilt binaries. There is one installer — `install.sh` — published two ways: as a release asset, and inside the skill folder where `scripts/bootstrap.sh` delegates to it. It downloads only release **assets** (never a script), tries `sha256sum`, `shasum`, then `openssl`, and **verifies the binary against the manifest**, aborting on a mismatch or a missing manifest.
 
+macOS binaries built by the current release workflow are ad-hoc signed and
+strictly signature-verified before upload; `SHA256SUMS` covers those final signed
+bytes. Ad-hoc signing provides executable integrity, not Developer ID identity
+or Apple notarization.
+
 The one behavioral difference is a parameter, not a second code path — what to do on a machine with no checksum tool at all:
 
 | | Invoked by | No checksum tool available |

@@ -55,6 +55,8 @@ shasum -a 256 -c SHA256SUMS --ignore-missing   # or: sha256sum -c …
 sh install.sh
 ```
 
+macOS artifacts built by the current release workflow are ad-hoc signed and signature-verified before checksumming; they are not Developer ID-signed or notarized.
+
 Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64.
 
 Once installed, **`docx upgrade`** updates a standalone binary — it replaces the binary wherever it already lives (`PREFIX` does not apply), running the same installer embedded in the binary at build time rather than fetched, so the download stays pinned to a release tag and SHA-256-verified. `--to v0.23.0` pins a version, `--dry-run` reports what would change. On an npm/bun install it tells you to use the package manager instead.

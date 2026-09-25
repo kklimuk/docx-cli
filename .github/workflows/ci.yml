@@ -71,8 +71,12 @@ jobs:
       - run: DOCX_LO_ALL=1 bun run test:integration # full fixture sweep in CI
 
   build-binary:
-    name: Smoke-build compiled binary
-    runs-on: ubuntu-latest
+    name: Smoke-build compiled binary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -83,5 +87,12 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run build:binary
+      - name: Sign and verify macOS binary
+        if: runner.os == 'macOS'
+        run: sh scripts/sign-macos-binary.sh ./dist/docx
       - name: Verify binary runs
-        run: ./dist/docx --version
+        run: |
+          ./dist/docx --version
+          ./dist/docx --help > /dev/null
+          ./dist/docx read tests/fixtures/markdown-import.docx > /dev/null
+          ./dist/docx validate tests/fixtures/markdown-import.docx

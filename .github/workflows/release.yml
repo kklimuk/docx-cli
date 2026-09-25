@@ -18,7 +18,7 @@ jobs:
         include:
           - { os: ubuntu-latest,  target: bun-linux-x64,    name: docx-linux-x64 }
           - { os: ubuntu-latest,  target: bun-linux-arm64,  name: docx-linux-arm64 }
-          - { os: macos-latest,   target: bun-darwin-x64,   name: docx-darwin-x64 }
+          - { os: macos-15-intel, target: bun-darwin-x64,   name: docx-darwin-x64 }
           - { os: macos-latest,   target: bun-darwin-arm64, name: docx-darwin-arm64 }
           - { os: windows-latest, target: bun-windows-x64,  name: docx-windows-x64.exe }
     steps:
@@ -32,6 +32,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Compile
         run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.name }} src/index.ts
+      # Sign after compilation (and any future binary rewriting), before upload.
+      - name: Sign and verify macOS artifact
+        if: runner.os == 'macOS'
+        run: sh scripts/sign-macos-binary.sh "./${{ matrix.name }}"
+      - name: Smoke-test macOS artifact natively
+        if: runner.os == 'macOS'
+        run: |
+          ./${{ matrix.name }} --version
+          ./${{ matrix.name }} --help > /dev/null
+          ./${{ matrix.name }} read tests/fixtures/markdown-import.docx > /dev/null
+          ./${{ matrix.name }} validate tests/fixtures/markdown-import.docx
       - name: Smoke-test render on Linux artifact
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'bun-linux-x64'
         run: |
@@ -67,6 +78,8 @@ jobs:
         # the logic, published two ways. See the installer invariant in CLAUDE.md.
         run: cp skills/docx-cli/scripts/install.sh ./artifacts/
       - name: Generate SHA256SUMS for the release assets
+        # Hash the final signed bytes downloaded from the build jobs. Never modify
+        # a binary after this step.
         # Published as a release asset so install.sh / bootstrap.sh can verify the
         # downloaded binary's integrity, and so install.sh itself can be verified
         # before it is run (supply-chain hardening).
