@@ -95,12 +95,13 @@ version-independent; on a release version bump, also bump `version` in
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on push to `main` and on PRs:
+GitHub Actions (`.github/workflows/ci.yml`) runs these jobs on push to `main` and on PRs:
 
 | Job                 | What                                                        |
 | ------------------- | ----------------------------------------------------------- |
 | `check`             | `biome check . && knip-bun && tsc --noEmit`                 |
 | `unit-tests`        | `bun run test:unit` (core + cli, fast)                      |
+| `macos-output`      | Output contract and real-pipe regressions on macOS with Bun 1.3.10 and latest |
 | `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
 | `build-binary`      | Smoke-builds via `bun build --compile` and runs `--version` |
 
