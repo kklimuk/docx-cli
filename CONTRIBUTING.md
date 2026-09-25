@@ -9,7 +9,8 @@ bun run check                       # biome + knip + tsc
 bun run test:unit                   # core + cli tests (fast)
 bun run test:integration            # LibreOffice round-trip (needs `soffice` on PATH)
 bun test                            # everything
-bun run build                       # produce dist/docx via bun build --compile
+bun run build                       # produce dist/index.js (npm bundle)
+bun run build:binary                # produce dist/docx via bun build --compile
 ```
 
 ### LibreOffice (for integration tests)
@@ -103,6 +104,17 @@ GitHub Actions (`.github/workflows/ci.yml`) runs these jobs on push to `main` an
 | `unit-tests`        | `bun run test:unit` (core + cli, fast)                      |
 | `macos-output`      | Output contract and real-pipe regressions on macOS with Bun 1.3.10 and latest |
 | `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
-| `build-binary`      | Smoke-builds via `bun build --compile` and runs `--version` |
+| `build-binary`      | Builds on Linux and native Intel/ARM macOS; signs/verifies macOS binaries; runs version/help, read, and schema-validation smoke checks |
 
 `.github/workflows/release.yml` triggers on `v*` tags, matrix-builds the five binaries, and uploads them to a GitHub Release via [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).
+
+macOS release binaries are ad-hoc signed with `sh scripts/sign-macos-binary.sh BINARY`
+after compilation and any other binary modifications. The script supplies Bun's
+JavaScriptCore entitlements and requires strict signature verification to pass.
+Both macOS release jobs run the artifact natively before upload. `SHA256SUMS` is
+then generated from the downloaded, signed artifacts; never modify binaries after
+signing or checksum generation. The same signing and smoke checks run on PRs.
+To reproduce locally on macOS, run `bun run build:binary`, then
+`sh scripts/sign-macos-binary.sh ./dist/docx` and the `build-binary` smoke commands
+in `.github/workflows/ci.yml`. These checks cover the runner's macOS version;
+compatibility with a newer macOS release needs a separate run on that release.

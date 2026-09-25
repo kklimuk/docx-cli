@@ -94,6 +94,7 @@ When a feature's natural brute-force path already works for weak agents (verifie
 
 - `bun run build` → `dist/index.js` — bundled JS that npm publishes (runs under Bun). **Required**: path aliases (`@core/*`) and JSX runtime resolution don't work when consumed from `node_modules`; the bundle pre-resolves everything. Never ship raw `src/`.
 - `bun run build:binary` → `dist/docx` — standalone executable for GitHub Releases.
+- macOS CI/release builds run `sh scripts/sign-macos-binary.sh BINARY` after all binary modifications, then native version/help/read/validate smoke checks. Signing and strict verification must precede upload; release checksums cover the final signed bytes.
 
 ## Docs layout
 

@@ -22,6 +22,33 @@ It installs to `~/.local/bin/docx` by default. Make sure that directory is on
 your `PATH` (`export PATH="$HOME/.local/bin:$PATH"`). Set `PREFIX=/usr/local/bin`
 before the install to choose another location.
 
+## macOS kills the standalone binary at startup
+
+An invalid code signature can cause a startup kill (reported for v0.25.0 on
+macOS 27). Verify the actual standalone executable, not a version-manager shim:
+
+```sh
+# For a mise-managed installation:
+codesign --verify --strict --verbose=2 "$(mise which docx)"
+# For a standalone binary directly on PATH (not a shim):
+codesign --verify --strict --verbose=2 "$(command -v docx)"
+```
+
+With Bun installed, the package is a fallback. Run its explicit path so an
+older mise installation or shim earlier on PATH cannot shadow it:
+
+```sh
+bun add -g bun-docx
+"$(bun pm bin -g)/docx" --version
+```
+
+Use that explicit path for subsequent commands, or adjust PATH and check
+`command -v docx` before using the bare command. A binary that cannot start
+cannot run `docx upgrade`; reinstall externally when a fixed release is available.
+The updated release workflow ad-hoc signs and verifies macOS binaries before
+generating `SHA256SUMS`; existing release assets are unchanged. Ad-hoc signing
+does not provide Developer ID identity or Apple notarization.
+
 ## `docx render` fails or hangs
 
 `render` is the **only** command that needs an external app. Everything else
