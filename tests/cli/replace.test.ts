@@ -1151,3 +1151,53 @@ describe("docx replace — across paragraphs (editor-style)", () => {
 		]);
 	});
 });
+
+test("replace and replace batch apply complex-script override only to replacement", async () => {
+	const workspace = tempWorkspace("complex-script-replace");
+	const docPath = join(workspace, "out.docx");
+	expect(
+		(await runCli("create", docPath, "--text", "Hello target world")).exitCode,
+	).toBe(0);
+	expect(
+		(
+			await runCli(
+				"replace",
+				docPath,
+				"target",
+				"مرحبا",
+				"--font-complex-script",
+				"Amiri",
+				"--font",
+				"Arial",
+			)
+		).exitCode,
+	).toBe(0);
+	const xml = await readDocumentXml(docPath);
+	expect(xml).toContain('w:cs="Amiri"');
+	expect(xml).toContain('w:ascii="Arial"');
+	const batchPath = join(workspace, "batch.jsonl");
+	await Bun.write(
+		batchPath,
+		JSON.stringify({
+			pattern: "مرحبا",
+			replacement: "أهلا",
+			"font-complex-script": "Noto Naskh Arabic",
+		}),
+	);
+	expect(
+		(await runCli("replace", docPath, "--batch", batchPath)).exitCode,
+	).toBe(0);
+	expect(await readDocumentXml(docPath)).toContain('w:cs="Noto Naskh Arabic"');
+	expect(
+		(
+			await runCli(
+				"replace",
+				docPath,
+				"--batch",
+				batchPath,
+				"--font-complex-script",
+				"Amiri",
+			)
+		).exitCode,
+	).toBe(2);
+});

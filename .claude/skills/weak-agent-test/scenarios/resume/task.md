@@ -56,6 +56,11 @@ but **Experience** was left as plain bold centered text. Fix it in two steps:
   page. This is a page setup change for the whole document, not a per-paragraph change.
 - **Keep the right-aligned date tab stops and the bullet lists** exactly as they are.
 
+## Bilingual contact detail
+
+Add the Arabic greeting “مرحبا” at the end of the contact line. Use Amiri for
+that Arabic text while retaining the existing font for the English contact details.
+
 ## What "done" looks like
 
 Every placeholder (name, contact, school, degree, dates, position, bullets) is filled

@@ -32,6 +32,10 @@ the request in `task.md`. Judge the finished document against these checks.
   shows the trailing section's `marginTop`, `marginRight`, `marginBottom`, `marginLeft`
   all equal 720. `docx read` shows `docx:page … margins="0.5in …"`.
 
+- **Independent Arabic font** — the contact line contains “مرحبا”; its run has
+  `w:rFonts w:cs="Amiri"` without `w:cstheme`. Existing Latin font settings on
+  the English contact details remain unchanged. AST reports `fontComplexScript`.
+
 ## How to verify
 
 - `docx read FILE` — confirm candidate text landed, no `[Note: ...]` survives, section

@@ -82,6 +82,9 @@ await appendText("Findings", { style: "Heading1" });
 await appendText("A second section heading, sharing the Heading 1 style.");
 
 // Restyle the built-in Heading 1 definition — both headings update together.
+// Also sets the East-Asian-script font (separate from --font: Word resolves
+// w:eastAsia independently of w:ascii/w:hAnsi) so the round-trip exercises
+// <w:rFonts w:eastAsia="…"> on a style definition.
 await cli(
 	"styles",
 	"set",
@@ -95,6 +98,8 @@ await cli(
 	"--bold",
 	"--space-before",
 	"12",
+	"--font-east-asia",
+	"SimHei",
 );
 
 // Mint a custom paragraph style and apply it to the "Key takeaway" line.
@@ -131,6 +136,28 @@ await cli(
 // font scheme (the only honest way to set a doc-wide font). Without --all it
 // preserves the styles that pin their own font (Heading1, KbdKey).
 await cli("styles", "set-default-font", out, "Garamond");
+
+// Explicit script fonts after the default change: Latin and Arabic stay distinct.
+await appendText("Arabic sample: مرحبا بالعالم");
+await cli(
+	"edit",
+	out,
+	"--at",
+	`p${lastP}`,
+	"--font",
+	"Arial",
+	"--font-complex-script",
+	"Amiri",
+);
+await cli(
+	"styles",
+	"set",
+	out,
+	"--at",
+	"Heading1",
+	"--font-complex-script",
+	"Amiri",
+);
 
 // Verify and report.
 const used = await cli("styles", out, "--used");

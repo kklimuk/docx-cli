@@ -78,6 +78,8 @@ Options:
                     "all"; repeatable), then apply any set flags below
   --bold / --italic / --underline / --strike
   --color HEX / --highlight NAME / --shade HEX / --font NAME / --size PT
+  --font-east-asia NAME       East Asian font (CJK)
+  --font-complex-script NAME  Complex-script font; overrides --font for Arabic/Hebrew
   --caps / --smallcaps / --superscript / --subscript
                     format only the newly inserted replacement text; unspecified
                     properties still inherit from the first matched run
@@ -159,6 +161,8 @@ export async function run(args: string[]): Promise<number> {
 			subscript: { type: "boolean" },
 			color: { type: "string" },
 			font: { type: "string" },
+			"font-east-asia": { type: "string" },
+			"font-complex-script": { type: "string" },
 			size: { type: "string" },
 			highlight: { type: "string" },
 			shade: { type: "string" },

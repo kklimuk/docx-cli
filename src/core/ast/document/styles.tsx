@@ -371,17 +371,40 @@ export class StylesView {
 	}
 }
 
-/** Point a `<w:rFonts>` at `fontName` for the Latin/ASCII script: set
- *  `w:ascii`/`w:hAnsi`/`w:cs` and DROP any `w:asciiTheme`/`w:hAnsiTheme`/
- *  `w:cstheme` reference (an explicit font must beat the theme). East-Asian /
- *  complex-script fallbacks (`w:eastAsia`) are left alone. Shared by
- *  `setDefaultFont`, `overrideStyleFonts`, and the `Fonts` lens's body/note walk. */
+/** Set ASCII, high-ANSI, and complex-script fonts for the legacy `--font`
+ *  surface, clearing their theme references. East Asian settings are preserved.
+ *  Apply script-specific overrides afterwards when both are supplied. Shared
+ *  by style defaults, overrides, and the Fonts lens's body/note walk. */
 export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 	rFonts.setAttribute("w:ascii", fontName);
 	rFonts.setAttribute("w:hAnsi", fontName);
 	rFonts.setAttribute("w:cs", fontName);
 	delete rFonts.attributes["w:asciiTheme"];
 	delete rFonts.attributes["w:hAnsiTheme"];
+	delete rFonts.attributes["w:cstheme"];
+}
+
+/** Point a `<w:rFonts>` at `fontName` for the East-Asian script: set
+ *  `w:eastAsia` and DROP any `w:eastAsiaTheme` reference (an explicit font
+ *  must beat the theme, the same rule `applyRunFont` applies to the Latin
+ *  attrs). This is the ONLY thing that changes what font CJK text renders
+ *  in — `applyRunFont`'s `w:ascii`/`w:hAnsi`/`w:cs` have no effect on it.
+ *  Deliberately separate from `applyRunFont` rather than folded into it:
+ *  a Latin-primary document with incidental CJK text usually wants the
+ *  theme's East-Asian font left alone (forcing it to the Latin font name
+ *  can render CJK in an unrelated/unsupported font), so callers opt in via
+ *  `--font-east-asia` explicitly instead of it riding along with `--font`. */
+export function applyRunFontEastAsia(rFonts: XmlNode, fontName: string): void {
+	rFonts.setAttribute("w:eastAsia", fontName);
+	delete rFonts.attributes["w:eastAsiaTheme"];
+}
+
+/** Override only the complex-script font, preserving Latin and CJK settings. */
+export function applyRunFontComplexScript(
+	rFonts: XmlNode,
+	fontName: string,
+): void {
+	rFonts.setAttribute("w:cs", fontName);
 	delete rFonts.attributes["w:cstheme"];
 }
 

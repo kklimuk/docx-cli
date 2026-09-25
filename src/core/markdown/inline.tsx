@@ -109,6 +109,8 @@ type InlineFormat = {
 	smallCaps?: boolean;
 	allCaps?: boolean;
 	font?: string;
+	fontEastAsia?: string;
+	fontComplexScript?: string;
 	sizeHalfPoints?: number;
 };
 
@@ -243,6 +245,8 @@ function RunProperties({ format }: { format: InlineFormat }): NullableXmlNode {
 		!format.smallCaps &&
 		!format.allCaps &&
 		!format.font &&
+		!format.fontEastAsia &&
+		!format.fontComplexScript &&
 		format.sizeHalfPoints === undefined
 	) {
 		return null;
@@ -257,7 +261,14 @@ function RunProperties({ format }: { format: InlineFormat }): NullableXmlNode {
 		<w.rPr>
 			{format.code && <w.rStyle w-val="Code" />}
 			{format.hyperlinkId && !format.code && <w.rStyle w-val="Hyperlink" />}
-			{format.font && <w.rFonts w-ascii={format.font} w-hAnsi={format.font} />}
+			{(format.font || format.fontEastAsia || format.fontComplexScript) && (
+				<w.rFonts
+					w-ascii={format.font}
+					w-hAnsi={format.font}
+					w-eastAsia={format.fontEastAsia}
+					w-cs={format.fontComplexScript}
+				/>
+			)}
 			{format.bold && <w.b />}
 			{format.italic && <w.i />}
 			{format.allCaps && <w.caps />}

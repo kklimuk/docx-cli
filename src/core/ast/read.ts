@@ -1129,6 +1129,12 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		const value =
 			fontNode.getAttribute("w:ascii") ?? fontNode.getAttribute("w:hAnsi");
 		if (value) run.font = value;
+		// East-Asian-script font family — independent of ascii/hAnsi (Word
+		// resolves w:eastAsia separately for CJK glyphs).
+		const eastAsiaValue = fontNode.getAttribute("w:eastAsia");
+		if (eastAsiaValue) run.fontEastAsia = eastAsiaValue;
+		const complexScriptValue = fontNode.getAttribute("w:cs");
+		if (complexScriptValue) run.fontComplexScript = complexScriptValue;
 	}
 
 	const sizeNode = runProperties.findChild("w:sz");

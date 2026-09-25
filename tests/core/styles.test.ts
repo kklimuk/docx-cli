@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Document } from "@core/ast/document";
+import { applyRunFormatToRpr } from "@core/edit/set-formatting";
 import { XmlNode } from "@core/parser";
 import type { BaselineStyleId } from "../../src/core/ast/document/styles";
 
@@ -239,3 +240,44 @@ function removeOverride(tree: XmlNode[], partName: string): void {
 			),
 	);
 }
+
+describe("script-specific font overrides", () => {
+	test("complex-script override clears only its theme and keeps unrelated XML", () => {
+		const [rPr] = XmlNode.parse(
+			'<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Georgia" w:cs="Old" w:eastAsia="SimSun" w:asciiTheme="minorHAnsi" w:hAnsiTheme="majorHAnsi" w:cstheme="minorBidi" w:eastAsiaTheme="majorEastAsia" w:hint="cs"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr>',
+		);
+		if (!rPr) throw new Error("missing seeded rPr");
+		const fonts = rPr.findChild("w:rFonts");
+		if (!fonts) throw new Error("missing seeded fonts");
+		const before = { ...fonts.attributes };
+		applyRunFormatToRpr(rPr, { fontComplexScript: "Amiri" });
+		delete before["w:cstheme"];
+		expect(fonts.attributes).toEqual({ ...before, "w:cs": "Amiri" });
+		expect(rPr.findChild("w:lang")?.getAttribute("w:bidi")).toBe("ar-SA");
+	});
+	test("explicit script overrides win over font and create only one ordered rFonts", () => {
+		const [rPr] = XmlNode.parse('<w:rPr><w:b/><w:sz w:val="24"/></w:rPr>');
+		if (!rPr) throw new Error("missing seeded rPr");
+		applyRunFormatToRpr(rPr, {
+			fontComplexScript: "Amiri",
+			fontEastAsia: "SimSun",
+			font: "Arial",
+		});
+		expect(rPr.children.map((child) => child.tag)).toEqual([
+			"w:rFonts",
+			"w:b",
+			"w:sz",
+		]);
+		expect(rPr.findChild("w:rFonts")?.attributes).toEqual({
+			"w:ascii": "Arial",
+			"w:hAnsi": "Arial",
+			"w:cs": "Amiri",
+			"w:eastAsia": "SimSun",
+		});
+		applyRunFormatToRpr(rPr, { font: "Calibri" });
+		expect(rPr.findChild("w:rFonts")?.getAttribute("w:cs")).toBe("Calibri");
+		expect(rPr.findChild("w:rFonts")?.getAttribute("w:eastAsia")).toBe(
+			"SimSun",
+		);
+	});
+});

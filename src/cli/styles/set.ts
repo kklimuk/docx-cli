@@ -42,6 +42,8 @@ Run formatting (any style):
   --superscript | --subscript
   --color HEX        Text color (e.g. 1F4E79 or #1F4E79)
   --font NAME        Font family (e.g. "Arial")
+  --font-east-asia NAME       East Asian font (CJK)
+  --font-complex-script NAME  Complex-script font; overrides --font for Arabic/Hebrew
   --size PT          Font size in points (e.g. 16)
   --highlight NAME   Highlight color (yellow, green, cyan, …)
   --shade HEX        Background fill behind the text

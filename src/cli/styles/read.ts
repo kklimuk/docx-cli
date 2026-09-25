@@ -107,6 +107,9 @@ type StyleMeta = {
 type StyleDetail = StyleMeta & {
 	next?: string;
 	font?: string;
+	fontEastAsia?: string;
+	/** Explicit complex-script font family (e.g. Arabic/Hebrew). */
+	fontComplexScript?: string;
 	sizePt?: number;
 	color?: string;
 	bold?: boolean;
@@ -158,8 +161,13 @@ function describeStyle(node: XmlNode): StyleDetail {
 }
 
 function describeRunProperties(rPr: XmlNode, detail: StyleDetail): void {
-	const font = rPr.findChild("w:rFonts")?.getAttribute("w:ascii");
+	const rFonts = rPr.findChild("w:rFonts");
+	const font = rFonts?.getAttribute("w:ascii");
 	if (font) detail.font = font;
+	const fontEastAsia = rFonts?.getAttribute("w:eastAsia");
+	if (fontEastAsia) detail.fontEastAsia = fontEastAsia;
+	const fontComplexScript = rFonts?.getAttribute("w:cs");
+	if (fontComplexScript) detail.fontComplexScript = fontComplexScript;
 	const sizeHalf = rPr.findChild("w:sz")?.getAttribute("w:val");
 	if (sizeHalf) {
 		const parsed = Number.parseInt(sizeHalf, 10);
@@ -280,6 +288,8 @@ function formatDetail(detail: StyleDetail): string {
 	add("basedOn:", detail.basedOn);
 	add("next:", detail.next);
 	add("font:", detail.font);
+	add("font-east-asia:", detail.fontEastAsia);
+	add("font-complex-script:", detail.fontComplexScript);
 	add("size:", detail.sizePt !== undefined ? `${detail.sizePt}pt` : undefined);
 	add("color:", detail.color);
 	add("bold:", detail.bold);

@@ -180,3 +180,11 @@ importer won't reconstruct it — NO comment is parse-back, not even `docx:base`
 OOXML has no `w:hyperlinkChange` / `w:drawingChange` element — Word silently bypasses tracking for hyperlink edits and image swaps. We compromise: when `<w:trackRevisions/>` is on, `hyperlinks add/replace/delete` and `images replace` each auto-emit a `[docx-cli] …` comment anchored to the affected span/run, attributed via the `--author` chain. The mutation itself stays silent (no fake `<w:ins>`/`<w:del>` — OOXML has no honest construct for it). The entry point is `new Comments(document).addAudit(anchor, { body, author, date })` (in [@core/comments](../core/comments/index.tsx)); the lower-level marker helpers `findContainingParagraph`, `findElementOffsetsInParagraph`, `addCommentMarkersAroundRun` live in [@core/comments/markers](../core/comments/markers.tsx). When track-changes is off, no comment is emitted.
 
 `images delete` is the exception — deleting an image is honest content removal, so under tracking it wraps the drawing's run in a real `<w:del>` (accept removes it, reject restores it; the media part is kept until accept). It does **not** emit an audit comment. Replace stays audit-comment because swapping bytes has no tracked-change construct, but removal does.
+
+## Script-specific font overrides
+
+`--font-east-asia` and `--font-complex-script` are shared run-format flags for
+edit/replace (including batch) and styles set/create. The latter overrides
+`--font` for `w:cs` regardless of argv order. Style readback and AST expose
+`fontEastAsia` / `fontComplexScript`; Markdown carries their explicit values
+in `data-font-east-asia` / `data-font-complex-script` span attributes.

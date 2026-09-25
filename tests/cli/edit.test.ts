@@ -2926,6 +2926,8 @@ type FormatRun = {
 	shade?: string;
 	underline?: string;
 	font?: string;
+	fontEastAsia?: string;
+	fontComplexScript?: string;
 	sizeHalfPoints?: number;
 	vertAlign?: string;
 	smallCaps?: boolean;
@@ -3016,6 +3018,33 @@ describe("docx edit — set run formatting (the inverse of --clear)", () => {
 		// …while the pre-existing bold/italic survive.
 		expect(run(runs, "Bold")?.bold).toBe(true);
 		expect(run(runs, "italic")?.italic).toBe(true);
+	});
+
+	test("--font-east-asia sets w:eastAsia independently of --font", async () => {
+		const docPath = await freshCopy("set-font-east-asia");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--font",
+			"Times New Roman",
+			"--font-east-asia",
+			"SimSun",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const runs = await readFormatRuns(docPath, "p2");
+		for (const candidate of runs.filter((entry) => entry.type === "text")) {
+			expect(candidate.font).toBe("Times New Roman");
+			expect(candidate.fontEastAsia).toBe("SimSun");
+		}
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('w:eastAsia="SimSun"');
+		// Setting an explicit east-Asian font must drop any theme fallback so
+		// the explicit family wins, mirroring how --font drops asciiTheme.
+		expect(xml).not.toContain("w:eastAsiaTheme");
 	});
 
 	test("enum + toggle properties: highlight, underline, strike, superscript", async () => {
@@ -3896,5 +3925,122 @@ describe("docx edit — contextual --help", () => {
 		expect(result.stdout).not.toContain("--smallcaps");
 		// …it points at the variant that does.
 		expect(result.stdout).toContain("--runs --help");
+	});
+});
+
+describe("docx edit complex-script font", () => {
+	test("span override preserves neighbors and works in a range and batch", async () => {
+		const docPath = await freshCopy("complex-script-span");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"Hello مرحبا",
+					"--font",
+					"Arial",
+					"--font-east-asia",
+					"SimSun",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0:6-11",
+					"--font-complex-script",
+					"Amiri",
+				)
+			).exitCode,
+		).toBe(0);
+		const runs = await readFormatRuns(docPath, "p0");
+		expect(runs.find((entry) => entry.text === "مرحبا")).toMatchObject({
+			font: "Arial",
+			fontEastAsia: "SimSun",
+			fontComplexScript: "Amiri",
+		});
+		expect(
+			runs.find((entry) => entry.text === "Hello ")?.fontComplexScript,
+		).toBe("Arial");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0-p1",
+					"--font-complex-script",
+					"Noto Naskh Arabic",
+				)
+			).exitCode,
+		).toBe(0);
+		const batchPath = join(tempWorkspace("cs-batch"), "batch.jsonl");
+		await Bun.write(
+			batchPath,
+			JSON.stringify({ at: "p0", "font-complex-script": "Amiri" }),
+		);
+		expect((await runCli("edit", docPath, "--batch", batchPath)).exitCode).toBe(
+			0,
+		);
+		expect(
+			(await readFormatRuns(docPath, "p0")).every(
+				(entry) => entry.fontComplexScript === "Amiri",
+			),
+		).toBe(true);
+		await Bun.write(
+			batchPath,
+			JSON.stringify({ at: "p0", "font-complex-script": 123 }),
+		);
+		expect((await runCli("edit", docPath, "--batch", batchPath)).exitCode).toBe(
+			2,
+		);
+	});
+	test("explicit override wins regardless of flag order; --runs retains script-only fonts", async () => {
+		const docPath = await freshCopy("complex-script-runs");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"مرحبا",
+					"--font-complex-script",
+					"Amiri",
+					"--font",
+					"Arial",
+				)
+			).exitCode,
+		).toBe(0);
+		expect((await readFormatRuns(docPath, "p0"))[0]).toMatchObject({
+			font: "Arial",
+			fontComplexScript: "Amiri",
+		});
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p0",
+					"--runs",
+					JSON.stringify([
+						{ type: "text", text: "مرحبا", fontComplexScript: "Amiri" },
+						{ type: "text", text: "中文", fontEastAsia: "SimSun" },
+					]),
+				)
+			).exitCode,
+		).toBe(0);
+		const runs = await readFormatRuns(docPath, "p0");
+		expect(runs[0]).toMatchObject({ fontComplexScript: "Amiri" });
+		expect(runs[0]?.font).toBeUndefined();
+		expect(runs[1]).toMatchObject({ fontEastAsia: "SimSun" });
 	});
 });
