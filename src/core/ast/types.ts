@@ -264,6 +264,8 @@ export type TextRun = {
 	 *  independently of `font` (`w:ascii`/`w:hAnsi`). Setting `font` alone has
 	 *  no visible effect on Chinese/Japanese/Korean text. */
 	fontEastAsia?: string;
+	/** Explicit complex-script font family (e.g. Arabic/Hebrew). */
+	fontComplexScript?: string;
 	sizeHalfPoints?: number;
 	/** Character style applied via <w:rStyle> (e.g., "Code" for inline code,
 	 *  "Hyperlink", or any user-defined style). Distinct from direct formatting

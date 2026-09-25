@@ -506,6 +506,7 @@ const RUN_FORMAT_FLAGS = [
 	"color",
 	"font",
 	"font-east-asia",
+	"font-complex-script",
 	"size",
 	"highlight",
 	"shade",
@@ -532,13 +533,20 @@ const BOOLEAN_FORMAT_FIELDS: ReadonlyArray<
 const STRING_FORMAT_FIELDS: ReadonlyArray<
 	readonly [
 		key: string,
-		field: "color" | "font" | "fontEastAsia" | "highlight" | "shade",
+		field:
+			| "color"
+			| "font"
+			| "fontEastAsia"
+			| "fontComplexScript"
+			| "highlight"
+			| "shade",
 		normalize: (value: string) => string,
 	]
 > = [
 	["color", "color", normalizeHexColor],
 	["font", "font", (value) => value],
 	["font-east-asia", "fontEastAsia", (value) => value],
+	["font-complex-script", "fontComplexScript", (value) => value],
 	["highlight", "highlight", (value) => value],
 	["shade", "shade", normalizeHexColor],
 ];

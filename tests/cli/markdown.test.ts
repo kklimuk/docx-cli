@@ -1914,3 +1914,39 @@ describe("import — docx: annotations are dropped, never reconstructed", () => 
 		expect(await read(doc2)).toBe(r1);
 	});
 });
+
+test("script-font runs remain distinct and survive Markdown read/import", async () => {
+	const workspace = tempWorkspace("script-font-roundtrip");
+	const docPath = join(workspace, "out.docx");
+	const copyPath = join(workspace, "copy.docx");
+	expect((await runCli("create", docPath, "--text", "seed")).exitCode).toBe(0);
+	const runs = [
+		{ type: "text", text: "مرحبا", fontComplexScript: 'Amiri & "Alternate"' },
+		{ type: "text", text: "أهلا", fontComplexScript: "Noto Naskh Arabic" },
+		{ type: "text", text: "中文", fontEastAsia: "SimSun" },
+	];
+	expect(
+		(
+			await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				"--runs",
+				JSON.stringify(runs),
+			)
+		).exitCode,
+	).toBe(0);
+	const markdown = await readMarkdown(docPath);
+	expect(markdown).toContain("data-font-complex-script=");
+	expect(markdown).toContain("data-font-east-asia=");
+	const mdPath = join(workspace, "input.md");
+	await Bun.write(mdPath, markdown);
+	expect((await runCli("create", copyPath, "--from", mdPath)).exitCode).toBe(0);
+	const ast = (await runCli("read", copyPath, "--ast")).parsed as {
+		blocks: Array<{ runs?: unknown[] }>;
+	};
+	const copiedRuns = ast.blocks.flatMap((block) => block.runs ?? []);
+	for (const expected of runs)
+		expect(copiedRuns).toContainEqual(expect.objectContaining(expected));
+});

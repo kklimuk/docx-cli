@@ -1133,6 +1133,8 @@ function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
 		// resolves w:eastAsia separately for CJK glyphs).
 		const eastAsiaValue = fontNode.getAttribute("w:eastAsia");
 		if (eastAsiaValue) run.fontEastAsia = eastAsiaValue;
+		const complexScriptValue = fontNode.getAttribute("w:cs");
+		if (complexScriptValue) run.fontComplexScript = complexScriptValue;
 	}
 
 	const sizeNode = runProperties.findChild("w:sz");

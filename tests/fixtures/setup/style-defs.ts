@@ -137,6 +137,28 @@ await cli(
 // preserves the styles that pin their own font (Heading1, KbdKey).
 await cli("styles", "set-default-font", out, "Garamond");
 
+// Explicit script fonts after the default change: Latin and Arabic stay distinct.
+await appendText("Arabic sample: مرحبا بالعالم");
+await cli(
+	"edit",
+	out,
+	"--at",
+	`p${lastP}`,
+	"--font",
+	"Arial",
+	"--font-complex-script",
+	"Amiri",
+);
+await cli(
+	"styles",
+	"set",
+	out,
+	"--at",
+	"Heading1",
+	"--font-complex-script",
+	"Amiri",
+);
+
 // Verify and report.
 const used = await cli("styles", out, "--used");
 console.log(`Wrote ${out}`);

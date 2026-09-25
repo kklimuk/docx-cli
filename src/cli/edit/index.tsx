@@ -192,6 +192,8 @@ parse them instead). To get FORMATTED text there are two paths:
        --underline       Underline (single)   --strike       Strikethrough
        --color HEX       Text color (C00000)  --highlight NAME  Highlighter
        --shade HEX       Background fill hex   --font NAME    Font family
+       --font-east-asia NAME       East Asian font (CJK)
+       --font-complex-script NAME  Complex-script font; overrides --font for Arabic/Hebrew
        --size PT         Font size (points)    --caps         All caps
        --smallcaps       Small caps            --superscript / --subscript
      e.g. \`--at pN --text "Title" --bold --color C00000\`.
@@ -242,6 +244,8 @@ span (pN:S-E), a whole paragraph (pN), or a range (pN-pM) — paste a span from
   --underline       Underline (single)   --strike       Strikethrough
   --color HEX       Text color (hex)     --highlight NAME  Highlighter
   --shade HEX       Background fill hex   --font NAME    Font family
+  --font-east-asia NAME       East Asian font (CJK)
+  --font-complex-script NAME  Complex-script font; overrides --font for Arabic/Hebrew
   --size PT         Font size (points)    --caps         All caps
   --smallcaps       Small caps            --superscript / --subscript
   --clear ATTRS     Turn formatting OFF (comma list, or "all")
@@ -913,6 +917,7 @@ const OPTION_SPEC = {
 	subscript: { type: "boolean" },
 	font: { type: "string" },
 	"font-east-asia": { type: "string" },
+	"font-complex-script": { type: "string" },
 	size: { type: "string" },
 	highlight: { type: "string" },
 	shade: { type: "string" },

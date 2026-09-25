@@ -66,6 +66,12 @@ These invariants are NOT SUGGESTIONS. These MUST be followed.
 - Errors print `{code, error, hint?}` (no `ok`) + a nonzero exit. Dry-run previews drop `ok` too.
 - **A mutation that changes NOTHING is an error, not a silent success.** Weak agents key their done/retry decision off the exit code (they react to nonzero, ignore a cheerful `replaced: 0` line), so a zero-effect mutation that exits `0` bakes in a confidently-wrong document. Any mutator with a clean "matched N things" signal must exit nonzero (`MATCH_NOT_FOUND`) when N is 0 — `replace` and `comments add --anchor` both do. **`replace --batch` is the one wrinkle: it exits nonzero if ANY entry matched nothing, but (sed-like) still SAVES the entries that DID match — so a nonzero batch means "some entries missed," NOT "nothing changed," and the applied edits are already on disk** (the error names which entries missed and how many were saved). Locator-addressed mutators (`edit`/`delete`/`tables …`) fail `BLOCK_NOT_FOUND` when the target locator can't be RESOLVED — a narrower guard, not the same one: it catches a bad address, not a resolved target that changed nothing (an `edit` whose flags already match the current state still exits `0`). Keep new mutators consistent: never `respondAck` a no-op.
 
+**Script fonts:** `--font` keeps its legacy ASCII/high-ANSI/complex-script scope.
+`--font-east-asia` and `--font-complex-script` target independent slots, remove
+only the corresponding theme reference, and apply after `--font`. Both travel
+through edit/replace (including batch), styles set/create, AST, `--runs`, and
+Markdown span data attributes; preserve them through the write-read loop.
+
 ## Testing
 
 ```bash

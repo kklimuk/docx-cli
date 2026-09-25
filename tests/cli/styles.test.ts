@@ -945,3 +945,53 @@ describe("docx styles set/create — review hardening", () => {
 		expect(styles).not.toContain('w:basedOn w:val=""');
 	});
 });
+
+test("styles create/set independently expose complex-script font in JSON and text", async () => {
+	const docPath = await docWithHeading1("complex-script-style");
+	expect(
+		(
+			await runCli(
+				"styles",
+				"create",
+				docPath,
+				"Arabic",
+				"--font-complex-script",
+				"Amiri",
+				"--font",
+				"Arial",
+				"--font-east-asia",
+				"SimSun",
+			)
+		).exitCode,
+	).toBe(0);
+	expect(
+		(await runCli("styles", docPath, "--at", "Arabic", "--json")).parsed,
+	).toMatchObject({
+		font: "Arial",
+		fontEastAsia: "SimSun",
+		fontComplexScript: "Amiri",
+	});
+	expect(
+		(
+			await runCli(
+				"styles",
+				"set",
+				docPath,
+				"--at",
+				"Arabic",
+				"--font-complex-script",
+				"Noto Naskh Arabic",
+			)
+		).exitCode,
+	).toBe(0);
+	expect(
+		(await runCli("styles", docPath, "--at", "Arabic", "--json")).parsed,
+	).toMatchObject({
+		font: "Arial",
+		fontEastAsia: "SimSun",
+		fontComplexScript: "Noto Naskh Arabic",
+	});
+	expect((await runCli("styles", docPath, "--at", "Arabic")).stdout).toContain(
+		"font-complex-script:",
+	);
+});

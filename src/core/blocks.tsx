@@ -130,6 +130,8 @@ type EmittableTextFormatting = Pick<
 	| "underlineColor"
 	| "strike"
 	| "font"
+	| "fontEastAsia"
+	| "fontComplexScript"
 	| "sizeHalfPoints"
 >;
 
@@ -618,6 +620,8 @@ function TextRunElement({ run }: { run: TextRun }): XmlNode {
 const FORMATTING_KEYS = [
 	"runStyle",
 	"font",
+	"fontEastAsia",
+	"fontComplexScript",
 	"bold",
 	"italic",
 	"allCaps",
@@ -646,7 +650,14 @@ function RunProperties({ run }: { run: TextRun }): NullableXmlNode {
 	return (
 		<w.rPr>
 			{run.runStyle && <w.rStyle w-val={run.runStyle} />}
-			{run.font && <w.rFonts w-ascii={run.font} w-hAnsi={run.font} />}
+			{(run.font || run.fontEastAsia || run.fontComplexScript) && (
+				<w.rFonts
+					w-ascii={run.font}
+					w-hAnsi={run.font}
+					w-eastAsia={run.fontEastAsia}
+					w-cs={run.fontComplexScript}
+				/>
+			)}
 			{run.bold && <w.b />}
 			{run.italic && <w.i />}
 			{run.allCaps && <w.caps />}

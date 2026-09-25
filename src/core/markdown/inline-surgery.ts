@@ -366,6 +366,10 @@ function htmlTagToAttributes(name: string, rawAttrs: string): SpanAttributes {
 	if (!node) return attributes;
 	const style = node.getAttribute("style");
 	if (style) applyCssStyle(attributes, style);
+	const eastAsia = node.getAttribute("data-font-east-asia");
+	if (eastAsia) attributes.fontEastAsia = eastAsia;
+	const complexScript = node.getAttribute("data-font-complex-script");
+	if (complexScript) attributes.fontComplexScript = complexScript;
 	const theme = node.getAttribute("data-color-theme");
 	if (theme) attributes.colorTheme = theme;
 	const tint = node.getAttribute("data-color-theme-tint");
@@ -584,6 +588,8 @@ export interface SpanAttributes {
 	smallCaps?: boolean;
 	allCaps?: boolean;
 	font?: string;
+	fontEastAsia?: string;
+	fontComplexScript?: string;
 	sizeHalfPoints?: number;
 }
 

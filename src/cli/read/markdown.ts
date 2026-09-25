@@ -1556,6 +1556,8 @@ function sameDecoration(a: TextRun, b: TextRun, view: MarkdownView): boolean {
 		(a.highlight ?? "") === (b.highlight ?? "") &&
 		(a.shade ?? "") === (b.shade ?? "") &&
 		(a.font ?? "") === (b.font ?? "") &&
+		(a.fontEastAsia ?? "") === (b.fontEastAsia ?? "") &&
+		(a.fontComplexScript ?? "") === (b.fontComplexScript ?? "") &&
 		(a.sizeHalfPoints ?? 0) === (b.sizeHalfPoints ?? 0) &&
 		(a.vertAlign ?? "") === (b.vertAlign ?? "") &&
 		(a.smallCaps ?? false) === (b.smallCaps ?? false) &&
@@ -1745,6 +1747,8 @@ function needsHtmlWrap(run: TextRun, baseline: RunFormatBaseline): boolean {
 			(run.colorTheme && !isDefaultThemeColor(run)) ||
 			run.shade ||
 			(run.font && run.font !== baseline.font) ||
+			run.fontEastAsia ||
+			run.fontComplexScript ||
 			(run.sizeHalfPoints !== undefined &&
 				run.sizeHalfPoints !== baseline.sizeHalfPoints) ||
 			run.smallCaps ||
@@ -1819,6 +1823,10 @@ function spanFormattingWrapper(
 ): HtmlFormattingWrapper | null {
 	const styles: string[] = [];
 	const attrs: string[] = [];
+	if (run.fontEastAsia)
+		attrs.push(htmlAttr("data-font-east-asia", run.fontEastAsia));
+	if (run.fontComplexScript)
+		attrs.push(htmlAttr("data-font-complex-script", run.fontComplexScript));
 	// Black / "auto" is the universal default — emitting it says nothing.
 	if (run.color && !isDefaultColor(run.color))
 		styles.push(`color:#${run.color}`);

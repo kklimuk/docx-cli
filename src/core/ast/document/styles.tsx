@@ -371,15 +371,10 @@ export class StylesView {
 	}
 }
 
-/** Point a `<w:rFonts>` at `fontName` for the Latin/ASCII script: set
- *  `w:ascii`/`w:hAnsi`/`w:cs` and DROP any `w:asciiTheme`/`w:hAnsiTheme`/
- *  `w:cstheme` reference (an explicit font must beat the theme). East-Asian /
- *  complex-script fallbacks (`w:eastAsia`) are left alone — CJK glyph shaping
- *  resolves through `w:eastAsia` (or its `w:eastAsiaTheme` fallback) entirely
- *  independently of `w:ascii`/`w:hAnsi`, so a Latin-only font change is
- *  invisible on CJK text; call `applyRunFontEastAsia` too when the target
- *  script includes Chinese/Japanese/Korean. Shared by `setDefaultFont`,
- *  `overrideStyleFonts`, and the `Fonts` lens's body/note walk. */
+/** Set ASCII, high-ANSI, and complex-script fonts for the legacy `--font`
+ *  surface, clearing their theme references. East Asian settings are preserved.
+ *  Apply script-specific overrides afterwards when both are supplied. Shared
+ *  by style defaults, overrides, and the Fonts lens's body/note walk. */
 export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 	rFonts.setAttribute("w:ascii", fontName);
 	rFonts.setAttribute("w:hAnsi", fontName);
@@ -402,6 +397,15 @@ export function applyRunFont(rFonts: XmlNode, fontName: string): void {
 export function applyRunFontEastAsia(rFonts: XmlNode, fontName: string): void {
 	rFonts.setAttribute("w:eastAsia", fontName);
 	delete rFonts.attributes["w:eastAsiaTheme"];
+}
+
+/** Override only the complex-script font, preserving Latin and CJK settings. */
+export function applyRunFontComplexScript(
+	rFonts: XmlNode,
+	fontName: string,
+): void {
+	rFonts.setAttribute("w:cs", fontName);
+	delete rFonts.attributes["w:cstheme"];
 }
 
 /** The metadata + formatting a `styles set`/`create` applies onto a `<w:style>`.

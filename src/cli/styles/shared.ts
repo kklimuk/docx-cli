@@ -23,6 +23,7 @@ export const STYLE_FORMAT_FLAGS = {
 	color: { type: "string" },
 	font: { type: "string" },
 	"font-east-asia": { type: "string" },
+	"font-complex-script": { type: "string" },
 	size: { type: "string" },
 	highlight: { type: "string" },
 	shade: { type: "string" },

@@ -1,4 +1,8 @@
-import { applyRunFont, applyRunFontEastAsia } from "../ast/document/styles";
+import {
+	applyRunFont,
+	applyRunFontComplexScript,
+	applyRunFontEastAsia,
+} from "../ast/document/styles";
 import { insertRprChildInOrder } from "../blocks";
 import {
 	isRunBearingWrapper,
@@ -38,6 +42,8 @@ export type RunFormat = {
 	 *  `w:eastAsia` resolves independently of `w:ascii`/`w:hAnsi`; setting
 	 *  `font` alone has no visible effect on Chinese/Japanese/Korean text. */
 	fontEastAsia?: string;
+	/** Explicit complex-script font family (e.g. Arabic/Hebrew). */
+	fontComplexScript?: string;
 	/** Font size in half-points (24 = 12pt). */
 	sizeHalfPoints?: number;
 	/** `superscript` | `subscript`. */
@@ -149,21 +155,21 @@ function setRunProperties(run: XmlNode, format: RunFormat): void {
  *  `setRunProperties` does so on a `<w:r>`; `StylesView.setStyleFormatting`/
  *  `createStyle` do so on a `<w:style>` — same rPr vocabulary, two homes. */
 export function applyRunFormatToRpr(rPr: XmlNode, format: RunFormat): void {
-	if (format.font !== undefined) {
+	if (
+		format.font !== undefined ||
+		format.fontEastAsia !== undefined ||
+		format.fontComplexScript !== undefined
+	) {
 		let rFonts = rPr.findChild("w:rFonts");
 		if (!rFonts) {
 			rFonts = XmlNode.element("w:rFonts");
 			insertRprChildInOrder(rPr, rFonts);
 		}
-		applyRunFont(rFonts, format.font);
-	}
-	if (format.fontEastAsia !== undefined) {
-		let rFonts = rPr.findChild("w:rFonts");
-		if (!rFonts) {
-			rFonts = XmlNode.element("w:rFonts");
-			insertRprChildInOrder(rPr, rFonts);
-		}
-		applyRunFontEastAsia(rFonts, format.fontEastAsia);
+		if (format.font !== undefined) applyRunFont(rFonts, format.font);
+		if (format.fontEastAsia !== undefined)
+			applyRunFontEastAsia(rFonts, format.fontEastAsia);
+		if (format.fontComplexScript !== undefined)
+			applyRunFontComplexScript(rFonts, format.fontComplexScript);
 	}
 	if (format.bold) putToggle(rPr, "w:b");
 	if (format.italic) putToggle(rPr, "w:i");

@@ -37,6 +37,8 @@ Run formatting:
   --bold --italic --underline --strike --caps --smallcaps
   --superscript | --subscript
   --color HEX   --font NAME   --size PT   --highlight NAME   --shade HEX
+  --font-east-asia NAME       East Asian font (CJK)
+  --font-complex-script NAME  Complex-script font; overrides --font for Arabic/Hebrew
 
 Paragraph formatting (paragraph styles only):
   --alignment left|center|right|justify

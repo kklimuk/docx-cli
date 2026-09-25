@@ -43,6 +43,7 @@ Three carriers — semantic tags (render everywhere, incl. GitHub), `<span style
 | shade (bg hex) | `<span style="background-color:#FFE599">` | `<w:shd w:fill>` — arbitrary hex |
 | theme color | `<span data-color-theme="accent1" data-color-theme-tint= data-color-theme-shade=>` | `<w:color w:themeColor/…>` — CSS has no theme concept, so `data-*` only (byte-exact) |
 | font | `<span style="font-family:Arial">` | quoted when it has spaces (`'Times New Roman'`); literal fonts only (theme fonts inherit) |
+| fontEastAsia / fontComplexScript | `<span data-font-east-asia="SimSun" data-font-complex-script="Amiri">` | Independent script fonts; preserved by read/import and run emitters |
 | size | `<span style="font-size:12pt">` | `<w:sz>` half-points; **omitted when it equals the document baseline** (see below) |
 | smallCaps / allCaps | `<span style="font-variant:small-caps">` / `text-transform:uppercase` | |
 
