@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import {
 	spawnCli as rawCli,
@@ -232,6 +233,208 @@ describe("binary smoke (real subprocess)", () => {
 		expect(() => JSON.parse(result.stdout)).not.toThrow();
 	});
 });
+
+// Use real OS pipes, bounded in both time and bytes: the old BunFile.write
+// path could repeat a prefix forever after process.stdout was materialized.
+const RESPOND_MODULE = join(import.meta.dir, "../../src/cli/respond.ts");
+const PIPE_PAYLOAD = pipePayload();
+
+function pipePayload(): string {
+	return Array.from(
+		{ length: 12000 },
+		(_, index) => `${index}: héllo 漢 🦊\n`,
+	).join("");
+}
+
+function pipeScript(body: string): string {
+	return `
+		import { writeStdout, writeStderr, respond, captureOutput } from ${JSON.stringify(RESPOND_MODULE)};
+		const text = (${pipePayload.toString()})();
+		${body}
+	`;
+}
+
+function runPipeScript(
+	body: string,
+	stream: "stdout" | "stderr" = "stdout",
+	consumer?: string,
+) {
+	return runPipeCommand(
+		[process.execPath, "-e", pipeScript(body)],
+		stream,
+		consumer,
+	);
+}
+
+async function runPipeCommand(
+	command: string[],
+	stream: "stdout" | "stderr" = "stdout",
+	consumer = "{ dd bs=1 count=1 2>/dev/null; sleep 0.1; cat; }",
+) {
+	// Bun's subprocess capture can use sockets, which hide this OS-pipe bug.
+	// bash supplies a real pipe on the chosen descriptor; pipefail preserves the
+	// producer's exit status. A separate process group lets the bounds kill
+	// the entire pipeline, even if a regressed producer spins forever. The
+	// consumer pauses after its first byte so the producer meets backpressure.
+	const producer = spawn(
+		"bash",
+		[
+			"-o",
+			"pipefail",
+			"-c",
+			`${stream === "stderr" ? '"$@" 3>&1 1>&2 2>&3' : '"$@"'} | ${consumer}`,
+			"docx-output-test",
+			...command,
+		],
+		{ detached: true, stdio: ["ignore", "pipe", "pipe"] },
+	);
+	const chunks: { stdout: Buffer[]; stderr: Buffer[] } = {
+		stdout: [],
+		stderr: [],
+	};
+	let size = 0;
+	let error: Error | undefined;
+	function stop(reason: Error) {
+		error ??= reason;
+		if (producer.pid) {
+			try {
+				process.kill(-producer.pid, "SIGKILL");
+			} catch {
+				/* already exited */
+			}
+		}
+	}
+	const timer = setTimeout(
+		() => stop(new Error("Pipe producer timed out")),
+		3000,
+	);
+	for (const stream of ["stdout", "stderr"] as const) {
+		producer[stream]?.on("data", (chunk: Buffer) => {
+			size += chunk.length;
+			if (size > 2 * 1024 * 1024) {
+				stop(new Error("Pipe producer exceeded output limit"));
+				return;
+			}
+			chunks[stream].push(chunk);
+		});
+	}
+	try {
+		const status = await new Promise<number | null>((resolve, reject) => {
+			producer.once("error", reject);
+			producer.once("close", resolve);
+		});
+		const output = {
+			stdout: Buffer.concat(chunks.stdout).toString("utf8"),
+			stderr: Buffer.concat(chunks.stderr).toString("utf8"),
+		};
+		// Undo the shell's descriptor swap for a stderr-pipe probe.
+		if (stream === "stderr")
+			[output.stdout, output.stderr] = [output.stderr, output.stdout];
+		return { status, error, ...output };
+	} finally {
+		clearTimeout(timer);
+		stop(new Error("Pipe test cleanup"));
+	}
+}
+
+// bash's OS-pipe setup is POSIX-only. The regular CLI smoke tests above also
+// cover Windows; these specifically guard the macOS/Linux pipe regression.
+describe.skipIf(process.platform === "win32")(
+	"output sinks through OS pipes",
+	() => {
+		test("large CLI Markdown and AST match captured output through a slow pipe", async () => {
+			const workspace = tempWorkspace("large-read-pipe");
+			const docPath = join(workspace, "large.docx");
+			const inputPath = join(workspace, "input.txt");
+			await Bun.write(inputPath, PIPE_PAYLOAD);
+			expect(
+				(await rawCli("create", docPath, "--text-file", inputPath)).exitCode,
+			).toBe(0);
+			for (const flags of [[], ["--ast"]]) {
+				const args = ["read", docPath, ...flags];
+				const expected = await runCli(...args);
+				expect(expected.exitCode).toBe(0);
+				expect(Buffer.byteLength(expected.stdout)).toBeGreaterThan(65536);
+				const result = await runPipeCommand([
+					process.execPath,
+					join(import.meta.dir, "../../src/index.ts"),
+					...args,
+				]);
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(0);
+				expect(result.stdout === expected.stdout).toBe(true);
+				expect(result.stderr).toBe("");
+			}
+		});
+
+		for (const materialize of [false, true]) {
+			for (const stream of ["stdout", "stderr"] as const) {
+				test(`${stream} delivers large UTF-8 writes exactly (process streams touched: ${materialize})`, async () => {
+					const write = stream === "stdout" ? "writeStdout" : "writeStderr";
+					const result = await runPipeScript(
+						`
+					${materialize ? "void process.stdout; void process.stderr;" : ""}
+					await ${write}("start\\n");
+					await ${write}(text);
+					await ${write}("end\\n");
+					process.exit(0);
+				`,
+						stream,
+					);
+					expect(result.error).toBeUndefined();
+					expect(result.status, result.stderr.slice(0, 1000)).toBe(0);
+					expect(result[stream].length).toBe(PIPE_PAYLOAD.length + 10);
+					expect(result[stream] === `start\n${PIPE_PAYLOAD}end\n`).toBe(true);
+					expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
+				});
+			}
+		}
+
+		test("respond flushes large JSON before immediate exit", async () => {
+			const result = await runPipeScript(`
+			void process.stdout;
+			await respond({ text });
+			process.exit(0);
+		`);
+			expect(result.error).toBeUndefined();
+			expect(result.status).toBe(0);
+			expect(
+				result.stdout === `${JSON.stringify({ text: PIPE_PAYLOAD })}\n`,
+			).toBe(true);
+		});
+
+		test("captureOutput can restore real sinks and allow natural exit", async () => {
+			const result = await runPipeScript(`
+			let captured = "";
+			captureOutput(async value => { captured += value; }, async value => { captured += value; });
+			await writeStdout("captured-out");
+			await writeStderr("captured-err");
+			if (captured !== "captured-outcaptured-err") process.exit(9);
+			captureOutput();
+			await writeStdout(text);
+			await writeStderr("restored");
+		`);
+			expect(result.error).toBeUndefined();
+			expect(result.status).toBe(0);
+			expect(result.stdout === PIPE_PAYLOAD).toBe(true);
+			expect(result.stderr).toBe("restored");
+		});
+
+		test("a consumer closing early terminates the producer without hanging", async () => {
+			const result = await runPipeScript(
+				`
+			void process.stdout;
+			for (let index = 0; index < 100; index++) await writeStdout(text);
+			process.exit(0);
+		`,
+				"stdout",
+				"head -c 1 > /dev/null",
+			);
+			expect(result.error).toBeUndefined();
+			expect(result.status).not.toBe(0);
+		});
+	},
+);
 
 // The full command tree. Every command and sub-verb must answer `--help` with a
 // usable screen — this is the regression guard for the help-drift bug class

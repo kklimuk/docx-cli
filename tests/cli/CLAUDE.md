@@ -27,7 +27,10 @@ only when the thing under test holds _regardless of which verb runs_:
   (resolve-first / re-read-between / pin-then-splice).
 - [output-contract.test.ts](output-contract.test.ts) — the output **contract**
   (quiet-vs-verbose, exit codes, bare-minted-locator, 64 KB boundary, `--help`
-  matrix), exercised at the real process boundary.
+  matrix), exercised at the real process boundary. Its bounded POSIX shell-pipe
+  probes also cover large UTF-8 writes after `process.stdout`/`stderr` is
+  accessed, flushing before exit, and an early-closing consumer (issue #8).
+  Ordinary subprocess capture may use sockets and miss the OS-pipe bug.
 - [invariants.test.ts](invariants.test.ts) — the in-place-mutation **invariant**
   (unmodeled-XML survival, transparent wrappers, docx validity).
 - [end-to-end.test.ts](end-to-end.test.ts) — the full document **lifecycle**

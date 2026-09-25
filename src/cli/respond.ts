@@ -41,20 +41,24 @@ export type ErrorCode =
 	| "UNSUPPORTED"
 	| "UNHANDLED";
 
-// Output sinks. Production leaves these null and writes straight to the real
-// streams; the test harness redirects them to run the CLI in-process (no
-// subprocess spawn). All CLI output funnels through here, so capturing these
-// two captures everything.
-const stdout = async (text: string) => {
-	await Bun.stdout.write(text);
-};
-const stderr = async (text: string) => {
-	await Bun.stderr.write(text);
-};
-const sinks = {
-	stdout,
-	stderr,
-};
+// All CLI output goes through these sinks so in-process tests can capture it.
+// Create FileSinks lazily: importing this module under captureOutput should
+// neither open writers nor change the real streams' lifecycle.
+const stdout = outputSink(Bun.stdout);
+const stderr = outputSink(Bun.stderr);
+const sinks = { stdout, stderr };
+
+function outputSink(file: Bun.BunFile): (text: string) => Promise<void> {
+	let writer: Bun.FileSink | undefined;
+	return async (text) => {
+		writer ??= file.writer();
+		// BunFile.write/Bun.write can repeat bytes or spin on a large pipe write
+		// after process.stdout/stderr is accessed (issue #8). FileSink handles
+		// partial writes; flush MUST finish before src/index.ts calls exit().
+		await writer.write(text);
+		await writer.flush();
+	};
+}
 
 /** Redirect CLI stdout/stderr (for in-process testing). */
 export function captureOutput(
