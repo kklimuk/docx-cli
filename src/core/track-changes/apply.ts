@@ -105,6 +105,7 @@ function applyResolvedTargets(
 	// Cell removals (accept-cellDel / reject-cellIns) shrink rows without
 	// touching <w:tblGrid>; bring the grid back in line with the widest row.
 	resyncTableGrids(document.documentTree);
+	pruneEmptyHyperlinks(document.documentTree);
 
 	// Pair body-side note revisions with the reference-side targets we just
 	// applied. For each affected (kind, noteId): if no live reference to it
@@ -503,6 +504,29 @@ function cellGridSpan(cell: XmlNode): number {
 		?.getAttribute("w:val");
 	const value = raw ? Number(raw) : Number.NaN;
 	return Number.isFinite(value) && value > 1 ? value : 1;
+}
+
+/** Drop `<w:hyperlink>` wrappers left with no element children. A tracked
+ *  edit inside a link can emit the link around its `<w:del>` and again around
+ *  its `<w:ins>` (`preserve-formatting.tsx` keeps kept/replaced link text INSIDE
+ *  the link, and the diff orders deletes before inserts), so accept empties the
+ *  first wrapper and reject the second. An empty `<w:hyperlink r:id/>` is
+ *  schema-valid but pointless cruft; the relationship stays referenced by the
+ *  surviving twin (or becomes a harmless orphan). Splices IN PLACE — child
+ *  arrays are held as `parent` by block/tracked-change references, so the walk
+ *  must not swap every array in the tree for a filtered copy. */
+function pruneEmptyHyperlinks(tree: XmlNode[]): void {
+	for (let index = tree.length - 1; index >= 0; index--) {
+		const node = tree[index];
+		if (!node || node.isText) continue;
+		pruneEmptyHyperlinks(node.children);
+		if (
+			node.tag === "w:hyperlink" &&
+			!node.children.some((inner) => !inner.isText)
+		) {
+			tree.splice(index, 1);
+		}
+	}
 }
 
 /** Accept-del-paragraph-mark: the paragraph break at the end of THIS paragraph is

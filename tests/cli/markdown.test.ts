@@ -1950,3 +1950,96 @@ test("script-font runs remain distinct and survive Markdown read/import", async 
 	for (const expected of runs)
 		expect(copiedRuns).toContainEqual(expect.objectContaining(expected));
 });
+
+describe("read — the base font is the dominant face ON THE PAGE", () => {
+	test("a bare run inheriting a different face from its style is marked, not hidden under docx:base", async () => {
+		// Explicit Calibri on most runs → base Calibri. A run with NO rFonts
+		// renders in whatever `Normal` says; when that is Times New Roman it must
+		// show a font-family span — the résumé contact line that lost its rFonts
+		// read as bare (= Calibri) while rendering serif.
+		const path = await docWith("base-inherited-deviates", [
+			{
+				type: "text",
+				text: "Explicit Calibri body content fills most of this page. ",
+				font: "Calibri",
+			},
+			{
+				type: "text",
+				text: "More explicit Calibri body content to dominate it. ",
+				font: "Calibri",
+			},
+			{ type: "text", text: "bare run" },
+		]);
+		await runCli(
+			"styles",
+			"set",
+			path,
+			"--at",
+			"Normal",
+			"--font",
+			"Times New Roman",
+		);
+		const md = await read(path);
+		expect(md).toContain('<!-- docx:base font="Calibri" -->');
+		expect(md).toMatch(
+			/<span style="font-family:[^"]*Times New Roman[^"]*">bare run<\/span>/,
+		);
+		expect(md).not.toMatch(/font-family:Calibri/);
+	});
+
+	test("with no explicit majority the note declares the inherited dominant face when it deviates from the template", async () => {
+		const path = join(tempWorkspace("base-inherited-dominant"), "out.docx");
+		await runCli(
+			"create",
+			path,
+			"--text",
+			"Plain body paragraph in the Normal style.",
+		);
+		await runCli(
+			"styles",
+			"set",
+			path,
+			"--at",
+			"Normal",
+			"--font",
+			"Times New Roman",
+		);
+		const md = await read(path);
+		expect(md).toContain('<!-- docx:base font="Times New Roman" -->');
+		expect(md).not.toContain("font-family:");
+	});
+});
+
+describe("read — span grouping compares the SHOWN face", () => {
+	test("an explicit run and a bare run rendering the same face share one bold span", async () => {
+		// Explicit Times + a bare run inheriting Times from `Normal` both SHOW
+		// `font-family:Times New Roman`; comparing raw `font` split them into
+		// `**a****b**`.
+		const path = await docWith("base-shown-face", [
+			{
+				type: "text",
+				text: "Bold explicit ",
+				bold: true,
+				font: "Times New Roman",
+			},
+			{ type: "text", text: "bold bare", bold: true },
+			{
+				type: "text",
+				text: " and plenty of explicit Calibri body text to dominate the page",
+				font: "Calibri",
+			},
+		]);
+		await runCli(
+			"styles",
+			"set",
+			path,
+			"--at",
+			"Normal",
+			"--font",
+			"Times New Roman",
+		);
+		const md = await read(path);
+		expect(md).toContain("**Bold explicit bold bare**");
+		expect(md).not.toContain("****");
+	});
+});

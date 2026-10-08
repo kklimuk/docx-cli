@@ -166,6 +166,76 @@ export class StylesView {
 			?.getAttribute("w:ascii");
 	}
 
+	/** The font a run with NO explicit `<w:rFonts>` actually renders in: the
+	 * character style's chain, else the paragraph style's `basedOn` chain (the
+	 * document's default paragraph style when the paragraph names none), else
+	 * `docDefaults`. `read` uses it so a bare run in a Times New Roman `Normal`
+	 * reads as Times — not as the `docx:base` Calibri that the explicit runs
+	 * around it declare (the résumé contact line that lost its rFonts looked
+	 * identical in Markdown to its Calibri neighbors while rendering serif).
+	 * A theme reference (`w:asciiTheme`) met before an explicit face resolves to
+	 * the theme, which we don't read here → undefined ("unknown"), never a wrong
+	 * face. */
+	resolveFont(
+		paragraphStyleId: string | undefined,
+		runStyleId: string | undefined,
+	): string | undefined {
+		const fromRunStyle = this.styleChainFont(runStyleId);
+		if (fromRunStyle !== null) return fromRunStyle;
+		// A paragraph naming a style that isn't DEFINED renders as the default
+		// paragraph style (Word's rule — see `ensureReferencedStyle`), so it
+		// resolves through `Normal`, not straight to docDefaults.
+		const fromParagraphStyle = this.styleChainFont(
+			paragraphStyleId && this.hasStyle(paragraphStyleId)
+				? paragraphStyleId
+				: this.defaultStyleId("paragraph"),
+		);
+		if (fromParagraphStyle !== null) return fromParagraphStyle;
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		const docDefault = root
+			?.findChild("w:docDefaults")
+			?.findChild("w:rPrDefault")
+			?.findChild("w:rPr")
+			?.findChild("w:rFonts");
+		return fontFace(docDefault) ?? undefined;
+	}
+
+	/** Walk a style's `basedOn` chain for the first `<w:rFonts>` that says
+	 * anything about the Latin face: an explicit name (returned), or a theme
+	 * reference (`undefined` — known-but-unresolved). `null` = the chain is
+	 * silent, keep looking further out. */
+	private styleChainFont(
+		styleId: string | undefined,
+	): string | undefined | null {
+		const seen = new Set<string>();
+		let current = styleId;
+		while (current && !seen.has(current)) {
+			seen.add(current);
+			const style = this.getStyle(current);
+			if (!style) return null;
+			const fonts = style.findChild("w:rPr")?.findChild("w:rFonts");
+			if (fonts) {
+				const face = fontFace(fonts);
+				if (face !== null) return face;
+			}
+			current = style.findChild("w:basedOn")?.getAttribute("w:val");
+		}
+		return null;
+	}
+
+	/** The `w:default="1"` style id of a type (`paragraph` → usually `Normal`). */
+	private defaultStyleId(type: string): string | undefined {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		return root
+			?.findChildren("w:style")
+			.find(
+				(style) =>
+					style.getAttribute("w:type") === type &&
+					style.getAttribute("w:default") === "1",
+			)
+			?.getAttribute("w:styleId");
+	}
+
 	/** Ensure the named baseline style is defined. Seeds `Normal` first so any
 	 * `basedOn` references resolve. Subsequent calls for the same id are no-ops.
 	 *
@@ -417,6 +487,23 @@ export type StyleSpec = {
 	basedOn?: string;
 	next?: string;
 };
+
+/** What one `<w:rFonts>` says about the Latin face, slot by slot (`ascii`,
+ *  then `hAnsi`): a theme reference (`w:asciiTheme`) → `undefined` — decided,
+ *  but resolved through theme1.xml, which this view doesn't read; it SUPERSEDES
+ *  an explicit name in the same slot (ECMA-376 §17.3.2.26), so a stale
+ *  `w:ascii` beside it is not what renders — else the explicit name, else
+ *  `null` when it says nothing about the Latin slots at all (an
+ *  `eastAsia`-only rFonts) so a resolver keeps walking. */
+function fontFace(rFonts: XmlNode | undefined): string | undefined | null {
+	if (!rFonts) return null;
+	for (const slot of ["ascii", "hAnsi"]) {
+		if (rFonts.getAttribute(`w:${slot}Theme`)) return undefined;
+		const explicit = rFonts.getAttribute(`w:${slot}`);
+		if (explicit) return explicit;
+	}
+	return null;
+}
 
 /** Apply a `StyleSpec`'s metadata + formatting onto a `<w:style>` node, in place,
  *  honoring CT_Style child order. Shared by `setStyleFormatting` (an existing

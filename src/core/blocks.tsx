@@ -329,31 +329,54 @@ export function applyParagraphPropsToPPr(
 		}
 	}
 	if (options.spacing) {
-		const node = findOrCreatePprChild(pPr, "w:spacing");
 		const { before, after, line, lineRule } = options.spacing;
-		if (before !== undefined) node.setAttribute("w:before", String(before));
-		if (after !== undefined) node.setAttribute("w:after", String(after));
-		if (line !== undefined) {
-			node.setAttribute("w:line", String(line));
-			node.setAttribute("w:lineRule", lineRule ?? "auto");
-		}
+		overlayParagraphAttributes(findOrCreatePprChild(pPr, "w:spacing"), {
+			...(before !== undefined ? { "w:before": String(before) } : {}),
+			...(after !== undefined ? { "w:after": String(after) } : {}),
+			...(line !== undefined
+				? { "w:line": String(line), "w:lineRule": lineRule ?? "auto" }
+				: {}),
+		});
 	}
 	if (options.indent) {
-		const node = findOrCreatePprChild(pPr, "w:ind");
 		const { left, right, firstLine, hanging } = options.indent;
-		if (left !== undefined) node.setAttribute("w:left", String(left));
-		if (right !== undefined) node.setAttribute("w:right", String(right));
-		// firstLine and hanging share a slot — setting one clears the other.
-		if (firstLine !== undefined) {
-			node.setAttribute("w:firstLine", String(firstLine));
-			delete node.attributes["w:hanging"];
-		}
-		if (hanging !== undefined) {
-			node.setAttribute("w:hanging", String(hanging));
-			delete node.attributes["w:firstLine"];
-		}
+		overlayParagraphAttributes(findOrCreatePprChild(pPr, "w:ind"), {
+			...(left !== undefined ? { "w:left": String(left) } : {}),
+			...(right !== undefined ? { "w:right": String(right) } : {}),
+			...(firstLine !== undefined ? { "w:firstLine": String(firstLine) } : {}),
+			...(hanging !== undefined ? { "w:hanging": String(hanging) } : {}),
+		});
 	}
 }
+
+/** Lay `attributes` onto a `<w:spacing>`/`<w:ind>` attribute bag, first
+ *  dropping any existing attribute a new value supersedes (unless it's being
+ *  set too): kept, they'd silently void the new setting — `beforeAutospacing`
+ *  makes Word ignore `before` (common on HTML-pasted text), `*Lines`/`*Chars`
+ *  win over twips, and firstLine/hanging share one slot. The one rule both the
+ *  in-place flag applier and pPr inheritance follow. */
+export function overlayParagraphAttributes(
+	node: XmlNode,
+	attributes: Record<string, string>,
+): void {
+	for (const [key, value] of Object.entries(attributes)) {
+		for (const superseded of SUPERSEDED_BY[key] ?? []) {
+			if (attributes[superseded] === undefined) {
+				delete node.attributes[superseded];
+			}
+		}
+		node.setAttribute(key, value);
+	}
+}
+
+const SUPERSEDED_BY: Readonly<Record<string, readonly string[]>> = {
+	"w:before": ["w:beforeAutospacing", "w:beforeLines"],
+	"w:after": ["w:afterAutospacing", "w:afterLines"],
+	"w:left": ["w:leftChars", "w:start", "w:startChars"],
+	"w:right": ["w:rightChars", "w:end", "w:endChars"],
+	"w:firstLine": ["w:firstLineChars", "w:hanging", "w:hangingChars"],
+	"w:hanging": ["w:hangingChars", "w:firstLine", "w:firstLineChars"],
+};
 
 /** Find a `<w:pPr>` child by tag, or create + splice it at its CT_PPr slot.
  *  Returns the live node so the caller can merge attributes onto it (preserving
@@ -608,6 +631,38 @@ export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 export function isInheritableRunProperty(child: XmlNode): boolean {
 	return child.tag !== "w:highlight" && child.tag !== "w:rPrChange";
 }
+
+/** Whether an inheritable `<w:rPr>` child is TYPOGRAPHY (see `TYPOGRAPHY_TAGS`)
+ *  — what an inserted paragraph takes from its neighbor, as opposed to the
+ *  neighbor's own emphasis. */
+export function isTypographyRunProperty(child: XmlNode): boolean {
+	return TYPOGRAPHY_TAGS.has(child.tag);
+}
+
+/** The run properties a NEW paragraph takes from its neighbor: typography only
+ * (face, size, color, language, character spacing) — what makes inserted text
+ * "blend in". Emphasis toggles (`<w:b>`/`<w:i>`/`<w:u>`/strike/caps/vertAlign)
+ * and a character style are the neighbor's OWN decoration, not the document's
+ * look: `insert --text "plain"` after an italic paragraph came out italic with
+ * no `--italic` passed (the eliot-journal run), a silent formatting leak an agent
+ * only catches with `--ast`. Word itself continues the face/size when you press
+ * Enter at the end of a paragraph, and this is the same contract. Distinct from
+ * `edit`'s whole-paragraph inheritance, which keeps a fully-bold line bold on
+ * purpose — there the emphasis IS the replaced paragraph's look. The script
+ * settings (`<w:rtl>`/`<w:cs>`) ride along like `<w:lang>`: they are how an
+ * Arabic/Hebrew line reads, not decoration. */
+const TYPOGRAPHY_TAGS: ReadonlySet<string> = new Set([
+	"w:rFonts",
+	"w:sz",
+	"w:szCs",
+	"w:color",
+	"w:lang",
+	"w:kern",
+	"w:spacing",
+	"w:w",
+	"w:rtl",
+	"w:cs",
+]);
 
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.
  * Word renders this as a thin line spanning the page width.

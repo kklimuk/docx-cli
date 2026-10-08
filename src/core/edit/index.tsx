@@ -36,8 +36,8 @@ import { readListContext } from "../insert";
 import { w } from "../jsx";
 import { hasTextBox } from "../mc";
 import {
+	bringsNewBlockStructure,
 	inheritParagraphFormattingIfPlain,
-	paragraphOwnsBlockStructure,
 } from "../paragraph-inheritance";
 import { partitionParagraphRuns, XmlNode } from "../parser";
 import {
@@ -55,6 +55,7 @@ import {
 	type TrackedMeta,
 } from "../track-changes";
 import { watchPendingRevisions } from "../track-changes/pending-authors";
+import { paragraphMarkRunRpr } from "../track-changes/preserve-formatting";
 import {
 	applyFormattingPreservingEdit,
 	applyTrackedRangeReplace,
@@ -193,12 +194,15 @@ export class Edit {
 			blockRef.node,
 			restatedPictures(newParagraphs),
 		);
-		inheritParagraphFormattingIfPlain(
-			blockRef.node,
-			newParagraphs,
-			spec.paragraphOptions.style,
-		);
-		applyMarkdownRideAlong(spec, newParagraphs);
+		// Run inheritance goes FIRST: its `bringsNewBlockStructure` guard must
+		// see only the structure the new content brought (a markdown `#` heading,
+		// a list item), not the old paragraph's `<w:pStyle>` that the pPr
+		// inheritance below is about to stamp on. In the other order every
+		// replacement in a styled paragraph (the résumé's BodyText contact line)
+		// looked like it "owned" its style and inherited no run font — the fresh
+		// runs fell back to the style chain (Times New Roman) while `read` still
+		// showed them bare under `docx:base font="Calibri"`.
+		//
 		// `runs` is the explicit, byte-precise surface — the caller states each
 		// run's rPr, so inheriting the old paragraph's would silently override
 		// their choices (a `{"bold": false}` run can't opt out, since the emitter
@@ -206,6 +210,12 @@ export class Edit {
 		if (!opts.noFormatting && spec.kind !== "code" && spec.kind !== "runs") {
 			inheritCommonRunFormatting(blockRef.node, newParagraphs);
 		}
+		inheritParagraphFormattingIfPlain(
+			blockRef.node,
+			newParagraphs,
+			spec.paragraphOptions.style,
+		);
+		applyMarkdownRideAlong(spec, newParagraphs);
 		continueHostList(this.document, blockRef.node, newParagraphs);
 		const anchorTarget = newParagraphs[0];
 		if (anchorTarget?.tag === "w:p") {
@@ -680,7 +690,16 @@ function inheritCommonRunFormatting(
 	const textRuns = partitionParagraphRuns(oldParagraph).runs.filter((run) =>
 		run.findChild("w:t"),
 	);
-	const firstRpr = textRuns[0]?.findChild("w:rPr");
+	// An EMPTY paragraph (a blank form cell, a template's mandatory cell
+	// paragraph) has no runs to take the common formatting from — the formatting
+	// Word applies when you type into it lives on the paragraph MARK
+	// (`<w:pPr><w:rPr>`). The `--text` diff path already falls back to it
+	// (`paragraphMarkRunRpr`); without the same fallback here, `edit --markdown`
+	// into the MNDA's empty signature cells wrote bare runs that rendered in the
+	// theme font at 12pt instead of the cell's Arial 9pt (batch-3, two runs).
+	const firstRpr =
+		textRuns[0]?.findChild("w:rPr") ??
+		(textRuns.length === 0 ? paragraphMarkRunRpr(oldParagraph) : null);
 	if (!firstRpr) return;
 	const otherSignatureSets = textRuns
 		.slice(1)
@@ -703,13 +722,13 @@ function inheritCommonRunFormatting(
 	if (template.children.length === 0) return;
 	for (const paragraph of newParagraphs) {
 		if (paragraph.tag !== "w:p") continue;
-		// A paragraph that brought its OWN block structure (a markdown `#` heading,
-		// a list item) owns its look through its style — stamping the replaced
-		// paragraph's direct rPr onto its runs would defeat that style (an 8pt
-		// Arial form cell replaced with `## Heading` would render the heading at
-		// 8pt Arial). Skip it via the shared `paragraphOwnsBlockStructure` guard so
-		// the two inheritance passes agree on what "plain" means.
-		if (paragraphOwnsBlockStructure(paragraph)) continue;
+		// A paragraph that brings NEW block structure (a markdown `#` heading on a
+		// body line, a list item on a plain paragraph) owns its look through its
+		// style — stamping the replaced paragraph's direct rPr onto its runs would
+		// defeat that style. Same structure as before (a bullet retyped as a
+		// bullet) inherits like plain text. Shared guard with the pPr pass so the
+		// two agree on what "plain" means.
+		if (bringsNewBlockStructure(paragraph, oldParagraph)) continue;
 		// Apply through the same wrapper-aware partition, so a run minted inside a
 		// markdown link's `<w:hyperlink>` inherits the font like its siblings.
 		for (const run of partitionParagraphRuns(paragraph).runs) {

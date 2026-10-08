@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { newTableDoc, trackedKinds } from "./helpers";
+import {
+	buildRawDoc,
+	newTableDoc,
+	readDocumentXml,
+	trackedKinds,
+} from "./helpers";
 
 type AstParagraph = {
 	id: string;
@@ -1108,6 +1113,228 @@ describe("insert --markdown — layout flags ride along", () => {
 			}>;
 		};
 		expect(ast.blocks[1]?.rows?.[0]?.cells[0]?.blocks[0]?.spacing).toEqual({
+			before: 240,
+			after: 120,
+			line: 360,
+			lineRule: "auto",
+		});
+	});
+});
+
+describe("insert — new content blends typography, not the neighbor's emphasis", () => {
+	test("--text after an italic paragraph keeps the face/size but is NOT italic", async () => {
+		// `insert --at pN --text "plain"` after an `--italic` paragraph came out
+		// italic with no `--italic` passed (the eliot-journal run) — an emphasis
+		// leak the agent only caught with --ast. Face and size still blend.
+		const docPath = join(tempWorkspace("insert-no-emphasis"), "out.docx");
+		await runCli("create", docPath, "--text", "First");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--italic",
+			"--bold",
+			"--font",
+			"Georgia",
+			"--size",
+			"14",
+		);
+		const inserted = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"plain",
+		);
+		expect(inserted.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				runs: Array<{
+					text: string;
+					italic?: boolean;
+					bold?: boolean;
+					font?: string;
+					sizeHalfPoints?: number;
+				}>;
+			}>;
+		};
+		const run = ast.blocks[1]?.runs[0];
+		expect(run).toMatchObject({
+			text: "plain",
+			font: "Georgia",
+			sizeHalfPoints: 28,
+		});
+		expect(run?.italic).toBeUndefined();
+		expect(run?.bold).toBeUndefined();
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain(">plain</span> <!-- p1 -->");
+		expect(md).not.toContain("*plain*");
+	});
+});
+
+describe("insert — a new paragraph inherits its neighbor's layout (Word's Enter key)", () => {
+	type Para = {
+		id: string;
+		type: string;
+		style?: string;
+		alignment?: string;
+		spacing?: Record<string, number>;
+		indent?: Record<string, number>;
+		tabStops?: Array<{ align: string; pos: number }>;
+		list?: unknown;
+		runs: Array<{ text: string }>;
+	};
+	async function paragraphs(docPath: string): Promise<Para[]> {
+		return (
+			(await runCli("read", docPath, "--ast")).parsed as { blocks: Para[] }
+		).blocks.filter((block) => block.type === "paragraph");
+	}
+
+	test("tabs, indent, alignment and spacing copy from the anchor; explicit flags still win", async () => {
+		// Re-inserting a résumé entry line next to its siblings used to come out with
+		// no tab stops and no indent, so "Org\tCity" rendered with the city mid-line.
+		const docPath = join(tempWorkspace("insert-layout"), "out.docx");
+		await runCli(
+			"create",
+			docPath,
+			"--text",
+			"Northwind Robotics\tSan Francisco, CA",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--tabs",
+			"right",
+			"--indent-left",
+			"0.25",
+			"--space-after",
+			"6",
+			"--alignment",
+			"right",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Harvard SEAS\tCambridge, MA",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--markdown",
+			"Centered instead",
+			"--alignment",
+			"center",
+		);
+		const [anchor, inherited, overridden] = await paragraphs(docPath);
+		expect(inherited?.tabStops).toEqual(anchor?.tabStops);
+		expect(inherited?.indent).toEqual({ left: 360 });
+		expect(inherited?.spacing).toEqual({ after: 120 });
+		expect(inherited?.alignment).toBe("right");
+		expect(overridden?.alignment).toBe("center");
+		expect(overridden?.tabStops).toEqual(anchor?.tabStops);
+	});
+
+	test("a heading anchor lends nothing; a list anchor lends run formatting but not its indent", async () => {
+		const docPath = join(tempWorkspace("insert-layout-guards"), "out.docx");
+		await runCli("create", docPath, "--text", "Heading");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--style",
+			"Heading1",
+			"--alignment",
+			"center",
+			"--indent-left",
+			"1",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Body after heading",
+		);
+		await runCli("insert", docPath, "--after", "p1", "--markdown", "- item");
+		await runCli("edit", docPath, "--at", "p2", "--font", "Georgia");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p2",
+			"--markdown",
+			"After the list",
+		);
+		const [, body, item, afterList] = await paragraphs(docPath);
+		expect(body?.style).toBeUndefined();
+		expect(body?.alignment).toBeUndefined();
+		expect(body?.indent).toBeUndefined();
+		expect(item?.list).toBeDefined();
+		expect(afterList?.list).toBeUndefined();
+		expect(afterList?.indent).toBeUndefined();
+	});
+});
+
+describe("insert — the empty anchor's paragraph mark and spacing bags", () => {
+	test("a bare-cell insert into a bold-marked empty cell is bold, like edit", async () => {
+		// The typography-only filter is for a NEIGHBOR's runs. A blank cell's
+		// paragraph mark is what Word types with — `edit --at CELL` honors its
+		// bold, so `insert --at CELL` must too.
+		const docPath = await buildRawDoc(
+			'<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:pPr><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="18"/></w:rPr></w:pPr></w:p></w:tc></w:tr></w:tbl>',
+			"insert-bold-cell",
+		);
+		const inserted = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"Filled",
+		);
+		expect(inserted.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(
+			/<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"\/><w:b\/><w:sz w:val="18"\/><\/w:rPr><w:t[^>]*>Filled<\/w:t>/,
+		);
+	});
+
+	test("--text with --space-before keeps the anchor's space-after and line spacing", async () => {
+		const docPath = join(tempWorkspace("insert-spacing-bag"), "out.docx");
+		await runCli("create", docPath, "--text", "Anchor line");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-after",
+			"6",
+			"--line-spacing",
+			"1.5",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Text kind",
+			"--space-before",
+			"12",
+		);
+		const [, inserted] = await readParagraphs(docPath);
+		expect(inserted?.spacing).toEqual({
 			before: 240,
 			after: 120,
 			line: 360,

@@ -24,6 +24,13 @@ import {
 	codeBlockLanguageFromStyleId,
 	isCodeBlockStyleId,
 } from "@core/code-block";
+import {
+	detectFormatBaseline,
+	effectiveFont,
+	type FontResolver,
+	type RunFormatBaseline,
+	resolveInheritedFonts,
+} from "@core/dominant-formatting";
 import { extensionForImageMime } from "@core/image/formats";
 import { inlineEscapeMask } from "@core/markdown";
 import {
@@ -54,6 +61,12 @@ export type MarkdownOptions = {
 	 *  Surfaced in the `docx:base` note when it DEVIATES from the template default
 	 *  (i.e. `set-default-font` ran), so the document font is observable on read. */
 	defaultFont?: string;
+	/** The face a run WITHOUT explicit `<w:rFonts>` renders in, from the style
+	 *  chain + docDefaults (`StylesView.resolveFont`). Lets the baseline be the
+	 *  dominant font ON THE PAGE and a bare run that inherits a different face
+	 *  (Times New Roman via `Normal`) show its `font-family` span instead of
+	 *  hiding as "matches `docx:base`". Undefined = unknown, never marked. */
+	resolveFont?: FontResolver;
 	/** Whether the document's global track-changes toggle is on. ALWAYS surfaced as
 	 *  a head `<!-- docx:track-changes on|off -->` hint — the one `docx:` note that
 	 *  states its default too (weak agents can't read "no hint" as "off," and a
@@ -61,18 +74,6 @@ export type MarkdownOptions = {
 	 *  read instead of spending a `track-changes list` call to learn it. */
 	trackChangesOn?: boolean;
 };
-
-/** Document-wide run formatting so ubiquitous it reads as noise: the dominant
- *  font and size across all body + table runs. `read` emits it once as a
- *  `<!-- docx:base … -->` note and omits it from every matching run, so the body
- *  reads clean AND an agent can see the doc's baseline to match new content. It's
- *  a VISIBILITY hint (per "comments are never anything but hints") — the importer
- *  DROPS it, so a full `read → create` rebuild falls back to the template
- *  docDefaults for the dominant font/size (`read --ast` stays lossless;
- *  in-place `edit` preserves runs). A value only becomes a baseline when it
- *  covers a majority of the document's text — otherwise every run keeps its
- *  explicit formatting. */
-export type RunFormatBaseline = { font?: string; sizeHalfPoints?: number };
 
 /** The canonical create-template `docDefaults` (Calibri 11pt) — the universal
  *  default, noise on every doc, so suppressed from the `docx:base` note. A
@@ -148,22 +149,35 @@ export function renderMarkdown(
 	options: MarkdownOptions = {},
 ): string {
 	const blocks = sliceBlocks(doc.blocks, options.from, options.to);
-	const dominant = detectFormatBaseline(blocks);
+	const inheritedFonts = resolveInheritedFonts(blocks, options.resolveFont);
+	// The suppression baseline is the dominant font ON THE PAGE — what most text
+	// renders in, explicit `<w:rFonts>` or inherited from the style chain — so a
+	// run is marked exactly when it LOOKS different from its neighbors.
+	const dominant = detectFormatBaseline(blocks, inheritedFonts);
 	// Suppression falls back to the document default size, so a doc that stamps the
 	// default `<w:sz>` on most runs still reads clean.
 	const baseline: RunFormatBaseline = {
 		font: dominant.font,
 		sizeHalfPoints: dominant.sizeHalfPoints ?? options.defaultSizeHalfPoints,
+		inheritedFonts,
 	};
-	// The NOTE declares the document's baseline font/size: the per-run majority,
-	// else the document DEFAULT (docDefaults) when it DEVIATES from the canonical
-	// template (Calibri 11pt) — i.e. someone ran `set-default-font`. The universal
-	// template default is suppressed as noise; a deviation is the meaningful signal
-	// that makes the document font/size observable on read. Safe to declare: the
-	// note is a hint the importer drops, so it can't drift a `read → create` rebuild.
+	// The NOTE declares the document's baseline font/size: the EXPLICIT per-run
+	// majority (a doc that stamps Arial on most runs says so), else the rendered
+	// majority / document DEFAULT when it DEVIATES from the canonical template
+	// (Calibri 11pt) — a Times New Roman `Normal`, or `set-default-font` ran. The
+	// universal template default is suppressed as noise; a deviation is the
+	// meaningful signal that makes the document font/size observable on read.
+	// The docDefaults face is consulted only when no rendered majority is known:
+	// a `Normal` that overrides it (docDefaults Times, Normal Calibri) renders
+	// Calibri, and declaring Times there would contradict the suppression
+	// baseline every unmarked run is compared against.
+	// Safe to declare: the note is a hint the importer drops, so it can't drift a
+	// `read → create` rebuild.
+	const explicitDominant = detectFormatBaseline(blocks, undefined);
 	const noteBaseline: RunFormatBaseline = {
 		font:
-			dominant.font ?? deviation(options.defaultFont, TEMPLATE_DEFAULT_FONT),
+			explicitDominant.font ??
+			deviation(dominant.font ?? options.defaultFont, TEMPLATE_DEFAULT_FONT),
 		sizeHalfPoints:
 			dominant.sizeHalfPoints ??
 			deviation(
@@ -307,47 +321,6 @@ export function renderMarkdown(
 	return `${head}${parts.join("\n\n")}\n`;
 }
 
-/** The dominant font and size across all body + table runs, each reported only
- * when it covers a majority of the document's rendered text (weighted by
- * character count). A clear majority is what makes omitting it from every run
- * legible rather than lossy; below the threshold the document has no single
- * baseline and every run keeps its explicit formatting. */
-function detectFormatBaseline(blocks: Block[]): RunFormatBaseline {
-	const fontChars = new Map<string, number>();
-	const sizeChars = new Map<number, number>();
-	let total = 0;
-	for (const paragraph of flattenParagraphs(blocks)) {
-		for (const run of paragraph.runs) {
-			if (run.type !== "text") continue;
-			const length = run.text.length;
-			if (length === 0) continue;
-			total += length;
-			if (run.font)
-				fontChars.set(run.font, (fontChars.get(run.font) ?? 0) + length);
-			if (run.sizeHalfPoints !== undefined) {
-				sizeChars.set(
-					run.sizeHalfPoints,
-					(sizeChars.get(run.sizeHalfPoints) ?? 0) + length,
-				);
-			}
-		}
-	}
-	if (total === 0) return {};
-	return {
-		font: majorityKey(fontChars, total),
-		sizeHalfPoints: majorityKey(sizeChars, total),
-	};
-}
-
-/** The map key whose accumulated weight exceeds half the total, or undefined
- * when no single key does. */
-function majorityKey<K>(counts: Map<K, number>, total: number): K | undefined {
-	for (const [key, weight] of counts) {
-		if (weight * 2 > total) return key;
-	}
-	return undefined;
-}
-
 /** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare —
  * `size` in points, `font` verbatim. A visibility hint the importer drops (not
  * parse-back). `formatNote` applies the shared `htmlAttr` escaping so a
@@ -372,7 +345,10 @@ function emptyCommentIndex(): CommentIndex {
 /** Whether a text run renders in `view` — the shared all-ancestors rule, so a
  * `<w:del>` nested inside another author's `<w:ins>` is hidden in BOTH
  * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it. */
-function isRunVisible(run: TextRun, view: MarkdownView): boolean {
+function isRunVisible(
+	run: Pick<TextRun, "trackedChange">,
+	view: MarkdownView,
+): boolean {
 	return isRevisionVisible(run.trackedChange, view);
 }
 
@@ -1041,7 +1017,23 @@ function renderParagraph(
 		// item isn't mis-detected as a fresh run-start (which would emit a spurious
 		// `docx:list … continues` hint). A non-list empty paragraph breaks the run.
 		ctx.prevListNumId = paragraph.list?.numId ?? null;
-		return null;
+		// An empty paragraph stays SILENT — with one exception. Printing every
+		// spacer's locator was tried (2026-09-28) and backfired: agents wrote the
+		// résumé's name into the first addressable line they saw, a 1pt spacer
+		// above the rule, and deleted the real name paragraph (2 of 3 runs). The
+		// exception is a paragraph holding only a manual page break: its `docx:p`
+		// note (with a bare `page-break` token) prints, because a break stacked on
+		// a next-page section break shipped a blank page nobody could see, and
+		// `delete --at pN` is the cure. The line is a comment the importer drops.
+		// Only a break VISIBLE in this view counts: after a tracked `delete --at
+		// pN` the break sits in a `<w:del>`, and still printing the token made the
+		// delete look like it never happened.
+		const holdsPageBreak = paragraph.runs.some(
+			(run) =>
+				run.type === "break" && run.kind === "page" && isRunVisible(run, view),
+		);
+		if (!holdsPageBreak) return null;
+		return formatParagraphNote(paragraph, { pageBreak: true }).trimStart();
 	}
 	const prefix = paragraphPrefix(paragraph, orderedOrdinal(paragraph, ctx));
 	// Trim trailing spaces/tabs (not newlines) so the single space separating
@@ -1074,7 +1066,10 @@ function renderParagraph(
  * already conveyed by the Markdown construct (headings `#`, lists `-`, quotes
  * `>`, code fences) — so Caption / custom paragraph styles surface; `align` only
  * when it isn't the default left. A DROPPED read-time hint. */
-function formatParagraphNote(paragraph: Paragraph): string {
+function formatParagraphNote(
+	paragraph: Paragraph,
+	{ pageBreak = false }: { pageBreak?: boolean } = {},
+): string {
 	const pairs: NotePair[] = [];
 	if (paragraph.style && !isConstructStyle(paragraph.style)) {
 		pairs.push(["style", paragraph.style]);
@@ -1124,10 +1119,20 @@ function formatParagraphNote(paragraph: Paragraph): string {
 	// Value is the control's alias, else its tag; a control with neither still
 	// emits the bare `content-control` token, since the fact is what matters.
 	const control = contentControlToken(paragraph.contentControl);
-	if (pairs.length === 0 && !paragraph.rawXml && !control) return "";
+	// A manual page break (`<w:br w:type="page"/>`) has no Markdown form, and a
+	// paragraph holding only one printed NOTHING — an agent stacked one on a
+	// next-page section break and shipped a blank page it could not see (the
+	// eliot-journal run). The bare `page-break` token makes it visible and
+	// addressable (`delete --at pN` removes it). Only for a BREAK-ONLY paragraph
+	// (`renderParagraph`'s empty branch sets it): on a line with text the same
+	// token would point that cure at real content.
+	if (pairs.length === 0 && !paragraph.rawXml && !control && !pageBreak)
+		return "";
 	// A raw-authored block flags itself with a bare `raw` token so the agent
 	// knows this block came from `docx raw` (and can `raw get` it for the truth).
-	const bareTokens = paragraph.rawXml ? [paragraph.id, "raw"] : [paragraph.id];
+	const bareTokens = [paragraph.id];
+	if (paragraph.rawXml) bareTokens.push("raw");
+	if (pageBreak) bareTokens.push("page-break");
 	return ` ${formatNote("p", control ? [...pairs, control] : pairs, bareTokens)}`;
 }
 
@@ -1398,7 +1403,7 @@ function renderRuns(
 			while (lookahead < visibleEntries.length) {
 				const next = visibleEntries[lookahead];
 				if (!next || next.run.type !== "text") break;
-				if (!sameDecoration(run, next.run, view)) break;
+				if (!sameDecoration(run, next.run, view, ctx.baseline)) break;
 				lookahead++;
 			}
 			const segment = visibleEntries.slice(cursor, lookahead);
@@ -1536,7 +1541,12 @@ function commentEndingsFor(
 	return out;
 }
 
-function sameDecoration(a: TextRun, b: TextRun, view: MarkdownView): boolean {
+function sameDecoration(
+	a: TextRun,
+	b: TextRun,
+	view: MarkdownView,
+	baseline: RunFormatBaseline,
+): boolean {
 	return (
 		(a.bold ?? false) === (b.bold ?? false) &&
 		(a.italic ?? false) === (b.italic ?? false) &&
@@ -1549,7 +1559,9 @@ function sameDecoration(a: TextRun, b: TextRun, view: MarkdownView): boolean {
 		(a.colorThemeShade ?? "") === (b.colorThemeShade ?? "") &&
 		(a.highlight ?? "") === (b.highlight ?? "") &&
 		(a.shade ?? "") === (b.shade ?? "") &&
-		(a.font ?? "") === (b.font ?? "") &&
+		// The SHOWN face — explicit or inherited — so an explicit Times run next to
+		// a bare run inheriting Times reads as one `**…**`, not `**a****b**`.
+		effectiveFont(a, baseline) === effectiveFont(b, baseline) &&
 		(a.fontEastAsia ?? "") === (b.fontEastAsia ?? "") &&
 		(a.fontComplexScript ?? "") === (b.fontComplexScript ?? "") &&
 		(a.sizeHalfPoints ?? 0) === (b.sizeHalfPoints ?? 0) &&
@@ -1740,7 +1752,7 @@ function needsHtmlWrap(run: TextRun, baseline: RunFormatBaseline): boolean {
 		(run.color && !isDefaultColor(run.color)) ||
 			(run.colorTheme && !isDefaultThemeColor(run)) ||
 			run.shade ||
-			(run.font && run.font !== baseline.font) ||
+			deviatingFont(run, baseline) ||
 			run.fontEastAsia ||
 			run.fontComplexScript ||
 			(run.sizeHalfPoints !== undefined &&
@@ -1811,6 +1823,17 @@ function htmlFormattingWrappers(
 	return wrappers;
 }
 
+/** The face a run renders in when it differs from the document baseline, else
+ *  undefined. A run whose face is unknown (no explicit font, unresolvable
+ *  inheritance) never deviates — we mark only what we know. */
+function deviatingFont(
+	run: TextRun,
+	baseline: RunFormatBaseline,
+): string | undefined {
+	const font = effectiveFont(run, baseline);
+	return font !== baseline.font ? font : undefined;
+}
+
 function spanFormattingWrapper(
 	run: TextRun,
 	baseline: RunFormatBaseline,
@@ -1827,10 +1850,12 @@ function spanFormattingWrapper(
 	if (run.shade) styles.push(`background-color:#${run.shade}`);
 	// Font and size matching the document baseline are declared once in the
 	// `<!-- docx:base … -->` note and omitted here (round-trip safe — the importer
-	// re-applies them); a run that deviates keeps its value.
-	if (run.font && run.font !== baseline.font) {
-		styles.push(`font-family:${cssFontFamily(run.font)}`);
-	}
+	// re-applies them); a run that deviates keeps its value. The face compared is
+	// the one the run RENDERS in — a bare run inheriting Times New Roman from its
+	// style shows `font-family` under a Calibri baseline, so a fresh run that lost
+	// its rFonts is visible on the next read instead of reading as Calibri.
+	const font = deviatingFont(run, baseline);
+	if (font) styles.push(`font-family:${cssFontFamily(font)}`);
 	if (
 		run.sizeHalfPoints !== undefined &&
 		run.sizeHalfPoints !== baseline.sizeHalfPoints

@@ -4594,3 +4594,495 @@ describe("docx edit — ride-along and measure edge cases", () => {
 		expect(JSON.parse(bad.stdout).error).toContain('break "kind"');
 	});
 });
+
+describe("docx edit — whole-paragraph replacement keeps the paragraph's look", () => {
+	test("--markdown on a styled paragraph inherits the runs' font (inheritance order)", async () => {
+		// The résumé contact line: a BodyText-styled paragraph whose runs all carry
+		// explicit Calibri. A `--markdown` rewrite used to stamp the old pPr (with
+		// its pStyle) on the new paragraph FIRST, so the run-inheritance pass saw a
+		// paragraph that "owned" its style and copied no rFonts — the fresh runs
+		// fell back to the style chain and rendered in another face.
+		const docPath = join(tempWorkspace("edit-md-font"), "out.docx");
+		await runCli("create", docPath, "--text", "Home Street • City • phone");
+		await runCli("edit", docPath, "--at", "p0", "--font", "Georgia");
+		await runCli("edit", docPath, "--at", "p0", "--style", "Subtitle");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"14 Plympton St • Cambridge • **(617) 555-0192**",
+		);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				style?: string;
+				runs: Array<{ text: string; font?: string; bold?: boolean }>;
+			}>;
+		};
+		const paragraph = ast.blocks[0];
+		expect(paragraph?.style).toBe("Subtitle");
+		expect(paragraph?.runs.map((run) => run.font)).toEqual([
+			"Georgia",
+			"Georgia",
+		]);
+		expect(paragraph?.runs[1]).toMatchObject({
+			text: "(617) 555-0192",
+			bold: true,
+		});
+	});
+
+	test("--alignment justify writes the ST_Jc token `both` and reads back as justify", async () => {
+		const docPath = join(tempWorkspace("edit-justify"), "out.docx");
+		await runCli("create", docPath, "--text", "Justified body text.");
+		await runCli("edit", docPath, "--at", "p0", "--alignment", "justify");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('<w:jc w:val="both"/>');
+		expect(xml).not.toContain('w:val="justify"');
+		const validation = await runCli("validate", docPath);
+		expect(validation.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ alignment?: string }>;
+		};
+		expect(ast.blocks[0]?.alignment).toBe("justify");
+	});
+});
+
+describe("docx edit — a rewrite's spacing/indent merge onto the inherited pPr", () => {
+	test("--markdown with --space-after keeps the paragraph's existing space-before and indent", async () => {
+		// `{"at":"p6","markdown":…,"space-after":6}` used to REPLACE the inherited
+		// <w:spacing> wholesale, dropping the template's before value (three résumé
+		// runs). Attribute bags overlay; single-value children still replace.
+		const docPath = join(tempWorkspace("edit-merge-spacing"), "out.docx");
+		await runCli("create", docPath, "--text", "Contact line");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-before",
+			"4.5",
+			"--indent-left",
+			"0.5",
+			"--first-line",
+			"0.25",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"New *contact* line",
+			"--space-after",
+			"6",
+			"--hanging",
+			"0.1",
+		);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				spacing?: Record<string, number>;
+				indent?: Record<string, number>;
+			}>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({ before: 90, after: 120 });
+		// hanging replaces firstLine (same slot); left survives.
+		expect(ast.blocks[0]?.indent).toEqual({ left: 720, hanging: 144 });
+	});
+});
+
+describe("docx edit --text — hyperlinks survive a whole-paragraph rewrite", () => {
+	async function linkedContactLine(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "out.docx");
+		await runCli("create", docPath, "--text", "intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Street • youremail@college.harvard.edu • phone",
+		);
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p1:9-37",
+			"--url",
+			"mailto:youremail@college.harvard.edu",
+		);
+		return docPath;
+	}
+	type LinkRow = { id: string; url?: string; text?: string };
+
+	test("unchanged link text stays linked when the rest of the line is retyped", async () => {
+		const docPath = await linkedContactLine("link-keep");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"14 Plympton St • youremail@college.harvard.edu • (617) 555-0192",
+		);
+		const links = (await runCli("hyperlinks", "list", docPath))
+			.parsed as LinkRow[];
+		expect(links).toHaveLength(1);
+		expect(links[0]).toMatchObject({
+			url: "mailto:youremail@college.harvard.edu",
+		});
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain(
+			"[youremail@college.harvard.edu](mailto:youremail@college.harvard.edu)",
+		);
+		expect(md).toContain("14 Plympton St • ");
+		expect(md).toContain(" • (617) 555-0192 <!-- p1 -->");
+	});
+
+	test("a replaced link text inherits the link (position-paired with the deleted token)", async () => {
+		const docPath = await linkedContactLine("link-swap");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Street • praman@college.harvard.edu • phone",
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		// Still a link, still pointing at the OLD target — retarget with `hyperlinks replace`.
+		expect(md).toContain(
+			"[praman@college.harvard.edu](mailto:youremail@college.harvard.edu)",
+		);
+		expect(md).not.toContain("youremail@college.harvard.edu •");
+		await runCli(
+			"hyperlinks",
+			"replace",
+			docPath,
+			"--at",
+			"link0",
+			"--with",
+			"mailto:praman@college.harvard.edu",
+		);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"[praman@college.harvard.edu](mailto:praman@college.harvard.edu)",
+		);
+	});
+
+	test("text typed right after a link does not extend the link", async () => {
+		const docPath = await linkedContactLine("link-no-extend");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Street • youremail@college.harvard.edu today • phone",
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain(
+			"[youremail@college.harvard.edu](mailto:youremail@college.harvard.edu) today • phone",
+		);
+		// Nor its look: the typed word takes the plain side's formatting, not the
+		// Hyperlink character style (blue + underlined, yet invisible in `read`).
+		expect(await runStyleOf(docPath, "today")).toBeUndefined();
+	});
+
+	test("text appended after a line-ending link drops the Hyperlink character style", async () => {
+		const docPath = join(tempWorkspace("link-tail"), "out.docx");
+		await runCli("create", docPath, "--text", "Email: me@x.com");
+		await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:7-15",
+			"--url",
+			"mailto:me@x.com",
+		);
+		expect(await runStyleOf(docPath, "me@x.com")).toBe("Hyperlink");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Email: me@x.com now",
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain("Email: [me@x.com](mailto:me@x.com) now <!-- p0 -->");
+		expect(await runStyleOf(docPath, "now")).toBeUndefined();
+	});
+
+	async function runStyleOf(
+		docPath: string,
+		needle: string,
+	): Promise<string | undefined> {
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ runs?: Array<{ text?: string; runStyle?: string }> }>;
+		};
+		const run = ast.blocks
+			.flatMap((block) => block.runs ?? [])
+			.find((candidate) => candidate.text?.includes(needle));
+		return run?.runStyle;
+	}
+
+	test("under tracking the link wraps the del/ins pair and the file validates", async () => {
+		const docPath = await linkedContactLine("link-tracked");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Street • praman@college.harvard.edu • phone",
+			"--track",
+		);
+		const xml = await readDocumentXml(docPath);
+		// The link is the OUTERMOST wrapper, holding the del/ins pair — the spaces
+		// beside the link stay kept, so no non-link revision splits the pair into
+		// link twins.
+		expect(xml).toMatch(
+			/<w:hyperlink[^>]*><w:del\b(?:(?!<\/w:hyperlink>).)*<w:ins\b/s,
+		);
+		expect(xml).not.toMatch(/<w:ins\b[^>]*>(?:(?!<\/w:ins>).)*<w:hyperlink/s);
+		// One logical change, addressable as a single revN.
+		const changes = (await runCli("track-changes", "list", docPath))
+			.parsed as Array<{ kind: string; text?: string; group?: string }>;
+		expect(changes).toEqual([
+			expect.objectContaining({
+				kind: "del",
+				text: "youremail@college.harvard.edu",
+				group: "rev0",
+			}),
+			expect.objectContaining({
+				kind: "ins",
+				text: "praman@college.harvard.edu",
+				group: "rev0",
+			}),
+		]);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"[praman@college.harvard.edu](mailto:youremail@college.harvard.edu)",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"[youremail@college.harvard.edu](mailto:youremail@college.harvard.edu)",
+		);
+		// Exactly one link element remains.
+		expect(
+			(await readDocumentXml(docPath)).match(/<w:hyperlink\b/g),
+		).toHaveLength(1);
+	});
+});
+
+describe("docx edit --text — paragraph-level mc:AlternateContent is diffed", () => {
+	test("text inside a paragraph-level mc:AlternateContent is diffed, so tracked reject restores it", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="w14"><w:r><w:rPr><w:b/></w:rPr><w:t>Hello</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:b/></w:rPr><w:t>Hello</w:t></w:r></mc:Fallback></mc:AlternateContent><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p>',
+			"edit-mc-text",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Hello world again",
+			"--track",
+		);
+		// "Hello" was KEPT (it matched), so it keeps its bold; only " again" is new.
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"**Hello** world again <!-- p0 -->",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"**Hello** world <!-- p0 -->",
+		);
+	});
+});
+
+describe("docx edit --markdown — inheritance parity with --text", () => {
+	test("into an EMPTY cell paragraph, the runs take the paragraph-mark formatting", async () => {
+		// The MNDA's blank signature cells carry Arial 9pt on the paragraph mark.
+		// `--text` inherited it; `--markdown` wrote bare runs (theme font, 12pt).
+		const docPath = await freshFixture(
+			"md-empty-cell",
+			"tests/fixtures/mnda.docx",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t2:r2c1",
+			"--markdown",
+			"Dana Okafor",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t2:r3c1",
+			"--text",
+			"Northwind Robotics",
+		);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				id: string;
+				rows?: Array<{
+					cells: Array<{
+						blocks: Array<{
+							runs: Array<{
+								text: string;
+								font?: string;
+								sizeHalfPoints?: number;
+							}>;
+						}>;
+					}>;
+				}>;
+			}>;
+		};
+		const table = ast.blocks.find((block) => block.id === "t2");
+		const markdownRun = table?.rows?.[2]?.cells[1]?.blocks[0]?.runs[0];
+		const textRun = table?.rows?.[3]?.cells[1]?.blocks[0]?.runs[0];
+		expect(markdownRun).toMatchObject({
+			text: "Dana Okafor",
+			font: "Arial",
+			sizeHalfPoints: 18,
+		});
+		expect(markdownRun?.font).toBe(textRun?.font);
+		expect(markdownRun?.sizeHalfPoints).toBe(textRun?.sizeHalfPoints);
+	});
+
+	test("a `- item` replacing a bullet keeps the bullet's font, tabs, spacing and indent", async () => {
+		// Judged only on the NEW paragraph, a list item "owned its structure" and
+		// inherited nothing — a bullet retyped through --markdown lost its Calibri,
+		// tab stops, spacing and indent (batch-3 résumé). Same structure as the
+		// paragraph it replaces → inherits like plain text.
+		type Para = {
+			list?: unknown;
+			tabStops?: unknown;
+			spacing?: unknown;
+			indent?: unknown;
+			runs: Array<{ text: string; font?: string; italic?: boolean }>;
+		};
+		const docPath = join(tempWorkspace("md-list-item"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"- Original bullet text",
+		);
+		await runCli("edit", docPath, "--at", "p1", "--font", "Calibri");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--tabs",
+			"left@1in",
+			"--space-after",
+			"6",
+			"--indent-right",
+			"0.3",
+		);
+		const bullet = async () =>
+			((await runCli("read", docPath, "--ast")).parsed as { blocks: Para[] })
+				.blocks[1] as Para;
+		const before = await bullet();
+		expect(before.list).toBeDefined();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--markdown",
+			"- Built an automated *test* harness.",
+		);
+		const after = await bullet();
+		expect(after.list).toBeDefined();
+		expect(after.runs.map((run) => run.font)).toEqual([
+			"Calibri",
+			"Calibri",
+			"Calibri",
+		]);
+		expect(after.runs[1]).toMatchObject({ text: "test", italic: true });
+		expect(after.tabStops).toEqual(before.tabStops);
+		expect(after.spacing).toEqual(before.spacing);
+		expect(after.indent).toEqual(before.indent);
+	});
+
+	test("an UNSTYLED bullet (a bare numPr, Google Docs style) retyped as `- item` keeps its look too", async () => {
+		const docPath = join(tempWorkspace("md-bare-numpr"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro");
+		await runCli("insert", docPath, "--after", "p0", "--markdown", "- Bullet");
+		await runCli("edit", docPath, "--at", "p1", "--font", "Georgia");
+		await runCli("edit", docPath, "--at", "p1", "--indent-left", "0.75");
+		const pkg = await Pkg.open(docPath);
+		const xml = await pkg.readText("word/document.xml");
+		pkg.writeText(
+			"word/document.xml",
+			xml.replace('<w:pStyle w:val="ListParagraph"/>', ""),
+		);
+		await pkg.save();
+		await runCli("edit", docPath, "--at", "p1", "--markdown", "- Retyped");
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				list?: unknown;
+				runs: Array<{ font?: string }>;
+			}>;
+		};
+		const bullet = ast.blocks[1];
+		expect(bullet?.list).toBeDefined();
+		expect(bullet?.runs[0]?.font).toBe("Georgia");
+		// The reader hides a list item's indent (list geometry), so check the XML.
+		expect(await readDocumentXml(docPath)).toMatch(
+			/<w:numPr>(?:(?!<\/w:pPr>).)*<w:ind w:left="1080"\/>(?:(?!<\/w:p>).)*Retyped/s,
+		);
+	});
+
+	test("a `## heading` replacing a body line owns its look (no inheritance)", async () => {
+		const docPath = join(tempWorkspace("md-heading-owns"), "out.docx");
+		await runCli("create", docPath, "--text", "Body line");
+		// Run formatting and paragraph properties are separate calls (combined,
+		// `edit` refuses — which once left this setup silently un-applied).
+		const fontResult = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--font",
+			"Arial",
+			"--size",
+			"8",
+		);
+		expect(fontResult.exitCode).toBe(0);
+		const indentResult = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"1",
+		);
+		expect(indentResult.exitCode).toBe(0);
+		await runCli("edit", docPath, "--at", "p0", "--markdown", "## Heading");
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				style?: string;
+				indent?: unknown;
+				runs: Array<{ font?: string; sizeHalfPoints?: number }>;
+			}>;
+		};
+		expect(ast.blocks[0]?.style).toBe("Heading2");
+		// The heading owns its look: no 1in indent, no 8pt, no Arial stamped on.
+		expect(ast.blocks[0]?.indent).toBeUndefined();
+		expect(ast.blocks[0]?.runs[0]?.sizeHalfPoints).toBeUndefined();
+		expect(ast.blocks[0]?.runs[0]?.font).toBeUndefined();
+	});
+});

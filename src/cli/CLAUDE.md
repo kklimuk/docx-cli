@@ -169,7 +169,7 @@ spacing/indent (`space-before`/`space-after`/`line-spacing`/`indent-left`/
 read a value and re-apply it through the matching `edit`/`insert` flag). Like
 `docx:cell`, the note carries the locator as its leading token, so a paragraph
 WITH a `docx:p` note does NOT also get the bare `<!-- pN -->` locator — that would
-duplicate `pN`. Plain paragraphs (no note) keep the bare locator. Every paragraph
+duplicate `pN`. Plain paragraphs (no note) keep the bare locator. An EMPTY paragraph prints NOTHING — with one exception: a paragraph holding only a manual `<w:br w:type="page"/>` prints its `docx:p` note with a bare `page-break` token, so a stray break (one stacked on a next-page section break shipped a blank page nobody could see) is visible and `delete --at pN` removes it. Printing every spacer's locator was tried and reverted: agents wrote the résumé's name into the first addressable line, a 1pt spacer, and deleted the real name paragraph. Every paragraph
 shows its addressable `pN` exactly once, either bare or as the note's leading token.
 Full contract in [src/core/markdown/CLAUDE.md](../core/markdown/CLAUDE.md). New
 structural annotation? Use `formatNote`, keep it deviation-only, and remember the

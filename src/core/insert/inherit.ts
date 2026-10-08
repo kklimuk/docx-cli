@@ -1,7 +1,14 @@
 import {
 	applyParagraphOptionsInPlace,
+	ensureParagraphProperties,
+	insertPprChildInOrder,
 	isInheritableRunProperty,
+	isTypographyRunProperty,
 } from "../blocks";
+import {
+	ATTRIBUTE_BAG_TAGS,
+	overlayAttributes,
+} from "../paragraph-inheritance";
 import type { XmlNode } from "../parser";
 import { paragraphMarkRunRpr } from "../track-changes/preserve-formatting";
 
@@ -41,12 +48,48 @@ export function inheritFormattingFromAnchor(
 		if (paragraphStyleId(block)) continue; // explicitly styled — leave it
 		if (hasListMembership(block)) continue; // explicit list — leave it
 		// Don't copy a list anchor's pStyle (it would carry ListParagraph without
-		// the numbering); run formatting still blends below.
-		if (!anchorIsList && anchorStyle) {
-			applyParagraphOptionsInPlace(block.children, { style: anchorStyle });
+		// the numbering) or its layout (its indent IS the list geometry); run
+		// formatting still blends below.
+		if (!anchorIsList) {
+			if (anchorStyle) {
+				applyParagraphOptionsInPlace(block.children, { style: anchorStyle });
+			}
+			inheritParagraphLayout(block, anchor);
 		}
 		if (anchorRunProperties) {
 			applyRunPropertiesToBareRuns(block, anchorRunProperties);
+		}
+	}
+}
+
+/** The `<w:pPr>` children that make a line LAY OUT like its neighbor — what
+ * Word carries into the new paragraph when you press Enter at the end of one.
+ * Copied only when the new paragraph doesn't set the same child itself (an
+ * explicit `--alignment`/`--indent-left`/`--tabs` still wins). Without this,
+ * re-inserting a résumé entry line next to its siblings came out with no tab
+ * stops and no indent, so "Harvard University\tCambridge, MA" rendered with the
+ * location jammed mid-line while every other line right-aligned it. */
+const LAYOUT_PPR_TAGS = ["w:jc", "w:spacing", "w:ind", "w:tabs"] as const;
+
+function inheritParagraphLayout(block: XmlNode, anchor: XmlNode): void {
+	const anchorPpr = anchor.findChild("w:pPr");
+	if (!anchorPpr) return;
+	const sources = LAYOUT_PPR_TAGS.map((tag) => anchorPpr.findChild(tag)).filter(
+		(node): node is XmlNode => node !== undefined,
+	);
+	if (sources.length === 0) return;
+	const pPr = ensureParagraphProperties(block);
+	for (const source of sources) {
+		const own = pPr.findChild(source.tag);
+		if (!own) {
+			insertPprChildInOrder(pPr, source.clone());
+			continue;
+		}
+		// `<w:spacing>`/`<w:ind>` are attribute bags: an explicit `--space-before`
+		// keeps the anchor's after/line, exactly as the markdown ride-along (and
+		// `edit`'s pPr merge) does. Other children are one value — own wins.
+		if (ATTRIBUTE_BAG_TAGS.has(source.tag)) {
+			pPr.children[pPr.children.indexOf(own)] = overlayAttributes(source, own);
 		}
 	}
 }
@@ -71,14 +114,22 @@ function hasListMembership(paragraph: XmlNode): boolean {
 }
 
 /** A clone of the first run's `<w:rPr>` in the paragraph (descending into
- * run-bearing wrappers like `<w:hyperlink>`), or null when the first run has no
- * explicit formatting to inherit. */
+ * run-bearing wrappers like `<w:hyperlink>`), reduced to typography, or null
+ * when the first run has nothing inheritable. An anchor with NO run lends its
+ * paragraph-mark rPr WHOLE (emphasis included): that mark is what Word types
+ * with in an empty paragraph, and the empty anchor is usually the very cell
+ * paragraph a bare-cell insert fills — `insert --at CELL` into a bold-marked
+ * blank cell must come out bold, exactly as `edit --at CELL` does. */
 function firstRunProperties(paragraph: XmlNode): XmlNode | null {
 	const run = firstRun(paragraph);
 	const source = run?.findChild("w:rPr") ?? paragraphMarkRunRpr(paragraph);
 	if (!source) return null;
 	const properties = source.clone();
-	properties.children = properties.children.filter(isInheritableRunProperty);
+	properties.children = properties.children.filter(
+		(child) =>
+			isInheritableRunProperty(child) &&
+			(!run || isTypographyRunProperty(child)),
+	);
 	return properties.children.length > 0 ? properties : null;
 }
 

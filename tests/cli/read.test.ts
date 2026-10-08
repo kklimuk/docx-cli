@@ -1155,3 +1155,89 @@ describe("block-level content controls are transparent to the reader", () => {
 		expect(out).not.toContain("content-control");
 	});
 });
+
+describe("docx read — page breaks are addressable, empty spacers stay silent", () => {
+	test("a page-break-only paragraph prints a docx:p page-break token; a plain empty paragraph prints nothing", async () => {
+		// A page break stacked on a next-page section break shipped a blank page
+		// nobody could see, so a break-only paragraph now shows (and `delete --at`
+		// removes it). Plain empty spacers stay hidden on purpose: printing their
+		// locators made agents write the résumé's name into a 1pt spacer line.
+		const docPath = join(tempWorkspace("read-empty"), "out.docx");
+		await runCli("create", docPath, "--text", "First");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"Second\n\nThird",
+		);
+		// A spacer: an empty paragraph, and a page break, both via --runs.
+		await runCli("insert", docPath, "--after", "p0", "--runs", "[]");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p2",
+			"--runs",
+			JSON.stringify([{ type: "break", kind: "page" }]),
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain("First <!-- p0 -->\n\nSecond <!-- p2 -->");
+		expect(md).not.toContain("<!-- p1 -->");
+		expect(md).toContain("<!-- docx:p p3 page-break -->");
+		expect(md).toContain("Third <!-- p4 -->");
+		// The importer drops the comment lines, so nothing parses back.
+		const rebuilt = join(tempWorkspace("read-empty-rt"), "rt.docx");
+		const mdPath = join(tempWorkspace("read-empty-md"), "doc.md");
+		await Bun.write(mdPath, md);
+		await runCli("create", rebuilt, "--from", mdPath);
+		expect((await runCli("read", rebuilt)).stdout).not.toContain("page-break");
+		// And the break is deletable by the id it now shows.
+		await runCli("delete", docPath, "--at", "p3");
+		expect((await runCli("read", docPath)).stdout).not.toContain("page-break");
+	});
+});
+
+describe("docx read — the page-break token is for break-only paragraphs", () => {
+	test("a line with text and a page break keeps its bare locator", async () => {
+		// `page-break` points at `delete --at pN`; on a line with text that cure
+		// would delete real content, so the token stays off it.
+		const docPath = join(tempWorkspace("read-break-in-text"), "out.docx");
+		await runCli("create", docPath, "--text", "x");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--runs",
+			JSON.stringify([
+				{ type: "text", text: "Chapter end" },
+				{ type: "break", kind: "page" },
+				{ type: "text", text: "Next chapter" },
+			]),
+		);
+		const md = (await runCli("read", docPath)).stdout;
+		expect(md).toContain("<!-- p0 -->");
+		expect(md).not.toContain("page-break");
+	});
+
+	test("a tracked delete of the break hides the token in the accepted view", async () => {
+		const docPath = join(tempWorkspace("read-break-tracked"), "out.docx");
+		await runCli("create", docPath, "--text", "First");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			JSON.stringify([{ type: "break", kind: "page" }]),
+		);
+		await runCli("insert", docPath, "--after", "p1", "--text", "Second");
+		await runCli("delete", docPath, "--at", "p1", "--track");
+		expect((await runCli("read", docPath)).stdout).not.toContain("page-break");
+		expect((await runCli("read", docPath, "--current")).stdout).toContain(
+			"<!-- docx:p p1 page-break -->",
+		);
+	});
+});
