@@ -719,6 +719,47 @@ describe("docx edit --at pN:S-E — character-span edit", () => {
 		expect(changes.every((change) => change.author === "Reviewer")).toBe(true);
 	});
 
+	test("tracked span inside another author's insertion splits it around the editor's del + ins (#13)", async () => {
+		// Same engine as `replace`: the third author's nested <w:del> stays in
+		// place and must not shift the cut; the replacement must not land bare
+		// inside Reviewer A's insertion; A's tail gets a fresh id.
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>',
+			"span-in-ins",
+		);
+		const locator = await firstLocator(docPath, "disputed amount");
+		expect(locator).toBe("p0:38-53");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			locator,
+			"--text",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const xml = (await readDocumentXml(docPath)).replaceAll(
+			/(w:author="Editor") w:date="[^"]*"/g,
+			'$1 w:date="NOW"',
+		);
+		expect(xml).toContain(
+			'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>' +
+				'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>' +
+				'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>' +
+				'<w:del w:id="3" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del></w:ins>' +
+				'<w:ins w:id="4" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
+				'<w:ins w:id="5" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"Fees are due. The Client may withhold disputed sum.",
+		);
+	});
+
 	test("out-of-range span fails with INVALID_LOCATOR", async () => {
 		const docPath = await freshSpan("span-oob");
 		const result = await runCli(
