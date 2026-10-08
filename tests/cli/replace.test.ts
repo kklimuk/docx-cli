@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { buildRawDoc, readDocumentXml } from "./helpers";
+import {
+	buildRawDoc,
+	readDocumentXml,
+	wordTextBoxParagraphXml,
+} from "./helpers";
 
 type Body = {
 	blocks: Array<{
@@ -1255,6 +1260,10 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 		);
 	}
 
+	async function readPart(docPath: string, name: string): Promise<string> {
+		return await (await Pkg.open(docPath)).readText(name);
+	}
+
 	async function viewText(docPath: string, view: string): Promise<string> {
 		const result = await runCli("read", docPath, view);
 		return result.stdout
@@ -1300,6 +1309,18 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 			["ins", "Editor", "disputed sum"],
 			["ins", "Reviewer A", "."],
 		]);
+		// revN pairing is per author: the editor's del+ins is one group, and
+		// Reviewer A's head ins never pairs with the editor's nested del.
+		const grouped = changes as Array<{ author: string; group?: string }>;
+		const editorGroups = grouped
+			.filter((change) => change.author === "Editor")
+			.map((change) => change.group);
+		expect(editorGroups).toEqual(["rev0", "rev0"]);
+		expect(
+			grouped
+				.filter((change) => change.author === "Reviewer A")
+				.every((change) => change.group === undefined),
+		).toBe(true);
 	});
 
 	test("case 2: a nested deletion by a third author stays put and does not shift the cut", async () => {
@@ -1433,6 +1454,190 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 		expect(current.stdout.replaceAll(/\[\^tc\d+\]/g, "")).toContain(
 			"{++pay ++}{--disputed --}{--old --}{--amount--}{++disputed sum++}{++ now.++}",
 		);
+	});
+
+	test("the author's OWN ins keeps a footnote reference and a text-box anchor that sat inside the cut", async () => {
+		const docPath = join(tempWorkspace("ins-own-anchors"), "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		expect(
+			(
+				await runCli(
+					"footnotes",
+					"add",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"the note",
+				)
+			).exitCode,
+		).toBe(0);
+		const footnotesBefore = await readPart(docPath, "word/footnotes.xml");
+		// Word's text-box run, anchored mid-word ("am|ount"), and the footnote
+		// reference run the CLI emits — both inside Reviewer A's insertion.
+		const box = wordTextBoxParagraphXml(["box story"], { leadingText: "am" });
+		const namespaces = box.slice("<w:p".length, box.indexOf(">"));
+		const shapeRun = box.slice(
+			box.indexOf("<w:r>"),
+			box.lastIndexOf("</w:r>") + "</w:r>".length,
+		);
+		const paragraph =
+			`<w:p${namespaces}><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}` +
+			'<w:r><w:t xml:space="preserve">may withhold a disputed</w:t></w:r>' +
+			'<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>' +
+			`<w:r><w:t xml:space="preserve"> </w:t></w:r>${shapeRun}<w:r><w:t>ount.</w:t></w:r></w:ins></w:p>`;
+		expect(
+			(
+				await runCli(
+					"raw",
+					"replace",
+					docPath,
+					"--at",
+					"p0",
+					"--xml",
+					paragraph,
+				)
+			).exitCode,
+		).toBe(0);
+		const before = await runCli("read", docPath);
+		expect(before.stdout).toContain(
+			"The Client may withhold a disputed[^fn1] amount.",
+		);
+		expect(before.stdout).toContain("box story");
+
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		const after = await runCli("read", docPath);
+		expect(after.stdout).toContain(
+			"The Client may withhold a disputed sum[^fn1].",
+		);
+		expect(after.stdout).toContain("docx:textbox tbx0");
+		expect(after.stdout).toContain("box story");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		expect(xml.match(/<w:ins /g)).toHaveLength(1);
+		expect(xml.match(/<w:footnoteReference /g)).toHaveLength(1);
+		expect(xml.match(/<w:txbxContent>/g)).toHaveLength(2);
+		expect(await readPart(docPath, "word/footnotes.xml")).toBe(footnotesBefore);
+	});
+
+	test("the author's OWN moveTo is split, never merged into (moved text is not new words)", async () => {
+		const MOVED =
+			'<w:p><w:r><w:t xml:space="preserve">Origin: </w:t></w:r><w:moveFromRangeStart w:id="0" w:author="Reviewer" w:date="2026-05-05T12:00:00Z" w:name="move1"/><w:moveFrom w:id="1" w:author="Reviewer" w:date="2026-05-05T12:00:00Z"><w:r><w:delText>the moved sentence</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="0"/></w:p>' +
+			'<w:p><w:r><w:t xml:space="preserve">Destination: </w:t></w:r><w:moveToRangeStart w:id="2" w:author="Reviewer" w:date="2026-05-05T12:00:00Z" w:name="move1"/><w:moveTo w:id="3" w:author="Reviewer" w:date="2026-05-05T12:00:00Z"><w:r><w:t>the moved sentence</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="2"/><w:r><w:t>.</w:t></w:r></w:p>';
+		const docPath = await buildRawDoc(MOVED, "moveto-own");
+		const result = await runCli(
+			"replace",
+			docPath,
+			"moved",
+			"relocated",
+			"--track",
+			"--author",
+			"Reviewer",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		const xml = (await readDocumentXml(docPath)).replaceAll(
+			/ w:date="[^"]*"/g,
+			"",
+		);
+		const destination = xml.match(
+			/<w:p>(?:(?!<w:p>).)*Destination.*?<\/w:p>/s,
+		)?.[0];
+		expect(destination).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">Destination: </w:t></w:r><w:moveToRangeStart w:id="2" w:author="Reviewer" w:name="move1"/>' +
+				'<w:moveTo w:id="3" w:author="Reviewer"><w:r><w:t xml:space="preserve">the </w:t></w:r>' +
+				'<w:del w:id="4" w:author="Reviewer"><w:r><w:delText xml:space="preserve">moved</w:delText></w:r></w:del></w:moveTo>' +
+				'<w:ins w:id="5" w:author="Reviewer"><w:r><w:t xml:space="preserve">relocated</w:t></w:r></w:ins>' +
+				'<w:moveTo w:id="6" w:author="Reviewer"><w:r><w:t xml:space="preserve"> sentence</w:t></w:r></w:moveTo>' +
+				'<w:moveToRangeEnd w:id="2"/><w:r><w:t>.</w:t></w:r></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"Origin:\nDestination: the relocated sentence.",
+		);
+		expect((await listChanges(docPath)).map((change) => change.kind)).toEqual([
+			"moveFrom",
+			"moveTo",
+			"del",
+			"ins",
+			"moveTo",
+		]);
+	});
+
+	test("a comment anchored on the replaced phrase keeps its markers; a marker-only tail is not a revision", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount</w:t></w:r></w:ins></w:p>`,
+			"ins-comment-tail",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					docPath,
+					"--anchor",
+					"disputed amount",
+					"--text",
+					"why?",
+				)
+			).exitCode,
+		).toBe(0);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		// The tail (comment range end + reference run) is pure markers: it stays
+		// in Reviewer A's ins after the cut — no fresh <w:ins> around zero
+		// content, so no empty revision, and the comment still brackets the text.
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r><w:commentRangeStart w:id="0"/>` +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del>' +
+				'<w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r></w:ins>' +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins></w:p>',
+		);
+		const changes = await listChanges(docPath);
+		expect(changes.map((change) => [change.kind, change.author])).toEqual([
+			["ins", "Reviewer A"],
+			["del", "Editor"],
+			["ins", "Editor"],
+		]);
+		expect(changes.every((change) => change.text.length > 0)).toBe(true);
+		const list = await runCli("comments", "list", docPath);
+		const comments = list.parsed as Array<{
+			id: string;
+			anchor: { startBlockId: string };
+		}>;
+		expect(comments.map((comment) => [comment.id, comment.anchor])).toEqual([
+			["c0", expect.objectContaining({ startBlockId: "p0" })],
+		]);
+
+		// Rejecting everything removes A's insertion with the comment markers it
+		// held — nothing dangles.
+		const rejected = await runCli("track-changes", "reject", docPath, "--all");
+		expect(rejected.exitCode).toBe(0);
+		const after = await readDocumentXml(docPath);
+		expect(after).not.toContain("<w:commentRangeStart ");
+		expect(after).not.toContain("<w:commentRangeEnd ");
+		expect(after).not.toContain("<w:commentReference ");
+		expect(await viewText(docPath, "--accepted")).toBe("The Client");
 	});
 
 	test("a span CROSSING out of the ins keeps the general walker's shape", async () => {
