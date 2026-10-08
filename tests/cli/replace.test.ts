@@ -1640,6 +1640,89 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 		expect(await viewText(docPath, "--accepted")).toBe("The Client");
 	});
 
+	test("the author's OWN ins drops a tab that was part of the match (only zero-width children survive)", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${INS_A}<w:r><w:t>Total:</w:t><w:tab/><w:t>100 due</w:t></w:r></w:ins></w:p>`,
+			"ins-own-tab",
+		);
+		// The agent types `\t`; the CLI ingress decodes it to a real tab.
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Total:\\t100",
+			"Sum 200",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await viewText(docPath, "--accepted")).toBe("Sum 200 due");
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			`<w:p>${INS_A}<w:r><w:t xml:space="preserve">Sum 200</w:t></w:r><w:r><w:t xml:space="preserve"> due</w:t></w:r></w:ins></w:p>`,
+		);
+	});
+
+	test("a comment that opened inside the cut brackets the replacement in the author's OWN ins", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${INS_A}<w:r><w:t>pay the disputed amount now.</w:t></w:r></w:ins></w:p>`,
+			"ins-own-comment",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					docPath,
+					"--anchor",
+					"amount",
+					"--text",
+					"which?",
+				)
+			).exitCode,
+		).toBe(0);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphXml(docPath, "Editor")).toContain(
+			'<w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r><w:commentRangeEnd w:id="0"/>',
+		);
+		const comments = (await runCli("comments", "list", docPath))
+			.parsed as Array<{
+			anchor: { startOffset: number; endOffset: number };
+		}>;
+		expect(comments.map((comment) => comment.anchor)).toEqual([
+			expect.objectContaining({ startOffset: 8, endOffset: 20 }),
+		]);
+		const rendered = await runCli("read", docPath, "--comments");
+		expect(rendered.stdout).toContain("pay the disputed sum[^c0] now.");
+		expect(rendered.stdout).toContain('[^c0]: "disputed sum"');
+	});
+
+	test("a tail holding only a rendered-page-break run is not a revision", async () => {
+		const docPath = await trackedReplace(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount</w:t></w:r><w:r><w:lastRenderedPageBreak/></w:r></w:ins></w:p>`,
+			"ins-pagebreak-tail",
+			"Editor",
+		);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>` +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del>' +
+				"<w:r><w:lastRenderedPageBreak/></w:r></w:ins>" +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins></w:p>',
+		);
+		expect((await listChanges(docPath)).map((change) => change.author)).toEqual(
+			["Reviewer A", "Editor", "Editor"],
+		);
+	});
+
 	test("a span CROSSING out of the ins keeps the general walker's shape", async () => {
 		// Only a match wholly inside the wrapper is gated; this one starts in the
 		// plain run before it. The expected string is main's output, pinned

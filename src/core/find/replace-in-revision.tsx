@@ -1,4 +1,10 @@
-import { runTextLength, sliceRun, wrapperContent, XmlNode } from "../parser";
+import {
+	inlineMarkerWidth,
+	runTextLength,
+	sliceRun,
+	wrapperContent,
+	XmlNode,
+} from "../parser";
 import { convertTextToDelText, type TrackedMeta } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
 import type { FindView } from "./index";
@@ -28,8 +34,10 @@ import {
  * the wrapper after the cut rather than becoming an empty revision. The one
  * exception to splitting is the editor's OWN `<w:ins>`, rebuilt in place
  * (same id, same date): the replacement is just more of that same insertion,
- * so no split and no `<w:del>` — though every non-text child of the cut (a
- * note or comment reference, a drawing, a text-box anchor) is kept. A
+ * so no split and no `<w:del>` — the cut's characters go, but every
+ * zero-width child (a note or comment reference, a drawing, a text-box
+ * anchor) is kept, range starts ahead of the replacement and the rest behind
+ * it, so a range that opened inside the cut brackets the new words. A
  * `<w:moveTo>` is never merged into, even by its own author: moved text is
  * relocated original text, not the author's new words.
  *
@@ -60,10 +68,12 @@ export function replaceSpanInsideRevision(
 		wrapper.tag === "w:ins" &&
 		wrapper.attributes["w:author"] === tracked.meta.author
 	) {
+		const remnants = cutRemnants(parts.cut);
 		wrapper.children = [
 			...parts.pre,
+			...remnants.before,
 			...runs,
-			...cutRemnants(parts.cut),
+			...remnants.after,
 			...parts.post,
 		];
 		return;
@@ -132,25 +142,44 @@ function partitionWrapperChildren(
 	return { pre, cut, post };
 }
 
-/** What the editor's own cut leaves behind, in order: every non-run child,
- *  and each cut run stripped of its text — a run that still carries a child
- *  beyond `<w:rPr>` (a note or comment reference, a drawing, a text-box
- *  anchor) stays, so whatever was anchored on the replaced words survives;
- *  a text-only run is dropped. */
-function cutRemnants(cut: XmlNode[]): XmlNode[] {
-	const out: XmlNode[] = [];
+/** What the editor's own cut leaves behind, split around the replacement.
+ *  Every character of the cut goes — `<w:t>`/`<w:delText>` and the width-1
+ *  equivalents (`<w:tab>`, `<w:br>`, `<w:sym>`, …) the offsets counted — but
+ *  each zero-width child (a note or comment reference, a drawing, a text-box
+ *  anchor, a page-break hint) is kept, so whatever was anchored on the
+ *  replaced words survives. Range starts, and anything ahead of the first cut
+ *  run, go BEFORE the replacement; range ends, reference runs and the kept
+ *  remnants go AFTER it — a range that opened inside the cut brackets the new
+ *  words instead of collapsing to a point. */
+function cutRemnants(cut: XmlNode[]): { before: XmlNode[]; after: XmlNode[] } {
+	const before: XmlNode[] = [];
+	const after: XmlNode[] = [];
+	let seenRun = false;
 	for (const child of cut) {
 		if (child.tag !== "w:r") {
-			out.push(child);
+			if (!seenRun || RANGE_START_TAGS.has(child.tag)) before.push(child);
+			else after.push(child);
 			continue;
 		}
+		seenRun = true;
 		child.children = child.children.filter(
-			(part) => part.tag !== "w:t" && part.tag !== "w:delText",
+			(part) =>
+				part.tag !== "w:t" &&
+				part.tag !== "w:delText" &&
+				inlineMarkerWidth(part) === 0,
 		);
-		if (child.children.some((part) => part.tag !== "w:rPr")) out.push(child);
+		if (child.children.some((part) => part.tag !== "w:rPr")) after.push(child);
 	}
-	return out;
+	return { before, after };
 }
+
+const RANGE_START_TAGS: ReadonlySet<string> = new Set([
+	"w:bookmarkStart",
+	"w:commentRangeStart",
+	"w:permStart",
+	"w:moveFromRangeStart",
+	"w:moveToRangeStart",
+]);
 
 /** The cut, deleted in document order: each contiguous group of runs becomes
  *  one editor `<w:del>` (text → delText); a non-run child between groups
@@ -188,14 +217,19 @@ const PURE_MARKER_TAGS: ReadonlySet<string> = new Set([
 	"w:proofErr",
 ]);
 
+const PURE_MARKER_RUN_CHILDREN: ReadonlySet<string> = new Set([
+	"w:rPr",
+	"w:commentReference",
+	"w:lastRenderedPageBreak",
+]);
+
 /** A range/annotation marker that is not revision content: one of the
- *  paragraph-level marker tags, or a run holding only a comment reference. */
+ *  paragraph-level marker tags, or a run holding nothing but a comment
+ *  reference and/or a rendered-page-break hint. */
 function isPureMarker(node: XmlNode): boolean {
 	if (PURE_MARKER_TAGS.has(node.tag)) return true;
 	if (node.tag !== "w:r") return false;
-	return node.children.every(
-		(part) => part.tag === "w:rPr" || part.tag === "w:commentReference",
-	);
+	return node.children.every((part) => PURE_MARKER_RUN_CHILDREN.has(part.tag));
 }
 
 /** The tail of a split wrapper: same tag, author and date, fresh `w:id`
