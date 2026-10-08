@@ -62,6 +62,7 @@ export {
 	Edit,
 	EditError,
 	type ParagraphContentSpec,
+	type ParagraphEditResult,
 	type RunFormat,
 	resolveClearTags,
 } from "./edit";

@@ -1,12 +1,13 @@
 # src/core/track-changes — `TrackChanges` lens, accept/reject machinery, tracked-range shapes
 
-Five files behind the `@core/track-changes` barrel ([index.tsx](index.tsx)):
+Five files behind the `@core/track-changes` barrel ([index.tsx](index.tsx)), plus one `core/edit` imports directly:
 
 - [index.tsx](index.tsx) — the `TrackChanges` lens + small free helpers (`resolveAuthor`, `resolveDate`, `convertTextToDelText`)
 - [apply.ts](apply.ts) — accept/reject state machine: `previewTrackedChanges`, `applyTrackedChanges`, `applyTrackedDecisions` (the mixed accept+reject pass behind `track-changes apply` — both lists resolved against the pre-mutation tree, applied in one reverse-preorder traversal via the shared `applyResolvedTargets` core), `collectTrackedChanges`, the `actionFor` dispatch table, body-side note pairing, table-grid resync
 - [emit.tsx](emit.tsx) — leaf primitives: `<Ins meta>`, `<Del meta>`, `markParagraphMarkAs(paragraph, kind, meta)` (drops a self-closing ins/del marker into `<w:pPr><w:rPr>`)
 - [replace.tsx](replace.tsx) — range edit/delete shapes empirically validated against Word: `applyTrackedRangeReplace`, `applyTrackedRangeDelete`, `applyUntrackedRangeReplace`, `applyUntrackedRangeDelete`, the shared `assertParagraphOnlyTrackedRange` guard + `TrackedRangeConflictError`, `applyFormattingPreservingEdit` (the word-level diff for `edit --text`), and `removeParagraphLine` — the cell-safe single-paragraph removal shared by `docx delete --at pN` and `docx edit --at pN --text ""` (a `<w:tc>`'s last paragraph is blanked, not deleted, so we never emit an invalid empty `<w:tc/>`)
 - [preserve-formatting.tsx](preserve-formatting.tsx) — the LCS-based word-level diff that drives `applyFormattingPreservingEdit`: `extractOldTokens`, `tokenize`, `diffTokens`, `buildTrackedRuns`, `buildUntrackedRuns`
+- [pending-authors.ts](pending-authors.ts) — `watchPendingRevisions`, the before/after snapshot `Edit.paragraph`/`Edit.range` use to report the other authors whose pending revisions a content rebuild resolved (issue #17; not re-exported by the barrel)
 
 ## TrackChanges lens API
 
@@ -91,6 +92,8 @@ A revision wrapper can sit inside another (an editor's `<w:del>` inside a review
 2. **Tokenizes the new text** identically.
 3. **LCS diff** aligns new tokens against old (`diffTokens`).
 4. **Re-emits runs** grouped by rPr: untracked path emits only kept + inserted tokens (inherited rPr from nearest matched neighbor); tracked path emits kept tokens as plain runs, inserts in `<w:ins>`, deletes in `<w:del>`. Pure pPr properties (`--style`, `--alignment`) apply in place via `applyParagraphOptionsInPlace`.
+
+**Other authors' pending revisions are resolved, not kept (issue #17, interim).** The diff rebuilds runs from the visible text under the single-author model, so another author's `<w:ins>` becomes plain text (or, on the `--markdown` path, is dropped) and their `<w:del>` vanishes. Until the rebuild keeps them, the CLI warns on stderr (exit 0) whenever a content edit — whole-paragraph `text`/`markdown`/`runs` (single or `--batch`), a `pN-pM` range replace, or `code edit` — resolves pending revisions by an author other than the editor, and points at span edits (`replace`, `edit --at pN:S-E`), which keep them. `Edit.paragraph` returns the authors as `resolvedAuthors` (`Edit.range` returns the list): `watchPendingRevisions` ([pending-authors.ts](pending-authors.ts)) snapshots the other authors' `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>`/`<w:pPrChange>` BEFORE the rebuild and reports the ones missing from the edited region AFTER it. Don't replace that with a prediction of what each path keeps — the `--text` diff carries text boxes and inline content controls through and keeps the pPr, while the markdown/runs replace drops the box and any pPrChange and, under tracking, keeps an existing `<w:del>` but drops every `<w:ins>`; only the before/after diff is right for all of them.
 
 rPr equality is structural (XML-string compare on cloned nodes). The codebase's emitter produces canonical output so this works in practice; non-canonical rPr from an external producer might leave equivalent rPr blocks unmerged (each token gets its own run). Acceptable.
 
