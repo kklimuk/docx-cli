@@ -38,7 +38,6 @@ export function paragraphTextLength(
 	paragraph: XmlNode,
 	view: FindView = "current",
 ): number {
-	if (view === "current") return sumRunBearingTextLength(paragraph.children);
 	return sumVisibleTextLength(paragraph.children, view);
 }
 

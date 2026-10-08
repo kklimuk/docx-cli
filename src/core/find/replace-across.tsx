@@ -183,10 +183,7 @@ function splitChildrenAt(
 			cursor += length;
 			continue;
 		}
-		if (
-			isRunBearingWrapper(child.tag) &&
-			isWrapperVisibleInView(child.tag, view)
-		) {
+		if (isWrapperVisibleInView(child.tag, view)) {
 			const length = sumVisibleTextLength(wrapperContent(child), view);
 			if (cursor + length <= offset) {
 				before.push(child);
@@ -215,10 +212,7 @@ function splitChildrenAt(
 function firstVisibleRun(children: XmlNode[], view: FindView): XmlNode | null {
 	for (const child of children) {
 		if (child.tag === "w:r") return child;
-		if (
-			isRunBearingWrapper(child.tag) &&
-			isWrapperVisibleInView(child.tag, view)
-		) {
+		if (isWrapperVisibleInView(child.tag, view)) {
 			const nested = firstVisibleRun(wrapperContent(child), view);
 			if (nested) return nested;
 		}
