@@ -658,6 +658,8 @@ async function buildApply(
 	// (so a trailing clear/set-format targets the post-edit node, not the
 	// replaced one). For `text`, color/bold/italic land on the new runs via the
 	// content build, so they're excluded from the ride-along (the rest still ride).
+	const ride = readRunFormatRideAlong(raw, index, kind === "text");
+	const restyleFollows = Boolean(clearTags || ride);
 	const contentNode = await buildWholeParagraphContent(
 		document,
 		raw,
@@ -665,12 +667,12 @@ async function buildApply(
 		kind,
 		blockRef,
 		author,
-		opts,
+		{ ...opts, restyleFollows },
 	);
-	const ride = readRunFormatRideAlong(raw, index, kind === "text");
 	return () => {
 		const result = contentNode();
 		resolvedAuthors.push(...result.resolvedAuthors);
+		if (!restyleFollows) return;
 		const edit = new Edit(document);
 		if (clearTags) edit.clearFormattingNode(result.node, null, clearTags);
 		if (ride) edit.setFormattingNode(result.node, null, ride);
@@ -688,7 +690,7 @@ async function buildWholeParagraphContent(
 	kind: (typeof CONTENT_KEYS)[number],
 	blockRef: BlockReference,
 	author: string | undefined,
-	opts: EntryOptions,
+	opts: EntryOptions & { restyleFollows: boolean },
 ): Promise<() => ParagraphEditResult> {
 	const paragraphOptions = readParagraphOptions(document, raw, index);
 	if (kind === "text") {
@@ -748,6 +750,7 @@ async function buildWholeParagraphContent(
 				authorFlag: author,
 				noFormatting: opts.noFormatting,
 				track: opts.track,
+				restyleFollows: opts.restyleFollows,
 			},
 		);
 }

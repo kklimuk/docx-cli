@@ -39,7 +39,11 @@ import {
 	bringsNewBlockStructure,
 	inheritParagraphFormattingIfPlain,
 } from "../paragraph-inheritance";
-import { partitionParagraphRuns, XmlNode } from "../parser";
+import {
+	partitionParagraphRuns,
+	TRACKED_CHANGE_WRAPPER_TAGS,
+	XmlNode,
+} from "../parser";
 import {
 	applyColumns,
 	applyPageGeometry,
@@ -65,6 +69,7 @@ import {
 	reattachObjectRuns,
 	TrackedRangeConflictError,
 } from "../track-changes/replace";
+import { markdownAsTextEdit } from "./markdown-as-text-edit";
 
 /** Cross-cutting lens over "edit an existing block." Stateless — each method
  * takes an already-resolved `BlockReference` (or `BlockRangeReference`) plus
@@ -134,7 +139,16 @@ export class Edit {
 	paragraph(
 		blockRef: BlockReference,
 		spec: ParagraphContentSpec,
-		opts: { authorFlag?: string; noFormatting?: boolean; track?: boolean } = {},
+		opts: {
+			authorFlag?: string;
+			noFormatting?: boolean;
+			track?: boolean;
+			/** The caller restyles the returned paragraph's runs afterward (ride-
+			 *  along `--size`/`--clear`): a markdown edit then replaces the whole
+			 *  paragraph, so the restyle touches only the NEW runs — on the word-
+			 *  diff path it would also restyle the kept old words, untracked. */
+			restyleFollows?: boolean;
+		} = {},
 	): ParagraphEditResult {
 		const targetIndex = blockRef.parent.indexOf(blockRef.node);
 		if (targetIndex === -1) {
@@ -167,11 +181,12 @@ export class Edit {
 		// instead of collapsing to a zero-length range (the orphaned-comment bug).
 		const commentMarkers = extractCommentMarkers(blockRef.node);
 
-		if (canPreserveFormatting(spec, opts.noFormatting ?? false)) {
+		const textEdit = wordDiffText(blockRef.node, spec, opts, tracked);
+		if (textEdit !== null) {
 			applyFormattingPreservingEdit(
 				this.document,
 				blockRef.node,
-				spec.text,
+				textEdit,
 				spec.paragraphOptions,
 				opts.authorFlag,
 				tracked,
@@ -595,6 +610,46 @@ export class EditError extends Error {
 		super(message);
 		this.name = "EditError";
 	}
+}
+
+/** The text `Edit.paragraph` applies as a word-level diff
+ *  (`applyFormattingPreservingEdit`), or null when the edit replaces the whole
+ *  paragraph. `--text` qualifies per `canPreserveFormatting`; a single-paragraph
+ *  markdown rewrite that changes no visible formatting is a TEXT edit too, so a
+ *  clause rewrite redlines only the changed words and unchanged words keep their
+ *  runs (see `markdownAsTextEdit`) — unless the caller restyles the result
+ *  afterward (`restyleFollows`), which would then restyle the kept old words
+ *  untracked. */
+function wordDiffText(
+	paragraph: XmlNode,
+	spec: ParagraphContentSpec,
+	opts: { noFormatting?: boolean; restyleFollows?: boolean },
+	tracked: boolean,
+): string | null {
+	if (tracked && hasPendingRevisions(paragraph)) return null;
+	if (opts.noFormatting) return null;
+	if (canPreserveFormatting(spec, false)) return spec.text;
+	if (spec.kind !== "markdown-blocks" || opts.restyleFollows) return null;
+	return markdownAsTextEdit(paragraph, spec.blocks);
+}
+
+/** Whether a paragraph already carries pending tracked insertions/deletions/
+ *  moves. The `--text` word-diff rebuilds a paragraph from its VISIBLE runs, so
+ *  under tracking it would unwrap a prior `<w:ins>` into plain text and drop a
+ *  prior `<w:del>` outright — a second tracked `--text` edit of a clause baked
+ *  the first rewrite into the baseline and erased the counterparty's original
+ *  wording, unrecoverable by reject (haiku contract-markup, 2026.10.01 r1). Such
+ *  a paragraph takes the whole-paragraph tracked replace instead, which keeps
+ *  every prior deletion inside its `<w:del>`: a coarser redline that keeps the
+ *  original wording. A text box's story is its own set of paragraphs, so its
+ *  revisions don't make the anchor paragraph "pending". */
+function hasPendingRevisions(paragraph: XmlNode): boolean {
+	for (const child of paragraph.children) {
+		if (TRACKED_CHANGE_WRAPPER_TAGS.has(child.tag)) return true;
+		if (child.tag === "w:txbxContent") continue;
+		if (child.children.length > 0 && hasPendingRevisions(child)) return true;
+	}
+	return false;
 }
 
 /** The formatting-preservation path applies only to `--text` (not `--runs`,

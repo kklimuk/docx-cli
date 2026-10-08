@@ -462,6 +462,7 @@ async function commitBlockEdit(
 					authorFlag: opts.authorFlag,
 					noFormatting: opts.noFormatting,
 					track,
+					restyleFollows: Boolean(opts.clearTags || opts.setFormat),
 				},
 			));
 		} else if (opts.spec.kind === "removeLine") {

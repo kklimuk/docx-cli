@@ -5089,3 +5089,218 @@ describe("docx edit --markdown — inheritance parity with --text", () => {
 		expect(ast.blocks[0]?.runs[0]?.font).toBe("Arial");
 	});
 });
+
+describe("edit --text under tracking: a re-edit never loses the original wording", () => {
+	// The contract-markup 2026.10.01 r1 shape: the agent rewrote a clause with a
+	// tracked `--text` (word diff), then rewrote it AGAIN. The diff rebuilt the
+	// paragraph from its visible runs, unwrapping the first `<w:ins>` into plain
+	// text and dropping the first `<w:del>` — the counterparty's original clause
+	// vanished from the file, and reject-all restored the FIRST rewrite instead.
+	for (const viaBatch of [false, true]) {
+		test(`second tracked --text edit keeps the original (${viaBatch ? "--batch" : "single"})`, async () => {
+			const docPath = await docFrom(
+				`text-re-edit-${viaBatch ? "batch" : "single"}`,
+				"The Contractor shall defend and hold harmless the Company.\n\nTail clause.\n",
+			);
+			await runCli("track-changes", docPath, "on");
+			const editTo = async (text: string) => {
+				if (!viaBatch) {
+					return runCli("edit", docPath, "--at", "p0", "--text", text);
+				}
+				const batchPath = join(tempWorkspace("text-re-edit-jsonl"), "e.jsonl");
+				await Bun.write(batchPath, JSON.stringify({ at: "p0", text }));
+				return runCli("edit", docPath, "--batch", batchPath);
+			};
+			expect((await editTo("First rewrite of the clause.")).exitCode).toBe(0);
+			expect((await editTo("Second rewrite of the clause.")).exitCode).toBe(0);
+
+			const lineIn = async (...flags: string[]) =>
+				(await runCli("read", docPath, ...flags)).stdout
+					.split("\n")
+					.find((line) => line.includes("p0")) ?? "";
+			expect(await lineIn("--baseline")).toContain(
+				"The Contractor shall defend and hold harmless the Company.",
+			);
+			expect(await lineIn("--accepted")).toContain(
+				"Second rewrite of the clause.",
+			);
+			expect(await lineIn("--accepted")).not.toContain("First rewrite");
+
+			await runCli("track-changes", "reject", docPath, "--all");
+			expect(await lineIn()).toContain(
+				"The Contractor shall defend and hold harmless the Company.",
+			);
+			expect(await lineIn()).not.toContain("rewrite");
+		});
+	}
+});
+
+describe("edit with markdown that changes only words is a word-level edit", () => {
+	async function trackedClause(label: string, text: string): Promise<string> {
+		const docPath = await docFrom(label, `${text}\n\nTail clause.\n`);
+		await runCli("track-changes", docPath, "on");
+		return docPath;
+	}
+	async function trackedChanges(
+		docPath: string,
+	): Promise<Array<{ kind: string; text: string; group?: string }>> {
+		return (await runCli("track-changes", "list", docPath)).parsed as Array<{
+			kind: string;
+			text: string;
+			group?: string;
+		}>;
+	}
+
+	test("a plain clause rewrite redlines only the changed word", async () => {
+		const docPath = await trackedClause(
+			"md-word-diff",
+			"All payments are Net 90 from the Company acceptance.",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"All payments are Net 30 from the Company acceptance.",
+		);
+		expect(result.exitCode).toBe(0);
+		const changes = await trackedChanges(docPath);
+		expect(changes.map((change) => [change.kind, change.text.trim()])).toEqual([
+			["del", "90"],
+			["ins", "30"],
+		]);
+		expect(new Set(changes.map((change) => change.group)).size).toBe(1);
+		const accepted = (await runCli("read", docPath, "--accepted")).stdout;
+		expect(accepted).toContain(
+			"All payments are Net 30 from the Company acceptance.",
+		);
+	});
+
+	test("a paragraph with visible emphasis keeps the whole-paragraph path", async () => {
+		const docPath = await trackedClause(
+			"md-word-diff-bold",
+			"All payments are **Net 90** from acceptance.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"All payments are **Net 30** from acceptance.",
+		);
+		const accepted = (await runCli("read", docPath, "--accepted")).stdout;
+		expect(accepted).toContain("All payments are **Net 30** from acceptance.");
+		// The whole-paragraph path redlines the clause, not just the number.
+		const deleted = (await trackedChanges(docPath))
+			.filter((change) => change.kind === "del")
+			.map((change) => change.text)
+			.join("");
+		expect(deleted).toContain("All payments are");
+	});
+
+	test("a clause ending in a space redlines no stray whitespace", async () => {
+		const docPath = await trackedClause("md-word-diff-edge", "Head.");
+		await runCli(
+			"raw",
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--xml",
+			'<w:p><w:r><w:t xml:space="preserve">All payments are Net 90 from acceptance. </w:t></w:r></w:p>',
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"All payments are Net 30 from acceptance.",
+		);
+		const changes = await trackedChanges(docPath);
+		expect(changes.map((change) => [change.kind, change.text.trim()])).toEqual([
+			["del", "90"],
+			["ins", "30"],
+		]);
+	});
+
+	test("removing an inline equation removes it (no word diff over math)", async () => {
+		const docPath = await trackedClause(
+			"md-word-diff-math",
+			"The area is $x^2$ in square meters.",
+		);
+		await runCli("track-changes", docPath, "off");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"The area is given in square meters.",
+		);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("The area is given in square meters.");
+		expect(markdown).not.toContain("$x^2$");
+	});
+
+	test("a positional tab and non-breaking hyphen survive a tracked reject", async () => {
+		const docPath = await trackedClause("md-word-diff-ptab", "Head.");
+		await runCli(
+			"raw",
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--xml",
+			'<w:p><w:r><w:t>Name</w:t></w:r><w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/></w:r><w:r><w:t xml:space="preserve">Page one co</w:t></w:r><w:r><w:noBreakHyphen/></w:r><w:r><w:t>op</w:t></w:r></w:p>',
+		);
+		await runCli("edit", docPath, "--at", "p1", "Name\tPage two co\u2011op");
+		await runCli("track-changes", "reject", docPath, "--all");
+		const xml = await (await Pkg.open(docPath)).readText("word/document.xml");
+		expect(xml).toContain("<w:ptab");
+		expect(xml).toContain("<w:noBreakHyphen/>");
+	});
+
+	test("a new east-asian font span is kept, not diffed away", async () => {
+		const docPath = await trackedClause(
+			"md-word-diff-east-asia",
+			"Company name 株式会社 here.",
+		);
+		await runCli("track-changes", docPath, "off");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			'Company name <span data-font-east-asia="MS Mincho">株式会社</span> here.',
+		);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain('data-font-east-asia="MS Mincho"');
+	});
+
+	test("filling an empty cell keeps the span's face and size", async () => {
+		const docPath = await docFrom(
+			"md-word-diff-empty-cell",
+			"| Name | Value |\n| --- | --- |\n| A |  |\n",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r1c1",
+			'<span style="font-size:8pt">Filled</span>',
+		);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("font-size:8pt");
+	});
+
+	test("dropping a link's markup removes the link (no word diff over links)", async () => {
+		const docPath = await trackedClause(
+			"md-word-diff-link",
+			"See [the terms](https://example.com/terms) today.",
+		);
+		await runCli("track-changes", docPath, "off");
+		await runCli("edit", docPath, "--at", "p0", "See the terms tomorrow.");
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("See the terms tomorrow.");
+		expect(markdown).not.toContain("example.com");
+	});
+});

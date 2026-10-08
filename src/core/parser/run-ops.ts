@@ -143,6 +143,14 @@ export function inlineMarkerWidth(child: XmlNode): number {
 	}
 }
 
+/** The tracked-change wrappers a paragraph's runs can sit in. */
+export const TRACKED_CHANGE_WRAPPER_TAGS: ReadonlySet<string> = new Set([
+	"w:ins",
+	"w:del",
+	"w:moveFrom",
+	"w:moveTo",
+]);
+
 /** Paragraph-level wrappers whose inner runs contribute to the paragraph's
  *  text content. Anything that `walkRunContainer` in `core/ast/read.ts`
  *  recurses into (besides `<w:r>` itself) must appear here so the AST text
@@ -160,10 +168,7 @@ export function inlineMarkerWidth(child: XmlNode): number {
  *    what keeps a multi-Choice wrapper counted exactly as the reader reads it.
  */
 export const RUN_BEARING_WRAPPER_TAGS: ReadonlySet<string> = new Set([
-	"w:ins",
-	"w:del",
-	"w:moveFrom",
-	"w:moveTo",
+	...TRACKED_CHANGE_WRAPPER_TAGS,
 	"w:hyperlink",
 	"w:fldSimple",
 	"w:smartTag",
