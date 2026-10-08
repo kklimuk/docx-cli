@@ -123,7 +123,7 @@ export function sliceRun(run: XmlNode, start: number, end: number): XmlNode {
  *  `core/ast/read.ts` and `paragraphTextForView` in `core/find/index.ts` — the
  *  three must agree or `find` and `replace`/`comments add`/`hyperlinks add`
  *  misalign. */
-function inlineMarkerWidth(child: XmlNode): number {
+export function inlineMarkerWidth(child: XmlNode): number {
 	switch (child.tag) {
 		case "w:noBreakHyphen":
 		case "w:softHyphen":

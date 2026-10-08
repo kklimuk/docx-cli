@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import {
+	buildRawDoc,
+	readDocumentXml,
+	wordTextBoxParagraphXml,
+} from "./helpers";
 
 type Body = {
 	blocks: Array<{
@@ -1200,4 +1205,557 @@ test("replace and replace batch apply complex-script override only to replacemen
 			)
 		).exitCode,
 	).toBe(2);
+});
+
+// Issue #13: a tracked replace whose match lies WHOLLY inside another author's
+// pending <w:ins>. Main put the replacement as a bare run inside that ins
+// (credited to the other author) and, when the match sat in a later run of the
+// ins (here: after a nested <w:del>), started its offset walk at that run's
+// offset and cut the wrong words. Word's shape: the other author's ins keeps
+// its id and the text before the match plus the editor's nested <w:del> of
+// the cut; the replacement rides the editor's own top-level <w:ins>; the text
+// after the match rides a copy of the ins with a fresh id. When the editor IS
+// that author the ins is rebuilt in place (no split, no <w:del>).
+describe("docx replace --track inside another author's insertion (#13)", () => {
+	const INS_A =
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z">';
+	const SINGLE_RUN = `<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>`;
+	const NESTED_DEL = `<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>${INS_A}<w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>`;
+
+	async function trackedReplace(
+		body: string,
+		label: string,
+		author: string,
+		pattern = "disputed amount",
+		...flags: string[]
+	): Promise<string> {
+		const docPath = await buildRawDoc(body, label);
+		const result = await runCli(
+			"replace",
+			docPath,
+			pattern,
+			"disputed sum",
+			"--track",
+			"--author",
+			author,
+			...flags,
+		);
+		expect(result.exitCode).toBe(0);
+		// Every emitted shape must pass the ECMA-376 schema gate Word applies.
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		return docPath;
+	}
+
+	/** The first `<w:p>` of document.xml with the editor's (now) dates pinned,
+	 *  so the whole revision structure can be asserted as one string. */
+	async function paragraphXml(
+		docPath: string,
+		editor: string,
+	): Promise<string> {
+		const xml = await readDocumentXml(docPath);
+		const paragraph = xml.match(/<w:p>.*?<\/w:p>/s)?.[0] ?? "";
+		return paragraph.replaceAll(
+			new RegExp(`(w:author="${editor}") w:date="[^"]*"`, "g"),
+			'$1 w:date="NOW"',
+		);
+	}
+
+	async function readPart(docPath: string, name: string): Promise<string> {
+		return await (await Pkg.open(docPath)).readText(name);
+	}
+
+	async function viewText(docPath: string, view: string): Promise<string> {
+		const result = await runCli("read", docPath, view);
+		return result.stdout
+			.split("\n")
+			.filter((line) => line.trim() && !/^<!--.*-->$/.test(line.trim()))
+			.map((line) => line.replace(/\s*<!--\s*p\d+\s*-->\s*$/, ""))
+			.join("\n");
+	}
+
+	async function listChanges(
+		docPath: string,
+	): Promise<
+		Array<{ id: string; kind: string; text: string; author: string }>
+	> {
+		const result = await runCli("track-changes", "list", docPath);
+		return result.parsed as Array<{
+			id: string;
+			kind: string;
+			text: string;
+			author: string;
+		}>;
+	}
+
+	test("case 1: the other author's ins is split around the editor's del + ins, tail gets a fresh id", async () => {
+		const docPath = await trackedReplace(SINGLE_RUN, "ins-split", "Editor");
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>` +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del></w:ins>' +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
+				'<w:ins w:id="4" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"The Client may withhold a disputed sum.",
+		);
+
+		const changes = await listChanges(docPath);
+		expect(
+			changes.map((change) => [change.kind, change.author, change.text]),
+		).toEqual([
+			["ins", "Reviewer A", "may withhold a "],
+			["del", "Editor", "disputed amount"],
+			["ins", "Editor", "disputed sum"],
+			["ins", "Reviewer A", "."],
+		]);
+		// revN pairing is per author: the editor's del+ins is one group, and
+		// Reviewer A's head ins never pairs with the editor's nested del.
+		const grouped = changes as Array<{ author: string; group?: string }>;
+		const editorGroups = grouped
+			.filter((change) => change.author === "Editor")
+			.map((change) => change.group);
+		expect(editorGroups).toEqual(["rev0", "rev0"]);
+		expect(
+			grouped
+				.filter((change) => change.author === "Reviewer A")
+				.every((change) => change.group === undefined),
+		).toBe(true);
+	});
+
+	test("case 2: a nested deletion by a third author stays put and does not shift the cut", async () => {
+		const docPath = await trackedReplace(
+			NESTED_DEL,
+			"ins-nested-del",
+			"Editor",
+		);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>` +
+				'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>' +
+				'<w:del w:id="3" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del></w:ins>' +
+				'<w:ins w:id="4" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
+				'<w:ins w:id="5" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"Fees are due. The Client may withhold disputed sum.",
+		);
+		const changes = await listChanges(docPath);
+		expect(changes.map((change) => [change.kind, change.author])).toEqual([
+			["ins", "Reviewer A"],
+			["del", "Reviewer B"],
+			["del", "Editor"],
+			["ins", "Editor"],
+			["ins", "Reviewer A"],
+		]);
+	});
+
+	test("case 3: the author's OWN ins is rebuilt in place — same id, no del, no split", async () => {
+		const docPath = await trackedReplace(SINGLE_RUN, "ins-own", "Reviewer A");
+		// Nothing to pin: no Editor revision exists, and A's date must survive.
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z">' +
+				'<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">disputed sum</w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"The Client may withhold a disputed sum.",
+		);
+		expect(await listChanges(docPath)).toHaveLength(1);
+	});
+
+	test("the author match is exact: 'Reviewer a' is another author", async () => {
+		const docPath = await trackedReplace(SINGLE_RUN, "ins-case", "Reviewer a");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain('<w:del w:id="2" w:author="Reviewer a"');
+		expect(xml).toContain('<w:ins w:id="3" w:author="Reviewer a"');
+		expect(xml.match(/<w:ins /g)).toHaveLength(3);
+	});
+
+	test("rejecting the editor's revisions restores the other author's text intact", async () => {
+		const docPath = await trackedReplace(SINGLE_RUN, "ins-reject", "Editor");
+		const editorIds = (await listChanges(docPath))
+			.filter((change) => change.author === "Editor")
+			.map((change) => change.id);
+		expect(editorIds).toHaveLength(2);
+		const rejected = await runCli(
+			"track-changes",
+			"reject",
+			docPath,
+			...editorIds.flatMap((id) => ["--at", id]),
+		);
+		expect(rejected.exitCode).toBe(0);
+
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"The Client may withhold a disputed amount.",
+		);
+		expect(await viewText(docPath, "--baseline")).toBe("The Client");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain('w:author="Editor"');
+		expect(xml).toContain(
+			`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r><w:r><w:t xml:space="preserve">disputed amount</w:t></w:r></w:ins>`,
+		);
+		expect((await listChanges(docPath)).map((change) => change.text)).toEqual([
+			"may withhold a disputed amount",
+			".",
+		]);
+	});
+
+	test("--all: two matches inside the same ins split it twice, right to left", async () => {
+		const docPath = await trackedReplace(
+			`<w:p>${INS_A}<w:r><w:t>disputed amount beta disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"ins-all",
+			"Editor",
+			"disputed amount",
+			"--all",
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"disputed sum beta disputed sum.",
+		);
+		const changes = await listChanges(docPath);
+		// The head of A's ins holds only the editor's nested del, so the reader
+		// lists it with no visible text of its own.
+		expect(
+			changes.map((change) => [change.kind, change.author, change.text]),
+		).toEqual([
+			["ins", "Reviewer A", ""],
+			["del", "Editor", "disputed amount"],
+			["ins", "Editor", "disputed sum"],
+			["ins", "Reviewer A", " beta "],
+			["del", "Editor", "disputed amount"],
+			["ins", "Editor", "disputed sum"],
+			["ins", "Reviewer A", "."],
+		]);
+		const ids = [
+			...(await readDocumentXml(docPath)).matchAll(/w:id="(\d+)"/g),
+		].map((match) => match[1]);
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	test("a third author's deletion INSIDE the match keeps its place between two editor dels", async () => {
+		const docPath = await trackedReplace(
+			`<w:p>${INS_A}<w:r><w:t xml:space="preserve">pay disputed </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">old </w:delText></w:r></w:del><w:r><w:t xml:space="preserve">amount now.</w:t></w:r></w:ins></w:p>`,
+			"ins-del-inside",
+			"Editor",
+		);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			`<w:p>${INS_A}<w:r><w:t xml:space="preserve">pay </w:t></w:r>` +
+				'<w:del w:id="3" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed </w:delText></w:r></w:del>' +
+				'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">old </w:delText></w:r></w:del>' +
+				'<w:del w:id="4" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">amount</w:delText></w:r></w:del></w:ins>' +
+				'<w:ins w:id="5" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
+				'<w:ins w:id="6" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve"> now.</w:t></w:r></w:ins></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe("pay disputed sum now.");
+		// Current view keeps the original word order of the deleted text.
+		const current = await runCli("read", docPath, "--current");
+		expect(current.stdout.replaceAll(/\[\^tc\d+\]/g, "")).toContain(
+			"{++pay ++}{--disputed --}{--old --}{--amount--}{++disputed sum++}{++ now.++}",
+		);
+	});
+
+	test("the author's OWN ins keeps a footnote reference and a text-box anchor that sat inside the cut", async () => {
+		const docPath = join(tempWorkspace("ins-own-anchors"), "out.docx");
+		await runCli("create", docPath, "--text", "seed");
+		expect(
+			(
+				await runCli(
+					"footnotes",
+					"add",
+					docPath,
+					"--at",
+					"p0",
+					"--text",
+					"the note",
+				)
+			).exitCode,
+		).toBe(0);
+		const footnotesBefore = await readPart(docPath, "word/footnotes.xml");
+		// Word's text-box run, anchored mid-word ("am|ount"), and the footnote
+		// reference run the CLI emits — both inside Reviewer A's insertion.
+		const box = wordTextBoxParagraphXml(["box story"], { leadingText: "am" });
+		const namespaces = box.slice("<w:p".length, box.indexOf(">"));
+		const shapeRun = box.slice(
+			box.indexOf("<w:r>"),
+			box.lastIndexOf("</w:r>") + "</w:r>".length,
+		);
+		const paragraph =
+			`<w:p${namespaces}><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}` +
+			'<w:r><w:t xml:space="preserve">may withhold a disputed</w:t></w:r>' +
+			'<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>' +
+			`<w:r><w:t xml:space="preserve"> </w:t></w:r>${shapeRun}<w:r><w:t>ount.</w:t></w:r></w:ins></w:p>`;
+		expect(
+			(
+				await runCli(
+					"raw",
+					"replace",
+					docPath,
+					"--at",
+					"p0",
+					"--xml",
+					paragraph,
+				)
+			).exitCode,
+		).toBe(0);
+		const before = await runCli("read", docPath);
+		expect(before.stdout).toContain(
+			"The Client may withhold a disputed[^fn1] amount.",
+		);
+		expect(before.stdout).toContain("box story");
+
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		const after = await runCli("read", docPath);
+		expect(after.stdout).toContain(
+			"The Client may withhold a disputed sum[^fn1].",
+		);
+		expect(after.stdout).toContain("docx:textbox tbx0");
+		expect(after.stdout).toContain("box story");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		expect(xml.match(/<w:ins /g)).toHaveLength(1);
+		expect(xml.match(/<w:footnoteReference /g)).toHaveLength(1);
+		expect(xml.match(/<w:txbxContent>/g)).toHaveLength(2);
+		expect(await readPart(docPath, "word/footnotes.xml")).toBe(footnotesBefore);
+	});
+
+	test("the author's OWN moveTo is split, never merged into (moved text is not new words)", async () => {
+		const MOVED =
+			'<w:p><w:r><w:t xml:space="preserve">Origin: </w:t></w:r><w:moveFromRangeStart w:id="0" w:author="Reviewer" w:date="2026-05-05T12:00:00Z" w:name="move1"/><w:moveFrom w:id="1" w:author="Reviewer" w:date="2026-05-05T12:00:00Z"><w:r><w:delText>the moved sentence</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="0"/></w:p>' +
+			'<w:p><w:r><w:t xml:space="preserve">Destination: </w:t></w:r><w:moveToRangeStart w:id="2" w:author="Reviewer" w:date="2026-05-05T12:00:00Z" w:name="move1"/><w:moveTo w:id="3" w:author="Reviewer" w:date="2026-05-05T12:00:00Z"><w:r><w:t>the moved sentence</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="2"/><w:r><w:t>.</w:t></w:r></w:p>';
+		const docPath = await buildRawDoc(MOVED, "moveto-own");
+		const result = await runCli(
+			"replace",
+			docPath,
+			"moved",
+			"relocated",
+			"--track",
+			"--author",
+			"Reviewer",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		const xml = (await readDocumentXml(docPath)).replaceAll(
+			/ w:date="[^"]*"/g,
+			"",
+		);
+		const destination = xml.match(
+			/<w:p>(?:(?!<w:p>).)*Destination.*?<\/w:p>/s,
+		)?.[0];
+		expect(destination).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">Destination: </w:t></w:r><w:moveToRangeStart w:id="2" w:author="Reviewer" w:name="move1"/>' +
+				'<w:moveTo w:id="3" w:author="Reviewer"><w:r><w:t xml:space="preserve">the </w:t></w:r>' +
+				'<w:del w:id="4" w:author="Reviewer"><w:r><w:delText xml:space="preserve">moved</w:delText></w:r></w:del></w:moveTo>' +
+				'<w:ins w:id="5" w:author="Reviewer"><w:r><w:t xml:space="preserve">relocated</w:t></w:r></w:ins>' +
+				'<w:moveTo w:id="6" w:author="Reviewer"><w:r><w:t xml:space="preserve"> sentence</w:t></w:r></w:moveTo>' +
+				'<w:moveToRangeEnd w:id="2"/><w:r><w:t>.</w:t></w:r></w:p>',
+		);
+		expect(await viewText(docPath, "--accepted")).toBe(
+			"Origin:\nDestination: the relocated sentence.",
+		);
+		expect((await listChanges(docPath)).map((change) => change.kind)).toEqual([
+			"moveFrom",
+			"moveTo",
+			"del",
+			"ins",
+			"moveTo",
+		]);
+	});
+
+	test("a comment anchored on the replaced phrase keeps its markers; a marker-only tail is not a revision", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount</w:t></w:r></w:ins></w:p>`,
+			"ins-comment-tail",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					docPath,
+					"--anchor",
+					"disputed amount",
+					"--text",
+					"why?",
+				)
+			).exitCode,
+		).toBe(0);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		// The tail (comment range end + reference run) is pure markers: it stays
+		// in Reviewer A's ins after the cut — no fresh <w:ins> around zero
+		// content, so no empty revision, and the comment still brackets the text.
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r><w:commentRangeStart w:id="0"/>` +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del>' +
+				'<w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r></w:ins>' +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins></w:p>',
+		);
+		const changes = await listChanges(docPath);
+		expect(changes.map((change) => [change.kind, change.author])).toEqual([
+			["ins", "Reviewer A"],
+			["del", "Editor"],
+			["ins", "Editor"],
+		]);
+		expect(changes.every((change) => change.text.length > 0)).toBe(true);
+		const list = await runCli("comments", "list", docPath);
+		const comments = list.parsed as Array<{
+			id: string;
+			anchor: { startBlockId: string };
+		}>;
+		expect(comments.map((comment) => [comment.id, comment.anchor])).toEqual([
+			["c0", expect.objectContaining({ startBlockId: "p0" })],
+		]);
+
+		// Rejecting everything removes A's insertion with the comment markers it
+		// held — nothing dangles.
+		const rejected = await runCli("track-changes", "reject", docPath, "--all");
+		expect(rejected.exitCode).toBe(0);
+		const after = await readDocumentXml(docPath);
+		expect(after).not.toContain("<w:commentRangeStart ");
+		expect(after).not.toContain("<w:commentRangeEnd ");
+		expect(after).not.toContain("<w:commentReference ");
+		expect(await viewText(docPath, "--accepted")).toBe("The Client");
+	});
+
+	test("the author's OWN ins drops a tab that was part of the match (only zero-width children survive)", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${INS_A}<w:r><w:t>Total:</w:t><w:tab/><w:t>100 due</w:t></w:r></w:ins></w:p>`,
+			"ins-own-tab",
+		);
+		// The agent types `\t`; the CLI ingress decodes it to a real tab.
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Total:\\t100",
+			"Sum 200",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await viewText(docPath, "--accepted")).toBe("Sum 200 due");
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			`<w:p>${INS_A}<w:r><w:t xml:space="preserve">Sum 200</w:t></w:r><w:r><w:t xml:space="preserve"> due</w:t></w:r></w:ins></w:p>`,
+		);
+	});
+
+	test("a comment that opened inside the cut brackets the replacement in the author's OWN ins", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${INS_A}<w:r><w:t>pay the disputed amount now.</w:t></w:r></w:ins></w:p>`,
+			"ins-own-comment",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					docPath,
+					"--anchor",
+					"amount",
+					"--text",
+					"which?",
+				)
+			).exitCode,
+		).toBe(0);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphXml(docPath, "Editor")).toContain(
+			'<w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r><w:commentRangeEnd w:id="0"/>',
+		);
+		const comments = (await runCli("comments", "list", docPath))
+			.parsed as Array<{
+			anchor: { startOffset: number; endOffset: number };
+		}>;
+		expect(comments.map((comment) => comment.anchor)).toEqual([
+			expect.objectContaining({ startOffset: 8, endOffset: 20 }),
+		]);
+		const rendered = await runCli("read", docPath, "--comments");
+		expect(rendered.stdout).toContain("pay the disputed sum[^c0] now.");
+		expect(rendered.stdout).toContain('[^c0]: "disputed sum"');
+	});
+
+	test("a tail holding only a rendered-page-break run is not a revision", async () => {
+		const docPath = await trackedReplace(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount</w:t></w:r><w:r><w:lastRenderedPageBreak/></w:r></w:ins></w:p>`,
+			"ins-pagebreak-tail",
+			"Editor",
+		);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>` +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">disputed amount</w:delText></w:r></w:del>' +
+				"<w:r><w:lastRenderedPageBreak/></w:r></w:ins>" +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins></w:p>',
+		);
+		expect((await listChanges(docPath)).map((change) => change.author)).toEqual(
+			["Reviewer A", "Editor", "Editor"],
+		);
+	});
+
+	test("a span CROSSING out of the ins keeps the general walker's shape", async () => {
+		// Only a match wholly inside the wrapper is gated; this one starts in the
+		// plain run before it. The expected string is main's output, pinned
+		// verbatim (its reuse of w:id="1" on both halves is pre-existing).
+		const docPath = await trackedReplace(
+			SINGLE_RUN,
+			"ins-crossing",
+			"Editor",
+			"Client may",
+		);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The </w:t></w:r>' +
+				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">Client </w:delText></w:r></w:del>' +
+				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
+				`${INS_A}<w:del w:id="4" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">may</w:delText></w:r></w:del></w:ins>` +
+				`${INS_A}<w:r><w:t xml:space="preserve"> withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
+		);
+	});
+
+	test("untracked, the replacement lands inside the ins exactly as before", async () => {
+		const docPath = await buildRawDoc(SINGLE_RUN, "ins-untracked");
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await paragraphXml(docPath, "Editor")).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>` +
+				'<w:r><w:t xml:space="preserve">disputed sum</w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+	});
 });

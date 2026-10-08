@@ -14,6 +14,10 @@ import {
 import type { RevisionAllocator, TrackedMeta } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
 import type { FindView } from "./index";
+import {
+	isDirectRevisionWrapper,
+	replaceSpanInsideRevision,
+} from "./replace-in-revision";
 
 export type Span = { start: number; end: number };
 
@@ -74,7 +78,9 @@ export function sumVisibleTextLength(
  * <w:t> nodes converted to <w:delText>), and the replacement is wrapped in
  * <w:ins> at the paragraph top level. When the replacement falls inside an
  * existing wrapper (same-parent case), it stays unwrapped and inherits the
- * surrounding wrapper's attribution.
+ * surrounding wrapper's attribution — except a tracked replace wholly inside
+ * a paragraph-level <w:ins>/<w:moveTo>, which `replaceSpanInsideRevision`
+ * splits (another author) or rebuilds in place (the editor's own).
  */
 export function replaceSpanInParagraph(
 	paragraph: XmlNode,
@@ -108,6 +114,27 @@ export function replaceSpanInParagraph(
 	const allSameParent = overlapping.every(
 		(slot) => slot.parent === firstParent,
 	);
+
+	// Tracked replace wholly inside another revision's <w:ins>/<w:moveTo>
+	// (issue #13): Word's split / same-author merge, in replace-in-revision.
+	if (
+		tracked &&
+		span.start < span.end &&
+		allSameParent &&
+		isDirectRevisionWrapper(paragraph, firstParent)
+	) {
+		replaceSpanInsideRevision(
+			paragraph,
+			firstParent,
+			span,
+			replacement,
+			inheritedProperties,
+			tracked,
+			view,
+			formatting,
+		);
+		return;
+	}
 
 	if (allSameParent) {
 		const containerStart =

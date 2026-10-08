@@ -1,4 +1,5 @@
 export {
+	inlineMarkerWidth,
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	partitionParagraphRuns,
