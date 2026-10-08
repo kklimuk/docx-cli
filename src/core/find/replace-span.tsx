@@ -30,8 +30,10 @@ export type ReplacementFormatting = {
 /** Whether a run-bearing wrapper's contents should be treated as VISIBLE in
  *  the chosen view. Invisible wrappers pass through replace's offset
  *  arithmetic untouched (their inner text adds nothing to the offset and
- *  spans don't slice into them). Mirrors `isRunVisibleInView` in
- *  src/core/find/index.ts so find/replace stay in sync. (Exported for
+ *  spans don't slice into them). The tag-side twin of `isRevisionVisible` in
+ *  core/track-changes/revision-visibility.ts (the AST-side rule `find` reads);
+ *  because a hidden wrapper is never descended, a wrapper nested inside a
+ *  hidden one is hidden too — the same all-ancestors rule. (Exported for
  *  replace-across.tsx, which walks the same offset space over whole
  *  paragraphs.) */
 export function isWrapperVisibleInView(tag: string, view: FindView): boolean {

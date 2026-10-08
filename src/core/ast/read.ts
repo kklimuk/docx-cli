@@ -627,6 +627,21 @@ function walkRunContainer(
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
+			// A wrapper nested inside another (Word's `<w:ins><w:del>…` for a
+			// deletion inside a pending insertion) records its enclosing chain,
+			// outermost first, so every view consumer can apply the
+			// all-ancestors rule (`isRevisionVisible`). Top-level wrappers carry
+			// no `within`, so the AST of an un-nested document is unchanged.
+			if (trackedChange) {
+				change.within = [
+					...(trackedChange.within ?? []),
+					{
+						id: trackedChange.id,
+						kind: trackedChange.kind,
+						author: trackedChange.author,
+					},
+				];
+			}
 			context.document.trackedChangeReferences.set(trackedChangeId, {
 				node: child,
 				parent: container.children,

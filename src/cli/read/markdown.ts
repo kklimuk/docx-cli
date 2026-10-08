@@ -27,6 +27,10 @@ import {
 import { extensionForImageMime } from "@core/image/formats";
 import { inlineEscapeMask } from "@core/markdown";
 import {
+	isRevisionVisible,
+	type RevisionView,
+} from "@core/track-changes/revision-visibility";
+import {
 	emuToInches,
 	formatNote,
 	htmlAttr,
@@ -35,7 +39,7 @@ import {
 	twipsToPoints,
 } from "./annotations";
 
-export type MarkdownView = "current" | "accepted" | "baseline";
+export type MarkdownView = RevisionView;
 
 export type MarkdownOptions = {
 	from?: string;
@@ -365,14 +369,11 @@ function emptyCommentIndex(): CommentIndex {
 	};
 }
 
+/** Whether a text run renders in `view` — the shared all-ancestors rule, so a
+ * `<w:del>` nested inside another author's `<w:ins>` is hidden in BOTH
+ * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it. */
 function isRunVisible(run: TextRun, view: MarkdownView): boolean {
-	const kind = run.trackedChange?.kind;
-	if (!kind) return true;
-	if (view === "accepted" && (kind === "del" || kind === "moveFrom"))
-		return false;
-	if (view === "baseline" && (kind === "ins" || kind === "moveTo"))
-		return false;
-	return true;
+	return isRevisionVisible(run.trackedChange, view);
 }
 
 function buildCommentIndex(
@@ -457,7 +458,7 @@ function renderTextBoxes(block: Block, ctx: RenderContext): string[] {
 		// A box whose anchor run is tracked-deleted is gone in the accepted view
 		// (and a tracked-inserted one absent from the baseline) — same rule as
 		// `isRunVisible` for text.
-		if (!isTextBoxVisible(run, view)) continue;
+		if (!isRevisionVisible(run.trackedChange, view)) continue;
 		const pairs: NotePair[] = [["anchor", anchorId]];
 		if (run.wrap) pairs.push(["wrap", run.wrap]);
 		if (run.align) pairs.push(["align", run.align]);
@@ -474,13 +475,6 @@ function renderTextBoxes(block: Block, ctx: RenderContext): string[] {
 		out.push(story.join("\n\n"));
 	}
 	return out;
-}
-
-function isTextBoxVisible(run: TextBoxRun, view: MarkdownView): boolean {
-	const kind = run.trackedChange?.kind;
-	if (view === "current" || !kind) return true;
-	if (view === "accepted") return kind !== "del" && kind !== "moveFrom";
-	return kind !== "ins" && kind !== "moveTo";
 }
 
 /** The text-box runs anchored DIRECTLY in `block` (its own runs, or its cells'

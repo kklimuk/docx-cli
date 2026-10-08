@@ -428,6 +428,14 @@ export type TrackedChange = {
 	author: string;
 	date: string;
 	revisionId: string;
+	/** The run-level revision wrappers ENCLOSING this one, outermost first.
+	 *  Present only when the wrapper is nested inside another — Word's shape for
+	 *  one author deleting inside another's still-pending insertion
+	 *  (`<w:ins><w:del>…</w:del></w:ins>`). `kind`/`id` stay the INNERMOST
+	 *  wrapper's; a run is visible in a view only when EVERY wrapper in the chain
+	 *  is (`isRevisionVisible` in `core/track-changes/revision-visibility.ts`): rejecting
+	 *  the outer insertion removes the nested deletion with it. */
+	within?: { id: string; kind: TrackedChangeKind; author: string }[];
 };
 
 /** OOXML revision-tracking wrappers we surface in the AST.

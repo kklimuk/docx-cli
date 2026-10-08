@@ -153,3 +153,52 @@ export function wordTextBoxParagraphXml(
 		`</mc:AlternateContent></w:r></w:p>`
 	);
 }
+
+/** `<w:body>` paragraphs with one revision wrapper NESTED inside another — the
+ * shape Word writes when a second author deletes inside a still-pending
+ * insertion (or inserts inside a pending deletion). Shared by the
+ * `read`/`find`/`wc` view tests, which assert the all-ancestors rule: a run is
+ * visible in a view only when EVERY enclosing wrapper is (`isRevisionVisible`),
+ * so `--baseline` ≡ `reject --all` and `--accepted` ≡ `accept --all`. Feed one
+ * to `buildRawDoc`. */
+export const NESTED_REVISION_BODY = {
+	/** Editor's `<w:del>` inside Reviewer A's `<w:ins>`, then Editor's own
+	 * `<w:ins>`. baseline "The Client " / accepted "The Client may withhold a
+	 * disputed sum." */
+	editorDelInIns:
+		'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">may withhold a </w:t></w:r>' +
+		'<w:del w:id="2" w:author="Editor" w:date="2026-09-03T00:00:00Z"><w:r><w:delText>disputed amount</w:delText></w:r></w:del></w:ins>' +
+		'<w:ins w:id="3" w:author="Editor" w:date="2026-09-03T00:00:00Z"><w:r><w:t>disputed sum</w:t></w:r></w:ins>' +
+		'<w:ins w:id="4" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>.</w:t></w:r></w:ins></w:p>',
+	/** Reviewer B's `<w:del>` inside Reviewer A's `<w:ins>`. baseline "Fees are
+	 * due. " / accepted "Fees are due. The Client may withhold disputed amount." */
+	bDelInAIns:
+		'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>' +
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>' +
+		'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>' +
+		"<w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>",
+	/** The mirror: Reviewer B's `<w:ins>` inside Reviewer A's `<w:del>`.
+	 * baseline "Keep this. Old clause goes away." / accepted "Keep this. " */
+	insInDel:
+		'<w:p><w:r><w:t xml:space="preserve">Keep this. </w:t></w:r>' +
+		'<w:del w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Old clause </w:delText></w:r>' +
+		'<w:ins w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:t xml:space="preserve">added inside </w:t></w:r></w:ins>' +
+		"<w:r><w:delText>goes away.</w:delText></w:r></w:del></w:p>",
+	/** A `<w:br/>` inside the nested `<w:del>`: the break's offset slot must
+	 * vanish with it. baseline "Start end" / accepted "Start alphaend". */
+	breakInNestedDel:
+		'<w:p><w:r><w:t xml:space="preserve">Start </w:t></w:r>' +
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>alpha</w:t></w:r>' +
+		'<w:del w:id="2" w:author="Editor" w:date="2026-09-03T00:00:00Z"><w:r><w:br/><w:delText>beta</w:delText></w:r></w:del></w:ins>' +
+		"<w:r><w:t>end</w:t></w:r></w:p>",
+} as const;
+
+/** The prose of a `read` (markdown) output: `docx:`/locator comments and blank
+ * lines dropped, whitespace collapsed — for comparing two views' TEXT. */
+export function markdownProse(markdown: string): string {
+	return markdown
+		.replace(/<!--[\s\S]*?-->/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}

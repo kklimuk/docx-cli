@@ -15,9 +15,12 @@ import {
 export { generateParaId };
 
 /** Whether a run-bearing wrapper's contents are visible in the chosen
- *  view. Mirrors `isWrapperVisibleInView` in `cli/replace/replace-span.tsx`
- *  and `isRunVisibleInView` in `core/find/index.ts` — they MUST agree, or
- *  `find → comments add` (and `find → replace`) misalign. */
+ *  view. Mirrors `isWrapperVisibleInView` in `core/find/replace-span.tsx`
+ *  and the AST-side `isRevisionVisible` in
+ *  `core/track-changes/revision-visibility.ts` (which `find` reads) — they
+ *  MUST agree, or `find → comments add` (and `find → replace`) misalign. A
+ *  hidden wrapper is never descended, so anything nested inside it is hidden
+ *  too — the same all-ancestors rule. */
 function isWrapperVisibleInView(tag: string, view: FindView): boolean {
 	if (!isRunBearingWrapper(tag)) return false;
 	if (view === "current") return true;
