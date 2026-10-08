@@ -44,6 +44,14 @@ describe("sanitizeSvg", () => {
 		expect(out).not.toContain("file:///");
 	});
 
+	test("rejects a scheme split by tab/newline (raw or as a character reference)", () => {
+		const out = sanitize(
+			`<svg xmlns="http://www.w3.org/2000/svg"><a href="java&#x9;script:alert(1)"><rect/></a><a href="java&#10;script:alert(2)"><rect/></a><a href="java\tscript:alert(3)"><rect/></a><a href="&#106;avascript:alert(4)"><rect/></a></svg>`,
+		);
+		expect(out).not.toContain("href");
+		expect(out).not.toContain("script:");
+	});
+
 	test("rejects data:image/svg+xml (recursive-SVG bypass)", () => {
 		const out = sanitize(
 			`<svg xmlns="http://www.w3.org/2000/svg"><use href="data:image/svg+xml,&lt;svg/onload=alert(1)/&gt;"/></svg>`,
