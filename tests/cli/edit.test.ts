@@ -4211,7 +4211,7 @@ describe("whole-paragraph edit over other authors' pending changes (#17)", () =>
 		expect(result.stderr).toContain("--at t0:r0c0:p0:START-END");
 	});
 
-	test("--markdown over a text box anchor warns: the replace drops the box and its story's revisions", async () => {
+	test("--markdown over a text box anchor keeps the box and its story's revisions — no warning", async () => {
 		const pendingInStory = `Box </w:t></w:r><w:ins w:id="9" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>note</w:t></w:r></w:ins><w:r><w:t>`;
 		const docPath = await buildRawDoc(
 			wordTextBoxParagraphXml([pendingInStory], { leadingText: "Anchor " }),
@@ -4228,10 +4228,12 @@ describe("whole-paragraph edit over other authors' pending changes (#17)", () =>
 			"Editor",
 		);
 		expect(result.exitCode).toBe(0);
-		expect(await readDocumentXml(docPath)).not.toContain("Reviewer A");
-		expect(result.stderr).toContain(
-			"warning: p0 had pending tracked changes by Reviewer A;",
-		);
+		// The box rides its anchor run through the replace (`liftObjectRuns`),
+		// so the story's pending insertion survives untouched.
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain("<w:txbxContent>");
+		expect(xml).toContain('w:author="Reviewer A"');
+		expect(result.stderr).not.toContain("warning");
 	});
 
 	test("another author's paragraph-property change dropped by --markdown warns", async () => {

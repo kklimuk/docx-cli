@@ -6,8 +6,14 @@ import {
 	type ParagraphOptions,
 	wrapPprChange,
 } from "../blocks";
-import { isAlternateContent } from "../mc";
-import { partitionParagraphRuns, XmlNode } from "../parser";
+import { hasTextBox, isAlternateContent } from "../mc";
+import {
+	isRunBearingWrapper,
+	isSubtractiveTrackedChangeWrapper,
+	partitionParagraphRuns,
+	wrapperContent,
+	XmlNode,
+} from "../parser";
 import { Ins, markParagraphMarkAs } from "./emit";
 import {
 	deleteParagraphContent,
@@ -52,14 +58,14 @@ export function applyFormattingPreservingEdit(
 		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag), fallbackRpr)
 		: buildUntrackedRuns(ops, fallbackRpr);
 
-	const { runs, nonRuns } = partitionParagraphRuns(paragraph);
+	const { nonRuns } = partitionParagraphRuns(paragraph);
 	// The text diff rebuilds runs from TOKENS, which sees no drawing — so the
 	// runs carrying a text box, image, or legacy embed are lifted out first and
 	// put back around the new text (anchors that led the paragraph lead it
 	// again; anything else trails). Otherwise `edit --at pN --text` on a box's
 	// anchor paragraph silently deleted the box — with no `<w:del>` under
 	// tracking, so reject couldn't bring it back.
-	const objects = extractObjectRuns(runs);
+	const objects = extractObjectRuns(liveRuns(paragraph.children));
 	// Paragraph properties riding along with the text edit (`--style`/`--alignment`/
 	// `--space-*`/`--line-spacing`/`--indent-*`/`--tabs`) are a real tracked
 	// revision under tracking: snapshot the prior `<w:pPr>` into a `<w:pPrChange>`
@@ -79,6 +85,110 @@ export function applyFormattingPreservingEdit(
 	paragraph.children = nonRuns;
 }
 
+/** Lift a paragraph's object runs (text box / image / legacy embed) OUT of it
+ *  for a whole-paragraph REPLACE (`--markdown` / `--runs`, or a `--text` that
+ *  can't preserve formatting): the replacement is built from content that never
+ *  saw the object, so without this the anchor paragraph's box vanished with the
+ *  old node — `edit --at p10 --markdown` on a stamp's anchor printed `edit p10`,
+ *  exit 0, and the box was gone (the sonnet-r3 invoice run). Mutates the old
+ *  paragraph's runs (the objects are removed from them, so a tracked `<w:del>`
+ *  of the old content doesn't carry a second copy) and returns carrier runs to
+ *  splice into the replacement via `reattachObjectRuns`.
+ *
+ *  Objects already inside a `<w:del>` / `<w:moveFrom>` are deleted content and
+ *  stay where they are (lifting them would resurrect them as live, untracked
+ *  runs). `leaveInPlace` keeps further objects with the old paragraph — the
+ *  pictures a markdown replacement re-states, or everything but text boxes on
+ *  a line removal — so they go wherever the old content goes. */
+export function liftObjectRuns(
+	paragraph: XmlNode,
+	leaveInPlace: (object: XmlNode) => boolean = () => false,
+): {
+	leading: XmlNode[];
+	trailing: XmlNode[];
+} {
+	const isLifted = (child: XmlNode): boolean =>
+		isObjectChild(child) && !leaveInPlace(child);
+	const runs = liveRuns(paragraph.children);
+	const objects = extractObjectRuns(runs, isLifted);
+	if (objects.leading.length === 0 && objects.trailing.length === 0) {
+		return objects;
+	}
+	// Strip the objects from their runs; a run that held ONLY the object is now
+	// an empty `<w:r>` (rPr at most) — drop it from wherever it sits (directly in
+	// the paragraph or inside a run-bearing wrapper) so a tracked `<w:del>` of
+	// the old content doesn't carry a stray `<w:r/>`.
+	const emptied = new Set<XmlNode>();
+	for (const run of runs) {
+		if (!run.children.some(isLifted)) continue;
+		run.children = run.children.filter((child) => !isLifted(child));
+		if (run.children.every((child) => child.isText || child.tag === "w:rPr")) {
+			emptied.add(run);
+		}
+	}
+	if (emptied.size > 0) pruneNodes(paragraph, emptied);
+	// A raw-inserted anchor paragraph may DECLARE the namespaces its shape uses
+	// (`xmlns:v`, `xmlns:wps`, …) on the `<w:p>` itself — the raw gate puts
+	// auto-declared prefixes on the fragment root. The carriers are about to
+	// leave that element (onto a rebuilt or neighboring paragraph), so the
+	// declarations ride along on each carrier run, or the moved shape references
+	// prefixes nothing declares and the part stops being well-formed XML.
+	const declarations = Object.entries(paragraph.attributes).filter(([key]) =>
+		key.startsWith("xmlns:"),
+	);
+	for (const carrier of [...objects.leading, ...objects.trailing]) {
+		for (const [key, value] of declarations) {
+			if (!carrier.getAttribute(key)) carrier.setAttribute(key, value);
+		}
+	}
+	return objects;
+}
+
+/** The paragraph's runs that are live content — directly in the paragraph or
+ *  inside any run-bearing wrapper EXCEPT a subtractive one (`<w:del>` /
+ *  `<w:moveFrom>`), whose runs are already deleted. */
+function liveRuns(container: XmlNode[], out: XmlNode[] = []): XmlNode[] {
+	for (const child of container) {
+		if (child.tag === "w:r") {
+			out.push(child);
+			continue;
+		}
+		if (
+			isRunBearingWrapper(child.tag) &&
+			!isSubtractiveTrackedChangeWrapper(child.tag)
+		) {
+			liveRuns(wrapperContent(child), out);
+		}
+	}
+	return out;
+}
+
+/** Remove the given nodes from `node`'s subtree, wherever they sit. */
+function pruneNodes(node: XmlNode, doomed: ReadonlySet<XmlNode>): void {
+	node.children = node.children.filter((child) => !doomed.has(child));
+	for (const child of node.children) {
+		if (!child.isText && child.children.length > 0) pruneNodes(child, doomed);
+	}
+}
+
+/** Put lifted object runs back onto the live replacement paragraph: leading
+ *  carriers right after the `<w:pPr>` (an anchor that led the paragraph leads it
+ *  again), trailing ones at the end. Carriers stay UNTRACKED even under
+ *  tracking — the box wasn't authored by this edit, mirroring the `--text` path
+ *  (`applyFormattingPreservingEdit`), so accept/reject never touches it. */
+export function reattachObjectRuns(
+	paragraph: XmlNode,
+	objects: { leading: XmlNode[]; trailing: XmlNode[] },
+): void {
+	if (objects.leading.length > 0) {
+		const pPrIndex = paragraph.children.findIndex(
+			(child) => child.tag === "w:pPr",
+		);
+		paragraph.children.splice(pPrIndex + 1, 0, ...objects.leading);
+	}
+	paragraph.children.push(...objects.trailing);
+}
+
 const OBJECT_TAGS: ReadonlySet<string> = new Set([
 	"w:drawing",
 	"w:pict",
@@ -92,8 +202,12 @@ function isObjectChild(child: XmlNode): boolean {
 /** The non-text payload of a paragraph's runs, as runs of their own (each keeps
  *  its `<w:rPr>`): those met before any text character are `leading`, the rest
  *  `trailing`. A run mixing text and an object is split — the text half feeds
- *  the diff, the object half is preserved. */
-function extractObjectRuns(runs: XmlNode[]): {
+ *  the diff, the object half is preserved. `isExtracted` narrows which object
+ *  children are taken (default: every one). */
+function extractObjectRuns(
+	runs: XmlNode[],
+	isExtracted: (child: XmlNode) => boolean = isObjectChild,
+): {
 	leading: XmlNode[];
 	trailing: XmlNode[];
 } {
@@ -101,7 +215,7 @@ function extractObjectRuns(runs: XmlNode[]): {
 	const trailing: XmlNode[] = [];
 	let sawText = false;
 	for (const run of runs) {
-		const objects = run.children.filter(isObjectChild);
+		const objects = run.children.filter(isExtracted);
 		if (objects.length === 0) {
 			if (
 				run.children.some((child) => !child.isText && child.tag !== "w:rPr")
@@ -118,7 +232,7 @@ function extractObjectRuns(runs: XmlNode[]): {
 		if (
 			run.children.some(
 				(child) =>
-					!child.isText && child.tag !== "w:rPr" && !isObjectChild(child),
+					!child.isText && child.tag !== "w:rPr" && !isExtracted(child),
 			)
 		) {
 			sawText = true;
@@ -363,18 +477,59 @@ export function removeParagraphLine(
 	}
 
 	if (opts.track) {
+		// A tracked delete wraps the anchor run in `<w:del>` (the box hides in the
+		// accepted view, reject brings it back) — the box is not moved.
 		new TrackChanges(document).applyDeletion(node, opts.author);
 		return;
 	}
 	const index = parent.indexOf(node);
-	if (index >= 0) parent.splice(index, 1);
+	if (index < 0) return;
+	relocateTextBoxes(node, parent, index);
+	parent.splice(index, 1);
 }
 
 /** Drop a paragraph's content, keeping its `<w:pPr>` (and any inline
- *  `<w:sectPr>` it carries) so the now-empty `<w:p>` stays valid. */
+ *  `<w:sectPr>` it carries) — and any text box it anchors — so the now-empty
+ *  `<w:p>` stays valid and the box survives. Pictures and other inline objects
+ *  are the line's own visible content (`read` prints them in it), so they go
+ *  with the rest of it. */
 function blankParagraphInPlace(paragraph: XmlNode): void {
+	const boxes = liftObjectRuns(paragraph, (object) => !hasTextBox(object));
 	const pPr = paragraph.findChild("w:pPr");
 	paragraph.children = pPr ? [pPr] : [];
+	reattachObjectRuns(paragraph, boxes);
+}
+
+/** Before an untracked paragraph removal, move the text boxes it anchors onto
+ *  the neighboring paragraph — the previous paragraph (appended), else the
+ *  next (leading). `delete --at p10` on the invoice's Notes line used to take
+ *  the stamp text box with it, silently, with no in-tool way back (the agent
+ *  copied a sibling run's file). A box's story is NOT part of the line `read`
+ *  prints (it renders as its own `docx:textbox` block), so removing the line
+ *  must not remove the box. Pictures are different: `![…](…)` IS the line, so
+ *  `delete --at pN` on a figure paragraph still removes the figure. The caller
+ *  guarantees another `<w:p>` exists in `parent` (it blanks a container's last
+ *  paragraph instead). */
+function relocateTextBoxes(
+	node: XmlNode,
+	parent: XmlNode[],
+	index: number,
+): void {
+	const boxes = liftObjectRuns(node, (object) => !hasTextBox(object));
+	const carriers = [...boxes.leading, ...boxes.trailing];
+	if (carriers.length === 0) return;
+	for (let cursor = index - 1; cursor >= 0; cursor--) {
+		const previous = parent[cursor];
+		if (previous?.tag !== "w:p") continue;
+		reattachObjectRuns(previous, { leading: [], trailing: carriers });
+		return;
+	}
+	for (let cursor = index + 1; cursor < parent.length; cursor++) {
+		const next = parent[cursor];
+		if (next?.tag !== "w:p") continue;
+		reattachObjectRuns(next, { leading: carriers, trailing: [] });
+		return;
+	}
 }
 
 function wrapNewParagraphContentAsInserted(

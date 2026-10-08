@@ -33,6 +33,7 @@ import {
 import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
 import { readListContext } from "../insert";
 import { w } from "../jsx";
+import { hasTextBox } from "../mc";
 import {
 	inheritParagraphFormattingIfPlain,
 	paragraphOwnsBlockStructure,
@@ -58,6 +59,8 @@ import {
 	applyTrackedRangeReplace,
 	applyUntrackedRangeReplace,
 	assertParagraphOnlyTrackedRange,
+	liftObjectRuns,
+	reattachObjectRuns,
 	TrackedRangeConflictError,
 } from "../track-changes/replace";
 
@@ -180,6 +183,15 @@ export class Edit {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 		const newParagraphs = buildNewParagraphs(spec);
+		// The replacement is built from content that never saw the old paragraph's
+		// text box / image / embed, so lift those runs out first and put them back
+		// on the live result below — the text-box invariant ("the box rides its
+		// anchor RUN") holds on this path exactly as on the `--text` diff path.
+		// Pictures the replacement re-states stay with the old content instead.
+		const objectRuns = liftObjectRuns(
+			blockRef.node,
+			restatedPictures(newParagraphs),
+		);
 		inheritParagraphFormattingIfPlain(
 			blockRef.node,
 			newParagraphs,
@@ -226,7 +238,14 @@ export class Edit {
 				newParagraphs,
 				opts.authorFlag,
 			);
+			// Under tracking the OLD node stays as the live "transition" paragraph
+			// (new content appended inside `<w:ins>`), so the untracked carriers go
+			// back onto it — after the replace, or they'd be swept into the `<w:del>`.
+			reattachObjectRuns(blockRef.node, objectRuns);
 		} else {
+			if (objectRuns.leading.length > 0 || objectRuns.trailing.length > 0) {
+				reattachObjectRuns(objectCarrierTarget(newParagraphs), objectRuns);
+			}
 			applyUntrackedRangeReplace(
 				blockRef.parent,
 				targetIndex,
@@ -234,8 +253,11 @@ export class Edit {
 				newParagraphs,
 			);
 		}
-		// The spliced-in first paragraph is the result (a following clear in a
-		// combined content+clear edit targets this node, not the replaced one).
+		// The first NEW paragraph is the result: untracked it's the spliced-in
+		// node; tracked, its runs are the very nodes now inside the transition's
+		// `<w:ins>`. A following clear/format in a combined content+clear edit
+		// must target only those — never the transition itself, whose `<w:del>`
+		// holds the original runs reject restores.
 		return {
 			node: anchorTarget ?? blockRef.node,
 			resolvedAuthors: listResolvedAuthors(),
@@ -601,6 +623,28 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
 }
 
+/** Which of the old paragraph's objects `liftObjectRuns` should leave with the
+ *  old content. Markdown CAN express a picture (`![alt](sha256.ext)` — the
+ *  read → edit round-trip re-emits the same media part), so when the
+ *  replacement carries a `<w:drawing>` the caller re-stated the paragraph's
+ *  pictures: the old ones stay behind — discarded with the replaced node, or
+ *  wrapped in the tracked `<w:del>` so reject restores them — instead of coming
+ *  back as a duplicate `img0`. Only a plain picture qualifies: a chart,
+ *  SmartArt, shape, or text box (`<w:drawing>` or not) has no Markdown form, so
+ *  it is always lifted and returned. */
+function restatedPictures(
+	newParagraphs: XmlNode[],
+): (object: XmlNode) => boolean {
+	const restates = newParagraphs.some((block) =>
+		block.findDescendant("w:drawing"),
+	);
+	return (object) =>
+		restates &&
+		object.tag === "w:drawing" &&
+		object.findDescendant("a:blip") !== undefined &&
+		!hasTextBox(object);
+}
+
 /** Replacement runs inherit the run formatting COMMON to every visible run of
  *  the replaced paragraph — the intersection of their `<w:rPr>` children (an
  *  8pt Arial form cell whose fill-in span is also underlined contributes the
@@ -720,6 +764,20 @@ function continueHostList(
 			numPr.children.unshift(<w.ilvl w-val={String(shifted)} />);
 		}
 	}
+}
+
+/** The paragraph lifted object runs go back onto for an untracked replace: the
+ *  first `<w:p>` of the replacement. When the replacement has none (markdown
+ *  that built only a table, or nothing at all), a bare paragraph is prepended
+ *  to carry them — dropping the box because the new content happened to be a
+ *  table is the silent loss this guards against. Only called when there ARE
+ *  lifted objects, so an object-free edit's block list is never padded. */
+function objectCarrierTarget(newParagraphs: XmlNode[]): XmlNode {
+	const first = newParagraphs.find((block) => block.tag === "w:p");
+	if (first) return first;
+	const carrier = new XmlNode("w:p");
+	newParagraphs.unshift(carrier);
+	return carrier;
 }
 
 function makeMetaMinter(

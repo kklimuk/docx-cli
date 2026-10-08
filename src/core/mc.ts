@@ -42,6 +42,13 @@ export function isAlternateContent(node: XmlNode): boolean {
 	return node.tag === "mc:AlternateContent";
 }
 
+/** Whether `node` holds a text-box story (a `<w:txbxContent>`) — stops at the
+ *  first one instead of collecting them all. Either MCE branch counts: both
+ *  carry the same story. */
+export function hasTextBox(node: XmlNode): boolean {
+	return node.findDescendant("w:txbxContent") !== undefined;
+}
+
 /** Every `<w:txbxContent>` story reachable from `node`, in document order,
  *  resolving nested `<mc:AlternateContent>` to ONE branch as it descends so
  *  the Choice copy and its Fallback twin never both surface. A `wpg` group
