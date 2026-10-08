@@ -237,6 +237,7 @@ describe("binary smoke (real subprocess)", () => {
 // Use real OS pipes, bounded in both time and bytes: the old BunFile.write
 // path could repeat a prefix forever after process.stdout was materialized.
 const RESPOND_MODULE = join(import.meta.dir, "../../src/cli/respond.ts");
+const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
 const PIPE_PAYLOAD = pipePayload();
 
 function pipePayload(): string {
@@ -246,9 +247,28 @@ function pipePayload(): string {
 	).join("");
 }
 
+/** A document whose `read` output is several pipe buffers long. Built once and
+ *  shared (both pipe tests only read it) — each build spawns a full CLI. */
+let largeDocument: Promise<string> | undefined;
+function createLargeDocument(): Promise<string> {
+	largeDocument ??= buildLargeDocument();
+	return largeDocument;
+}
+
+async function buildLargeDocument(): Promise<string> {
+	const workspace = tempWorkspace("large-read-pipe");
+	const docPath = join(workspace, "large.docx");
+	const inputPath = join(workspace, "input.txt");
+	await Bun.write(inputPath, PIPE_PAYLOAD);
+	expect(
+		(await rawCli("create", docPath, "--text-file", inputPath)).exitCode,
+	).toBe(0);
+	return docPath;
+}
+
 function pipeScript(body: string): string {
 	return `
-		import { writeStdout, writeStderr, respond, captureOutput } from ${JSON.stringify(RESPOND_MODULE)};
+		import { writeStdout, writeStderr, respond, captureOutput, fail } from ${JSON.stringify(RESPOND_MODULE)};
 		const text = (${pipePayload.toString()})();
 		${body}
 	`;
@@ -343,13 +363,7 @@ describe.skipIf(process.platform === "win32")(
 	"output sinks through OS pipes",
 	() => {
 		test("large CLI Markdown and AST match captured output through a slow pipe", async () => {
-			const workspace = tempWorkspace("large-read-pipe");
-			const docPath = join(workspace, "large.docx");
-			const inputPath = join(workspace, "input.txt");
-			await Bun.write(inputPath, PIPE_PAYLOAD);
-			expect(
-				(await rawCli("create", docPath, "--text-file", inputPath)).exitCode,
-			).toBe(0);
+			const docPath = await createLargeDocument();
 			for (const flags of [[], ["--ast"]]) {
 				const args = ["read", docPath, ...flags];
 				const expected = await runCli(...args);
@@ -357,7 +371,7 @@ describe.skipIf(process.platform === "win32")(
 				expect(Buffer.byteLength(expected.stdout)).toBeGreaterThan(65536);
 				const result = await runPipeCommand([
 					process.execPath,
-					join(import.meta.dir, "../../src/index.ts"),
+					CLI_ENTRY,
 					...args,
 				]);
 				expect(result.error).toBeUndefined();
@@ -420,18 +434,51 @@ describe.skipIf(process.platform === "win32")(
 			expect(result.stderr).toBe("restored");
 		});
 
-		test("a consumer closing early terminates the producer without hanging", async () => {
+		for (const stream of ["stdout", "stderr"] as const) {
+			test(`a consumer closing ${stream} early stops the producer quietly (no hang, no EPIPE crash)`, async () => {
+				const write = stream === "stdout" ? "writeStdout" : "writeStderr";
+				const result = await runPipeScript(
+					`
+				void process.stdout; void process.stderr;
+				for (let index = 0; index < 100; index++) await ${write}(text);
+				process.exit(0);
+			`,
+					stream,
+					"head -c 1 > /dev/null",
+				);
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(0);
+				expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
+			});
+		}
+
+		test("a dead pipe keeps the command's own nonzero exit code", async () => {
+			// Fill the pipe until the reader is gone, then fail: the error JSON
+			// hits the dead pipe too, but the exit code must still say "failed".
 			const result = await runPipeScript(
 				`
 			void process.stdout;
-			for (let index = 0; index < 100; index++) await writeStdout(text);
-			process.exit(0);
+			for (let index = 0; index < 4; index++) await writeStdout(text);
+			process.exit(await fail("MATCH_NOT_FOUND", "nothing matched"));
 		`,
 				"stdout",
-				"head -c 1 > /dev/null",
+				"true",
 			);
 			expect(result.error).toBeUndefined();
-			expect(result.status).not.toBe(0);
+			expect(result.status).toBe(3);
+			expect(result.stderr).toBe("");
+		});
+
+		test("a real command piped into a consumer that never reads exits cleanly", async () => {
+			const docPath = await createLargeDocument();
+			const result = await runPipeCommand(
+				[process.execPath, CLI_ENTRY, "read", docPath],
+				"stdout",
+				"true",
+			);
+			expect(result.error).toBeUndefined();
+			expect(result.status).toBe(0);
+			expect(result.stderr).toBe("");
 		});
 	},
 );
