@@ -4,7 +4,13 @@ import { Pkg } from "@core/ast/document/package";
 import { clearFormatting, resolveClearTags } from "@core/edit/clear-formatting";
 import { XmlNode } from "@core/parser";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml, trackedKinds } from "./helpers";
+import {
+	buildRawDoc,
+	freshFixture,
+	readDocumentXml,
+	trackedKinds,
+	wordTextBoxParagraphXml,
+} from "./helpers";
 
 const FIXTURE = "tests/fixtures/word-formatted.docx";
 // Layout (built by tests/fixtures/setup/word-formatted.ts):
@@ -4042,5 +4048,230 @@ describe("docx edit complex-script font", () => {
 		expect(runs[0]).toMatchObject({ fontComplexScript: "Amiri" });
 		expect(runs[0]?.font).toBeUndefined();
 		expect(runs[1]).toMatchObject({ fontEastAsia: "SimSun" });
+	});
+});
+
+describe("whole-paragraph edit over other authors' pending changes (#17)", () => {
+	const NESTED =
+		`<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>` +
+		`<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>` +
+		`<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>` +
+		`<w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>`;
+
+	test("warns on stderr naming the other authors, and still applies the edit", async () => {
+		const docPath = await buildRawDoc(NESTED, "pending-warn");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Fees are due. The Client may withhold disputed sum.",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain(
+			"warning: p0 had pending tracked changes by Reviewer A, Reviewer B",
+		);
+		expect(result.stderr).toContain("--at p0:START-END");
+		expect(await readDocumentXml(docPath)).toContain(" sum.</w:t>");
+	});
+
+	test("the editing author's own pending changes don't warn", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:ins w:id="1" w:author="Editor" w:date="2026-09-01T00:00:00Z"><w:r><w:t>world</w:t></w:r></w:ins></w:p>`,
+			"pending-own",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Hello there",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("warning");
+	});
+
+	test("batch warns per whole-paragraph entry, using the entry's author", async () => {
+		const docPath = await buildRawDoc(NESTED, "pending-batch");
+		const dir = tempWorkspace("pending-batch-jsonl");
+		const batchPath = join(dir, "edits.jsonl");
+		await Bun.write(
+			batchPath,
+			`${JSON.stringify({ at: "p0", text: "Fees are due. X.", author: "Reviewer A" })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain(
+			"warning: p0 had pending tracked changes by Reviewer B;",
+		);
+	});
+
+	test("a revision inside an anchored text box doesn't warn — the box rides through intact", async () => {
+		const pendingInStory = `Box </w:t></w:r><w:ins w:id="9" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>note</w:t></w:r></w:ins><w:r><w:t>`;
+		const docPath = await buildRawDoc(
+			wordTextBoxParagraphXml([pendingInStory], { leadingText: "Anchor " }),
+			"pending-textbox",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Anchor moved",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("warning");
+		expect(await readDocumentXml(docPath)).toContain('w:author="Reviewer A"');
+	});
+
+	test("a span edit keeps the changes pending and doesn't warn", async () => {
+		const docPath = await buildRawDoc(NESTED, "pending-span");
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("warning");
+	});
+
+	test("a bare-cell target's span suggestion names the cell's paragraph, not the cell", async () => {
+		const docPath = await buildRawDoc(
+			`<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">Hi </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>there</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl>`,
+			"pending-cell",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--text",
+			"Hi you",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("warning: t0:r0c0 had pending");
+		expect(result.stderr).toContain("--at t0:r0c0:p0:START-END");
+	});
+
+	test("--markdown over a text box anchor warns: the replace drops the box and its story's revisions", async () => {
+		const pendingInStory = `Box </w:t></w:r><w:ins w:id="9" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>note</w:t></w:r></w:ins><w:r><w:t>`;
+		const docPath = await buildRawDoc(
+			wordTextBoxParagraphXml([pendingInStory], { leadingText: "Anchor " }),
+			"pending-textbox-md",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Anchor **moved**",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).not.toContain("Reviewer A");
+		expect(result.stderr).toContain(
+			"warning: p0 had pending tracked changes by Reviewer A;",
+		);
+	});
+
+	test("another author's paragraph-property change dropped by --markdown warns", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="5" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Hello world</w:t></w:r></w:p>`,
+			"pending-pprchange",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Hello **there**",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).not.toContain("w:pPrChange");
+		expect(result.stderr).toContain("by Reviewer A;");
+	});
+
+	test("a range replace warns, with a per-paragraph span suggestion", async () => {
+		const docPath = await buildRawDoc(
+			`${NESTED}<w:p><w:r><w:t>Second.</w:t></w:r></w:p>`,
+			"pending-range",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--text",
+			"Merged.",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain(
+			"warning: p0-p1 had pending tracked changes by Reviewer A, Reviewer B;",
+		);
+		expect(result.stderr).toContain("--at pN:START-END");
+	});
+
+	test("revisions the edit keeps don't warn: a content control's toggle, a tracked replace's surviving deletion", async () => {
+		const checkbox = await buildRawDoc(
+			`<w:p><w:sdt><w:sdtPr><w14:checkbox xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w14:checked w14:val="1"/></w14:checkbox></w:sdtPr><w:sdtContent><w:del w:id="3" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>☐</w:delText></w:r></w:del><w:ins w:id="4" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>☒</w:t></w:r></w:ins></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Buy milk</w:t></w:r></w:p>`,
+			"pending-sdt",
+		);
+		const toggled = await runCli(
+			"edit",
+			checkbox,
+			"--at",
+			"p0",
+			"--text",
+			"Buy bread",
+			"--author",
+			"Editor",
+		);
+		expect(toggled.exitCode).toBe(0);
+		expect(await readDocumentXml(checkbox)).toContain('w:author="Reviewer A"');
+		expect(toggled.stderr).not.toContain("warning");
+
+		const deletion = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Fees </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>due.</w:t></w:r></w:p>`,
+			"pending-kept-del",
+		);
+		const replaced = await runCli(
+			"edit",
+			deletion,
+			"--at",
+			"p0",
+			"--markdown",
+			"Fees **due**.",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(replaced.exitCode).toBe(0);
+		expect(await readDocumentXml(deletion)).toContain('w:author="Reviewer B"');
+		expect(replaced.stderr).not.toContain("warning");
 	});
 });

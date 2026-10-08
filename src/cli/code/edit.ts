@@ -1,4 +1,5 @@
 import { Edit, EditError, type ParagraphContentSpec } from "@core";
+import { warnPendingRevisions } from "../edit/pending-revisions-warning";
 import { parseParagraphOptions } from "../insert/index";
 import {
 	EXIT,
@@ -119,15 +120,23 @@ export async function run(args: string[]): Promise<number> {
 	const track = resolveTracked(document, Boolean(parsed.values.track));
 	const authorFlag = parsed.values.author as string | undefined;
 
+	const isRange = /^p\d+-p\d+$/.test(locator);
+	let resolvedAuthors: string[];
 	try {
-		if (/^p\d+-p\d+$/.test(locator)) {
+		if (isRange) {
 			const rangeRef = await resolveBlockRangeOrFail(document, locator);
 			if (typeof rangeRef === "number") return rangeRef;
-			new Edit(document).range(rangeRef, spec, { authorFlag, track });
+			resolvedAuthors = new Edit(document).range(rangeRef, spec, {
+				authorFlag,
+				track,
+			});
 		} else {
 			const blockRef = await resolveBlockOrFail(document, locator);
 			if (typeof blockRef === "number") return blockRef;
-			new Edit(document).paragraph(blockRef, spec, { authorFlag, track });
+			({ resolvedAuthors } = new Edit(document).paragraph(blockRef, spec, {
+				authorFlag,
+				track,
+			}));
 		}
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -137,6 +146,10 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	await document.save(outputPath);
+	await warnPendingRevisions(locator, resolvedAuthors, {
+		paragraphLocator: isRange ? null : locator,
+		tracked: track,
+	});
 	await respondAck({
 		ok: true,
 		operation: "edit",

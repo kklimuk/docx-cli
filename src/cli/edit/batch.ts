@@ -10,6 +10,7 @@ import {
 	locatorToBlockTarget,
 	MarkdownImport,
 	MarkdownImportError,
+	type ParagraphEditResult,
 	parseCellAt,
 	parseLocator,
 	type Run,
@@ -40,6 +41,7 @@ import {
 	respond,
 	respondAck,
 } from "../respond";
+import { warnPendingRevisions } from "./pending-revisions-warning";
 import { parseTabsValue, resolveTabsDirective } from "./tabs";
 
 type RawValues = Record<
@@ -157,6 +159,12 @@ export async function runEditBatch(
 	}
 
 	await document.save(outputPath);
+	for (const entry of resolved) {
+		await warnPendingRevisions(entry.locatorString, entry.resolvedAuthors, {
+			paragraphLocator: entry.paragraphLocator,
+			tracked: track,
+		});
+	}
 
 	await respondAck({
 		ok: true,
@@ -272,8 +280,14 @@ type ResolvedEntry = {
 	span: { start: number; end: number } | null;
 	/** Bare-cell targets repair Word's mandatory terminal paragraph after apply. */
 	cellParent?: XmlNode[];
+	/** The paragraph a span-edit suggestion addresses: `at` itself, or a bare
+	 *  cell's sole `tN:rRcC:p0` (a cell locator takes no `:S-E` span). */
+	paragraphLocator: string;
 	/** Performs the mutation via the `Edit` lens. Throws `EditError`. */
 	apply: () => void;
+	/** Filled by `apply` for a whole-paragraph content edit: the other authors
+	 *  whose pending revisions it resolved (warned after the save, issue #17). */
+	resolvedAuthors: string[];
 };
 
 /** Validate one JSONL entry and produce its `apply` closure. Markdown content
@@ -339,6 +353,7 @@ async function resolveEntry(
 	let blockRef: BlockReference;
 	let span: { start: number; end: number } | null;
 	let cellParent: XmlNode[] | undefined;
+	let paragraphLocator = at;
 	if (parseCellAt(at)) {
 		try {
 			const resolved = resolveCellParagraphReference(
@@ -348,6 +363,7 @@ async function resolveEntry(
 			);
 			blockRef = resolved.paragraph;
 			cellParent = resolved.cell.parent;
+			paragraphLocator = `${resolved.cell.id}:p0`;
 		} catch (error) {
 			if (error instanceof CellTargetError) {
 				throw new EntryError(
@@ -432,7 +448,9 @@ async function resolveEntry(
 			node: blockRef.node,
 			span: null,
 			...(cellParent ? { cellParent } : {}),
+			paragraphLocator,
 			apply,
+			resolvedAuthors: [],
 		};
 	}
 
@@ -465,6 +483,7 @@ async function resolveEntry(
 		| "clear"
 		| "props";
 
+	const resolvedAuthors: string[] = [];
 	const apply = await buildApply(
 		document,
 		raw,
@@ -473,6 +492,7 @@ async function resolveEntry(
 		blockRef,
 		span,
 		opts,
+		resolvedAuthors,
 	);
 	return {
 		index,
@@ -480,7 +500,9 @@ async function resolveEntry(
 		node: blockRef.node,
 		span,
 		...(cellParent ? { cellParent } : {}),
+		paragraphLocator,
 		apply,
+		resolvedAuthors,
 	};
 }
 
@@ -494,6 +516,7 @@ async function buildApply(
 	blockRef: BlockReference,
 	span: { start: number; end: number } | null,
 	opts: EntryOptions,
+	resolvedAuthors: string[],
 ): Promise<() => void> {
 	const author = typeof raw.author === "string" ? raw.author : opts.authorFlag;
 	const clearTags =
@@ -590,18 +613,19 @@ async function buildApply(
 		opts,
 	);
 	const ride = readRunFormatRideAlong(raw, index, kind === "text");
-	if (!clearTags && !ride) return () => void contentNode();
 	return () => {
-		const node = contentNode();
+		const result = contentNode();
+		resolvedAuthors.push(...result.resolvedAuthors);
 		const edit = new Edit(document);
-		if (clearTags) edit.clearFormattingNode(node, null, clearTags);
-		if (ride) edit.setFormattingNode(node, null, ride);
+		if (clearTags) edit.clearFormattingNode(result.node, null, clearTags);
+		if (ride) edit.setFormattingNode(result.node, null, ride);
 	};
 }
 
-/** Build a closure that applies one whole-paragraph content edit and returns the
- *  resulting paragraph node. Split out so the combined content+clear path can
- *  clear that node afterward. */
+/** Build a closure that applies one whole-paragraph content edit and returns
+ *  the resulting paragraph node (plus the other authors whose pending revisions
+ *  it resolved). Split out so the combined content+clear path can clear that
+ *  node afterward. */
 async function buildWholeParagraphContent(
 	document: Document,
 	raw: Record<string, unknown>,
@@ -610,7 +634,7 @@ async function buildWholeParagraphContent(
 	blockRef: BlockReference,
 	author: string | undefined,
 	opts: EntryOptions,
-): Promise<() => XmlNode> {
+): Promise<() => ParagraphEditResult> {
 	const paragraphOptions = readParagraphOptions(document, raw, index);
 	if (kind === "text") {
 		// Whole-paragraph empty "text" never reaches here — `resolveEntry`
