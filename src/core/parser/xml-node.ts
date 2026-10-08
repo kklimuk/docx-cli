@@ -224,12 +224,15 @@ const PARSE_OPTIONS = {
 	trimValues: false,
 	processEntities: true,
 	// Numeric character references (`&#8226;`, `&#x2013;`) are only decoded
-	// with this on; without it they survive parsing as literal text and the
+	// with this set; without it they survive parsing as literal text and the
 	// builder re-escapes their `&`, turning a bullet into the text "&#8226;"
 	// on the next save (issue #12). Decoding happens once, so an escaped
-	// `&amp;#8226;` still reads back as the literal text "&#8226;". HTML named
-	// entities (`&nbsp;`) decode too — undefined in XML, so harmless here.
-	htmlEntities: true,
+	// `&amp;#8226;` still reads back as the literal text "&#8226;". The empty
+	// object is the named-entity table: HTML names like `&nbsp;` are undefined
+	// in XML, so they stay literal rather than being silently rewritten. The
+	// object form is implemented (OrderedObjParser) but typed `boolean`; the
+	// HTML-entity test in xml-node.test.ts fails if an upgrade drops it.
+	htmlEntities: {} as unknown as boolean,
 	ignoreDeclaration: false,
 };
 

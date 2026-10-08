@@ -41,6 +41,15 @@ describe("XmlNode", () => {
 		expect(serialized).toContain('w:val="•"');
 	});
 
+	test("HTML-only named entities stay literal — XML doesn't define them", () => {
+		const node = XmlNode.findRoot(
+			XmlNode.parse('<w:t a="&copy;">&nbsp;&euro; &#160;</w:t>'),
+			"w:t",
+		);
+		expect(node?.getAttribute("a")).toBe("&copy;");
+		expect(node?.collectText()).toBe("&nbsp;&euro;  ");
+	});
+
 	test("an escaped reference stays literal text, decoded exactly once", () => {
 		const xml = '<w:t a="&amp;#8226;">&amp;#8226; &amp;nbsp;</w:t>';
 		const node = XmlNode.findRoot(XmlNode.parse(xml), "w:t");
