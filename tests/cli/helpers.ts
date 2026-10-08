@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
+import { XmlNode } from "@core/parser";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
 
@@ -44,6 +45,28 @@ export function revisionWrappersBy(
 	);
 	return [...xml.matchAll(pattern)].map((match) => match[1] ?? "");
 }
+
+/** For every `<w:ins>` `author` wrote, the tags (with authors) of the revision
+ *  wrappers it sits inside, outermost first — `[]` when it is top-level. A
+ *  tracked edit's insertion must never ride inside another revision: it would
+ *  be attributed to that author, or vanish when that revision resolves. */
+export function insertionAncestry(xml: string, author: string): string[][] {
+	const out: string[][] = [];
+	const walk = (nodes: XmlNode[], revisions: string[]): void => {
+		for (const node of nodes) {
+			const isRevision = REVISION_TAGS.has(node.tag);
+			const label = `${node.tag}@${node.getAttribute("w:author") ?? ""}`;
+			if (node.tag === "w:ins" && node.getAttribute("w:author") === author) {
+				out.push(revisions);
+			}
+			walk(node.children, isRevision ? [...revisions, label] : revisions);
+		}
+	};
+	walk(XmlNode.parse(xml), []);
+	return out;
+}
+
+const REVISION_TAGS = new Set(["w:ins", "w:del", "w:moveFrom", "w:moveTo"]);
 
 /** Every `w:id` on an `<w:ins>`/`<w:del>` wrapper — duplicates corrupt the
  *  revision list, so splitting a wrapper must mint a fresh id for one half. */

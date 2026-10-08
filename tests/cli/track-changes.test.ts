@@ -141,6 +141,18 @@ describe("nested revisions — views agree with accept/reject all", () => {
 			body: `<w:p><w:r><w:t xml:space="preserve">Keep this. </w:t></w:r><w:del w:id="1" ${reviewerA}><w:r><w:delText xml:space="preserve">Old </w:delText></w:r><w:ins w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:t xml:space="preserve">added </w:t></w:r></w:ins><w:r><w:delText>words.</w:delText></w:r></w:del></w:p>`,
 			baseline: "Keep this. Old words.",
 		},
+		// Breaks and tabs ride the same view rule as text: a line break inside
+		// a rejected insertion is gone from the baseline (and, via the loop's
+		// accept/reject comparison, one inside an accepted deletion is gone from
+		// the accepted view).
+		"line break inside an insertion": {
+			body: `<w:p><w:r><w:t>Keep</w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t>new</w:t><w:br/><w:t>line</w:t><w:tab/></w:r></w:ins><w:r><w:t>End</w:t></w:r></w:p>`,
+			baseline: "KeepEnd",
+		},
+		"line break inside a deletion": {
+			body: `<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:del w:id="1" ${reviewerA}><w:r><w:delText xml:space="preserve">old </w:delText><w:br/><w:tab/></w:r></w:del><w:r><w:t>End</w:t></w:r></w:p>`,
+			baseline: "Keep old \n\tEnd",
+		},
 	};
 
 	for (const [name, { body, baseline }] of Object.entries(docs)) {
@@ -1890,5 +1902,78 @@ describe("docx track-changes apply (mixed accept+reject)", () => {
 		expect(result.stdout).toContain("five years");
 		// The unaddressed rev1 replace is still pending (its two tcN halves).
 		expect(await listCount(docPath)).toBe(2);
+	});
+});
+
+// `list` after a cross-author span replace: the head half of the other
+// author's insertion holds only the editor's nested deletion. It is that
+// author's insertion, not a paragraph mark, and a revision never pairs into a
+// `revN` with one nested inside it.
+describe("track-changes list — nested revisions", () => {
+	const authorA = 'w:author="A" w:date="2026-09-01T00:00:00Z"';
+
+	async function listAfterReplace(
+		body: string,
+		pattern: string,
+		replacement: string,
+		author: string,
+	): Promise<{ table: string; json: Array<Record<string, unknown>> }> {
+		const docPath = await buildRawDoc(body, "list-nested");
+		const replaced = await runCli(
+			"replace",
+			docPath,
+			pattern,
+			replacement,
+			"--track",
+			"--author",
+			author,
+		);
+		expect(replaced.exitCode).toBe(0);
+		const table = await spawnCli("track-changes", "list", docPath);
+		const json = await runCli("track-changes", "list", docPath, "--json");
+		return {
+			table: table.stdout,
+			json: json.parsed as Array<Record<string, unknown>>,
+		};
+	}
+
+	test("an insertion holding only a nested deletion is labeled by its content", async () => {
+		const { table, json } = await listAfterReplace(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r><w:ins w:id="1" ${authorA}><w:r><w:t>withhold amounts</w:t></w:r></w:ins></w:p>`,
+			"withhold",
+			"keep",
+			"Editor",
+		);
+		expect(table).not.toContain("paragraph mark");
+		expect(table).toMatch(/tc0\s+insert\s+p0\s+"withhold" \(contains tc1\)/);
+		expect(table).toMatch(/rev0\s+replace\s+p0\s+"withhold" → "keep"/);
+		// The JSON item keeps its documented shape — no reader-internal chain.
+		for (const item of json) expect(item).not.toHaveProperty("within");
+		expect(json[0]).toMatchObject({ id: "tc0", kind: "ins", text: "withhold" });
+	});
+
+	test("a real paragraph-mark insertion is still labeled as one", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:pPr><w:rPr><w:ins w:id="1" ${authorA}/></w:rPr></w:pPr><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>`,
+			"list-paragraph-mark",
+		);
+		const table = await spawnCli("track-changes", "list", docPath);
+		expect(table.stdout).toMatch(/tc0\s+insert\s+p0\s+¶ paragraph mark/);
+	});
+
+	test("a same-author deletion nested in an insertion doesn't pair with it", async () => {
+		const { table, json } = await listAfterReplace(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r><w:ins w:id="1" ${authorA}><w:r><w:t>may withhold</w:t></w:r></w:ins></w:p>`,
+			"Client may",
+			"Customer may",
+			"A",
+		);
+		expect(table).not.toContain("→ ¶");
+		const groups = json.filter((item) => item.group !== undefined);
+		// Only the sibling del "Client " + ins "Customer may" pair.
+		expect(groups.map((item) => item.text)).toEqual([
+			"Client ",
+			"Customer may",
+		]);
 	});
 });

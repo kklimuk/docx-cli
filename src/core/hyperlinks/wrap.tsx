@@ -1,9 +1,10 @@
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
+	isWrapperVisibleInView,
 	runTextLength,
 	sliceRun,
-	sumRunBearingTextLength,
+	sumVisibleTextLength,
 	wrapperContent,
 	type XmlNode,
 } from "../parser";
@@ -22,16 +23,22 @@ export class HyperlinkWrapError extends Error {
  * single `<w:hyperlink r:id="...">`. Splits runs at the span edges so the
  * surrounding text (and its run formatting) is preserved.
  *
+ * The span is in accepted-view offsets (what `find` reports): a wrapper
+ * hidden there (a tracked `<w:del>`/`<w:moveFrom>`) is zero-width — it passes
+ * through before/after the link, or rides inside it when it sits strictly
+ * within the span (keeping document order).
+ *
  * Refuses to operate when the span overlaps an existing `<w:hyperlink>` —
- * nesting hyperlinks is not allowed in OOXML — or crosses `<w:ins>`/`<w:del>`
- * wrappers, since the run-splitting logic here is paragraph-level only.
+ * nesting hyperlinks is not allowed in OOXML — or crosses a visible
+ * `<w:ins>`/… wrapper, since the run-splitting logic here is paragraph-level
+ * only. Returns the new `<w:hyperlink>`.
  */
 export function wrapSpanInHyperlink(
 	paragraph: XmlNode,
 	span: Span,
 	relationshipId: string,
 	applyStyle = true,
-): void {
+): XmlNode {
 	if (span.start >= span.end) {
 		throw new HyperlinkWrapError(
 			`Empty or inverted span ${span.start}-${span.end}`,
@@ -41,14 +48,13 @@ export function wrapSpanInHyperlink(
 	const newChildren: XmlNode[] = [];
 	const wrappedRuns: XmlNode[] = [];
 	let offset = 0;
-	let placed = false;
+	let link: XmlNode | undefined;
 
 	const placeWrapper = (): void => {
-		if (placed || wrappedRuns.length === 0) return;
+		if (link || wrappedRuns.length === 0) return;
 		if (applyStyle) for (const run of wrappedRuns) applyHyperlinkRunStyle(run);
-		newChildren.push(hyperlinkWrapper(relationshipId, wrappedRuns));
-		wrappedRuns.length = 0;
-		placed = true;
+		link = hyperlinkWrapper(relationshipId, [...wrappedRuns]);
+		newChildren.push(link);
 	};
 
 	for (const child of paragraph.children) {
@@ -78,7 +84,15 @@ export function wrapSpanInHyperlink(
 		}
 
 		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(wrapperContent(child));
+			if (!isWrapperVisibleInView(child.tag, "accepted")) {
+				const inside = !link && offset > span.start && offset < span.end;
+				(inside ? wrappedRuns : newChildren).push(child);
+				continue;
+			}
+			const innerLength = sumVisibleTextLength(
+				wrapperContent(child),
+				"accepted",
+			);
 			const wrapperStart = offset;
 			const wrapperEnd = offset + innerLength;
 			offset = wrapperEnd;
@@ -96,7 +110,13 @@ export function wrapSpanInHyperlink(
 	}
 
 	placeWrapper();
+	if (!link) {
+		throw new HyperlinkWrapError(
+			`Span ${span.start}-${span.end} covers no text`,
+		);
+	}
 	paragraph.children = newChildren;
+	return link;
 }
 
 function messageForOverlap(tag: string, span: Span): string {

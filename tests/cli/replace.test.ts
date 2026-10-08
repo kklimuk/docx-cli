@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	insertionAncestry,
 	readDocumentXml,
 	revisionIds,
 	revisionWrappersBy,
@@ -1385,7 +1386,8 @@ describe("docx replace --track inside another author's insertion", () => {
 			name: "an insertion Word nested in a link, crossed into",
 			body: `<w:p><w:hyperlink w:anchor="terms"><w:r><w:t>abc</w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t>def</w:t></w:r></w:ins><w:r><w:t>ghi</w:t></w:r></w:hyperlink></w:p>`,
 			pattern: "bcde",
-			accepted: "[aZ](#terms)[fghi](#terms) <!-- p0 -->",
+			// The span lies inside the link, so the edit stays inside it: one link.
+			accepted: "[aZfghi](#terms) <!-- p0 -->",
 		},
 	]) {
 		for (const track of [true, false]) {
@@ -1614,5 +1616,125 @@ describe("docx replace --track inside a hyperlink", () => {
 		expect(result.exitCode).toBe(0);
 		const accepted = await runCli("read", docPath, "--accepted");
 		expect(accepted.stdout).toContain("[the docs Q](#x)");
+	});
+});
+
+// The editor's own <w:ins> must never be a descendant of ANY other revision
+// wrapper — not just its immediate parent. A span inside a link/smart tag
+// that sits in another author's insertion, or inside a revision nested in
+// another revision, splits at the container ABOVE the outermost foreign
+// revision (every wrapper on the path splits with it).
+describe("docx replace --track splits the whole revision ancestry", () => {
+	const authorA = 'w:author="A" w:date="2026-09-01T00:00:00Z"';
+
+	async function replaceAsEditor(
+		body: string,
+		pattern: string,
+		replacement: string,
+		...flags: string[]
+	): Promise<{ docPath: string; xml: string }> {
+		const docPath = await buildRawDoc(body, "replace-ancestry");
+		const result = await runCli(
+			"replace",
+			docPath,
+			pattern,
+			replacement,
+			"--track",
+			"--author",
+			"Editor",
+			...flags,
+		);
+		expect(result.exitCode).toBe(0);
+		return { docPath, xml: await readDocumentXml(docPath) };
+	}
+
+	test("a link inside another author's insertion: the insertion splits at the paragraph", async () => {
+		const { docPath, xml } = await replaceAsEditor(
+			`<w:p><w:ins w:id="1" ${authorA}><w:r><w:t xml:space="preserve">see </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t>the terms</w:t></w:r></w:hyperlink></w:ins></w:p>`,
+			"terms",
+			"rules",
+		);
+		expect(insertionAncestry(xml, "Editor")).toEqual([[]]);
+		expect(revisionWrappersBy(xml, "del", "Editor")).toEqual([
+			expect.stringContaining(">terms</w:delText>"),
+		]);
+		const ids = revisionIds(xml);
+		expect(new Set(ids).size).toBe(ids.length);
+		// The replacement keeps the link: a split-off copy of it carries the
+		// editor's insertion, outside A's.
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("see [the ](#x)[rules](#x)");
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).not.toContain("rules");
+		expect(baseline.stdout).not.toContain("terms");
+	});
+
+	test("a smart tag inside another author's insertion", async () => {
+		const { xml, docPath } = await replaceAsEditor(
+			`<w:p><w:ins w:id="1" ${authorA}><w:smartTag w:uri="u" w:element="e"><w:r><w:t>abcdef</w:t></w:r></w:smartTag></w:ins></w:p>`,
+			"cd",
+			"Z",
+		);
+		expect(insertionAncestry(xml, "Editor")).toEqual([[]]);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("abZef");
+	});
+
+	test("--current: an insertion nested in another author's deletion", async () => {
+		const { xml, docPath } = await replaceAsEditor(
+			`<w:p><w:r><w:t xml:space="preserve">Keep this. </w:t></w:r><w:del w:id="1" ${authorA}><w:r><w:delText xml:space="preserve">Old </w:delText></w:r><w:ins w:id="2" w:author="B" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">added words </w:t></w:r></w:ins><w:r><w:delText>tail.</w:delText></w:r></w:del></w:p>`,
+			"added",
+			"fresh",
+			"--current",
+		);
+		expect(insertionAncestry(xml, "Editor")).toEqual([[]]);
+		const ids = revisionIds(xml);
+		expect(new Set(ids).size).toBe(ids.length);
+		// The replacement survives accepting everything (A's deletion goes).
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("Keep this. fresh <!-- p0 -->");
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("Keep this. Old tail. <!-- p0 -->");
+	});
+
+	test("--current: cut text already deleted by an outer <w:del> isn't re-deleted", async () => {
+		const { xml, docPath } = await replaceAsEditor(
+			`<w:p><w:r><w:t>abc</w:t></w:r><w:del w:id="1" ${authorA}><w:hyperlink w:anchor="x"><w:r><w:delText>def</w:delText></w:r></w:hyperlink></w:del></w:p>`,
+			"cde",
+			"Z",
+			"--current",
+		);
+		// Editor deletes only "c" (live text); "de" stays A's deletion alone.
+		expect(revisionWrappersBy(xml, "del", "Editor")).toEqual([
+			expect.stringContaining(">c</w:delText>"),
+		]);
+		expect(insertionAncestry(xml, "Editor")).toEqual([[]]);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("abZ <!-- p0 -->");
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("abc[de](#x)[f](#x)");
+	});
+
+	test("same author: a span crossing a link nested in the own insertion still merges", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:ins w:id="1" ${authorA}><w:r><w:t xml:space="preserve">see </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t>the terms</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> now</w:t></w:r></w:ins></w:p>`,
+			"replace-own-ins-cross-link",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"see the",
+			"read the",
+			"--track",
+			"--author",
+			"A",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		expect(revisionWrappersBy(xml, "ins", "A")).toHaveLength(1);
+		expect(xml).toContain(`<w:ins w:id="1" ${authorA}>`);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("read the[ terms](#x) now");
 	});
 });

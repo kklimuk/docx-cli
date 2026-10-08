@@ -4,43 +4,17 @@ import type { FindView } from "../find";
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
+	isWrapperVisibleInView,
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	sumVisibleTextLength,
 	wrapperContent,
 	wrapperContentNode,
 	XmlNode,
 } from "../parser";
 
 export { generateParaId };
-
-/** Whether a run-bearing wrapper's contents are visible in the chosen
- *  view. Mirrors `isWrapperVisibleInView` in `core/find/replace-span.tsx`
- *  and `isRevisionVisible` in `core/ast/revision-visibility.ts` — they MUST
- *  agree, or `find → comments add` (and `find → replace`) misalign. */
-function isWrapperVisibleInView(tag: string, view: FindView): boolean {
-	if (!isRunBearingWrapper(tag)) return false;
-	if (view === "current") return true;
-	if (view === "accepted") return tag !== "w:del" && tag !== "w:moveFrom";
-	return tag !== "w:ins" && tag !== "w:moveTo";
-}
-
-/** Sum the text length of `children` counting only runs visible in the
- *  chosen view. Used for paragraph length / span bounds checks when
- *  placing comment markers. */
-function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
-	let total = 0;
-	for (const child of children) {
-		if (child.tag === "w:r") {
-			total += runTextLength(child);
-			continue;
-		}
-		if (isWrapperVisibleInView(child.tag, view)) {
-			total += sumVisibleTextLength(wrapperContent(child), view);
-		}
-	}
-	return total;
-}
 
 export function authorInitials(author: string): string {
 	const parts = author.trim().split(/\s+/).filter(Boolean);

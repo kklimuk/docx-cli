@@ -1,8 +1,8 @@
 import {
-	isRunBearingWrapper,
+	isWrapperVisibleInView,
 	runTextLength,
 	sliceRun,
-	sumRunBearingTextLength,
+	sumVisibleTextLength,
 	wrapperContent,
 	wrapperContentNode,
 	XmlNode,
@@ -11,7 +11,10 @@ import type { TrackedMeta } from "../track-changes";
 import { Del } from "../track-changes/emit";
 import { type NoteKind, noteConfig } from "./config";
 
-/** Splice `noteRun` into `paragraph` at the given character offset. Mirrors
+/** Splice `noteRun` into `paragraph` at the given character offset — an
+ *  accepted-view offset, as `find` reports it (a tracked deletion counts
+ *  nothing and is never descended into, so the reference can't land inside
+ *  deleted text). Mirrors
  *  the run-splitting machinery in `core/comments/markers.tsx`: walks the
  *  paragraph in document order, descends into run-bearing wrappers
  *  (`<w:ins>`, `<w:del>`, `<w:hyperlink>`, …), and when the cursor crosses the
@@ -23,7 +26,7 @@ export function insertNoteReferenceAtOffset(
 	offset: number,
 	noteRun: XmlNode,
 ): void {
-	const total = sumRunBearingTextLength(paragraph.children);
+	const total = paragraphNoteLength(paragraph);
 	if (offset < 0 || offset > total) {
 		throw new NoteOffsetOutOfRangeError(
 			`Offset ${offset} out of paragraph length ${total}`,
@@ -37,6 +40,12 @@ export function insertNoteReferenceAtOffset(
 		paragraph.children.push(noteRun);
 		state.placed = true;
 	}
+}
+
+/** The paragraph's length in the offset space notes are placed in — the
+ *  default point (the paragraph's end) for a reference with no offset. */
+export function paragraphNoteLength(paragraph: XmlNode): number {
+	return sumVisibleTextLength(paragraph.children, "accepted");
 }
 
 function walkAndPlace(
@@ -91,8 +100,11 @@ function walkAndPlace(
 			state.offset = runEnd;
 			continue;
 		}
-		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(wrapperContent(child));
+		if (isWrapperVisibleInView(child.tag, "accepted")) {
+			const innerLength = sumVisibleTextLength(
+				wrapperContent(child),
+				"accepted",
+			);
 			const wrapperStart = state.offset;
 			const wrapperEnd = wrapperStart + innerLength;
 			if (targetOffset >= wrapperStart && targetOffset <= wrapperEnd) {

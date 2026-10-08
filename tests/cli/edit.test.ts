@@ -4167,3 +4167,96 @@ describe("docx edit complex-script font", () => {
 		expect(runs[1]).toMatchObject({ fontEastAsia: "SimSun" });
 	});
 });
+
+// Span offsets are accepted-view offsets everywhere. After a cross-author
+// tracked replace, the head half of the other author's insertion holds only
+// the editor's nested deletion — zero visible characters — so every walker
+// that skips a wrapper must skip it by its VISIBLE length, or later spans land
+// on the wrong text.
+describe("docx edit span offsets around nested revisions", () => {
+	test("--bold after a cross-author replace formats the found text", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>withhold amounts that are long</w:t></w:r></w:ins></w:p>',
+			"span-format-nested",
+		);
+		const replaced = await runCli(
+			"replace",
+			docPath,
+			"withhold",
+			"keep",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(replaced.exitCode).toBe(0);
+		const locator = await firstLocator(docPath, "long");
+		expect(locator).toBe("p0:33-37");
+
+		const bold = await runCli("edit", docPath, "--at", locator, "--bold");
+		expect(bold.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"The Client keep amounts that are **long**",
+		);
+
+		const cleared = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			locator,
+			"--clear",
+			"bold",
+		);
+		expect(cleared.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"The Client keep amounts that are long <!-- p0 -->",
+		);
+	});
+
+	test("an empty span between two runs of a link lands inside the link, styled", async () => {
+		const linkRun = (text: string) =>
+			`<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>${text}</w:t></w:r>`;
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:hyperlink w:anchor="x">${linkRun("wo")}${linkRun("rld")}</w:hyperlink></w:p>`,
+			"span-empty-in-link",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:8-8",
+			"--text",
+			"X",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"Hello [woXrld](#x)",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<w:hyperlink /g)).toHaveLength(1);
+		expect(xml).toMatch(
+			/<w:rStyle w:val="Hyperlink"\/><\/w:rPr><w:t[^>]*>X<\/w:t>/,
+		);
+	});
+
+	test("an empty span at a link's edge still lands outside the link", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>world</w:t></w:r></w:hyperlink></w:p>',
+			"span-empty-link-edge",
+		);
+		// The second point is the link's end — shifted by the first insert.
+		for (const locator of ["p0:6-6", "p0:12-12"]) {
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				locator,
+				"--text",
+				"!",
+			);
+			expect(result.exitCode).toBe(0);
+		}
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"Hello ![world](#x)!",
+		);
+	});
+});

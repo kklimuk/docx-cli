@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { trackedKinds } from "./helpers";
+import { buildRawDoc, readDocumentXml, trackedKinds } from "./helpers";
 
 type FootnoteRefRun = {
 	type: string;
@@ -1001,5 +1001,34 @@ describe("docx footnotes/endnotes — inline escape decoding (--text)", () => {
 		const xml = await partXml(docPath, "word/footnotes.xml");
 		// The break lands inside the tracked insertion, not as a swallowed raw \n.
 		expect(xml).toMatch(/<w:ins[\s\S]*<w:br\/>[\s\S]*<\/w:ins>/);
+	});
+});
+
+// Note offsets are accepted-view offsets (what `find` reports): a tracked
+// deletion ahead of the point counts nothing, so the reference must land after
+// the found phrase, not inside the deleted text.
+describe("docx footnotes add — accepted-view offsets", () => {
+	test("--anchor after a tracked deletion lands after the phrase", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>ab</w:t></w:r><w:del w:id="1" w:author="A" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>XY</w:delText></w:r></w:del><w:r><w:t>cdef</w:t></w:r></w:p>',
+			"note-after-del",
+		);
+		const result = await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--anchor",
+			"cd",
+			"--text",
+			"note",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(
+			/<w:t[^>]*>cd<\/w:t><\/w:r><w:r><w:rPr><w:rStyle w:val="FootnoteReference"\/>/,
+		);
+		expect(xml).not.toMatch(
+			/<w:del [^>]*>(?:(?!<\/w:del>).)*footnoteReference/s,
+		);
 	});
 });

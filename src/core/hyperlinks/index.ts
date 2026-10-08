@@ -35,15 +35,17 @@ export class Hyperlinks {
 		// Provision Word's Hyperlink character style so the rStyle reference
 		// resolves (otherwise the link renders as plain body text).
 		if (applyStyle) this.document.ensureStyles().ensureStyle("Hyperlink");
-		wrapSpanInHyperlink(paragraph, span, relationshipId, applyStyle);
+		const link = wrapSpanInHyperlink(
+			paragraph,
+			span,
+			relationshipId,
+			applyStyle,
+		);
 		this.document.relationships.hyperlinksByRelationshipId.set(relationshipId, {
 			url,
 		});
 		if (this.document.isTrackChangesEnabled()) {
-			new Comments(this.document).addAudit(
-				{ kind: "span", paragraph, span },
-				auditBody(`hyperlink added → ${url}`, options.author),
-			);
+			this.auditAtNode(link, `hyperlink added → ${url}`, options.author);
 		}
 	}
 

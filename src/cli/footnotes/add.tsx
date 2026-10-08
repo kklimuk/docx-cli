@@ -9,9 +9,10 @@ import {
 	NoteOffsetOutOfRangeError,
 	NoteReferenceRun,
 	noteConfig,
+	paragraphNoteLength,
 	TrackedNoteBody,
 } from "@core/notes";
-import { sumRunBearingTextLength, XmlNode } from "@core/parser";
+import { XmlNode } from "@core/parser";
 import {
 	resolveAuthor,
 	resolveDate,
@@ -314,8 +315,7 @@ export async function runAddNote(
 			>)
 		: baseRun;
 
-	const targetOffset =
-		offset ?? sumRunBearingTextLength(paragraphRef.node.children);
+	const targetOffset = offset ?? paragraphNoteLength(paragraphRef.node);
 
 	try {
 		insertNoteReferenceAtOffset(paragraphRef.node, targetOffset, referenceRun);

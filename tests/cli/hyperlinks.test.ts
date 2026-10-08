@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { buildRawDoc, readDocumentXml } from "./helpers";
 
 type LinkInfo = {
 	id: string;
@@ -748,5 +748,34 @@ describe("docx replace — across hyperlink boundaries", () => {
 		expect(links).toHaveLength(1);
 		expect(links[0]?.text).toBe("LINKED");
 		expect(links[0]?.url).toBe("https://example.com/link");
+	});
+});
+
+// Span locators are accepted-view offsets (what `find` reports): a tracked
+// deletion ahead of the span counts nothing, so it must not shift the link —
+// nor make the span look like it "crosses" the deletion.
+describe("docx hyperlinks add — accepted-view offsets", () => {
+	test("a deletion before the span doesn't shift the link", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>ab</w:t></w:r><w:del w:id="1" w:author="A" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>XY</w:delText></w:r></w:del><w:r><w:t>cdef</w:t></w:r></w:p>',
+			"link-after-del",
+		);
+		const found = await runCli("find", docPath, "cd");
+		const locator = (found.parsed as { matches: Array<{ locator: string }> })
+			.matches[0]?.locator;
+		expect(locator).toBe("p0:2-4");
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			locator ?? "",
+			"--url",
+			"https://example.com",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"ab[cd](https://example.com)ef",
+		);
 	});
 });

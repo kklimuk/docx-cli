@@ -1,4 +1,10 @@
 export {
+	isRevisionKindVisible,
+	isWrapperVisibleInView,
+	type RevisionView,
+	sumVisibleTextLength,
+} from "./revision-view";
+export {
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	isTrackedChangeWrapper,

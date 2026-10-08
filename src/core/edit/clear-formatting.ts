@@ -1,8 +1,9 @@
 import {
 	isRunBearingWrapper,
+	isWrapperVisibleInView,
 	runTextLength,
 	sliceRun,
-	sumRunBearingTextLength,
+	sumVisibleTextLength,
 	wrapperContent,
 	wrapperContentNode,
 	type XmlNode,
@@ -98,14 +99,16 @@ function clearInContainer(
 			if (sliceEnd < length) out.push(sliceRun(child, sliceEnd, length));
 			continue;
 		}
-		// `<w:del>` / `<w:moveFrom>` are invisible in the accepted view — pass
-		// through with no offset advance, matching `find`'s accounting.
-		if (child.tag === "w:del" || child.tag === "w:moveFrom") {
-			out.push(child);
-			continue;
-		}
-		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumRunBearingTextLength(wrapperContent(child));
+		// Spans are accepted-view offsets: a wrapper hidden there (`<w:del>` /
+		// `<w:moveFrom>`) falls to the pass-through below with no offset
+		// advance, and a visible one advances by its VISIBLE length — a deletion
+		// nested inside it (an insertion split around another author's edit)
+		// counts nothing, matching `find`'s accounting.
+		if (isWrapperVisibleInView(child.tag, "accepted")) {
+			const innerLength = sumVisibleTextLength(
+				wrapperContent(child),
+				"accepted",
+			);
 			if (offset + innerLength <= span.start || offset >= span.end) {
 				out.push(child);
 				offset += innerLength;

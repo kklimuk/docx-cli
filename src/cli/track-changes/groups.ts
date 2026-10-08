@@ -1,3 +1,5 @@
+import type { XmlNode } from "@core/parser";
+
 /** Revision groups: a DERIVED VIEW over the existing `tcN` inventory that bundles
  *  an adjacent del+ins (or ins+del) text replace into one `revN` handle.
  *
@@ -13,7 +15,10 @@ type Groupable = {
 	id: string;
 	kind: string;
 	author: string;
+	date: string;
 	blockId?: string;
+	/** The revision's wrapper element — nesting is read off the tree. */
+	node: XmlNode;
 };
 
 export type RevisionGroups = {
@@ -48,18 +53,27 @@ export function revisionGroups(changes: Groupable[]): RevisionGroups {
 	return { membersOf, revOf };
 }
 
-/** An adjacent del+ins / ins+del on the same paragraph by the same author —
- *  the canonical text "replace" shape. Restricted to plain `ins`/`del` (not
- *  moveFrom/moveTo, table, or section-property revisions) so grouping stays
- *  conservative; same-paragraph ins+ins / del+del (a paragraph insert/delete's
- *  run + paragraph-mark markers) never pair. The author check keeps another
- *  reviewer's deletion nested in an insertion (the cross-author span-replace
- *  shape, `<w:ins A><w:del B>…`) from pairing with that insertion. */
+/** An adjacent del+ins / ins+del on the same paragraph, by the same author
+ *  at the same time (one edit), neither nested in the other — the canonical
+ *  text "replace" shape. Restricted to plain `ins`/`del` (not moveFrom/moveTo,
+ *  table, or section-property revisions) so grouping stays conservative;
+ *  same-paragraph ins+ins / del+del (a paragraph insert/delete's run +
+ *  paragraph-mark markers) never pair. A deletion nested INSIDE an insertion
+ *  (the span-replace shape `<w:ins A><w:del …>…`, whoever deleted) is an edit
+ *  of that insertion, not the other half of a replace; nor is the earlier
+ *  insertion's split-off tail that follows it (same author, older date). */
 function isTextReplacePair(a: Groupable, b: Groupable): boolean {
 	if (a.blockId === undefined || a.blockId !== b.blockId) return false;
-	if (a.author !== b.author) return false;
+	if (a.author !== b.author || a.date !== b.date) return false;
 	const pair = `${a.kind}+${b.kind}`;
-	return pair === "del+ins" || pair === "ins+del";
+	if (pair !== "del+ins" && pair !== "ins+del") return false;
+	return !contains(a.node, b.node) && !contains(b.node, a.node);
+}
+
+function contains(ancestor: XmlNode, node: XmlNode): boolean {
+	return ancestor.children.some(
+		(child) => child === node || contains(child, node),
+	);
 }
 
 /** Expand any `revN` in a list of `--at` targets to its member `tcN` ids; pass

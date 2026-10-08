@@ -1370,8 +1370,10 @@ function renderRuns(
 	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
-		if (run.type === "text" && !isRevisionVisible(run.trackedChange, view))
-			return;
+		// Every run kind follows the view — a break, tab or image inside a
+		// hidden revision is gone after accept/reject all, exactly like text.
+		const change = "trackedChange" in run ? run.trackedChange : undefined;
+		if (!isRevisionVisible(change, view)) return;
 		visibleEntries.push({ run, originalIndex: index });
 	});
 

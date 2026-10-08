@@ -6,10 +6,8 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
-import {
-	collectTrackedChangeRecords,
-	renderTrackedChangeTable,
-} from "./list-view";
+import { renderTrackedChangeTable } from "./list-table";
+import { collectTrackedChangeRecords, listItem } from "./list-view";
 
 const HELP = `docx track-changes list — inventory every revision wrapper
 
@@ -49,7 +47,11 @@ text } sorted by id (document order). Each item's "id" (e.g. tc0) is its granula
 handle; paired halves additionally carry "group": "revN". kind is one of: "ins",
 "del", "moveFrom", "moveTo", "sectPrChange", "pPrChange", "rowIns", "rowDel",
 "cellIns", "cellDel", "tblGridChange", "tblPrChange", "tcPrChange",
-"checkboxToggle". Paragraph-mark entries have kind "ins"/"del" with text "" —
+"checkboxToggle". text is all the text inside the revision, including any
+revision nested in it (another author's deletion inside an insertion is
+still text that insertion added; the table names it, e.g. "(contains tc1)").
+A replace pair (revN) is a del+ins by one author in one edit, side by side —
+never one nested in the other. Paragraph-mark entries have kind "ins"/"del" with text "" —
 their blockId is the owning paragraph's pN. Table-structural entries
 (rowIns/rowDel/cellIns/cellDel and the property revisions
 tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to the
@@ -89,7 +91,7 @@ export async function run(args: string[]): Promise<number> {
 	const records = collectTrackedChangeRecords(document);
 
 	if (parsed.values.json) {
-		await respond(records);
+		await respond(records.map(listItem));
 		return EXIT.OK;
 	}
 

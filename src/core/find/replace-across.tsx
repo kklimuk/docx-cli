@@ -2,19 +2,16 @@ import type { Body } from "../ast/document/body";
 import { w } from "../jsx";
 import {
 	isRunBearingWrapper,
+	isWrapperVisibleInView,
 	rewrapSplitHalf,
 	runTextLength,
 	sliceRun,
+	sumVisibleTextLength,
 	wrapperContent,
 	type XmlNode,
 } from "../parser";
 import type { FindView, ParagraphSpanMatch } from "./index";
-import {
-	isWrapperVisibleInView,
-	type ReplacementFormatting,
-	replacementRuns,
-	sumVisibleTextLength,
-} from "./replace-span";
+import { type ReplacementFormatting, replacementRuns } from "./replace-span";
 
 /**
  * Editor-style replace of a span that may cross paragraph boundaries: the

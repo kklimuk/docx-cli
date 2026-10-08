@@ -34,7 +34,7 @@ src/
     edit/                     # docx edit FILE
     delete/                   # docx delete FILE
     find/                     # docx find FILE QUERY
-    replace/                  # docx replace FILE PATTERN REPLACEMENT (replace-span.tsx: run-splitting)
+    replace/                  # docx replace FILE PATTERN REPLACEMENT (core/find/replace-span/: run-splitting)
     wc/                       # docx wc FILE [LOCATOR] (count.ts)
     outline/                  # docx outline FILE (build.ts: heading-tree builder)
     diff/                     # docx diff FILE --against SRC (markers.ts: locator normalization; renders read view, diffs via @core/diff)
