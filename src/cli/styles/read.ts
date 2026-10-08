@@ -1,4 +1,5 @@
 import { type Block, baselineCatalog, iterateBlocks } from "@core";
+import { alignmentFromJc } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
 import {
 	EXIT,
@@ -197,7 +198,10 @@ function describeRunProperties(rPr: XmlNode, detail: StyleDetail): void {
 
 function describeParagraphProperties(pPr: XmlNode, detail: StyleDetail): void {
 	const jc = pPr.findChild("w:jc")?.getAttribute("w:val");
-	if (jc) detail.alignment = jc;
+	// Report the `--alignment` vocabulary (`both` → `justify`) so a value read
+	// here can be passed straight back to `styles set`; an unmodeled token
+	// passes through raw rather than vanishing.
+	if (jc) detail.alignment = alignmentFromJc(jc) ?? jc;
 	const spacing = pPr.findChild("w:spacing");
 	if (spacing) {
 		const before = numberAttr(spacing, "w:before");

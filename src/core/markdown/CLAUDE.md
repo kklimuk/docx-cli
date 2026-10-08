@@ -26,7 +26,7 @@ Phases 2 and 3 share one `WalkContext` (see [inline.tsx](inline.tsx)). The CLI v
 
 Robustness is the contract: markers that don't balance, and spans whose attributes parse to nothing, **degrade to their literal text** — never a throw, never lost content. `inlineCode` (and every non-text node) is an opaque atom, so code spans (`` `{++x++}` ``) are excluded for free. Any unexpected failure restores the original children array.
 
-When `<w:trackChanges/>` is on, `criticInsert` wraps its (now possibly multi-run, formatted) content in `<w:ins>`; `criticDelete` wraps in `<w:del>` with **every descendant** `<w:t>` → `<w:delText>` (recursive rename — deleted content can nest hyperlinks/formatted runs, and a bare `<w:t>` inside `<w:del>` is invalid OOXML). When tracking is off, `criticInsert` flattens to plain runs (CriticMarkup's "accepted" view, formatting preserved) and `criticDelete` drops entirely. Decided once at lens construction via `document.isTrackChangesEnabled()` — no per-call override.
+When `<w:trackRevisions/>` is on, `criticInsert` wraps its (now possibly multi-run, formatted) content in `<w:ins>`; `criticDelete` wraps in `<w:del>` with **every descendant** `<w:t>` → `<w:delText>` (recursive rename — deleted content can nest hyperlinks/formatted runs, and a bare `<w:t>` inside `<w:del>` is invalid OOXML). When tracking is off, `criticInsert` flattens to plain runs (CriticMarkup's "accepted" view, formatting preserved) and `criticDelete` drops entirely. Decided once at lens construction via `document.isTrackChangesEnabled()` — no per-call override.
 
 ## Run-formatting encoding: hybrid HTML (the read↔import contract)
 

@@ -290,7 +290,7 @@ export async function runAddNote(
 	});
 	if (typeof body === "number") return body;
 
-	// Tracking is doc-level: when `<w:trackChanges/>` is set in settings.xml,
+	// Tracking is doc-level: when `<w:trackRevisions/>` is set in settings.xml,
 	// Word wraps BOTH the body reference run AND the entire body content in
 	// `<w:ins>` (different revision ids, shared author/date). Mirroring Word
 	// exactly is what makes accept/reject in Word render this CLI's edits

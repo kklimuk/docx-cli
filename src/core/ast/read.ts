@@ -1,4 +1,4 @@
-import { normalizeTabAlign } from "../blocks";
+import { alignmentFromJc, normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
 
 import { enumerateMarginalRefs } from "../marginals/resolve";
@@ -734,18 +734,13 @@ function applyParagraphProperties(
 		if (value) paragraph.style = value;
 	}
 
-	const justification = paragraphProperties.findChild("w:jc");
-	if (justification) {
-		const value = justification.getAttribute("w:val");
-		if (
-			value === "left" ||
-			value === "center" ||
-			value === "right" ||
-			value === "justify"
-		) {
-			paragraph.alignment = value;
-		}
-	}
+	// ST_Jc spells justified `both` (and LTR-aware `start`/`end`); pre-fix builds
+	// wrote a schema-invalid `justify` — `alignmentFromJc` reads them all as our
+	// vocabulary.
+	const alignment = alignmentFromJc(
+		paragraphProperties.findChild("w:jc")?.getAttribute("w:val"),
+	);
+	if (alignment) paragraph.alignment = alignment;
 
 	const tabsNode = paragraphProperties.findChild("w:tabs");
 	if (tabsNode) {
@@ -1320,14 +1315,17 @@ function readTable(
 	return table;
 }
 
-/** The table's on-page justification from `<w:tblPr><w:jc w:val="…"/>`. Only
- * `center`/`right` surface — `left` (or absent) is the default, suppressed. */
+/** The table's on-page justification from `<w:tblPr><w:jc w:val="…"/>`
+ * (ST_JcTable). Only `center`/`right` surface — `left`/`start` (or absent) is
+ * the default, suppressed; the LTR-aware `end` reads as `right`. */
 function readTableAlign(table: XmlNode): "center" | "right" | undefined {
 	const val = table
 		.findChild("w:tblPr")
 		?.findChild("w:jc")
 		?.getAttribute("w:val");
-	return val === "center" || val === "right" ? val : undefined;
+	if (val === "center") return "center";
+	if (val === "right" || val === "end") return "right";
+	return undefined;
 }
 
 /** Row height from `<w:trPr><w:trHeight w:val="…" w:hRule="…"/>`. `w:hRule`

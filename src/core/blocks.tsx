@@ -304,11 +304,11 @@ export function applyParagraphPropsToPPr(
 	if (options.alignment) {
 		const existingJc = pPr.findChild("w:jc");
 		if (existingJc) {
-			existingJc.setAttribute("w:val", options.alignment);
+			existingJc.setAttribute("w:val", jcValue(options.alignment));
 		} else {
 			insertPprChildInOrder(
 				pPr,
-				new XmlNode("w:jc", { "w:val": options.alignment }),
+				new XmlNode("w:jc", { "w:val": jcValue(options.alignment) }),
 			);
 		}
 	}
@@ -721,10 +721,49 @@ function ParagraphProperties({
 			)}
 			{spacingAttrs && <w.spacing {...spacingAttrs} />}
 			{indentAttrs && <w.ind {...indentAttrs} />}
-			{options.alignment && <w.jc w-val={options.alignment} />}
+			{options.alignment && <w.jc w-val={jcValue(options.alignment)} />}
 		</w.pPr>
 	);
 }
+
+/** The `<w:jc w:val>` token for a CLI alignment. Our vocabulary says `justify`;
+ *  ST_Jc (ECMA-376 §17.18.44) spells it `both` — `justify` is not in the enum,
+ *  so emitting it verbatim wrote schema-invalid XML that `validate` flagged and
+ *  Word silently ignored (the eliot-journal run). The reader maps `both` back. */
+export function jcValue(
+	alignment: NonNullable<ParagraphOptions["alignment"]>,
+): string {
+	return alignment === "justify" ? "both" : alignment;
+}
+
+/** The inverse of `jcValue`: a `<w:jc w:val>` token in our alignment vocabulary,
+ *  so the AST reader, `styles --at`, and the tracked `pPrChange` summary all
+ *  report a value `--alignment` accepts (`both` → `justify`, never the raw
+ *  OOXML spelling). The pre-fix `justify` and the distributed/kashida
+ *  justifications read as `justify`; the LTR-aware `start`/`end` read as
+ *  `left`/`right`, exactly as `normalizeTabAlign` treats them. Undefined for a
+ *  missing or unmodeled token (`numTab`). Keep every PARAGRAPH `w:jc` reader
+ *  going through THIS function (a table's `w:jc` is ST_JcTable — see
+ *  `readTableAlign`). */
+export function alignmentFromJc(
+	value: string | undefined,
+): ParagraphOptions["alignment"] {
+	if (value === "left" || value === "start") return "left";
+	if (value === "right" || value === "end") return "right";
+	if (value === "center") return "center";
+	if (value !== undefined && JUSTIFIED_JC_VALUES.has(value)) return "justify";
+	return undefined;
+}
+
+const JUSTIFIED_JC_VALUES = new Set([
+	"both",
+	"justify",
+	"distribute",
+	"lowKashida",
+	"mediumKashida",
+	"highKashida",
+	"thaiDistribute",
+]);
 
 /** Build the `<w:spacing>` attribute map from a `ParagraphSpacing`, or null if it
  *  sets nothing. `before`/`after` are emitted in twips; `line` carries its

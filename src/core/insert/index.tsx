@@ -6,6 +6,7 @@ import {
 	hasParagraphProperties,
 	indentAttributes,
 	injectPprChange,
+	jcValue,
 	Paragraph,
 	type ParagraphOptions,
 	priorPprChildren,
@@ -35,7 +36,7 @@ import { inheritFormattingFromAnchor } from "./inherit";
 /** Cross-cutting lens over "insert a block (of any kind) at a target location."
  * Stateless — `new Insert(document).paragraph(blockRef, spec, …)` builds the
  * block(s), provisions any styles / list ids / image relationships it needs,
- * applies tracked-change wrapping when `<w:trackChanges/>` is on, and returns
+ * applies tracked-change wrapping when `<w:trackRevisions/>` is on, and returns
  * the freshly-built XmlNodes. **The caller splices and saves** so `--dry-run`
  * can skip persistence cleanly. Throws `InsertError(code, message, hint?)` for
  * domain failures (LaTeX parse, image source, unsupported tracking combo). */
@@ -330,7 +331,7 @@ function EquationParagraph({
 					{style && <w.pStyle w-val={style} />}
 					{spacingAttrs && <w.spacing {...spacingAttrs} />}
 					{indentAttrs && <w.ind {...indentAttrs} />}
-					{alignment && <w.jc w-val={alignment} />}
+					{alignment && <w.jc w-val={jcValue(alignment)} />}
 				</w.pPr>
 			)}
 			{omml}
@@ -394,7 +395,7 @@ async function buildImageParagraph(
 					{hasCaption ? <w.keepNext /> : null}
 					{spacingAttrs ? <w.spacing {...spacingAttrs} /> : null}
 					{indentAttrs ? <w.ind {...indentAttrs} /> : null}
-					{alignment ? <w.jc w-val={alignment} /> : null}
+					{alignment ? <w.jc w-val={jcValue(alignment)} /> : null}
 				</w.pPr>
 			) : null}
 			{imageRun}

@@ -10,6 +10,48 @@ async function readPart(docPath: string, partName: string): Promise<string> {
 	return await pkg.readText(partName);
 }
 
+describe("docx comments — schema hygiene of the comments part", () => {
+	test("add on a comments part lacking mc:Ignorable registers w14 so validate stays clean", async () => {
+		// Word-authored comments.xml declares xmlns:w14 but often omits
+		// `mc:Ignorable`; our `w14:paraId`/`w14:textId` are then schema errors the
+		// validator can't strip — every `comments add` made `validate` fail on a file
+		// the agent hadn't broken. Simulate: strip the declaration our fresh root
+		// carries, then add again.
+		const workspace = tempWorkspace("comments-ignorable");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Clause one. Clause two.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "first");
+		const pkg = await Pkg.open(docPath);
+		const stripped = (await pkg.readText("word/comments.xml")).replace(
+			/ mc:Ignorable="[^"]*"/,
+			"",
+		);
+		expect(stripped).not.toContain("mc:Ignorable");
+		pkg.writeText("word/comments.xml", stripped);
+		await pkg.save();
+		// Sanity: the stripped part now fails validation on its own.
+		expect((await runCli("validate", docPath)).exitCode).not.toBe(0);
+
+		const added = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"second",
+		);
+		expect(added.exitCode).toBe(0);
+		const validation = await runCli("validate", docPath);
+		expect(validation.exitCode).toBe(0);
+		const root = (await readPart(docPath, "word/comments.xml")).match(
+			/<w:comments[^>]*>/,
+		)?.[0];
+		expect(root).toContain("w14");
+		expect(root).toMatch(/mc:Ignorable="[^"]*w14/);
+	});
+});
+
 describe("docx comments", () => {
 	let docPath: string;
 

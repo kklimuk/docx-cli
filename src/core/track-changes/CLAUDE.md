@@ -19,7 +19,7 @@ Word nests one author's `<w:del>` inside another author's still-pending `<w:ins>
 `new TrackChanges(document).…`:
 - `mintMeta(authorFlag?)` — one-shot `TrackedMeta`. For multi-revision operations call `createAllocator()` instead.
 - `createAllocator()` — `{ next(): number }` seeded from `computeMaxRevisionId` (scans document.xml + footnotes.xml + endnotes.xml so a new id can't collide with one already in a note body).
-- `setEnabled(on)` — toggles `<w:trackChanges/>` in settings.xml; turning on materializes the part.
+- `setEnabled(on)` — toggles `<w:trackRevisions/>` in settings.xml; turning on materializes the part.
 - `list()` — `collectTrackedChanges(document)`; reads `document.trackedChangeReferences` (the reader's map), never re-walks.
 - `preview(target, verb)` — accept/reject preview for `--dry-run`. Throws `TrackedChangeNotFoundError` on unknown id.
 - `accept(target)` / `reject(target)` — apply; returns `ChangeRecord[]`. Caller saves.
