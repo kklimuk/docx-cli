@@ -1,4 +1,5 @@
 import type { XmlNode } from "../../parser";
+import { isRevisionVisible, type RevisionView } from "../revision-visibility";
 import { flattenImageRuns } from "../text";
 import type {
 	Block,
@@ -178,7 +179,7 @@ export class Body {
  *  `current` walks every story. */
 export function* iterateBlocks(
 	blocks: Block[],
-	options: { view?: "current" | "accepted" | "baseline" } = {},
+	options: { view?: RevisionView } = {},
 ): IterableIterator<Block> {
 	const view = options.view ?? "current";
 	for (const block of blocks) {
@@ -194,13 +195,7 @@ export function* iterateBlocks(
 		if (block.type === "paragraph") {
 			for (const run of block.runs) {
 				if (run.type !== "textBox") continue;
-				const kind = run.trackedChange?.kind;
-				if (view === "accepted" && (kind === "del" || kind === "moveFrom")) {
-					continue;
-				}
-				if (view === "baseline" && (kind === "ins" || kind === "moveTo")) {
-					continue;
-				}
+				if (!isRevisionVisible(run.trackedChange, view)) continue;
 				yield* iterateBlocks(run.blocks, options);
 			}
 		}

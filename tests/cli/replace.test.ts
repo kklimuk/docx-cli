@@ -1252,6 +1252,9 @@ describe("docx replace --track inside another author's insertion", () => {
 		const baseline = await runCli("read", docPath, "--baseline");
 		expect(baseline.stdout).toContain("The Client");
 		expect(baseline.stdout).not.toContain("withhold");
+		// Editor's deletion sits INSIDE Reviewer A's insertion: rejecting A's
+		// insertion removes it too, so the baseline never shows its text.
+		expect(baseline.stdout).not.toContain("disputed");
 	});
 
 	test("a third author's nested deletion before the match doesn't shift the span", async () => {
@@ -1281,6 +1284,8 @@ describe("docx replace --track inside another author's insertion", () => {
 		const baseline = await runCli("read", docPath, "--baseline");
 		expect(baseline.stdout).toContain("Fees are due.");
 		expect(baseline.stdout).not.toContain("withhold");
+		expect(baseline.stdout).not.toContain("disputed");
+		expect(baseline.stdout).not.toContain("any");
 	});
 
 	test("an insertion Word nested in a hyperlink splits inside the link", async () => {
@@ -1360,6 +1365,54 @@ describe("docx replace --track inside another author's insertion", () => {
 		expect(accepted.stdout).toContain("Keep back");
 	});
 
+	// A wrapper nested in the split one (a link inside the insertion, an
+	// insertion inside a link) is split too — moved whole, the matched text it
+	// held survived the replace while it exited 0.
+	for (const { name, body, pattern, accepted } of [
+		{
+			name: "a link inside the insertion",
+			body: `<w:p><w:ins w:id="1" ${reviewerA}><w:r><w:t xml:space="preserve">see </w:t></w:r><w:hyperlink w:anchor="terms"><w:r><w:t>the terms</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> now</w:t></w:r></w:ins></w:p>`,
+			pattern: "see the terms now",
+			accepted: "Z <!-- p0 -->",
+		},
+		{
+			name: "a smart tag inside the insertion",
+			body: `<w:p><w:ins w:id="1" ${reviewerA}><w:r><w:t>ab</w:t></w:r><w:smartTag w:uri="u" w:element="e"><w:r><w:t>cd</w:t></w:r></w:smartTag><w:r><w:t>ef</w:t></w:r></w:ins></w:p>`,
+			pattern: "bcde",
+			accepted: "aZf <!-- p0 -->",
+		},
+		{
+			name: "an insertion Word nested in a link, crossed into",
+			body: `<w:p><w:hyperlink w:anchor="terms"><w:r><w:t>abc</w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t>def</w:t></w:r></w:ins><w:r><w:t>ghi</w:t></w:r></w:hyperlink></w:p>`,
+			pattern: "bcde",
+			accepted: "[aZ](#terms)[fghi](#terms) <!-- p0 -->",
+		},
+	]) {
+		for (const track of [true, false]) {
+			test(`${name}: the whole match goes (${track ? "tracked" : "untracked"})`, async () => {
+				const docPath = await buildRawDoc(body, "replace-nested-wrapper");
+				const result = await runCli(
+					"replace",
+					docPath,
+					pattern,
+					"Z",
+					...(track ? ["--track", "--author", "Editor"] : []),
+				);
+				expect(result.exitCode).toBe(0);
+				const read = await runCli("read", docPath, "--accepted");
+				expect(read.stdout).toContain(accepted);
+				// Untracked splits keep one w:id on both halves (no allocator — a
+				// known gap), so only the tracked shape promises unique ids.
+				if (!track) return;
+				const ids = revisionIds(await readDocumentXml(docPath));
+				expect(new Set(ids).size).toBe(ids.length);
+				// Nothing Editor inserted survives rejecting every revision.
+				const baseline = await runCli("read", docPath, "--baseline");
+				expect(baseline.stdout).not.toContain("Z");
+			});
+		}
+	}
+
 	function replaceTrackedAsEditor(docPath: string) {
 		return runCli(
 			"replace",
@@ -1371,6 +1424,147 @@ describe("docx replace --track inside another author's insertion", () => {
 			"Editor",
 		);
 	}
+});
+
+/** The `<w:t>` text inside an XML fragment, concatenated. */
+function visibleText(xml: string): string {
+	return [...xml.matchAll(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g)]
+		.map((match) => match[1])
+		.join("");
+}
+
+// Editing your OWN pending insertion is not a new revision: Word removes the
+// cut text outright and types the replacement into the existing insertion
+// (same w:id, same date) — no nested <w:del>, no split, no fresh <w:ins>.
+describe("docx replace --track inside the same author's insertion", () => {
+	const ownInsertion =
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z">';
+
+	test("the replacement merges into the existing insertion", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${ownInsertion}<w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"replace-own-ins",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		expect(xml).not.toContain("disputed amount");
+		const insertions = revisionWrappersBy(xml, "ins", "Reviewer A");
+		expect(insertions).toHaveLength(1);
+		expect(xml).toContain(ownInsertion);
+		expect(visibleText(insertions[0] ?? "")).toBe(
+			"may withhold a disputed sum.",
+		);
+
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"The Client may withhold a disputed sum.",
+		);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("The Client");
+		expect(baseline.stdout).not.toContain("disputed");
+	});
+
+	test("author match is exact: a differently-cased name still splits", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${ownInsertion}<w:r><w:t>a disputed amount</w:t></w:r></w:ins></w:p>`,
+			"replace-other-ins",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"disputed",
+			"open",
+			"--track",
+			"--author",
+			"Reviewer a",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer A")).toHaveLength(2);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer a")).toEqual([
+			expect.stringContaining("open"),
+		]);
+	});
+
+	test("a span crossing out of the own insertion keeps the tracked shape", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${ownInsertion}<w:r><w:t>may withhold</w:t></w:r></w:ins></w:p>`,
+			"replace-own-ins-crossing",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Client may",
+			"Customer may",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "del", "Reviewer A").join("")).toContain(
+			"Client ",
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("The Customer may withhold");
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("The Client");
+		expect(baseline.stdout).not.toContain("withhold");
+	});
+
+	test("a link nested in the own insertion merges too", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${ownInsertion}<w:r><w:t xml:space="preserve">see </w:t></w:r><w:hyperlink w:anchor="terms"><w:r><w:t>the terms</w:t></w:r></w:hyperlink></w:ins></w:p>`,
+			"replace-own-ins-link",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"terms",
+			"rules",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		expect(revisionWrappersBy(xml, "ins", "Reviewer A")).toHaveLength(1);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("see [the rules](#terms)");
+	});
+
+	test("deleting all of the own insertion leaves no empty revision", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r>${ownInsertion}<w:r><w:t>world</w:t></w:r></w:ins><w:r><w:t>!</w:t></w:r></w:p>`,
+			"replace-own-ins-all",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"world",
+			"",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:ins ");
+		const list = await runCli("track-changes", "list", docPath);
+		expect(list.parsed).toEqual([]);
+	});
 });
 
 describe("docx replace --track inside a hyperlink", () => {

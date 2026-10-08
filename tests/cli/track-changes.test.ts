@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
-import { freshFixture as copyFixture } from "./helpers";
+import { buildRawDoc, freshFixture as copyFixture } from "./helpers";
 
 describe("docx track-changes", () => {
 	test("on creates settings.xml and registers it", async () => {
@@ -122,6 +122,81 @@ describe("docx track-changes", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		expect(result.parsed).toEqual([]);
+	});
+});
+
+// A revision nested inside another author's revision is visible in a view only
+// when EVERY enclosing wrapper is: rejecting an insertion removes everything in
+// it — including a later editor's deletion nested inside — so `read --baseline`
+// must not show that deleted text. The views must predict exactly what
+// `reject --all` / `accept --all` leave behind.
+describe("nested revisions — views agree with accept/reject all", () => {
+	const reviewerA = 'w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"';
+	const docs: Record<string, { body: string; baseline: string }> = {
+		"del nested in another author's ins": {
+			body: `<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>`,
+			baseline: "Fees are due.",
+		},
+		"ins nested in another author's del": {
+			body: `<w:p><w:r><w:t xml:space="preserve">Keep this. </w:t></w:r><w:del w:id="1" ${reviewerA}><w:r><w:delText xml:space="preserve">Old </w:delText></w:r><w:ins w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:t xml:space="preserve">added </w:t></w:r></w:ins><w:r><w:delText>words.</w:delText></w:r></w:del></w:p>`,
+			baseline: "Keep this. Old words.",
+		},
+	};
+
+	for (const [name, { body, baseline }] of Object.entries(docs)) {
+		test(`${name}: --baseline = reject --all, --accepted = accept --all`, async () => {
+			const docPath = await buildRawDoc(body, "nested-revisions");
+			for (const [view, verb] of [
+				["--baseline", "reject"],
+				["--accepted", "accept"],
+			] as const) {
+				const predicted = await runCli("read", docPath, view);
+				const resolvedPath = join(
+					tempWorkspace(`nested-${verb}`),
+					"resolved.docx",
+				);
+				const resolved = await runCli(
+					"track-changes",
+					verb,
+					docPath,
+					"--all",
+					"-o",
+					resolvedPath,
+				);
+				expect(resolved.exitCode).toBe(0);
+				const actual = await runCli("read", resolvedPath, view);
+				expect(predicted.stdout).toBe(actual.stdout);
+			}
+			const baselineRead = await runCli("read", docPath, "--baseline");
+			expect(baselineRead.stdout).toContain(`${baseline} <!-- p0 -->`);
+			// find and wc count the same visible text as the read view.
+			const words = baseline.split(/\s+/).filter(Boolean).length;
+			const wc = await runCli("wc", docPath, "--baseline", "--json");
+			expect((wc.parsed as { words: number }).words).toBe(words);
+		});
+	}
+
+	test("a code block's fenced lines follow the view too", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:pPr><w:pStyle w:val="CodeBlock"/></w:pPr><w:r><w:t xml:space="preserve">let x = </w:t></w:r><w:del w:id="1" ${reviewerA}><w:r><w:delText>1</w:delText></w:r></w:del><w:ins w:id="2" ${reviewerA}><w:r><w:t>2</w:t></w:r></w:ins></w:p>`,
+			"nested-code-block",
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("let x = 2\n");
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("let x = 1\n");
+	});
+
+	test("find --baseline doesn't match a deletion nested in an insertion", async () => {
+		const docPath = await buildRawDoc(
+			docs["del nested in another author's ins"]?.body ?? "",
+			"nested-find",
+		);
+		const hidden = await runCli("find", docPath, "any", "--baseline");
+		expect(hidden.stdout).not.toContain("p0:");
+		// --current still sees it, at the offset read/replace agree on.
+		const current = await runCli("find", docPath, "any", "--current");
+		expect(current.stdout).toContain("p0:38-41");
 	});
 });
 
@@ -1465,6 +1540,30 @@ describe("docx track-changes revision groups (revN)", () => {
 		expect(del?.group).toBeDefined();
 		expect(del?.group).toBe(ins?.group);
 		expect(del?.group).toBe("rev0");
+	});
+
+	test("another author's deletion nested in an insertion doesn't pair with it", async () => {
+		// The cross-author span-replace shape: Reviewer A's insertion holds
+		// Editor's nested deletion, then Editor's own insertion follows. Only
+		// Editor's del+ins is a replace; A's insertion stays solo.
+		const docPath = await buildRawDoc(
+			'<w:p><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:del w:id="2" w:author="Editor" w:date="2026-09-02T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:ins><w:ins w:id="3" w:author="Editor" w:date="2026-09-02T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>',
+			"rev-cross-author",
+		);
+		const changes = (await list(docPath)) as Array<{
+			id: string;
+			kind: string;
+			author: string;
+			group?: string;
+		}>;
+		const reviewerInsertion = changes.find(
+			(change) => change.author === "Reviewer A",
+		);
+		expect(reviewerInsertion?.group).toBeUndefined();
+		const editorGroups = changes
+			.filter((change) => change.author === "Editor")
+			.map((change) => change.group);
+		expect(editorGroups).toEqual(["rev0", "rev0"]);
 	});
 
 	test("the text-first default collapses the pair onto one revN line", async () => {

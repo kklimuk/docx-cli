@@ -153,26 +153,32 @@ const JSON_SCHEMA = {
 				sizeHalfPoints: { type: "number" },
 				runStyle: { type: "string" },
 				comments: { type: "array", items: { type: "string" } },
-				trackedChange: {
-					type: "object",
-					required: ["id", "kind", "author", "date", "revisionId"],
-					properties: {
-						id: { type: "string" },
-						// Only kinds that attach to a TextRun are listed here. Other
-						// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
-						// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
-						// surface via `track-changes list` from
-						// `document.trackedChangeReferences`, not via `Run.trackedChange`
-						// — keep this enum tight to what readers actually see here.
-						kind: {
-							enum: ["ins", "del", "moveFrom", "moveTo"],
-						},
-						author: { type: "string" },
-						date: { type: "string" },
-						revisionId: { type: "string" },
-					},
-				},
+				trackedChange: { $ref: "#/$defs/RunRevision" },
 				hyperlink: { $ref: "#/$defs/Hyperlink" },
+			},
+		},
+		RunRevision: {
+			type: "object",
+			required: ["id", "kind", "author", "date", "revisionId"],
+			properties: {
+				id: { type: "string" },
+				// Only kinds that attach to a run are listed here. Other
+				// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
+				// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
+				// surface via `track-changes list` from
+				// `document.trackedChangeReferences`, not via `Run.trackedChange`
+				// — keep this enum tight to what readers actually see here.
+				kind: {
+					enum: ["ins", "del", "moveFrom", "moveTo"],
+				},
+				author: { type: "string" },
+				date: { type: "string" },
+				revisionId: { type: "string" },
+				within: {
+					$ref: "#/$defs/RunRevision",
+					description:
+						"the revision this one is nested inside (e.g. a del inside another author's ins); the run shows in --accepted/--baseline only if every revision in the chain does",
+				},
 			},
 		},
 		Hyperlink: {
@@ -199,17 +205,7 @@ const JSON_SCHEMA = {
 				floating: { type: "boolean" },
 				wrap: { type: "string" },
 				align: { type: "string" },
-				trackedChange: {
-					type: "object",
-					required: ["id", "kind", "author", "date", "revisionId"],
-					properties: {
-						id: { type: "string" },
-						kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
-						author: { type: "string" },
-						date: { type: "string" },
-						revisionId: { type: "string" },
-					},
-				},
+				trackedChange: { $ref: "#/$defs/RunRevision" },
 			},
 		},
 		BreakRun: {
@@ -218,12 +214,16 @@ const JSON_SCHEMA = {
 			properties: {
 				type: { const: "break" },
 				kind: { enum: ["page", "line", "column"] },
+				trackedChange: { $ref: "#/$defs/RunRevision" },
 			},
 		},
 		TabRun: {
 			type: "object",
 			required: ["type"],
-			properties: { type: { const: "tab" } },
+			properties: {
+				type: { const: "tab" },
+				trackedChange: { $ref: "#/$defs/RunRevision" },
+			},
 		},
 		EquationRun: {
 			type: "object",
@@ -263,6 +263,7 @@ const JSON_SCHEMA = {
 				wrap: { type: "string" },
 				align: { type: "string" },
 				blocks: { type: "array", items: { $ref: "#/$defs/Block" } },
+				trackedChange: { $ref: "#/$defs/RunRevision" },
 			},
 		},
 		Footnote: {

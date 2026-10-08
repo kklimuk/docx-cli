@@ -428,6 +428,11 @@ export type TrackedChange = {
 	author: string;
 	date: string;
 	revisionId: string;
+	/** The revision this one is nested inside, when its wrapper sits within
+	 * another author's revision wrapper (e.g. a `<w:del>` inside a `<w:ins>`).
+	 * The run's own `kind`/`id` stay the innermost wrapper's; visibility in the
+	 * accepted/baseline views needs the whole chain (`isRevisionVisible`). */
+	within?: TrackedChange;
 };
 
 /** OOXML revision-tracking wrappers we surface in the AST.

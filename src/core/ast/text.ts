@@ -1,4 +1,5 @@
 import { iterateBlocks } from "./document/body";
+import { isRevisionVisible } from "./revision-visibility";
 import type { Block, ImageRun, Paragraph } from "./types";
 
 export function paragraphText(paragraph: Paragraph): string {
@@ -10,29 +11,28 @@ export function paragraphText(paragraph: Paragraph): string {
 }
 
 /** Concatenate text as it would read in the accepted view: skip runs inside
- * a tracked deletion (`<w:del>`) or a tracked-move source (`<w:moveFrom>`);
- * keep insertions and move destinations. */
+ * a tracked deletion (`<w:del>`) or a tracked-move source (`<w:moveFrom>`) —
+ * at any nesting depth; keep insertions and move destinations. */
 export function paragraphTextAccepted(paragraph: Paragraph): string {
-	let out = "";
-	for (const run of paragraph.runs) {
-		if (run.type !== "text") continue;
-		const kind = run.trackedChange?.kind;
-		if (kind === "del" || kind === "moveFrom") continue;
-		out += run.text;
-	}
-	return out;
+	return paragraphTextInView(paragraph, "accepted");
 }
 
 /** Concatenate text as it would read in the baseline (pre-change) view: skip
  * runs inside a tracked insertion (`<w:ins>`) or a tracked-move destination
- * (`<w:moveTo>`); keep deletions and move sources. */
+ * (`<w:moveTo>`) — at any nesting depth, so a deletion nested inside an
+ * insertion goes too; keep deletions and move sources. */
 export function paragraphTextBaseline(paragraph: Paragraph): string {
+	return paragraphTextInView(paragraph, "baseline");
+}
+
+function paragraphTextInView(
+	paragraph: Paragraph,
+	view: "accepted" | "baseline",
+): string {
 	let out = "";
 	for (const run of paragraph.runs) {
 		if (run.type !== "text") continue;
-		const kind = run.trackedChange?.kind;
-		if (kind === "ins" || kind === "moveTo") continue;
-		out += run.text;
+		if (isRevisionVisible(run.trackedChange, view)) out += run.text;
 	}
 	return out;
 }

@@ -35,8 +35,10 @@ export type ReplacementFormatting = {
 /** Whether a run-bearing wrapper's contents should be treated as VISIBLE in
  *  the chosen view. Invisible wrappers pass through replace's offset
  *  arithmetic untouched (their inner text adds nothing to the offset and
- *  spans don't slice into them). Mirrors `isRunVisibleInView` in
- *  src/core/find/index.ts so find/replace stay in sync. (Exported for
+ *  spans don't slice into them). Walkers recurse only into visible wrappers,
+ *  so nested content counts only when EVERY enclosing revision is visible —
+ *  the rule `isRevisionVisible` (core/ast/revision-visibility.ts) applies to
+ *  the AST, which keeps find/replace in sync. (Exported for
  *  replace-across.tsx, which walks the same offset space over whole
  *  paragraphs.) */
 export function isWrapperVisibleInView(tag: string, view: FindView): boolean {
@@ -87,7 +89,14 @@ export function sumVisibleTextLength(
  * <w:del> in the surrounding revision and splits it around the replacement's
  * own <w:ins>, so that case takes the across-boundaries path over the
  * wrapper's container (the paragraph, or e.g. the hyperlink Word nests a
- * tracked insertion in), which does exactly that.
+ * tracked insertion in), which does exactly that. The one exception to the
+ * exception: a span wholly inside the tracked author's OWN insertion (the
+ * nearest enclosing `<w:ins>`/`<w:moveTo>` whose `w:author` matches exactly)
+ * is rebuilt untracked inside it — the cut vanishes and the replacement joins
+ * that insertion (same `w:id`/date), as Word does when you edit your own
+ * pending text. A span that crosses out of it keeps the split/tracked shape.
+ * A pure insertion at a revision wrapper's edge lands beside it, tracked or
+ * not (unless it is the author's own insertion).
  */
 export function replaceSpanInParagraph(
 	paragraph: XmlNode,
@@ -133,20 +142,35 @@ export function replaceSpanInParagraph(
 	const allSameParent = overlapping.every(
 		(slot) => slot.parent === firstParent,
 	);
-	const insideTrackedRevision =
-		tracked !== undefined && isTrackedChangeWrapper(firstParent.tag);
+	// A tracked span inside a revision wrapper splits it (below). So does a pure
+	// insertion at a wrapper's edge (`boundaryAnchor`), tracked or not: it
+	// belongs beside that revision, not in it — an untracked one would join the
+	// other author's revision and vanish when that revision is rejected.
+	const splitsRevision =
+		(tracked !== undefined || overlapping.length === 0) &&
+		isTrackedChangeWrapper(firstParent.tag);
+	// Editing your own pending insertion isn't a new revision: Word removes the
+	// cut outright and types the replacement into that insertion — inside a
+	// link nested in it too.
+	const insideOwnInsertion =
+		tracked !== undefined &&
+		firstSlot.revision !== undefined &&
+		isOwnInsertion(firstSlot.revision, tracked.meta.author);
 
-	if (allSameParent && !insideTrackedRevision) {
+	if (allSameParent && (!splitsRevision || insideOwnInsertion)) {
 		rebuildContainer(
 			firstParent,
 			firstSlot.parentStart,
 			span,
 			replacement,
 			inheritedProperties,
-			tracked ?? null,
+			insideOwnInsertion ? null : (tracked ?? null),
 			view,
 			formatting,
 		);
+		if (insideOwnInsertion && firstParent === firstSlot.revision) {
+			dropIfBlank(firstParent, firstSlot.container);
+		}
 		return;
 	}
 
@@ -165,6 +189,46 @@ export function replaceSpanInParagraph(
 	);
 }
 
+function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
+	const slots: RunSlot[] = [];
+	let offset = 0;
+	function walk(
+		parent: XmlNode,
+		container: XmlNode,
+		containerStart: number,
+		revision: XmlNode | undefined,
+	): void {
+		const parentStart = offset;
+		for (const child of parent.children) {
+			if (child.tag === "w:r") {
+				const length = runTextLength(child);
+				slots.push({
+					parent,
+					parentStart,
+					container,
+					containerStart,
+					revision,
+					run: child,
+					offsetBefore: offset,
+					length,
+				});
+				offset += length;
+				continue;
+			}
+			if (isWrapperVisibleInView(child.tag, view)) {
+				walk(
+					wrapperContentNode(child),
+					parent,
+					parentStart,
+					isTrackedChangeWrapper(child.tag) ? child : revision,
+				);
+			}
+		}
+	}
+	walk(paragraph, paragraph, 0, undefined);
+	return slots;
+}
+
 type RunSlot = {
 	parent: XmlNode;
 	/** Paragraph offset where `parent`'s content begins — NOT the offset of the
@@ -177,43 +241,14 @@ type RunSlot = {
 	 *  is split under tracking. */
 	container: XmlNode;
 	containerStart: number;
+	/** The nearest enclosing revision wrapper (`<w:ins>`/`<w:del>`/
+	 *  `<w:moveFrom>`/`<w:moveTo>`), if any — whose author decides whether a
+	 *  tracked edit here is the author's own. */
+	revision: XmlNode | undefined;
 	run: XmlNode;
 	offsetBefore: number;
 	length: number;
 };
-
-function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
-	const slots: RunSlot[] = [];
-	let offset = 0;
-	function walk(
-		parent: XmlNode,
-		container: XmlNode,
-		containerStart: number,
-	): void {
-		const parentStart = offset;
-		for (const child of parent.children) {
-			if (child.tag === "w:r") {
-				const length = runTextLength(child);
-				slots.push({
-					parent,
-					parentStart,
-					container,
-					containerStart,
-					run: child,
-					offsetBefore: offset,
-					length,
-				});
-				offset += length;
-				continue;
-			}
-			if (isWrapperVisibleInView(child.tag, view)) {
-				walk(wrapperContentNode(child), parent, parentStart);
-			}
-		}
-	}
-	walk(paragraph, paragraph, 0);
-	return slots;
-}
 
 /** An empty span (a pure insertion, `pN:S-S`) at a run boundary overlaps no
  *  run. Anchor it on the run ending at the point — else the one starting
@@ -237,6 +272,15 @@ function boundaryAnchor(slots: RunSlot[], span: Span): RunSlot | undefined {
 	);
 }
 
+/** An additive revision wrapper (`<w:ins>`/`<w:moveTo>`) written by `author`
+ *  — exact string match on `w:author`, as Word compares reviewer names. */
+function isOwnInsertion(wrapper: XmlNode, author: string): boolean {
+	return (
+		(wrapper.tag === "w:ins" || wrapper.tag === "w:moveTo") &&
+		wrapper.getAttribute("w:author") === author
+	);
+}
+
 function rebuildContainer(
 	container: XmlNode,
 	baseOffset: number,
@@ -251,18 +295,16 @@ function rebuildContainer(
 	let offset = baseOffset;
 	let placed = false;
 
-	// Under tracking the container is never a revision wrapper (those are
-	// split instead), so the replacement always gets its own <w:ins> — inside
-	// a hyperlink too, where it used to land bare and untracked.
+	// A revision wrapper is rebuilt here only untracked (the author's own
+	// insertion) — under tracking those are split instead — so a tracked
+	// replacement always gets its own <w:ins>, inside a hyperlink too, where it
+	// used to land bare and untracked.
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const runs = replacementRuns(runProperties, replacement, formatting);
-		if (tracked) {
-			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
-			return;
-		}
-		newChildren.push(...runs);
+		newChildren.push(
+			...placedReplacement(runProperties, replacement, tracked, formatting),
+		);
 	};
 
 	for (const child of container.children) {
@@ -295,6 +337,39 @@ function rebuildContainer(
 
 	if (!placed) placeReplacement();
 	container.children = newChildren;
+}
+
+/** The replacement as it lands: its runs, inside its own `<w:ins>` under
+ *  tracking. Shared by every path that places it. */
+function placedReplacement(
+	runProperties: XmlNode | null,
+	replacement: string,
+	tracked: TrackedReplaceOptions | null,
+	formatting?: ReplacementFormatting,
+): XmlNode[] {
+	const runs = replacementRuns(runProperties, replacement, formatting);
+	return tracked ? [<Ins meta={mintMeta(tracked)}>{runs}</Ins>] : runs;
+}
+
+/** Remove an own insertion the merge left holding nothing but blank runs —
+ *  deleting all of your own pending text leaves no revision behind, as in
+ *  Word, rather than a phantom empty `<w:ins>` that `track-changes list`
+ *  would still report. */
+function dropIfBlank(wrapper: XmlNode, container: XmlNode): void {
+	if (!wrapper.children.every(isBlankRun)) return;
+	const index = container.children.indexOf(wrapper);
+	if (index >= 0) container.children.splice(index, 1);
+}
+
+function isBlankRun(node: XmlNode): boolean {
+	return (
+		node.tag === "w:r" &&
+		node.children.every(
+			(child) =>
+				child.tag === "w:rPr" ||
+				(child.tag === "w:t" && child.collectText().length === 0),
+		)
+	);
 }
 
 /** Emit `run` into `out`: whole when it lies outside `span`, else sliced at
@@ -375,12 +450,9 @@ function rebuildAcrossBoundaries(
 	const placeReplacement = (): void => {
 		if (placed) return;
 		placed = true;
-		const runs = replacementRuns(runProperties, replacement, formatting);
-		if (tracked) {
-			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
-			return;
-		}
-		newChildren.push(...runs);
+		newChildren.push(
+			...placedReplacement(runProperties, replacement, tracked, formatting),
+		);
 	};
 
 	for (const child of container.children) {
@@ -418,19 +490,6 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
-		if (isTrackedChangeWrapper(child.tag)) {
-			splitWrapperAcrossSpan(
-				child,
-				wrapperStart,
-				span,
-				tracked,
-				view,
-				newChildren,
-				placeReplacement,
-			);
-			continue;
-		}
-
 		if (child.tag === "w:hyperlink") {
 			splitHyperlinkAcrossSpan(
 				child,
@@ -451,81 +510,145 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
-		// Transparent wrappers (w:fldSimple, w:smartTag, mc:AlternateContent):
-		// contents contribute to offset and may be split. Their attributes
-		// (e.g. w:fldSimple's w:instr) are preserved on both halves of any
-		// split — splitting a fldSimple would technically duplicate the field
-		// instruction, but Word re-evaluates fields on next render and any
-		// other behavior would silently drop the user's replacement intent.
-		splitTransparentWrapperAcrossSpan(
+		// Revision wrappers and transparent ones (w:fldSimple, w:smartTag,
+		// mc:AlternateContent) split alike, with the replacement placed between
+		// the halves at THIS level — never inside, where it would inherit
+		// another author's revision or the wrapper's semantics. A transparent
+		// wrapper's attributes (e.g. w:fldSimple's w:instr) ride both halves —
+		// splitting a fldSimple duplicates its instruction, but Word re-evaluates
+		// fields on render and anything else would silently drop the user's
+		// replacement intent.
+		const { head, tail } = splitAroundSpan(
 			child,
 			wrapperStart,
 			span,
 			tracked,
 			view,
-			newChildren,
-			placeReplacement,
 		);
+		newChildren.push(...head);
+		placeReplacement();
+		// Minted after the replacement's <w:ins>, so ids follow document order.
+		mintTailRevisionId(child, head, tail, tracked);
+		newChildren.push(...tail);
 	}
 
 	if (!placed) placeReplacement();
 	container.children = newChildren;
 }
 
-function splitWrapperAcrossSpan(
+function splitHyperlinkAcrossSpan(
 	wrapper: XmlNode,
 	wrapperStart: number,
+	wrapperEnd: number,
 	span: Span,
+	runProperties: XmlNode | null,
+	replacement: string,
 	tracked: TrackedReplaceOptions | null,
 	view: FindView,
+	formatting: ReplacementFormatting | undefined,
 	out: XmlNode[],
 	placeReplacement: () => void,
+	markReplacementPlaced: () => void,
 ): void {
-	// Subtractive wrappers (w:del, w:moveFrom) hold content that's already
-	// considered deleted — the cut portion stays in the pre-half wrapper.
-	// Additive wrappers (w:ins, w:moveTo) hold "live" content; under tracking
-	// the cut needs a new <w:del> wrapper nested inside, preserving the
-	// surrounding author's insert/move-to attribution.
+	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
 	const { pre, cut, post } = partitionAroundSpan(
 		wrapper.children,
 		wrapperStart,
 		span,
+		tracked,
 		view,
 	);
-	const preChildren = [
-		...pre,
-		...settleCut(cut, tracked, isSubtractiveTrackedChangeWrapper(wrapper.tag)),
-	];
-	if (preChildren.length > 0) {
-		const preWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
-		preWrapper.children = preChildren;
+	// Under tracking the cut link text stays as a <w:del> inside the link, so
+	// reject restores it (it used to be dropped untracked).
+	const preInner = [...pre, ...settleCut(cut, tracked, false)];
+
+	if (startsInside) {
+		// Replacement inherits the link: append it inside the pre-half.
+		preInner.push(
+			...placedReplacement(runProperties, replacement, tracked, formatting),
+		);
+		markReplacementPlaced();
+	}
+
+	if (preInner.length > 0) {
+		const preWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
+		preWrapper.children = preInner;
 		out.push(preWrapper);
 	}
 
-	placeReplacement();
+	if (!startsInside) placeReplacement();
 
 	if (post.length > 0) {
-		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
-		// Both halves are live revisions: the trailing one needs its own w:id
-		// (same author/date) or the document carries a duplicate revision id.
-		if (tracked && preChildren.length > 0 && "w:id" in wrapper.attributes) {
-			postWrapper.attributes["w:id"] = String(tracked.allocator.next());
-		}
+		const postWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
 		postWrapper.children = post;
 		out.push(postWrapper);
 	}
 }
 
-type SpanSides = { pre: XmlNode[]; cut: XmlNode[]; post: XmlNode[] };
+/** Split `wrapper` where its content crosses `span`: the head keeps what lies
+ *  before the span plus the settled cut, the tail what lies after. A
+ *  subtractive wrapper's (w:del, w:moveFrom) cut simply stays deleted; an
+ *  additive one's (w:ins, w:moveTo) gets our <w:del> nested inside, keeping
+ *  that author's attribution. Each half carries the wrapper's tag and
+ *  attributes — except an `<mc:AlternateContent>`, whose halves come back BARE
+ *  (`rewrapSplitHalf`: it can't be halved into two valid Choice/Fallback
+ *  pairs). The caller gives the tail of a revision its own `w:id`
+ *  (`mintTailRevisionId`). */
+function splitAroundSpan(
+	wrapper: XmlNode,
+	wrapperStart: number,
+	span: Span,
+	tracked: TrackedReplaceOptions | null,
+	view: FindView,
+): { head: XmlNode[]; tail: XmlNode[] } {
+	const { pre, cut, post } = partitionAroundSpan(
+		wrapperContent(wrapper),
+		wrapperStart,
+		span,
+		tracked,
+		view,
+	);
+	const head = rewrapSplitHalf(wrapper, [
+		...pre,
+		...settleCut(cut, tracked, isSubtractiveTrackedChangeWrapper(wrapper.tag)),
+	]);
+	return { head, tail: rewrapSplitHalf(wrapper, post) };
+}
+
+/** Both halves of a split revision are live revisions, so under tracking the
+ *  tail gets its own `w:id` (same author/date) — a duplicate would corrupt
+ *  the revision list. */
+function mintTailRevisionId(
+	wrapper: XmlNode,
+	head: XmlNode[],
+	tail: XmlNode[],
+	tracked: TrackedReplaceOptions | null,
+): void {
+	const [tailWrapper] = tail;
+	if (
+		tracked &&
+		head.length > 0 &&
+		tailWrapper &&
+		isTrackedChangeWrapper(wrapper.tag) &&
+		"w:id" in wrapper.attributes
+	) {
+		tailWrapper.attributes["w:id"] = String(tracked.allocator.next());
+	}
+}
 
 /** Partition a split wrapper's children around `span`. Runs are sliced at the
- *  span's edges; any other child can't be sliced, so it moves whole to the
- *  side `sideFor` picks, while its visible text still advances the offset so
- *  the runs after it stay aligned with the AST's accounting. */
+ *  span's edges. A nested visible wrapper the span reaches into (a link or
+ *  smart tag inside another author's insertion, an insertion Word nested in a
+ *  link) is split the same way, recursively — moved whole, the matched text
+ *  it holds would survive the replace. Any other child can't be sliced, so it
+ *  moves whole to the side `sideFor` picks, while its visible text still
+ *  advances the offset so the runs after it stay aligned with the AST's
+ *  accounting. */
 function partitionAroundSpan(
 	children: XmlNode[],
 	start: number,
 	span: Span,
+	tracked: TrackedReplaceOptions | null,
 	view: FindView,
 ): SpanSides {
 	const sides: SpanSides = { pre: [], cut: [], post: [] };
@@ -534,6 +657,23 @@ function partitionAroundSpan(
 		if (child.tag !== "w:r") {
 			const childStart = offset;
 			offset += sumVisibleTextLength([child], view);
+			const reachesInside =
+				offset > childStart && offset > span.start && childStart < span.end;
+			if (reachesInside && isWrapperVisibleInView(child.tag, view)) {
+				const { head, tail } = splitAroundSpan(
+					child,
+					childStart,
+					span,
+					tracked,
+					view,
+				);
+				mintTailRevisionId(child, head, tail, tracked);
+				// The head holds this wrapper's pre-span content (if any) and its
+				// already-settled cut, which the caller's settleCut passes through.
+				(childStart <= span.start ? sides.pre : sides.cut).push(...head);
+				sides.post.push(...tail);
+				continue;
+			}
 			sideFor(span, childStart, offset, sides).push(child);
 			continue;
 		}
@@ -562,10 +702,10 @@ function partitionAroundSpan(
 
 /** Which side of `span` an unsliceable child covering `[start, end)` moves to,
  *  keeping document order: wholly before or after → that side; wholly inside
- *  (a zero-width marker, or another author's nested deletion in the matched
- *  text) → the cut, between the halves; straddling an edge → the side of the
- *  edge it crosses. A child's own text is never re-cut, so visible text it
- *  holds inside the span survives the replace. */
+ *  (a zero-width marker — a bookmark, an equation, another author's deletion
+ *  hidden in this view) → the cut, between the halves; straddling an edge →
+ *  the side of the edge it crosses. A visible wrapper the span reaches into
+ *  never gets here — `partitionAroundSpan` splits it instead. */
 function sideFor(
 	span: Span,
 	start: number,
@@ -578,87 +718,7 @@ function sideFor(
 	return start < span.start ? sides.pre : sides.post;
 }
 
-/** Split a transparent wrapper (`<w:fldSimple>`, `<w:smartTag>`,
- * `<mc:AlternateContent>`) where its inner runs cross `span`. The cut is
- * settled like any other (dropped, or a `<w:del>` under tracking); pre/post
- * halves carry the wrapper's original attributes. The replacement run is
- * placed at top level (between pre and post halves) so it does not inherit
- * wrapper semantics. */
-function splitTransparentWrapperAcrossSpan(
-	wrapper: XmlNode,
-	wrapperStart: number,
-	span: Span,
-	tracked: TrackedReplaceOptions | null,
-	view: FindView,
-	out: XmlNode[],
-	placeReplacement: () => void,
-): void {
-	// `wrapperContent`: for an `<mc:AlternateContent>` this is its chosen
-	// branch's runs — the halves come back BARE (`rewrapSplitHalf`), since a
-	// wrapper can't be split into two valid Choice/Fallback pairs.
-	const { pre, cut, post } = partitionAroundSpan(
-		wrapperContent(wrapper),
-		wrapperStart,
-		span,
-		view,
-	);
-	out.push(
-		...rewrapSplitHalf(wrapper, [...pre, ...settleCut(cut, tracked, false)]),
-	);
-	placeReplacement();
-	out.push(...rewrapSplitHalf(wrapper, post));
-}
-
-function splitHyperlinkAcrossSpan(
-	wrapper: XmlNode,
-	wrapperStart: number,
-	wrapperEnd: number,
-	span: Span,
-	runProperties: XmlNode | null,
-	replacement: string,
-	tracked: TrackedReplaceOptions | null,
-	view: FindView,
-	formatting: ReplacementFormatting | undefined,
-	out: XmlNode[],
-	placeReplacement: () => void,
-	markReplacementPlaced: () => void,
-): void {
-	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
-	const { pre, cut, post } = partitionAroundSpan(
-		wrapper.children,
-		wrapperStart,
-		span,
-		view,
-	);
-	// Under tracking the cut link text stays as a <w:del> inside the link, so
-	// reject restores it (it used to be dropped untracked).
-	const preInner = [...pre, ...settleCut(cut, tracked, false)];
-
-	if (startsInside) {
-		// Replacement inherits the link: append it inside the pre-half.
-		const innerRuns = replacementRuns(runProperties, replacement, formatting);
-		if (tracked) {
-			preInner.push(<Ins meta={mintMeta(tracked)}>{innerRuns}</Ins>);
-		} else {
-			preInner.push(...innerRuns);
-		}
-		markReplacementPlaced();
-	}
-
-	if (preInner.length > 0) {
-		const preWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
-		preWrapper.children = preInner;
-		out.push(preWrapper);
-	}
-
-	if (!startsInside) placeReplacement();
-
-	if (post.length > 0) {
-		const postWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
-		postWrapper.children = post;
-		out.push(postWrapper);
-	}
-}
+type SpanSides = { pre: XmlNode[]; cut: XmlNode[]; post: XmlNode[] };
 
 function mintMeta(tracked: TrackedReplaceOptions): TrackedMeta {
 	return { ...tracked.meta, revisionId: tracked.allocator.next() };

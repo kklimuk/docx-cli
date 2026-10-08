@@ -9,7 +9,12 @@
  *  maps `revN` ⇄ its member `tcN`s, computed the SAME way in `list` and `apply`
  *  (sorted by tcN index, then paired) so the two can't disagree. */
 
-type Groupable = { id: string; kind: string; blockId?: string };
+type Groupable = {
+	id: string;
+	kind: string;
+	author: string;
+	blockId?: string;
+};
 
 export type RevisionGroups = {
 	/** `revN` → its member `tcN` ids (always exactly the two halves of a replace). */
@@ -43,13 +48,16 @@ export function revisionGroups(changes: Groupable[]): RevisionGroups {
 	return { membersOf, revOf };
 }
 
-/** An adjacent del+ins / ins+del on the same paragraph — the canonical text
- *  "replace" shape. Restricted to plain `ins`/`del` (not moveFrom/moveTo, table,
- *  or section-property revisions) so grouping stays conservative; same-paragraph
- *  ins+ins / del+del (a paragraph insert/delete's run + paragraph-mark markers)
- *  never pair. */
+/** An adjacent del+ins / ins+del on the same paragraph by the same author —
+ *  the canonical text "replace" shape. Restricted to plain `ins`/`del` (not
+ *  moveFrom/moveTo, table, or section-property revisions) so grouping stays
+ *  conservative; same-paragraph ins+ins / del+del (a paragraph insert/delete's
+ *  run + paragraph-mark markers) never pair. The author check keeps another
+ *  reviewer's deletion nested in an insertion (the cross-author span-replace
+ *  shape, `<w:ins A><w:del B>…`) from pairing with that insertion. */
 function isTextReplacePair(a: Groupable, b: Groupable): boolean {
 	if (a.blockId === undefined || a.blockId !== b.blockId) return false;
+	if (a.author !== b.author) return false;
 	const pair = `${a.kind}+${b.kind}`;
 	return pair === "del+ins" || pair === "ins+del";
 }

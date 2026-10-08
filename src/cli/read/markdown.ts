@@ -6,11 +6,13 @@ import {
 	type Footnote,
 	flattenParagraphs,
 	type ImageRun,
+	isRevisionVisible,
 	type Locator,
 	LocatorParseError,
 	type Marginal,
 	type Paragraph,
 	parseLocator,
+	type RevisionView,
 	type Run,
 	type SectionBreak,
 	type Table,
@@ -35,7 +37,7 @@ import {
 	twipsToPoints,
 } from "./annotations";
 
-export type MarkdownView = "current" | "accepted" | "baseline";
+export type MarkdownView = RevisionView;
 
 export type MarkdownOptions = {
 	from?: string;
@@ -365,16 +367,6 @@ function emptyCommentIndex(): CommentIndex {
 	};
 }
 
-function isRunVisible(run: TextRun, view: MarkdownView): boolean {
-	const kind = run.trackedChange?.kind;
-	if (!kind) return true;
-	if (view === "accepted" && (kind === "del" || kind === "moveFrom"))
-		return false;
-	if (view === "baseline" && (kind === "ins" || kind === "moveTo"))
-		return false;
-	return true;
-}
-
 function buildCommentIndex(
 	blocks: Block[],
 	options: MarkdownOptions,
@@ -391,7 +383,8 @@ function buildCommentIndex(
 			// edits anchors comment ranges on the `<m:oMath>` itself).
 			const comments = runComments(run);
 			if (!comments) return;
-			if (run.type === "text" && !isRunVisible(run, view)) return;
+			if (run.type === "text" && !isRevisionVisible(run.trackedChange, view))
+				return;
 			const spanContribution =
 				run.type === "text"
 					? run.text
@@ -455,9 +448,9 @@ function renderTextBoxes(block: Block, ctx: RenderContext): string[] {
 	const view = ctx.options.view ?? "accepted";
 	for (const { run, anchorId } of collectTextBoxRuns(block)) {
 		// A box whose anchor run is tracked-deleted is gone in the accepted view
-		// (and a tracked-inserted one absent from the baseline) — same rule as
-		// `isRunVisible` for text.
-		if (!isTextBoxVisible(run, view)) continue;
+		// (and a tracked-inserted one absent from the baseline) — the same
+		// whole-chain rule as text runs.
+		if (!isRevisionVisible(run.trackedChange, view)) continue;
 		const pairs: NotePair[] = [["anchor", anchorId]];
 		if (run.wrap) pairs.push(["wrap", run.wrap]);
 		if (run.align) pairs.push(["align", run.align]);
@@ -474,13 +467,6 @@ function renderTextBoxes(block: Block, ctx: RenderContext): string[] {
 		out.push(story.join("\n\n"));
 	}
 	return out;
-}
-
-function isTextBoxVisible(run: TextBoxRun, view: MarkdownView): boolean {
-	const kind = run.trackedChange?.kind;
-	if (view === "current" || !kind) return true;
-	if (view === "accepted") return kind !== "del" && kind !== "moveFrom";
-	return kind !== "ins" && kind !== "moveTo";
 }
 
 /** The text-box runs anchored DIRECTLY in `block` (its own runs, or its cells'
@@ -989,14 +975,17 @@ function isCodeBlockParagraph(block: Block): block is Paragraph {
  *  Tracked-change references inside the group's runs (someone edited a line
  *  under tracking) are collected into `ctx.referencedTrackedChanges` so the
  *  current-view footnote appendix still surfaces them — even though their
- *  CriticMarkup wrappers are stripped from the fenced rendering itself. */
+ *  CriticMarkup wrappers are stripped from the fenced rendering itself. The
+ *  accepted/baseline views drop the text those views hide, like any paragraph,
+ *  so a fenced line reads exactly as accept/reject-all would leave it. */
 function renderCodeBlockGroup(
 	paragraphs: Paragraph[],
 	ctx: RenderContext,
 ): string {
-	if (ctx.options.view !== "baseline" && ctx.options.view !== "accepted") {
-		// `current` view: collect tracked-change refs so [^tcN] definitions
-		// still render in the footnote appendix.
+	const view = ctx.options.view ?? "accepted";
+	if (view === "current") {
+		// Collect tracked-change refs so [^tcN] definitions still render in the
+		// footnote appendix.
 		for (const paragraph of paragraphs) {
 			for (const run of paragraph.runs) {
 				if (run.type === "text" && run.trackedChange) {
@@ -1012,7 +1001,9 @@ function renderCodeBlockGroup(
 		paragraph.runs
 			.filter(
 				(run): run is TextRun =>
-					run.type === "text" && typeof run.text === "string",
+					run.type === "text" &&
+					typeof run.text === "string" &&
+					isRevisionVisible(run.trackedChange, view),
 			)
 			.map((run) => run.text)
 			.join(""),
@@ -1379,7 +1370,8 @@ function renderRuns(
 	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
-		if (run.type === "text" && !isRunVisible(run, view)) return;
+		if (run.type === "text" && !isRevisionVisible(run.trackedChange, view))
+			return;
 		visibleEntries.push({ run, originalIndex: index });
 	});
 
@@ -1916,7 +1908,7 @@ function paragraphContent(runs: Run[], view: MarkdownView): string {
 	for (const run of runs) {
 		if (run.type !== "text") continue;
 		if (run.runStyle === "Code") continue;
-		if (!isRunVisible(run, view)) continue;
+		if (!isRevisionVisible(run.trackedChange, view)) continue;
 		content += run.text;
 	}
 	return content;

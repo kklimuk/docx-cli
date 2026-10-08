@@ -12,6 +12,7 @@ export {
 	type TrackedChangeReference,
 } from "./document/body";
 export { baselineCatalog, isBaselineStyle } from "./document/styles";
+export { isRevisionVisible, type RevisionView } from "./revision-visibility";
 export {
 	findBlockById,
 	flattenImageRuns,

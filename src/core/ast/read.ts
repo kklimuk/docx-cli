@@ -627,6 +627,7 @@ function walkRunContainer(
 				date: child.getAttribute("w:date") ?? "",
 				revisionId: child.getAttribute("w:id") ?? "",
 			};
+			if (trackedChange) change.within = trackedChange;
 			context.document.trackedChangeReferences.set(trackedChangeId, {
 				node: child,
 				parent: container.children,

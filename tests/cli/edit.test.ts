@@ -755,6 +755,59 @@ describe("docx edit --at pN:S-E — character-span edit", () => {
 		);
 	});
 
+	test("tracked span inside the editor's OWN insertion merges into it", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>',
+			"span-in-own-ins",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:26-41",
+			"--text",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Reviewer A",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:del ");
+		const insertions = revisionWrappersBy(xml, "ins", "Reviewer A");
+		expect(insertions).toHaveLength(1);
+		expect(insertions[0]).toContain("disputed sum");
+		expect(xml).toContain('<w:ins w:id="1" w:author="Reviewer A"');
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"The Client may withhold a disputed sum.",
+		);
+	});
+
+	test("an untracked empty span at another author's insertion edge lands beside it", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>world</w:t></w:r></w:ins><w:r><w:t>!</w:t></w:r></w:p>',
+			"span-edge-of-ins",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:11-11",
+			"--text",
+			" there",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer A")).toEqual([
+			expect.not.stringContaining("there"),
+		]);
+		// Untracked text is baseline text: rejecting A's insertion keeps it.
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("Hello  there!");
+	});
+
 	test("an empty span inserts AT the point, tracked, with no phantom deletion", async () => {
 		const docPath = await buildRawDoc(
 			'<w:p><w:r><w:t>Hello</w:t></w:r><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p><w:p><w:r><w:t>Hello world</w:t></w:r></w:p>',

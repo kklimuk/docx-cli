@@ -11,10 +11,12 @@ export {
 	type HyperlinkReference,
 	type ImageReference,
 	isBaselineStyle,
+	isRevisionVisible,
 	iterateBlocks,
 	paragraphText,
 	paragraphTextAccepted,
 	paragraphTextBaseline,
+	type RevisionView,
 	type TrackedChangeReference,
 } from "./ast";
 export {
