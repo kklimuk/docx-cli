@@ -2,6 +2,7 @@ import { describeForms, type InsertSpec } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import type { parseArgs } from "util";
 import {
+	adoptPositionalMarkdown,
 	batchExampleIntro,
 	decodeInlineEscapes,
 	parseRunsArg,
@@ -34,101 +35,90 @@ const ANCHOR_FORMS = describeForms(
 
 const INSERT_HELP = `docx insert — insert content at a locator
 
+The read view is Markdown; add new content the same way — just pass it after the
+locator. It's parsed (headings, lists, tables, links, bold, inline <span>/<mark>)
+in the same dialect \`read\` prints, and a multi-block source inserts several
+blocks at once. --text is the LITERAL escape hatch: every character lands
+verbatim (--text "**bold**" writes the asterisks). New content blends in: a
+paragraph takes its neighbor's font/size, tab stops, indent, alignment and
+spacing; a "- item" next to a list joins THAT list with its look; anything else
+falls back to the document's font/size (the docx:base \`read\` shows).
+
 Usage:
-  docx insert FILE (--after | --before | --at) LOCATOR <content> [options]
-  docx insert FILE (--at-start | --at-end) <content> [options]
-  docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read
-  docx insert FILE --batch -          [options]   # read JSONL from stdin
+  docx insert FILE (--after | --before | --at) LOCATOR "MARKDOWN" [options]
+  docx insert FILE (--at-start | --at-end) "MARKDOWN" [options]
+  docx insert FILE --batch FILE.jsonl [options]   # many inserts, one read (- = stdin)
 
 Examples:
 ${batchExampleIntro("Insert several blocks")}
   #   adds.jsonl:
-  #     {"after":"p3","text":"New clause."}
-  #     {"at":"t0:r2c1","text":"Charlie Darwin"}
-  #     {"before":"p0","text":"ALERT","color":"CC0000","bold":true,"style":"Heading2"}
-  #     {"after":"p5","markdown":"## Summary"}
+  #     {"after":"p3","markdown":"New clause."}
+  #     {"at":"t0:r2c1","markdown":"Charlie Darwin"}            # fill a blank cell
+  #     {"after":"p5","markdown":"## Summary\\n\\nFirst point."}  # several blocks
+  #     {"before":"p0","markdown":"**ALERT**","alignment":"center"}
   docx insert doc.docx --batch adds.jsonl
   # …or one at a time:
-  docx insert doc.docx --at t0:r2c1 --text "Charlie Darwin"   # fill a blank cell
-  docx insert doc.docx --after p3 --text "Section header" --style Heading2
-  docx insert doc.docx --after p3 --text "click here" --url https://example.com
+  docx insert doc.docx --after p3 "## New section"
+  docx insert doc.docx --after p3 "- first\\n- second"   # a bullet list
+  docx insert doc.docx --after p7 "- another bullet"      # p7 is a bullet: joins its list
+  docx insert doc.docx --after p3 "See [the site](https://example.com)."
+  docx insert doc.docx --after p9 "Harvard SEAS\\tCambridge, MA"  # inherits p9's tabs
+  docx insert doc.docx --at-start "# Title"
   docx insert doc.docx --after p3 --page-break
-  docx insert doc.docx --after p3 --markdown "## New section"
-  docx insert doc.docx --at-start --text "Title" --style Title
-  docx insert doc.docx --after p3 --text-file reviewer-notes.txt
+  docx insert doc.docx --after p3 --text-file notes.txt   # literal prose, one paragraph per line
 
 Ordering: batch entries apply in file order; several anchored after the SAME
-block stack in that order (three "after":"p0" land as p1, p2, p3, not reversed).
-Bare-cell start/end entries likewise keep file order at their boundary.
+block stack in that order (three "after":"p0" land as p1, p2, p3).
 
-Placement (exactly one required) — where to put the new block:
-  --at LOCATOR      Insert after an ordinary block; for a bare table cell,
-                    insert into it (fill/reuse a normal blank cell, otherwise append).
-  --after LOCATOR   Insert after a block, or at the END of a bare cell
-  --before LOCATOR  Insert before a block, or at the START of a bare cell
+Placement (exactly one):
+  --at LOCATOR      After an ordinary block; INTO a bare table cell (fills a blank
+                    cell, otherwise appends).
+  --after LOCATOR   After a block, or at the END of a bare cell
+  --before LOCATOR  Before a block, or at the START of a bare cell
                     LOCATOR is one of:
 ${ANCHOR_FORMS}
-                    Bare-cell forms reject merged/grid-shifted cells. Use
-                    CELL:pK for precise placement around a complex cell paragraph.
-  --at-start        Insert at the very top (before the first block) — no locator.
-  --at-end          Insert at the very end (after the last block, before the
-                    trailing section properties) — no locator.
-                    (--at-start/--at-end are single-shot only, not --batch.)
+  --at-start / --at-end   Very top / very end of the document (not in --batch).
 
-Content (one required):
-  --markdown TEXT   Parse TEXT as GFM markdown → one or more blocks (headings,
-                    lists, tables, code fences, blockquotes, rules, links, inline
-                    + display math, images, footnotes, ~~strike~~, CriticMarkup).
-  --markdown-file PATH  Same as --markdown, but read from PATH ("-" = stdin).
-  --text TEXT       Insert a paragraph with this text (one run). Format it with
-                    --bold/--italic/--color/--url — see \`docx insert --text --help\`.
-  --text-file PATH  Insert literal multi-paragraph text from PATH ("-" = stdin),
-                    NOT parsed as markdown — every character verbatim, each newline
-                    a new paragraph. Use for prose that must stay untouched ("3.
-                    note" stays "3.", bare URLs / *x* / {++x++} not interpreted).
-  --runs JSON       Insert a paragraph with custom runs (Run[] JSON).
-                    See \`docx insert --runs --help\`.
-  --page-break      Insert an empty paragraph containing a page break
-  --column-break    Insert an empty paragraph containing a column break
+Content (one):
+  "MARKDOWN"        Positional, after the flags: parsed GFM, the dialect \`read\`
+                    prints. Quote it as ONE argument ('$' amounts: single quotes).
+  --markdown TEXT   The same, as a flag. --markdown-file PATH reads it from a
+                    file ("-" = stdin).
+  --text TEXT       LITERAL single paragraph, no parsing. Format it with
+                    --bold/--italic/--color/--url. \`docx insert --text --help\`.
+  --text-file PATH  LITERAL multi-paragraph text ("-" = stdin): every character
+                    verbatim, each newline a new paragraph. For prose Markdown
+                    would mangle ("3. note", bare URLs, *x*, {++x++}).
+  --runs JSON       Byte-precise runs (Run[] JSON). \`docx insert --runs --help\`.
+  --page-break / --column-break   An empty paragraph holding that break.
 
-Formatting options (with --markdown they apply to every paragraph it produces;
-only --style / --list / --list-level can't combine with --markdown):
-  --style NAME       Apply paragraph style (e.g., Heading1)
+Formatting (applies to every paragraph the content produces):
+  --style NAME       Paragraph style — refused next to --markdown (a \`# heading\`
+                     or list item sets its own)
   --alignment ALIGN  left | center | right | justify
-  --space-before PT / --space-after PT   Space above / below, in points
-  --line-spacing N   A multiple (1, 1.5, 2), a name, or 15pt
-  --indent-left IN / --indent-right IN   Indent, in inches
-  --first-line IN / --hanging IN         First-line / hanging indent, in inches
-                     Spacing/indent also take a unit suffix (in, cm, mm, pt,
-                     tw = twips, the read --ast unit); a bare inch value above
-                     9 is read as twips.
-  --list KIND        Make the paragraph a list item: "bullet" or "ordered"
-                     (requires --text/--runs; task checkbox → \`docx tasks add\`).
-  --list-level N     List nesting level, integer 0-8 (use with --list to nest).
+  --space-before N / --space-after N   Points, or a unit suffix (6pt, 0.1in, 120tw)
+  --line-spacing N   1, 1.5, 2, single, double, or 15pt
+  --indent-left N / --indent-right N   Inches, or a unit suffix (0.5in, 1.27cm,
+                     720tw); a bare number above 9 is read as twips
+  --first-line N / --hanging N         Same units
+  --list KIND / --list-level N   Make a --text/--runs paragraph a bullet|ordered
+                     item at nesting level 0-8 (in markdown, write "- item").
 
-Batch (--batch PATH | -):
-  Apply many inserts from one read — the preferred way to add several blocks
-  (locators do not shift between entries). Each JSONL line is one insert whose
-  keys mirror the flags: {"at" or "after" or "before": LOCATOR, one content
-  field, ...options}, e.g. {"at":"p3","text":"Hi","style":"Heading2"}.
-  (--at-start/--at-end don't work in a batch.) Don't pass --after/--text/…
-  alongside --batch.
+Batch (--batch PATH | -): one JSON object per line; keys mirror the flags
+  ({"at"|"after"|"before":…} + one content field + any formatting). Locators
+  address the document AS READ. --at-start/--at-end are not batchable.
 
-General options:
-  --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
-  --track           Record this insertion as a tracked change even when the
-                    document's track-changes toggle is off (OFF by default).
+Options:
+  --track           Record as a tracked change even when the doc toggle is off
+  --author NAME     Tracked-change author (default: $DOCX_AUTHOR)
   -o, --output PATH Write to PATH instead of overwriting FILE
-  --dry-run         Print what would be inserted; do not write the file
-  -v, --verbose     Print the full success ack JSON
+  --dry-run         Preview; write nothing
+  -v, --verbose     Full JSON ack
   -h, --help        Show this help
 
-Output:
-  Prints the locator(s) the new block(s) landed at, one per line (a multi-block
-  --markdown insert prints several). Positional ids shift after an insert, so
-  re-read before further edits. --verbose prints {ok:true, operation, path,
-  locators, anchor, placement}. Errors print {code, error, hint?} + nonzero exit.
-`;
+Output: the new block's locator(s), one per line (exit 0). Ids shift after an
+insert — re-read before further edits, or do everything from one read with
+--batch. Errors print {code, error, hint?} with a nonzero exit.`;
 
 const INSERT_TEXT_HELP = `docx insert --text — insert new text content and format it
 
@@ -213,6 +203,8 @@ export async function run(args: string[]): Promise<number> {
 
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", INSERT_HELP);
+	const positionalError = await adoptPositionalMarkdown(parsed, INSERT_HELP);
+	if (positionalError !== undefined) return positionalError;
 
 	const batchInput = parsed.values.batch as string | undefined;
 	if (batchInput !== undefined) {
@@ -255,7 +247,7 @@ async function buildSingleShotOptions(
 		if (conflict) {
 			return fail(
 				"USAGE",
-				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
+				`--${conflict} can't be combined with markdown content (positional, --markdown, or --markdown-file) — the markdown source controls block-level styling`,
 				INSERT_HELP,
 			);
 		}

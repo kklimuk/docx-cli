@@ -1,5 +1,5 @@
 import { insertPprChildInOrder, overlayParagraphAttributes } from "./blocks";
-import type { XmlNode } from "./parser";
+import { partitionParagraphRuns, type XmlNode } from "./parser";
 
 /** Whether a replacement paragraph brings block structure the paragraph it
  * replaces did NOT have — a markdown `# heading` landing on a body line, or a
@@ -113,4 +113,39 @@ function mergeInheritedPpr(
 		return;
 	}
 	newParagraph.children.unshift(merged);
+}
+
+/** A paragraph's `<w:pStyle>` id, if any. */
+export function paragraphStyleId(paragraph: XmlNode): string | undefined {
+	return paragraph
+		.findChild("w:pPr")
+		?.findChild("w:pStyle")
+		?.getAttribute("w:val");
+}
+
+/** Paragraph styles that set their own size and look on purpose (headings,
+ * title, TOC levels) — new content neither lends them a body line's look nor
+ * shrinks them to body size. */
+export function isHeadingLikeStyle(styleId: string | undefined): boolean {
+	return styleId !== undefined && HEADING_LIKE.test(styleId);
+}
+
+const HEADING_LIKE = /^(heading[1-9]|title|subtitle|toc)/i;
+
+/** The runs of a paragraph that carry text (`<w:t>`), wrappers resolved. */
+export function textRuns(paragraph: XmlNode): XmlNode[] {
+	return partitionParagraphRuns(paragraph).runs.filter((run) =>
+		run.findChild("w:t"),
+	);
+}
+
+/** Every `<w:p>` in freshly-built content, descending into tables a markdown
+ * source may have produced. */
+export function paragraphsIn(nodes: XmlNode[]): XmlNode[] {
+	const out: XmlNode[] = [];
+	for (const node of nodes) {
+		if (node.tag === "w:p") out.push(node);
+		else if (node.children.length > 0) out.push(...paragraphsIn(node.children));
+	}
+	return out;
 }

@@ -7,15 +7,12 @@ import {
 } from "../blocks";
 import {
 	ATTRIBUTE_BAG_TAGS,
+	isHeadingLikeStyle,
 	overlayAttributes,
+	paragraphStyleId,
 } from "../paragraph-inheritance";
 import type { XmlNode } from "../parser";
 import { paragraphMarkRunRpr } from "../track-changes/preserve-formatting";
-
-/** Paragraph styles whose look must NOT bleed onto inserted body content:
- * inserting after a heading/title should produce body text, not another
- * heading. Matched case-insensitively against the prefix of the pStyle id. */
-const HEADING_LIKE = /^(heading[1-9]|title|subtitle|toc)/i;
 
 /** Make freshly-inserted plain content blend into the document it lands in by
  * copying the anchor paragraph's run formatting — and paragraph style, when
@@ -40,7 +37,9 @@ export function inheritFormattingFromAnchor(
 ): void {
 	if (anchor.tag !== "w:p") return;
 	const anchorStyle = paragraphStyleId(anchor);
-	if (anchorStyle && HEADING_LIKE.test(anchorStyle)) return;
+	// A heading/title anchor lends nothing: inserting after it produces body
+	// text, not another heading.
+	if (isHeadingLikeStyle(anchorStyle)) return;
 	const anchorRunProperties = firstRunProperties(anchor);
 	const anchorIsList = hasListMembership(anchor);
 	for (const block of blocks) {
@@ -92,13 +91,6 @@ function inheritParagraphLayout(block: XmlNode, anchor: XmlNode): void {
 			pPr.children[pPr.children.indexOf(own)] = overlayAttributes(source, own);
 		}
 	}
-}
-
-function paragraphStyleId(paragraph: XmlNode): string | undefined {
-	return paragraph
-		.findChild("w:pPr")
-		?.findChild("w:pStyle")
-		?.getAttribute("w:val");
 }
 
 /** True when the paragraph belongs to a real numbered/bulleted list — a

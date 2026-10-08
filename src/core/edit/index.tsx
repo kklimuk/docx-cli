@@ -6,8 +6,8 @@ import {
 	applyParagraphOptionsToBlocks,
 	ensureParagraphProperties,
 	hasParagraphProperties,
+	inheritRprChild,
 	injectPprChange,
-	insertRprChildInOrder,
 	isInheritableRunProperty,
 	Paragraph,
 	type ParagraphOptions,
@@ -31,9 +31,9 @@ import {
 	paragraphTextLength,
 	reanchorCommentMarkers,
 } from "../comments/markers";
+import { matchDocumentLook } from "../dominant-formatting";
 import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
-import { readListContext } from "../insert";
-import { w } from "../jsx";
+import { continueList } from "../lists/continue-list";
 import { hasTextBox } from "../mc";
 import {
 	bringsNewBlockStructure,
@@ -216,7 +216,16 @@ export class Edit {
 			spec.paragraphOptions.style,
 		);
 		applyMarkdownRideAlong(spec, newParagraphs);
-		continueHostList(this.document, blockRef.node, newParagraphs);
+		continueList(this.document, blockRef.node, newParagraphs);
+		// Whatever the rPr inheritance above didn't donate (a `#` heading on a
+		// body line brings new structure, so it inherits no rPr) takes the look
+		// that was AT this position — the replaced paragraph's rendered face and
+		// explicit size — before the document's dominant face/size.
+		if (!opts.noFormatting && authorsFreshText(spec)) {
+			matchDocumentLook(this.document, newParagraphs, {
+				position: blockRef.node,
+			});
+		}
 		const anchorTarget = newParagraphs[0];
 		if (anchorTarget?.tag === "w:p") {
 			this.reanchorComments(anchorTarget, commentMarkers);
@@ -469,7 +478,7 @@ export class Edit {
 	range(
 		rangeRef: BlockRangeReference,
 		spec: ParagraphContentSpec,
-		opts: { authorFlag?: string; track?: boolean } = {},
+		opts: { authorFlag?: string; track?: boolean; noFormatting?: boolean } = {},
 	): string[] {
 		this.document
 			.ensureStyles()
@@ -505,6 +514,12 @@ export class Edit {
 		);
 		const newParagraphs = buildNewParagraphs(spec);
 		applyMarkdownRideAlong(spec, newParagraphs);
+		const firstReplaced = rangeRef.parent[rangeRef.startIndex];
+		if (!opts.noFormatting && authorsFreshText(spec)) {
+			matchDocumentLook(this.document, newParagraphs, {
+				position: firstReplaced?.tag === "w:p" ? firstReplaced : undefined,
+			});
+		}
 		if (tracked) {
 			applyTrackedRangeReplace(
 				this.document,
@@ -599,6 +614,13 @@ function canPreserveFormatting(
 	const format = spec.format;
 	if (format.color || format.bold || format.italic) return false;
 	return true;
+}
+
+/** Content whose runs the agent didn't specify byte-for-byte — markdown and
+ * `--text` — so they take the document's look. `--runs` states its own rPr and
+ * a code block owns its monospace. */
+function authorsFreshText(spec: ParagraphContentSpec): boolean {
+	return spec.kind === "markdown-blocks" || spec.kind === "text";
 }
 
 /** Build the new paragraph(s) for a paragraph-content spec. Text/runs produce
@@ -737,63 +759,7 @@ function inheritCommonRunFormatting(
 				run.children.unshift(template.clone());
 				continue;
 			}
-			for (const child of template.children) {
-				if (own.findChild(child.tag)) continue;
-				insertRprChildInOrder(own, child.clone());
-			}
-		}
-	}
-}
-
-/** When a whole-paragraph edit replaces a LIST ITEM with markdown that brings
- *  its own list, the markdown walker has already minted a FRESH numId — a
- *  brand-new list. Dropped mid-list, that restarts numbering at the split
- *  point and desynchronizes everything after it in Word. An agent rewriting
- *  one clause with `--markdown "1. …"` means "replace this item's content,"
- *  not "start a new list" — so re-point the new items at the HOST paragraph's
- *  numId (same list kind only), nesting their levels under the host's. The
- *  minted numId goes unreferenced, which is harmless (see the relationship
- *  invariant: orphans are safe, dangling references are not). */
-function continueHostList(
-	document: Document,
-	oldParagraph: XmlNode,
-	newParagraphs: XmlNode[],
-): void {
-	const host = readListContext(oldParagraph);
-	if (!host) return;
-	const numbering = document.numbering;
-	if (!numbering) return;
-	const hostFormat = numbering.getFormat(String(host.numId), host.level);
-	// `numFmt="none"` is an unnumbered list — not something a fresh ordered/bullet
-	// list should silently continue into (matches `Lists.isOrdered`, which also
-	// excludes "none"). Only a real bullet or ordered host is continuable.
-	if (!hostFormat || hostFormat === "none") return;
-	const hostKind = hostFormat === "bullet" ? "bullet" : "ordered";
-	for (const paragraph of newParagraphs) {
-		if (paragraph.tag !== "w:p") continue;
-		const numPr = paragraph.findChild("w:pPr")?.findChild("w:numPr");
-		const numIdNode = numPr?.findChild("w:numId");
-		if (!numPr || !numIdNode) continue;
-		const fresh = Number(numIdNode.getAttribute("w:val") ?? "0");
-		if (!Number.isFinite(fresh) || fresh <= 0 || fresh === host.numId) {
-			continue;
-		}
-		const freshFormat = numbering.getFormat(String(fresh), 0);
-		const freshKind = freshFormat === "bullet" ? "bullet" : "ordered";
-		// A bullet list replacing an ordered item (or vice versa) is a deliberate
-		// kind change — keep the fresh list.
-		if (freshKind !== hostKind) continue;
-		numIdNode.setAttribute("w:val", String(host.numId));
-		const ilvlNode = numPr.findChild("w:ilvl");
-		const freshLevel = Number(ilvlNode?.getAttribute("w:val") ?? "0");
-		const shifted = Math.min(
-			(Number.isFinite(freshLevel) ? freshLevel : 0) + host.level,
-			8,
-		);
-		if (ilvlNode) ilvlNode.setAttribute("w:val", String(shifted));
-		else if (shifted > 0) {
-			// CT_NumPr order: <w:ilvl> precedes <w:numId>.
-			numPr.children.unshift(<w.ilvl w-val={String(shifted)} />);
+			for (const child of template.children) inheritRprChild(own, child);
 		}
 	}
 }

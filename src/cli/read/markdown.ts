@@ -1562,8 +1562,10 @@ function sameDecoration(
 		// The SHOWN face — explicit or inherited — so an explicit Times run next to
 		// a bare run inheriting Times reads as one `**…**`, not `**a****b**`.
 		effectiveFont(a, baseline) === effectiveFont(b, baseline) &&
-		(a.fontEastAsia ?? "") === (b.fontEastAsia ?? "") &&
-		(a.fontComplexScript ?? "") === (b.fontComplexScript ?? "") &&
+		// Script faces split a span only when they'd SHOW — a hidden slot on Latin
+		// text is invisible, so it must not break `**bold**` in two.
+		(shownEastAsianFont(a) ?? "") === (shownEastAsianFont(b) ?? "") &&
+		(shownComplexScriptFont(a) ?? "") === (shownComplexScriptFont(b) ?? "") &&
 		(a.sizeHalfPoints ?? 0) === (b.sizeHalfPoints ?? 0) &&
 		(a.vertAlign ?? "") === (b.vertAlign ?? "") &&
 		(a.smallCaps ?? false) === (b.smallCaps ?? false) &&
@@ -1753,8 +1755,8 @@ function needsHtmlWrap(run: TextRun, baseline: RunFormatBaseline): boolean {
 			(run.colorTheme && !isDefaultThemeColor(run)) ||
 			run.shade ||
 			deviatingFont(run, baseline) ||
-			run.fontEastAsia ||
-			run.fontComplexScript ||
+			shownEastAsianFont(run) ||
+			shownComplexScriptFont(run) ||
 			(run.sizeHalfPoints !== undefined &&
 				run.sizeHalfPoints !== baseline.sizeHalfPoints) ||
 			run.smallCaps ||
@@ -1834,16 +1836,57 @@ function deviatingFont(
 	return font !== baseline.font ? font : undefined;
 }
 
+/** The East-Asian / complex-script face worth printing for a run, or undefined.
+ *  Word applies `w:eastAsia` only to East Asian characters and `w:cs` only to
+ *  complex-script ones (Arabic, Hebrew, Indic, Thai, …), and stamps the same face
+ *  on every slot of every run (`w:ascii="Calibri" w:hAnsi="Calibri"
+ *  w:cs="Calibri"`). On Latin-only text those slots are invisible, and echoing
+ *  them wrapped every line of a Word doc in a noise span — while the Latin face
+ *  beside it was suppressed as `docx:base`, so a line copied back into `edit`
+ *  carried only the cs slot. So a slot shows only when the run's text contains
+ *  characters it governs; an `edit` refills a hidden slot from the replaced
+ *  paragraph (`inheritRprChild`), so hiding it loses nothing on the write-back
+ *  path. (A `<w:rtl/>`/`<w:cs/>` run flag isn't modeled; such runs almost always
+ *  carry RTL characters, which still show.) */
+function shownComplexScriptFont(run: TextRun): string | undefined {
+	return shownScriptFont(run.fontComplexScript, run.text, COMPLEX_SCRIPT_TEXT);
+}
+
+function shownEastAsianFont(run: TextRun): string | undefined {
+	return shownScriptFont(run.fontEastAsia, run.text, EAST_ASIAN_TEXT);
+}
+
+/** `face` when `text` holds a character of `script`. Pure-ASCII text (nearly
+ *  every run of a Latin document, which Word stamps with every slot) skips the
+ *  Unicode-property scan — this runs several times per run on the read path. */
+function shownScriptFont(
+	face: string | undefined,
+	text: string,
+	script: RegExp,
+): string | undefined {
+	if (!face || ASCII_ONLY.test(text)) return undefined;
+	return script.test(text) ? face : undefined;
+}
+
+const ASCII_ONLY = /^[\t\n\r\x20-\x7E]*$/;
+
+const COMPLEX_SCRIPT_TEXT =
+	/[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Gurmukhi}\p{Script=Gujarati}\p{Script=Oriya}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Kannada}\p{Script=Malayalam}\p{Script=Sinhala}\p{Script=Thai}\p{Script=Lao}\p{Script=Tibetan}\p{Script=Myanmar}\p{Script=Khmer}\p{Script=Mongolian}\p{Script=Ethiopic}]/u;
+
+const EAST_ASIAN_TEXT =
+	/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}\u3000-\u303F\uFF00-\uFFEF]/u;
+
 function spanFormattingWrapper(
 	run: TextRun,
 	baseline: RunFormatBaseline,
 ): HtmlFormattingWrapper | null {
 	const styles: string[] = [];
 	const attrs: string[] = [];
-	if (run.fontEastAsia)
-		attrs.push(htmlAttr("data-font-east-asia", run.fontEastAsia));
-	if (run.fontComplexScript)
-		attrs.push(htmlAttr("data-font-complex-script", run.fontComplexScript));
+	const eastAsia = shownEastAsianFont(run);
+	if (eastAsia) attrs.push(htmlAttr("data-font-east-asia", eastAsia));
+	const complexScript = shownComplexScriptFont(run);
+	if (complexScript)
+		attrs.push(htmlAttr("data-font-complex-script", complexScript));
 	// Black / "auto" is the universal default — emitting it says nothing.
 	if (run.color && !isDefaultColor(run.color))
 		styles.push(`color:#${run.color}`);

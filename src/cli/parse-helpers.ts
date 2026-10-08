@@ -50,6 +50,64 @@ export async function rejectShellMangledValue(
 	);
 }
 
+/** Adopt the positional CONTENT argument of `edit`/`insert` as markdown:
+ *  `docx edit FILE --at p3 "Net **30** days"` is `--markdown "Net **30** days"`.
+ *  Markdown is the read view's dialect, so it's the DEFAULT way to write content
+ *  back — the flag is optional and stays as an alias; `--text` keeps its meaning
+ *  (the literal, verbatim channel). Mutates `values.markdown` so every downstream
+ *  check (content-flag exclusivity, `--style` conflict, escape decoding) sees one
+ *  path. Returns an exit code on a usage error, else undefined. A second content
+ *  positional is refused rather than dropped: an unquoted phrase splits into
+ *  several positionals, and silently keeping only the first word would write a
+ *  truncated paragraph with exit 0. */
+export async function adoptPositionalMarkdown(
+	parsed: { positionals: string[]; values: Record<string, unknown> },
+	help: string,
+): Promise<number | undefined> {
+	const [, content, ...extra] = parsed.positionals;
+	if (content === undefined) return undefined;
+	if (extra.length > 0) {
+		return await fail(
+			"USAGE",
+			`Too many positional arguments: ${JSON.stringify(parsed.positionals.slice(1))}. Content is ONE argument — quote it.`,
+			help,
+		);
+	}
+	if (parsed.values.batch !== undefined) {
+		return await fail(
+			"USAGE",
+			"Positional content can't be combined with --batch (each JSONL entry carries its own content).",
+			help,
+		);
+	}
+	// Name the flag the agent actually passed: folded into `--markdown`, a
+	// positional beside `--text` would otherwise fail "pass only one of --text,
+	// …, --markdown" — naming a flag they never typed.
+	const other = OTHER_CONTENT_FLAGS.find(
+		(flag) => parsed.values[flag] !== undefined,
+	);
+	if (other !== undefined) {
+		return await fail(
+			"USAGE",
+			`Content given twice: the positional content plus --${other}. Pass ONE — the positional is parsed markdown; --text is the literal channel.`,
+			help,
+		);
+	}
+	parsed.values.markdown = content;
+	return undefined;
+}
+
+/** Every content flag `edit`/`insert` accept besides the positional. */
+const OTHER_CONTENT_FLAGS = [
+	"markdown",
+	"markdown-file",
+	"text",
+	"text-file",
+	"runs",
+	"page-break",
+	"column-break",
+] as const;
+
 /** Decode the whitespace escape sequences weak agents type LITERALLY into an
  *  inline `--text` / `--markdown` argv value. A model reaching for a line break
  *  writes `--text "a\nb"`, but bash double-quotes don't interpret `\n` — the CLI

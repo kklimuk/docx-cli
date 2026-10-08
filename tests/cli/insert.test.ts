@@ -485,7 +485,7 @@ describe("insert — spacing/indent across content kinds (no silent drop)", () =
 		);
 		expect(result.exitCode).not.toBe(0);
 		expect((result.parsed as { error?: string }).error).toContain(
-			"can't be combined with --markdown",
+			"can't be combined with markdown content",
 		);
 	});
 });
@@ -1169,7 +1169,9 @@ describe("insert — new content blends typography, not the neighbor's emphasis"
 		expect(run?.italic).toBeUndefined();
 		expect(run?.bold).toBeUndefined();
 		const md = (await runCli("read", docPath)).stdout;
-		expect(md).toContain(">plain</span> <!-- p1 -->");
+		// Georgia 14pt is the docx:base, and a complex-script slot never shows on
+		// Latin text, so the line reads bare.
+		expect(md).toContain("\nplain <!-- p1 -->");
 		expect(md).not.toContain("*plain*");
 	});
 });

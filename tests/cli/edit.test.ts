@@ -1310,13 +1310,14 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 		expect(paragraph).not.toContain("<w:highlight");
 	});
 
-	test("--markdown that brings its own style does NOT inherit the old run formatting", async () => {
+	test("--markdown that brings its own style keeps its size but takes the document face", async () => {
 		// The counterpart to the run-inheritance above: replacing a direct-
 		// formatted paragraph (8pt Arial form cell) with a markdown HEADING must
-		// keep the heading's style, not stamp the old 8pt Arial onto its run as
-		// hard direct formatting (which would render the heading at form-cell
-		// size). The run-inheritance pass skips styled/listed paragraphs, same as
-		// the paragraph-property pass.
+		// keep the heading's style SIZE, not stamp the old 8pt onto its run
+		// (which would render the heading at form-cell size). Its FACE, though,
+		// follows the document's dominant formatting (`docx:base` — Arial here),
+		// not the Heading2 style chain: a heading in an all-Arial document is an
+		// Arial heading.
 		const docPath = await docFrom("md-styled-noinherit", "placeholder\n");
 		await runCli(
 			"edit",
@@ -1348,9 +1349,10 @@ describe("edit preserves paragraph style on plain whole-paragraph edits", () => 
 		)?.[0];
 		if (!paragraph) throw new Error("expected the replaced heading paragraph");
 		expect(paragraph).toContain('<w:pStyle w:val="Heading2"');
-		// No inherited 8pt (sz=16) Arial direct formatting defeating the style.
+		// No inherited 8pt (sz=16) defeating the heading style's size…
 		expect(paragraph).not.toContain('<w:sz w:val="16"');
-		expect(paragraph).not.toContain('w:ascii="Arial"');
+		// …but the document's dominant face.
+		expect(paragraph).toContain('w:ascii="Arial"');
 	});
 
 	test("--markdown that sets its own block style wins (## → Heading2)", async () => {
@@ -3711,7 +3713,7 @@ describe("docx edit — paragraph spacing & indentation", () => {
 			);
 			expect(result.exitCode).not.toBe(0);
 			expect((result.parsed as { error?: string }).error).toContain(
-				"can't be combined with --markdown",
+				"can't be combined with markdown content",
 			);
 		});
 
@@ -5046,7 +5048,7 @@ describe("docx edit --markdown — inheritance parity with --text", () => {
 		);
 	});
 
-	test("a `## heading` replacing a body line owns its look (no inheritance)", async () => {
+	test("a `## heading` replacing a body line owns its size and layout, keeps the line's face", async () => {
 		const docPath = join(tempWorkspace("md-heading-owns"), "out.docx");
 		await runCli("create", docPath, "--text", "Body line");
 		// Run formatting and paragraph properties are separate calls (combined,
@@ -5080,9 +5082,10 @@ describe("docx edit --markdown — inheritance parity with --text", () => {
 			}>;
 		};
 		expect(ast.blocks[0]?.style).toBe("Heading2");
-		// The heading owns its look: no 1in indent, no 8pt, no Arial stamped on.
+		// The heading owns its layout and size (no 1in indent, no 8pt)…
 		expect(ast.blocks[0]?.indent).toBeUndefined();
 		expect(ast.blocks[0]?.runs[0]?.sizeHalfPoints).toBeUndefined();
-		expect(ast.blocks[0]?.runs[0]?.font).toBeUndefined();
+		// …but keeps the face that was at this position.
+		expect(ast.blocks[0]?.runs[0]?.font).toBe("Arial");
 	});
 });

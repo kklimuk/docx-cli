@@ -358,7 +358,13 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #   --runs '[{"type":"text","text":"X","bold":true}]'
 #   --text-file PATH                               # (insert/create) LITERAL multi-paragraph text, NOT parsed — every char verbatim,
 #       each newline = a new paragraph. For prose GFM would corrupt: "3. note" stays "3.", *x* / [t](u) / bare URLs / {++x++} untouched.
-#   --markdown "..." | --markdown-file PATH        # GFM + math + CriticMarkup + inline HTML formatting → blocks
+#   "MARKDOWN" (positional, edit/insert) | --markdown "..." | --markdown-file PATH
+#       GFM + math + CriticMarkup + inline HTML formatting → blocks. Markdown is the default:
+#       `docx edit doc.docx --at p3 "Net **30** days"`, `docx insert doc.docx --after p7 "- another bullet"`.
+#       New content looks like the document: a "- item" beside a list joins THAT list (numbering,
+#       indent, font); an edit keeps the font that was at that position (a "# heading" over a
+#       Georgia line stays Georgia); otherwise it takes the document's dominant font/size (the
+#       `docx:base` read shows), not the style chain's default.
 #   --code "..." | --code-file PATH [--language LANG]
 #   --equation "x^2 + y^2" [--display]   (insert; edit also accepts --inline)
 #   --clear bold,italic,highlight,color,size,font,…|all   (edit; strip run formatting, keep text)
@@ -585,7 +591,7 @@ docx read doc.docx --from p3 --to p3              # → markdown (with <!-- p3 -
 docx edit doc.docx --at p3 --markdown-file revised.md   # multi-block source expands naturally
 ```
 
-Use `--markdown-file` (not `--markdown TEXT`) when the source starts with `-` — Node's `parseArgs` rejects leading-dash flag values.
+A source starting with `-` (a bullet) works inline too — `docx insert doc.docx --after p3 "- item"`; `--markdown-file` is for long or multi-block sources.
 
 **track-changes review loop.** Toggle tracking on, make edits (they auto-emit `<w:ins>`/`<w:del>`), then inventory and resolve:
 
@@ -623,7 +629,7 @@ docx track-changes accept doc.docx --at tc0 --at tc2   # or --all
 
 **List numbering.** `docx lists set FILE --at p12 --start 5` makes a numbered list begin at 5; `--format upper-roman` (or `lower-alpha`/`upper-alpha`/`lower-roman`) switches the glyph; `--restart` splits a fresh list off at that item; `--continue` makes a list pick up the previous list's numbering instead of restarting. `--at` names any item — the change applies to the whole list. The start round-trips through the markdown ordinal (the body reads `5. 6. 7.`); the glyph and any continue link, which GFM can't express, surface as a deviation-only `<!-- docx:list p12 format="upper-roman" -->` / `<!-- docx:list p20 continues -->` hint (dropped on import, like every `docx:` note — `read --ast` carries `list.start`/`list.format` losslessly). Untracked, matching Word, which records no revision for a list-numbering change.
 
-**Run formatting beyond bold/italic.** Properties markdown has no native syntax for — text color, theme color, highlight, shading, underline (all 18 styles + color), super/subscript, small/all caps, font, and size — are emitted as the **HTML a markdown reader actually renders**, so the output looks right in GitHub, VS Code, Obsidian, and browsers (Pandoc `[text]{…}` spans render as literal brackets in all of those). `read` emits semantic tags where they exist — `<mark>overdue</mark>`, `<sup>x</sup>`, `<sub>2</sub>` — a `<span style="color:#C00000">…</span>` for the CSS-expressible properties, and `data-*` attributes for the OOXML-only ones CSS can't express (theme colors, underline styles); `insert/edit --markdown` parses them back losslessly, and a leading `<!-- docx:base font="Arial" size="8pt" -->` note declares the document's dominant font/size once so the body isn't buried in per-run repetition. Bold/italic/strike/code/links stay native (`**`/`*`/`~~`/`` ` ``/`[](…)`). Because the inline-surgery transform scans whole sibling sequences, a CriticMarkup marker or span can straddle other formatting — `{++**bold insertion**++}` is tracked correctly. An invalid enum value (e.g. a bogus highlight name) fails with a clear error rather than silently vanishing. Inserted plain content inherits the surrounding paragraph's font/size so it blends in.
+**Run formatting beyond bold/italic.** Properties markdown has no native syntax for — text color, theme color, highlight, shading, underline (all 18 styles + color), super/subscript, small/all caps, font, and size — are emitted as the **HTML a markdown reader actually renders**, so the output looks right in GitHub, VS Code, Obsidian, and browsers (Pandoc `[text]{…}` spans render as literal brackets in all of those). `read` emits semantic tags where they exist — `<mark>overdue</mark>`, `<sup>x</sup>`, `<sub>2</sub>` — a `<span style="color:#C00000">…</span>` for the CSS-expressible properties, and `data-*` attributes for the OOXML-only ones CSS can't express (theme colors, underline styles); `insert/edit --markdown` parses them back losslessly, and a leading `<!-- docx:base font="Arial" size="8pt" -->` note declares the document's dominant font/size once so the body isn't buried in per-run repetition. Bold/italic/strike/code/links stay native (`**`/`*`/`~~`/`` ` ``/`[](…)`). Because the inline-surgery transform scans whole sibling sequences, a CriticMarkup marker or span can straddle other formatting — `{++**bold insertion**++}` is tracked correctly. An invalid enum value (e.g. a bogus highlight name) fails with a clear error rather than silently vanishing. Inserted plain content inherits the surrounding paragraph's font/size so it blends in; a markdown bullet beside a list joins that list; and new headings/list items fall back to the `docx:base` font/size rather than their style's.
 
 **Visual verification.** `docx render` is the only command that needs an external application installed: it drives Microsoft Word (macOS via `osascript`, Windows via PowerShell COM — the ground-truth renderer) or LibreOffice (`soffice`, cross-platform) to produce a PDF, then rasterizes in-process via the bundled `@hyzyla/pdfium` WASM package — no poppler/pdftoppm/ImageMagick needed. Agents that consume PNGs use this to verify edits, diff accept/reject before-vs-after, or generate screenshots.
 

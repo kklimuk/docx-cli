@@ -50,7 +50,7 @@ describe("docx read (markdown)", () => {
 		// the content and its per-paragraph locator. The explicit complex-script
 		// font is preserved in a span even on Latin text.
 		expect(out).toMatch(
-			/^\| <span data-font-complex-script="Arial">\*\*Equipment\*\*<\/span> <!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 halign="center" --> \|/m,
+			/^\| \*\*Equipment\*\* <!-- t0:r0c0:p0 --> <!-- docx:cell t0:r0c0 halign="center" --> \|/m,
 		);
 		expect(out).toMatch(/^\| --- \| --- \|$/m);
 		expect(out).toContain("Agilent E3631A Triple Output DC Power Supply");
@@ -229,15 +229,9 @@ describe("docx read (markdown)", () => {
 		// ordered list with their real running ordinal (1. 2. 3.) — so the RAW
 		// markdown reads correctly rather than as a wall of `1.`.
 		const out = await render(fixture("tables-and-lists.docx"));
-		expect(out).toMatch(
-			/^1\. <span data-font-complex-script="Arial">\*\*Introduction\*\*<\/span>/m,
-		);
-		expect(out).toMatch(
-			/^2\. <span data-font-complex-script="Arial">\*\*Background Information\*\*<\/span>/m,
-		);
-		expect(out).toMatch(
-			/^3\. <span data-font-complex-script="Arial">\*\*Methods and Materials\*\*<\/span>/m,
-		);
+		expect(out).toMatch(/^1\. \*\*Introduction\*\*/m);
+		expect(out).toMatch(/^2\. \*\*Background Information\*\*/m);
+		expect(out).toMatch(/^3\. \*\*Methods and Materials\*\*/m);
 	});
 
 	test("resume-styling: list bullets and bold runs render", async () => {

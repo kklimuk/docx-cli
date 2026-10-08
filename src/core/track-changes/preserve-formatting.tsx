@@ -780,7 +780,7 @@ function cloneOrNull(node: XmlNode | null): XmlNode | null {
  *  `<w:rPr>` (CT_RPr): all four revision markers plus the rPr-change snapshot.
  *  Strip every one when reusing the paragraph-mark rPr as a run rPr, or Word
  *  silently drops the whole (schema-invalid) run. */
-const PARA_MARK_ONLY_RPR_CHILDREN = new Set([
+export const PARA_MARK_ONLY_RPR_CHILDREN: ReadonlySet<string> = new Set([
 	"w:ins",
 	"w:del",
 	"w:moveFrom",

@@ -621,6 +621,47 @@ export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 	else rPr.children.splice(at, 0, child);
 }
 
+/** Inherit one reference `<w:rPr>` child onto a run's own rPr without
+ *  overriding what the run states. Most children are single values — inherited
+ *  only when the run has none. `<w:rFonts>` is a BAG of independent script slots
+ *  (ascii / hAnsi / eastAsia / cs, each explicit or `…Theme`): a run that states
+ *  only its complex-script face still needs the Latin one. The read view writes
+ *  exactly that shape back (`<span data-font-complex-script="Calibri">` → an
+ *  rFonts with just `w:cs`), and treating "has rFonts" as "has its font" let a
+ *  line copied from `read` and passed back to `edit` fall through to the style
+ *  chain's Times New Roman (résumé, haiku 2026.09.30 r3). Each empty slot takes
+ *  the reference's value; a slot the run sets (explicitly or via theme) wins. */
+export function inheritRprChild(rPr: XmlNode, inherited: XmlNode): void {
+	const own = rPr.findChild(inherited.tag);
+	if (!own) {
+		insertRprChildInOrder(rPr, inherited.clone());
+		return;
+	}
+	if (inherited.tag !== "w:rFonts") return;
+	for (const [slot, theme] of FONT_SLOTS) {
+		if (own.getAttribute(slot) !== undefined) continue;
+		if (own.getAttribute(theme) !== undefined) continue;
+		const explicit = inherited.getAttribute(slot);
+		const themed = inherited.getAttribute(theme);
+		if (explicit !== undefined) own.setAttribute(slot, explicit);
+		if (themed !== undefined) own.setAttribute(theme, themed);
+	}
+	const hint = inherited.getAttribute("w:hint");
+	if (hint !== undefined && own.getAttribute("w:hint") === undefined) {
+		own.setAttribute("w:hint", hint);
+	}
+}
+
+/** Each `<w:rFonts>` script slot with its theme twin. The complex-script twin
+ *  is spelled `w:cstheme` (lowercase t) in ECMA-376 §17.3.2.26 — a
+ *  `${slot}Theme` template would look for a `w:csTheme` no producer writes. */
+const FONT_SLOTS = [
+	["w:ascii", "w:asciiTheme"],
+	["w:hAnsi", "w:hAnsiTheme"],
+	["w:eastAsia", "w:eastAsiaTheme"],
+	["w:cs", "w:cstheme"],
+] as const;
+
 /** Whether an `<w:rPr>` child may be INHERITED when cloning a reference run's
  *  formatting onto fresh content. Excludes two markers: `<w:highlight>` (a
  *  placeholder-fill marker — re-stamping it recreates the todo the fill was

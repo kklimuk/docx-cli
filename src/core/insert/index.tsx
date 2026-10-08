@@ -14,6 +14,7 @@ import {
 	spacingAttributes,
 } from "../blocks";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
+import { matchDocumentLook } from "../dominant-formatting";
 import { EquationParseError, latexToOmml } from "../equation";
 import {
 	computeExtentEmu,
@@ -25,6 +26,7 @@ import {
 	nextDrawingId,
 } from "../image";
 import { w } from "../jsx";
+import { continueList, readListContext } from "../lists/continue-list";
 import { literalParagraphs } from "../literal-text";
 import { MarkdownImport, MarkdownImportError } from "../markdown";
 import { inheritParagraphFormattingIfPlain } from "../paragraph-inheritance";
@@ -92,11 +94,29 @@ export class Insert {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 		const blocks = Array.isArray(built) ? built : [built];
+		// Empty markdown (`insert FILE --after p3 ""` — often an unset shell
+		// variable — or a comment-only source) parses to zero blocks. Splicing
+		// nothing and exiting 0 is the zero-effect success weak agents trust.
+		if (blocks.length === 0) {
+			throw new InsertError(
+				"USAGE",
+				"The content is empty — nothing to insert",
+				'Pass the new content after the locator, e.g. `docx insert FILE --after p3 "New paragraph"`.',
+			);
+		}
 
 		// Blend plain inserted content into the surrounding document by inheriting
 		// the anchor paragraph's run formatting (and style, when safe) for runs
 		// that didn't bring their own. Only text-bearing inserts blend; structural
 		// inserts (table/image/section/break/code/equation) keep their own shape.
+		// A markdown list item written beside an existing list joins THAT list and
+		// takes its look — the Enter-at-the-end-of-a-bullet contract — instead of
+		// starting a fresh Times New Roman list with its own numbering.
+		if (spec.kind === "markdown" && !opts.reuseAnchorParagraph) {
+			const host = neighboringListItem(blockRef, opts.placement);
+			if (host)
+				continueList(this.document, host, blocks, { copyHostLook: true });
+		}
 		if (
 			spec.kind === "text" ||
 			spec.kind === "runs" ||
@@ -104,6 +124,17 @@ export class Insert {
 			spec.kind === "literal"
 		) {
 			inheritFormattingFromAnchor(blocks, blockRef.node);
+		}
+		// Whatever neither the neighbor nor the list supplied falls back to the
+		// document's dominant face/size (the `docx:base` read shows), not the
+		// style chain's — a new `# heading` in a Calibri doc whose Heading1 style
+		// says Times renders Calibri like the headings already on the page.
+		if (
+			spec.kind === "markdown" ||
+			spec.kind === "text" ||
+			spec.kind === "literal"
+		) {
+			matchDocumentLook(this.document, blocks);
 		}
 		if (opts.reuseAnchorParagraph) {
 			inheritParagraphFormattingIfPlain(
@@ -280,6 +311,20 @@ async function buildInsertedParagraph(
 		case "literal":
 			return literalParagraphs(spec.text, paragraphOptions);
 	}
+}
+
+/** The list item a new block lands next to: the anchor itself when it's a list
+ * item, else the sibling on the insertion side (`--after` a list's lead-in
+ * paragraph lands right before the list's first item). Null when neither is. */
+function neighboringListItem(
+	blockRef: BlockReference,
+	placement: "before" | "after",
+): XmlNode | null {
+	if (readListContext(blockRef.node)) return blockRef.node;
+	const index = blockRef.parent.indexOf(blockRef.node);
+	const neighbor =
+		blockRef.parent[placement === "after" ? index + 1 : index - 1];
+	return neighbor && readListContext(neighbor) ? neighbor : null;
 }
 
 async function buildMarkdownBlocks(
@@ -507,29 +552,4 @@ function resolveListContext(
 		level: explicitLevel ?? 0,
 		numId: document.ensureNumbering().allocate(kind),
 	};
-}
-
-/** The (numId, level) list membership of a paragraph, or null when it isn't a
- * (valid) list item. Shared with `Edit.paragraph`, which uses it to continue
- * the host paragraph's list when replacement markdown brings its own. */
-export function readListContext(
-	anchor: XmlNode,
-): { level: number; numId: number } | null {
-	if (anchor.tag !== "w:p") return null;
-	const numPr = anchor.findChild("w:pPr")?.findChild("w:numPr");
-	if (!numPr) return null;
-	// `numId="0"` is the OOXML sentinel for "remove this paragraph from any
-	// numbered list" (ECMA-376 §17.9.18) — it's NOT a valid list to inherit.
-	// `Number("")` is `0`, so guard explicitly against missing val too.
-	const numIdRaw = numPr.findChild("w:numId")?.getAttribute("w:val");
-	if (!numIdRaw) return null;
-	const numId = Number(numIdRaw);
-	if (!Number.isFinite(numId) || numId <= 0) return null;
-	// A garbage `w:ilvl` (malformed doc) must not propagate NaN into a computed
-	// level that a caller writes back as `w:ilvl="NaN"` — fall back to level 0.
-	const levelRaw = Number(
-		numPr.findChild("w:ilvl")?.getAttribute("w:val") ?? "0",
-	);
-	const level = Number.isFinite(levelRaw) && levelRaw >= 0 ? levelRaw : 0;
-	return { level, numId };
 }

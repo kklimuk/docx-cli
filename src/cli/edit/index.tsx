@@ -23,6 +23,7 @@ import { ensureCellEndsWithParagraph } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
 import {
+	adoptPositionalMarkdown,
 	batchExampleIntro,
 	decodeInlineEscapes,
 	hasRunFormatFlags,
@@ -70,107 +71,90 @@ const AT_FORMS = describeForms(
 
 const EDIT_HELP = `docx edit — replace content at a locator
 
+The read view is Markdown; write it back the same way — pass the new content
+after the locator. It's parsed (bold, links, headings, lists, tables, inline
+<span>/<mark>/<u>) in the same dialect \`read\` prints, so you can copy a line from
+the read view, change it, and pass it back. The paragraph keeps its look — a new
+heading keeps the font that was there (else the docx:base \`read\` shows).
+--text is the LITERAL escape hatch: every character lands verbatim
+(--text "**bold**" writes the asterisks). Use it only for a value Markdown would
+mangle — a bare URL, a leading "3.", {++x++} — or for a character span.
+
 Usage:
-  docx edit FILE --at LOCATOR <content> [options]
-  docx edit FILE --batch FILE.jsonl [options]   # many edits, one read
-  docx edit FILE --batch -          [options]   # read JSONL from stdin
+  docx edit FILE --at LOCATOR "MARKDOWN" [formatting] [options]
+  docx edit FILE --batch FILE.jsonl [options]   # many edits, one read (- = stdin)
 
 Examples:
 ${batchExampleIntro("Edit several blocks")}
   #   edits.jsonl:
-  #     {"at":"p2","markdown":"New **bold** text"}
-  #     {"at":"p4","text":"Delaware"}
-  #     {"at":"p7:0-4","text":"ACME","bold":true}
-  #     {"at":"p9","style":"Heading1"}
-  #     {"at":"p5","text":""}
-  #     {"at":"p6","text":"Acme Corp","clear":"highlight"}
+  #     {"at":"p2","markdown":"Revised **bold** text"}
+  #     {"at":"p4","markdown":"Delaware","clear":"highlight"}   # fill + un-highlight
+  #     {"at":"p7:0-4","text":"ACME","bold":true}               # a character span
+  #     {"at":"p9","style":"Heading1"}                           # formatting only
+  #     {"at":"p5","delete":true}                                # remove the line
   docx edit doc.docx --batch edits.jsonl
   # …or one at a time:
-  docx find doc.docx "fill in state"                   # → p4:25-38
-  docx edit doc.docx --at p4:25-38 --text "Delaware"   # replace just that span
-  docx edit doc.docx --at p3 --markdown "## Revised heading"
-  docx edit doc.docx --at p4 --text "Title" --bold     # fill + format in one call
-  docx edit doc.docx --at t0:r2c1 --text "Charlie Darwin" # fill a blank cell
-  docx edit doc.docx --at p9-p38 --tabs right          # fix every wrapping tab line
+  docx edit doc.docx --at p3 "## Revised heading"
+  docx edit doc.docx --at t0:r2c1 "Charlie Darwin"   # fill a blank cell
+  docx edit doc.docx --at p6 "Org\\tCity, ST" --space-after 6
+  docx find doc.docx "fill in state"                     # → p4:25-38
+  docx edit doc.docx --at p4:25-38 --text "Delaware"     # replace just those characters
+  docx edit doc.docx --at p9-p38 --tabs right            # fix every wrapping tab line
 
 Locator (required):
-  --at LOCATOR      What to edit. One of:
+  --at LOCATOR      One of:
 ${AT_FORMS}
-                    A bare CELL aliases its sole direct paragraph; use CELL:pK
-                    when the cell has multiple blocks or a nested table. Merged
-                    bare cells are rejected. A character span (pN:S-E, or
-                    tN:rRcC:pK:S-E) replaces just those characters. More:
-                    \`docx info locators\`.
+                    A bare CELL aliases its sole direct paragraph (use CELL:pK
+                    when the cell holds several blocks). pN:S-E replaces just
+                    those characters. More: \`docx info locators\`.
 
-Content (required, UNLESS you pass only the formatting options below):
-  --markdown TEXT   Replace with parsed GFM markdown (headings, lists, tables,
-                    code, links, math, footnotes, CriticMarkup, …). Same dialect
-                    as \`docx insert --markdown\`. A multi-block source expands —
-                    the paragraph is replaced by however many blocks it parses to.
-  --markdown-file PATH  Same as --markdown, but read content from PATH ("-" = stdin).
-  --text TEXT       Replace with a single LITERAL run — every character verbatim.
-                    Empty "" REMOVES the line (a table cell's last paragraph is
-                    blanked, not deleted). To FORMAT it, add run-formatting flags
-                    or use --markdown — see \`docx edit --text --help\`.
-  --runs JSON       Replace with custom runs (Run[] JSON). Field list + the full
-                    run-formatting flag list: \`docx edit --runs --help\`.
-  --clear ATTRS     Strip run formatting in place, keeping the text. ATTRS is a
-                    comma list (bold, italic, underline, highlight, shade, color,
-                    font, size, …) or "all". Rides along with content on a
-                    paragraph or span: \`--text "Delaware" --clear highlight\` fills
-                    then un-highlights in one call. (Not tracked.)
+Content (one — or none, to reformat in place):
+  "MARKDOWN"        Positional, after the flags (same as --markdown TEXT). Quote it
+                    as ONE argument; single-quote '$' amounts.
+  --markdown TEXT   Parsed GFM, the dialect \`read\` prints. Inline HTML round-trips
+                    (<span style="font-family:X;color:#hex;font-size:Npt">, <mark>,
+                    <u>, <sup>, <sub>). A multi-block source replaces the paragraph
+                    with however many blocks it parses to.
+  --markdown-file PATH  Same, read from PATH ("-" = stdin).
+  --text TEXT       LITERAL single run, no parsing. The only content a character
+                    span (pN:S-E) takes. Empty "" removes the line.
+  --runs JSON       Byte-precise runs (Run[] JSON) — for replaying a paragraph
+                    from --ast. \`docx edit --runs --help\`.
+  --clear ATTRS     Strip formatting, keeping the text: a comma list (bold, italic,
+                    underline, highlight, color, font, size, …) or "all". Alone, or
+                    alongside content.
 
-Formatting options (pass them ALONE to reformat a block in place, keeping its
-text — or add them to --text / --markdown; with --markdown they apply to every
-paragraph it produces. Only --style can't combine with --markdown):
-  --style NAME       Paragraph style (e.g., Heading1)
+Formatting (alone = restyle in place; with content = fill and format):
+  --style NAME       Paragraph style (Heading1, …) — refused next to --markdown,
+                     whose headings/lists set their own
   --alignment ALIGN  left | center | right | justify
-  --space-before PT / --space-after PT   Space above / below, in points
-  --line-spacing N   A multiple (1, 1.5, 2), a name (single, double), or 15pt
-  --indent-left IN / --indent-right IN   Indent, in inches (negative outdents)
-  --first-line IN / --hanging IN         First-line / hanging indent, in inches
-                     Spacing/indent also take a unit suffix (in, cm, mm, pt,
-                     tw = twips, the read --ast unit); a bare inch value above
-                     9 is read as twips.
-  --tabs SPEC        Replace the paragraph's tab stops. SPEC is one of:
-                       right — a single RIGHT tab at the text margin
-                       clear — remove all tab stops
-                       left@1in,right@7.5in — explicit stops (left|right|center)
-                     A RANGE locator fixes every wrapping line at once:
-                     \`--at pN-pM --tabs right\`.
+  --space-before N / --space-after N   Points, or a unit suffix (6pt, 0.1in, 120tw)
+  --line-spacing N   1, 1.5, 2, single, double, or 15pt
+  --indent-left N / --indent-right N   Inches, or a unit suffix (0.5in, 1.27cm,
+                     720tw); a bare number above 9 is read as twips
+  --first-line N / --hanging N         Same units
+  --tabs SPEC        right (one RIGHT tab at the margin) | clear | left@1in,right@7.5in
+                     A range (--at pN-pM) fixes every wrapping line at once.
+  --bold --italic --underline --strike --color HEX --font NAME --size PT …
+                     Run formatting. Full list: \`docx edit --runs --help\`.
 
-Batch (--batch PATH | -):
-  Apply many edits from one read — the preferred way to update several blocks
-  (locators do not shift between entries). Each JSONL line is one edit whose
-  keys mirror the flags: {"at": LOCATOR, ...} with at most one content field
-  ("text"/"markdown"/"runs"). "style"/"alignment"/"clear"/"bold"/"color"/…
-  can ride along with content, or stand alone to format existing text. A bare
-  CELL is valid when it contains exactly one direct paragraph.
-  \`"text": ""\` or \`"delete": true\` removes the line. One entry per paragraph —
-  to fill AND format the same paragraph, put both fields in that one entry.
-  Ranges (pN-pM) aren't batchable; sections (sN) and equations (eqN) aren't
-  edit's at all — use \`docx sections\` / \`docx equations edit\`.
-  Don't pass --at/--text/… alongside --batch.
+Batch (--batch PATH | -): one JSON object per line; keys mirror the flags
+  ({"at":…} + one content field + any formatting). Every locator addresses the
+  document AS READ — ids never shift between entries. Ranges (pN-pM) aren't
+  batchable; sections → \`docx sections\`, equations → \`docx equations edit\`.
 
-General options:
-  --author NAME     Author for tracked changes (default: $DOCX_AUTHOR)
-  --track           Record this edit as a tracked change even when the document's
-                    toggle is off (check with \`docx track-changes list FILE\`).
-  --no-formatting   Replace with a single fresh run; don't preserve rPr on
-                    unchanged words
+Options:
+  --track           Record as a tracked change even when the doc toggle is off
+  --author NAME     Tracked-change author (default: $DOCX_AUTHOR)
+  --no-formatting   Don't carry run formatting onto unchanged words (--text)
   -o, --output PATH Write to PATH instead of overwriting FILE
-  --dry-run         Print what would change; do not write the file
-  -v, --verbose     Print the success ack JSON (default: a one-line confirmation)
+  --dry-run         Preview; write nothing
+  -v, --verbose     Full JSON ack
   -h, --help        Show this help
 
-Output:
-  Prints a one-line confirmation on success (exit 0) — an in-place edit shifts
-  nothing, so the edited locator is unchanged and there's nothing to mint.
-  --verbose prints {ok:true, operation, path, locator}. Errors print {code, error,
-  hint?} with a nonzero exit. Heads up: a locator you hold from BEFORE a structural
-  edit (an insert/delete elsewhere renumbers ids) is stale — re-read after any
-  insert/delete, or apply the whole set from one read with --batch.
-`;
+Output: a one-line confirmation (exit 0); errors print {code, error, hint?} with a
+nonzero exit. A locator from BEFORE an insert/delete is stale — re-read, or do
+everything from one read with --batch.`;
 
 const EDIT_TEXT_HELP = `docx edit --text — replace a line's text and format it
 
@@ -276,6 +260,8 @@ export async function run(args: string[]): Promise<number> {
 
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", EDIT_HELP);
+	const positionalError = await adoptPositionalMarkdown(parsed, EDIT_HELP);
+	if (positionalError !== undefined) return positionalError;
 
 	const batchInput = parsed.values.batch as string | undefined;
 	if (batchInput !== undefined) {
@@ -590,6 +576,7 @@ async function commitRangeEdit(
 		resolvedAuthors = new Edit(document).range(rangeRef, spec, {
 			authorFlag: opts.authorFlag,
 			track,
+			noFormatting: opts.noFormatting,
 		});
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -1145,7 +1132,7 @@ async function validateParagraphEdit(
 		if (values.style !== undefined) {
 			return fail(
 				"USAGE",
-				"--style can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)",
+				"--style can't be combined with markdown content (positional, --markdown, or --markdown-file) — the markdown source controls block-level styling",
 				EDIT_HELP,
 			);
 		}

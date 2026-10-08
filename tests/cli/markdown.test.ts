@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
@@ -2041,5 +2041,609 @@ describe("read — span grouping compares the SHOWN face", () => {
 		const md = await read(path);
 		expect(md).toContain("**Bold explicit bold bare**");
 		expect(md).not.toContain("****");
+	});
+});
+
+// Markdown is the default authoring dialect: positional content parses as
+// markdown, and freshly-authored paragraphs look like the document they land
+// in — a bullet beside a list joins that list, and anything nothing closer
+// formats takes the document's dominant face/size rather than the style chain.
+
+type AuthoringRun = {
+	type: string;
+	text?: string;
+	font?: string;
+	bold?: boolean;
+	sizeHalfPoints?: number;
+};
+type AuthoringParagraph = {
+	id: string;
+	type: string;
+	style?: string;
+	list?: { numId: string; level: number };
+	spacing?: Record<string, unknown>;
+	runs?: AuthoringRun[];
+};
+
+async function authoringParagraphs(
+	docPath: string,
+): Promise<AuthoringParagraph[]> {
+	const read = await runCli("read", docPath, "--ast");
+	const doc = read.parsed as { blocks: AuthoringParagraph[] };
+	return doc.blocks.filter((block) => block.type === "paragraph");
+}
+
+function authoringText(paragraph: AuthoringParagraph | undefined): string {
+	return (paragraph?.runs ?? []).map((run) => run.text ?? "").join("");
+}
+
+function paragraphWithText(
+	all: AuthoringParagraph[],
+	text: string,
+): AuthoringParagraph | undefined {
+	return all.find((paragraph) => authoringText(paragraph) === text);
+}
+
+describe("positional content is markdown", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		docPath = join(tempWorkspace("positional-md"), "doc.docx");
+		await runCli("create", docPath, "--text", "Original body");
+	});
+
+	test("edit FILE --at pN CONTENT parses markdown", async () => {
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"Net **30** days",
+		);
+		expect(result.exitCode).toBe(0);
+		const [paragraph] = await authoringParagraphs(docPath);
+		expect(authoringText(paragraph)).toBe("Net 30 days");
+		expect(paragraph?.runs?.find((run) => run.text === "30")?.bold).toBe(true);
+	});
+
+	test("insert FILE --after pN CONTENT parses markdown (a heading)", async () => {
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"## Summary",
+		);
+		expect(result.exitCode).toBe(0);
+		const all = await authoringParagraphs(docPath);
+		expect(paragraphWithText(all, "Summary")?.style).toBe("Heading2");
+	});
+
+	test("an unquoted multi-word content is refused, not truncated", async () => {
+		const result = await runCli("edit", docPath, "--at", "p0", "Two", "words");
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("quote it");
+		expect(authoringText((await authoringParagraphs(docPath))[0])).toBe(
+			"Original body",
+		);
+	});
+
+	test("positional content next to --markdown is refused", async () => {
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"a",
+			"b",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("Content given twice");
+	});
+
+	test("--text stays literal", async () => {
+		await runCli("edit", docPath, "--at", "p0", "--text", "**not bold**");
+		const [paragraph] = await authoringParagraphs(docPath);
+		expect(authoringText(paragraph)).toBe("**not bold**");
+	});
+});
+
+describe("a markdown bullet beside a list joins that list", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("list-join");
+		docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(
+			source,
+			"Lead-in paragraph.\n\n- first\n- second\n\nAfter.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+		// Give the list its own look, so "takes the list's look" is observable.
+		await runCli("edit", docPath, "--at", "p1-p2", "--font", "Georgia");
+	});
+
+	test("--after a bullet: same list, same face", async () => {
+		await runCli("insert", docPath, "--after", "p2", "- third with **bold**");
+		const all = await authoringParagraphs(docPath);
+		const host = paragraphWithText(all, "second");
+		const added = paragraphWithText(all, "third with bold");
+		expect(added?.list?.numId).toBe(host?.list?.numId);
+		expect(added?.style).toBe(host?.style);
+		for (const run of added?.runs ?? []) expect(run.font).toBe("Georgia");
+		expect(added?.runs?.find((run) => run.text === "bold")?.bold).toBe(true);
+	});
+
+	test("--before a bullet: same list", async () => {
+		await runCli("insert", docPath, "--before", "p1", "- zeroth");
+		const all = await authoringParagraphs(docPath);
+		expect(paragraphWithText(all, "zeroth")?.list?.numId).toBe(
+			paragraphWithText(all, "first")?.list?.numId,
+		);
+	});
+
+	test("--after the lead-in paragraph: joins the list that follows", async () => {
+		await runCli("insert", docPath, "--after", "p0", "- zeroth");
+		const all = await authoringParagraphs(docPath);
+		expect(paragraphWithText(all, "zeroth")?.list?.numId).toBe(
+			paragraphWithText(all, "first")?.list?.numId,
+		);
+	});
+
+	test("a numbered item beside a bullet list keeps its own list", async () => {
+		await runCli("insert", docPath, "--after", "p2", "1. numbered");
+		const all = await authoringParagraphs(docPath);
+		expect(paragraphWithText(all, "numbered")?.list?.numId).not.toBe(
+			paragraphWithText(all, "second")?.list?.numId,
+		);
+	});
+});
+
+describe("new content falls back to the dominant formatting, not the style", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		docPath = join(tempWorkspace("dominant"), "doc.docx");
+		await runCli("create", docPath, "--text", "Intro");
+	});
+
+	test("a new heading matches the headings already on the page", async () => {
+		// Heading1's STYLE says Times New Roman, but every Heading1 on the page
+		// stamps Calibri directly — the résumé template's shape.
+		await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Heading1",
+			"--font",
+			"Times New Roman",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Education",
+			"--style",
+			"Heading1",
+		);
+		await runCli("edit", docPath, "--at", "p1", "--font", "Calibri");
+		await runCli("insert", docPath, "--after", "p1", "--text", "Body line");
+		await runCli("edit", docPath, "--at", "p2", "# Experience");
+		const heading = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"Experience",
+		);
+		expect(heading?.style).toBe("Heading1");
+		expect(heading?.runs?.[0]?.font).toBe("Calibri");
+	});
+
+	test("with no style peers, a heading takes the docx:base face but keeps its size", async () => {
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Arial body text",
+			"--font",
+			"Arial",
+			"--size",
+			"9",
+		);
+		await runCli("edit", docPath, "--at", "p0", "# Fresh heading");
+		const heading = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"Fresh heading",
+		);
+		expect(heading?.runs?.[0]?.font).toBe("Arial");
+		expect(heading?.runs?.[0]?.sizeHalfPoints).toBeUndefined();
+	});
+
+	test("an edit takes the look that was at that position before the dominant one", async () => {
+		// The document is mostly Arial, but the line being replaced is Georgia:
+		// a heading written over it stays Georgia (the position), not Arial.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"A long Arial body paragraph that dominates the document text",
+			"--font",
+			"Arial",
+		);
+		await runCli("insert", docPath, "--after", "p0", "--text", "Short line");
+		await runCli("edit", docPath, "--at", "p1", "--font", "Georgia");
+		await runCli("edit", docPath, "--at", "p1", "# Section");
+		const heading = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"Section",
+		);
+		expect(heading?.style).toBe("Heading1");
+		expect(heading?.runs?.[0]?.font).toBe("Georgia");
+	});
+
+	test("a code block keeps its monospace", async () => {
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Arial body text",
+			"--font",
+			"Arial",
+		);
+		await runCli("insert", docPath, "--after", "p0", "```\nconst x = 1;\n```");
+		const code = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"const x = 1;",
+		);
+		expect(code?.runs?.[0]?.font).not.toBe("Arial");
+	});
+});
+
+describe("a line copied from read and passed back to edit is a no-op", () => {
+	test("keeps the Latin face when the read view states only the complex-script one", async () => {
+		// The résumé shape: Normal says Times New Roman, the runs stamp Calibri on
+		// every script slot. `read` then shows the line as a
+		// `data-font-complex-script` span (the Latin face rides docx:base), so
+		// the edit's run gets an rFonts with ONLY w:cs — which must still inherit
+		// the old Latin face instead of falling back to Normal's Times.
+		const docPath = join(tempWorkspace("read-roundtrip-font"), "doc.docx");
+		await runCli(
+			"create",
+			docPath,
+			"--text",
+			"Beginning with your most recent position.",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Second line of body text.",
+		);
+		await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Normal",
+			"--font",
+			"Times New Roman",
+		);
+		await runCli("edit", docPath, "--at", "p0-p1", "--font", "Calibri");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--font-complex-script",
+			"Calibri",
+		);
+
+		const lineOf = async () =>
+			(await readMarkdown(docPath))
+				.split("\n")
+				.find((line) => line.includes("most recent position")) ?? "";
+		const before = await lineOf();
+		const markdown = before.replace(/ <!--.*$/, "");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0", markdown)).exitCode,
+		).toBe(0);
+
+		expect(await lineOf()).toBe(before);
+		const [paragraph] = await authoringParagraphs(docPath);
+		for (const run of paragraph?.runs ?? []) expect(run.font).toBe("Calibri");
+	});
+});
+
+describe("a new styled paragraph takes the direct formatting its style peers agree on", () => {
+	type PeerBlock = { id: string; style?: string; alignment?: string };
+	async function headingDoc(
+		label: string,
+		centered: number[],
+	): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(
+			source,
+			"# Alpha\n\nBody one.\n\n# Beta\n\nBody two.\n\n# Gamma\n\nBody three.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+		for (const index of centered) {
+			await runCli(
+				"edit",
+				docPath,
+				"--at",
+				`p${index}`,
+				"--alignment",
+				"center",
+			);
+		}
+		return docPath;
+	}
+	async function blockWithText(
+		docPath: string,
+		text: string,
+	): Promise<PeerBlock | undefined> {
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<PeerBlock & { runs?: Array<{ text?: string }> }>;
+		};
+		return ast.blocks.find(
+			(block) =>
+				(block.runs ?? []).map((run) => run.text ?? "").join("") === text,
+		);
+	}
+
+	test("edit: a `#` heading over a body line is centered like the centered Heading1s", async () => {
+		const docPath = await headingDoc("peer-edit", [0, 2, 4]);
+		await runCli("edit", docPath, "--at", "p1", "# Delta");
+		const heading = await blockWithText(docPath, "Delta");
+		expect(heading?.style).toBe("Heading1");
+		expect(heading?.alignment).toBe("center");
+	});
+
+	test("insert: a new `#` heading is centered like its peers", async () => {
+		const docPath = await headingDoc("peer-insert", [0, 2, 4]);
+		await runCli("insert", docPath, "--after", "p5", "# Epsilon");
+		expect((await blockWithText(docPath, "Epsilon"))?.alignment).toBe("center");
+	});
+
+	test("peers that don't agree lend nothing (1 of 3 centered)", async () => {
+		const docPath = await headingDoc("peer-split", [0]);
+		await runCli("edit", docPath, "--at", "p1", "# Delta");
+		expect((await blockWithText(docPath, "Delta"))?.alignment).toBeUndefined();
+	});
+
+	test("an explicit --alignment still wins over the peers", async () => {
+		const docPath = await headingDoc("peer-explicit", [0, 2, 4]);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"# Delta",
+			"--alignment",
+			"right",
+		);
+		expect((await blockWithText(docPath, "Delta"))?.alignment).toBe("right");
+	});
+});
+
+test("script fonts show only on text in that script, and never split a span", async () => {
+	const docPath = join(tempWorkspace("script-font-visibility"), "out.docx");
+	expect((await runCli("create", docPath, "--text", "seed")).exitCode).toBe(0);
+	const runs = [
+		// Word's usual stamp: every slot the same face, Latin text → nothing to show.
+		{
+			type: "text",
+			text: "Plain ",
+			bold: true,
+			font: "Calibri",
+			fontComplexScript: "Calibri",
+			fontEastAsia: "Calibri",
+		},
+		// Same bold, no script slots — must NOT split the bold span from the run above.
+		{ type: "text", text: "English.", bold: true, font: "Calibri" },
+		// Arabic text: its complex-script face matters even when it equals the Latin one.
+		{
+			type: "text",
+			text: " مرحبا",
+			font: "Calibri",
+			fontComplexScript: "Calibri",
+		},
+		// CJK text: its East Asian face matters.
+		{ type: "text", text: "中文", fontEastAsia: "SimSun" },
+	];
+	expect(
+		(
+			await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				"--runs",
+				JSON.stringify(runs),
+			)
+		).exitCode,
+	).toBe(0);
+	const markdown = await readMarkdown(docPath);
+	expect(markdown).toContain("**Plain English.**");
+	expect(markdown).toMatch(/data-font-complex-script="Calibri"> مرحبا/);
+	expect(markdown).toMatch(/data-font-east-asia="SimSun">中文/);
+	expect(markdown.match(/data-font-/g)).toHaveLength(2);
+});
+
+describe("new content blends in without importing a neighbor's quirks", () => {
+	async function listDoc(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(source, "- one\n- two\n\nBody text.\n");
+		await runCli("create", docPath, "--from", source);
+		return docPath;
+	}
+
+	test("a bullet joining a TRACKED bullet doesn't clone its mark revision", async () => {
+		const docPath = await listDoc("join-tracked-host");
+		await runCli("insert", docPath, "--after", "p1", "- three", "--track");
+		await runCli("insert", docPath, "--after", "p2", "- four", "--track");
+		await runCli("insert", docPath, "--after", "p3", "- five");
+		// Two tracked inserts: content + paragraph mark each. The untracked one
+		// adds nothing, and no mark carries two <w:ins> (schema-invalid).
+		const listed = await runCli("track-changes", "list", docPath, "--json");
+		expect((listed.parsed as unknown[]).length).toBe(4);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("the host's own list style and spacing come across (ListBullet)", async () => {
+		const docPath = await listDoc("join-list-bullet");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--style",
+			"ListBullet",
+			"--space-after",
+			"12",
+		);
+		await runCli("insert", docPath, "--after", "p1", "- three");
+		const added = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"three",
+		);
+		expect(added?.style).toBe("ListBullet");
+		expect(added?.spacing?.after).toBe(240);
+	});
+
+	test("a nested item keeps its level's indent, not the host's direct one", async () => {
+		const docPath = await listDoc("join-nested");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--indent-left",
+			"0.5",
+			"--hanging",
+			"0.25",
+		);
+		await runCli("insert", docPath, "--after", "p1", "- a\n  - nested b");
+		const xml = await readDocumentXml(docPath);
+		const nested = xml.match(/<w:p>(?:(?!<w:p>).)*nested b/)?.[0] ?? "";
+		expect(nested).toContain('<w:ilvl w:val="1"/>');
+		expect(nested).not.toContain("<w:ind ");
+	});
+
+	test("inline code keeps its monospace and a link its color in a joined bullet", async () => {
+		const docPath = await listDoc("join-char-styles");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--font",
+			"Georgia",
+			"--color",
+			"333333",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"- run `npm test` and see [docs](https://example.com)",
+		);
+		const xml = await readDocumentXml(docPath);
+		const code = xml.match(/<w:r>(?:(?!<w:r>).)*npm test/)?.[0] ?? "";
+		expect(code).toContain('<w:rStyle w:val="Code"/>');
+		expect(code).not.toContain("Georgia");
+		const link = xml.match(/<w:r>(?:(?!<w:r>).)*>docs</)?.[0] ?? "";
+		expect(link).toContain('<w:rStyle w:val="Hyperlink"/>');
+		expect(link).not.toContain("333333");
+	});
+
+	test("a bold lead-in on every clause doesn't bold new text in that style", async () => {
+		const workspace = tempWorkspace("peer-lead-in");
+		const docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(
+			source,
+			"**1. Definitions.** Terms apply.\n\n**2. Term.** One year.\n\n**3. Payment.** Net 30.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+		await runCli("edit", docPath, "--at", "p0-p2", "--style", "BodyText");
+		await runCli("insert", docPath, "--after", "p2", "Plain new clause.");
+		await runCli("edit", docPath, "--at", "p1", "Replaced plain text");
+		const all = await authoringParagraphs(docPath);
+		for (const text of ["Plain new clause.", "Replaced plain text"]) {
+			const paragraph = paragraphWithText(all, text);
+			expect(paragraph?.style).toBe("BodyText");
+			for (const run of paragraph?.runs ?? []) expect(run.bold).toBeFalsy();
+		}
+	});
+
+	test("a body line retyped as a heading keeps the theme heading face", async () => {
+		const workspace = tempWorkspace("theme-heading");
+		const docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(source, "# Existing heading\n\nBody one\n\nBody two\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli("edit", docPath, "--at", "p1", "# New heading");
+		const added = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"New heading",
+		);
+		expect(added?.style).toBe("Heading1");
+		// The body line's face only RESOLVES through docDefaults — the existing
+		// Heading1 (theme font) doesn't vouch for it.
+		expect(added?.runs?.[0]?.font).toBeUndefined();
+	});
+
+	test("a body line retyped as a heading takes its peers' stated size", async () => {
+		const workspace = tempWorkspace("peer-heading-size");
+		const docPath = join(workspace, "doc.docx");
+		const source = join(workspace, "src.md");
+		await Bun.write(source, "# Existing heading\n\nBody one\n\nBody two\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli("edit", docPath, "--at", "p0", "--size", "14");
+		await runCli("edit", docPath, "--at", "p1", "# New heading");
+		const added = paragraphWithText(
+			await authoringParagraphs(docPath),
+			"New heading",
+		);
+		expect(added?.runs?.[0]?.sizeHalfPoints).toBe(28);
+	});
+
+	test("empty content is an error, not a silent no-op insert", async () => {
+		const docPath = await listDoc("empty-insert");
+		const result = await runCli("insert", docPath, "--after", "p0", "");
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("empty");
+	});
+
+	test("positional content beside --text names --text", async () => {
+		const docPath = await listDoc("positional-text");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"x",
+			"y",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("plus --text");
 	});
 });
