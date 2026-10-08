@@ -91,13 +91,17 @@ Content (one required):
   --page-break      Insert an empty paragraph containing a page break
   --column-break    Insert an empty paragraph containing a column break
 
-Formatting options (incompatible with --markdown / --markdown-file):
+Formatting options (with --markdown they apply to every paragraph it produces;
+only --style / --list / --list-level can't combine with --markdown):
   --style NAME       Apply paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
   --space-before PT / --space-after PT   Space above / below, in points
   --line-spacing N   A multiple (1, 1.5, 2), a name, or 15pt
   --indent-left IN / --indent-right IN   Indent, in inches
   --first-line IN / --hanging IN         First-line / hanging indent, in inches
+                     Spacing/indent also take a unit suffix (in, cm, mm, pt,
+                     tw = twips, the read --ast unit); a bare inch value above
+                     9 is read as twips.
   --list KIND        Make the paragraph a list item: "bullet" or "ordered"
                      (requires --text/--runs; task checkbox → \`docx tasks add\`).
   --list-level N     List nesting level, integer 0-8 (use with --list to nest).
@@ -241,9 +245,9 @@ async function buildSingleShotOptions(
 		if (typeof mangled === "number") return mangled;
 	}
 
-	// Markdown spec carries its own block styling (heading levels, list
-	// numbering, code blocks, …) so paragraph-level flags would be silently
-	// dropped. Reject them up front instead.
+	// A markdown source owns its paragraph style and list membership (heading
+	// levels, list numbering), so `--style`/`--list` conflict — reject them up
+	// front. Layout flags ride along (see MARKDOWN_INCOMPATIBLE_FLAGS).
 	if (spec.kind === "markdown") {
 		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
 			(flag) => values[flag] !== undefined,
@@ -342,29 +346,19 @@ type ValidatedOptions = {
 
 export type RawValues = ReturnType<typeof parseArgs>["values"];
 
+/** The only flags that CONFLICT with `--markdown`: a `# heading` or list item in
+ *  the source owns its paragraph style and list membership. Layout flags ride
+ *  along (`applyParagraphOptionsToBlocks`). */
+export const MARKDOWN_INCOMPATIBLE_FLAGS = [
+	"style",
+	"list",
+	"list-level",
+] as const;
+
 /** The mutually-exclusive content flags, each with the sub-flags that only
  * make sense alongside it. Drives both the "exactly one content flag" check
  * and the "this sub-flag requires its content flag" check, so those rules
  * live in one place instead of scattered guards. */
-/** Paragraph-level flags that are meaningless under `--markdown` /
- *  `--markdown-file` because the markdown source already encodes block
- *  styling (heading levels, list numbering, code-block fences, …). We
- *  reject explicitly so the agent doesn't silently lose their intent.
- *  `--text` / `--runs` etc. still accept these. */
-export const MARKDOWN_INCOMPATIBLE_FLAGS = [
-	"style",
-	"alignment",
-	"list",
-	"list-level",
-	"space-before",
-	"space-after",
-	"line-spacing",
-	"indent-left",
-	"indent-right",
-	"first-line",
-	"hanging",
-] as const;
-
 const CONTENT_KINDS = [
 	{ flag: "text", subFlags: ["color", "bold", "italic", "url"] },
 	{ flag: "text-file", subFlags: [] },

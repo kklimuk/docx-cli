@@ -2,6 +2,7 @@ import type { Document } from "../ast/document";
 import type { BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
+	applyParagraphOptionsToBlocks,
 	ensureParagraphProperties,
 	hasParagraphProperties,
 	indentAttributes,
@@ -111,6 +112,11 @@ export class Insert {
 				paragraphOptions.style,
 				{ preservePprChange: true },
 			);
+		}
+		// Same ride-along contract as `edit` — after the reused-paragraph
+		// inheritance above (see `applyParagraphOptionsToBlocks`).
+		if (spec.kind === "markdown") {
+			applyParagraphOptionsToBlocks(blocks, paragraphOptions);
 		}
 
 		if (opts.track ?? this.document.isTrackChangesEnabled()) {
@@ -268,6 +274,8 @@ async function buildInsertedParagraph(
 		case "equation":
 			return buildEquationParagraph(spec, paragraphOptions);
 		case "markdown":
+			// Its layout flags ride along later, in `Insert.paragraph` — after the
+			// reused-cell-paragraph inheritance, so they merge onto it.
 			return buildMarkdownBlocks(document, spec);
 		case "literal":
 			return literalParagraphs(spec.text, paragraphOptions);

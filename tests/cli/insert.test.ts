@@ -77,17 +77,43 @@ describe("docx insert / edit / delete", () => {
 		expect(paragraphs[0]?.runs?.[0]?.text).toBe("Prepended");
 	});
 
-	test("insert --runs silently drops unsupported run types (round-trip safety)", async () => {
+	test("insert --runs rejects run types the emitter can't build instead of dropping them", async () => {
 		// Simulates `docx read | jq | docx insert --runs '[...]'` where the
 		// source paragraph contained an equation/footnoteRef/chart that we
-		// surface in the AST but can't re-emit as fresh OOXML. Should not crash.
+		// surface in the AST but can't re-emit as fresh OOXML. The emitter
+		// silently dropped those — and a paragraph of ONLY unknown types landed
+		// empty with exit 0 (a judge hit it with typeless runs). Now the ingress
+		// refuses, so nothing is written and the exit code says why.
 		const runsJson = JSON.stringify([
 			{ type: "text", text: "Before " },
 			{ type: "equation", text: "x_i", display: false },
-			{ type: "text", text: " middle " },
-			{ type: "noteRef", kind: "footnote", id: "fn1" },
-			{ type: "chart", kind: "chart" },
 			{ type: "text", text: " after" },
+		]);
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--runs",
+			runsJson,
+		);
+		expect(result.exitCode).toBe(2);
+		expect(JSON.parse(result.stdout).error).toContain(
+			'unknown "type" "equation"',
+		);
+		const read = await runCli("read", docPath, "--ast");
+		const doc = read.parsed as { blocks: Array<{ type: string }> };
+		expect(
+			doc.blocks.filter((block) => block.type === "paragraph"),
+		).toHaveLength(1);
+	});
+
+	test("insert --runs treats a typeless run with a string text as a text run", async () => {
+		// The shape agents write by instinct — `{"text":"…","bold":true}` with no
+		// `type`. It used to be dropped by the emitter (empty paragraph, exit 0).
+		const runsJson = JSON.stringify([
+			{ text: "Intern", bold: true },
+			{ text: "\tJun 2025" },
 		]);
 		const result = await runCli(
 			"insert",
@@ -100,15 +126,19 @@ describe("docx insert / edit / delete", () => {
 		expect(result.exitCode).toBe(0);
 		const read = await runCli("read", docPath, "--ast");
 		const doc = read.parsed as {
-			blocks: Array<{ type: string; runs?: Array<{ text?: string }> }>;
+			blocks: Array<{
+				type: string;
+				runs?: Array<{ type: string; text?: string; bold?: boolean }>;
+			}>;
 		};
-		const lastParagraph = doc.blocks
-			.filter((block) => block.type === "paragraph")
-			.pop();
-		const texts = (lastParagraph?.runs ?? [])
-			.map((run) => run.text)
-			.filter((text): text is string => text !== undefined);
-		expect(texts.join("")).toBe("Before  middle  after");
+		const inserted = doc.blocks.filter(
+			(block) => block.type === "paragraph",
+		)[1];
+		expect(inserted?.runs?.[0]).toMatchObject({
+			type: "text",
+			text: "Intern",
+			bold: true,
+		});
 	});
 
 	test("insert --runs supports mixed-format paragraph", async () => {
@@ -445,8 +475,8 @@ describe("insert — spacing/indent across content kinds (no silent drop)", () =
 			"p0",
 			"--markdown",
 			"A new paragraph.",
-			"--space-after",
-			"12",
+			"--style",
+			"Heading2",
 		);
 		expect(result.exitCode).not.toBe(0);
 		expect((result.parsed as { error?: string }).error).toContain(
@@ -1029,5 +1059,59 @@ describe("docx insert — contextual --help", () => {
 		expect(result.stdout).not.toContain("vertAlign");
 		// …it points at the variant that does.
 		expect(result.stdout).toContain("--runs --help");
+	});
+});
+
+describe("insert --markdown — layout flags ride along", () => {
+	test("a reused empty cell paragraph keeps its spacing; the flag merges onto it", async () => {
+		const docPath = join(tempWorkspace("insert-md-cell-merge"), "out.docx");
+		await runCli("create", docPath, "--text", "Anchor");
+		await runCli(
+			"tables",
+			"create",
+			docPath,
+			"--after",
+			"p0",
+			"--rows",
+			"1",
+			"--cols",
+			"1",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--space-before",
+			"12",
+			"--line-spacing",
+			"1.5",
+		);
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--markdown",
+			"Cell",
+			"--space-after",
+			"6",
+		);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				rows?: Array<{
+					cells: Array<{
+						blocks: Array<{ spacing?: Record<string, unknown> }>;
+					}>;
+				}>;
+			}>;
+		};
+		expect(ast.blocks[1]?.rows?.[0]?.cells[0]?.blocks[0]?.spacing).toEqual({
+			before: 240,
+			after: 120,
+			line: 360,
+			lineRule: "auto",
+		});
 	});
 });

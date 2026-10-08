@@ -3697,7 +3697,7 @@ describe("docx edit — paragraph spacing & indentation", () => {
 			);
 		});
 
-		test("spacing/indent with --markdown is rejected, not silently dropped", async () => {
+		test("--style with --markdown is rejected (the source owns its block style)", async () => {
 			const docPath = await oneLine("md-drop");
 			const result = await runCli(
 				"edit",
@@ -3706,8 +3706,8 @@ describe("docx edit — paragraph spacing & indentation", () => {
 				"p0",
 				"--markdown",
 				"New paragraph.",
-				"--space-after",
-				"12",
+				"--style",
+				"Heading2",
 			);
 			expect(result.exitCode).not.toBe(0);
 			expect((result.parsed as { error?: string }).error).toContain(
@@ -4341,5 +4341,256 @@ describe("tracked delete keeps the paragraph-mark rPr schema-valid", () => {
 			/<w:pPr><w:rPr><w:del [^>]*\/><w:b\/><\/w:rPr><\/w:pPr>/,
 		);
 		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+});
+
+describe("docx edit — measure units", () => {
+	async function indentOf(
+		docPath: string,
+	): Promise<Record<string, number> | undefined> {
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				indent?: Record<string, number>;
+				spacing?: Record<string, number>;
+			}>;
+		};
+		return ast.blocks[0]?.indent;
+	}
+
+	test("a bare inch value above 9 is read as twips (the AST value an agent copies back)", async () => {
+		// `--indent-left 119` used to write a 119-INCH indent (171360 twips) with
+		// exit 0 and push three résumé entries off the page.
+		const docPath = join(tempWorkspace("measure-twips"), "out.docx");
+		await runCli("create", docPath, "--text", "Indented line.");
+		await runCli("edit", docPath, "--at", "p0", "--indent-left", "119");
+		expect(await indentOf(docPath)).toEqual({ left: 119 });
+		await runCli("edit", docPath, "--at", "p0", "--indent-left", "0.5");
+		expect(await indentOf(docPath)).toEqual({ left: 720 });
+	});
+
+	test("explicit unit suffixes: cm, mm, pt, tw on indents; in/tw on spacing", async () => {
+		const docPath = join(tempWorkspace("measure-units"), "out.docx");
+		await runCli("create", docPath, "--text", "Indented line.");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"2.54cm",
+			"--first-line",
+			"720tw",
+		);
+		expect(await indentOf(docPath)).toEqual({ left: 1440, firstLine: 720 });
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-right",
+			"25.4mm",
+			"--hanging",
+			"36pt",
+		);
+		expect(await indentOf(docPath)).toEqual({
+			left: 1440,
+			right: 1440,
+			hanging: 720,
+		});
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-before",
+			"0.5in",
+			"--space-after",
+			"220tw",
+		);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ spacing?: Record<string, number> }>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({ before: 720, after: 220 });
+	});
+
+	test("an unknown unit is rejected with the accepted list", async () => {
+		const docPath = join(tempWorkspace("measure-bad"), "out.docx");
+		await runCli("create", docPath, "--text", "Indented line.");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"3em",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(JSON.parse(result.stdout).hint).toContain("in, cm, mm, pt, tw");
+	});
+});
+
+describe("docx edit — paragraph properties ride along with --markdown", () => {
+	test("single-shot: --space-after and --alignment apply to the produced paragraph", async () => {
+		const docPath = join(tempWorkspace("md-rideprops"), "out.docx");
+		await runCli("create", docPath, "--text", "Old line");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"New *line*",
+			"--space-after",
+			"6",
+			"--alignment",
+			"center",
+		);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				alignment?: string;
+				spacing?: Record<string, number>;
+				runs: Array<{ text: string; italic?: boolean }>;
+			}>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({ after: 120 });
+		expect(ast.blocks[0]?.alignment).toBe("center");
+		expect(ast.blocks[0]?.runs[1]).toMatchObject({
+			text: "line",
+			italic: true,
+		});
+	});
+
+	test("batch: {markdown, space-after} applies the spacing (it used to be silently dropped)", async () => {
+		const docPath = join(tempWorkspace("md-rideprops-batch"), "out.docx");
+		await runCli("create", docPath, "--text", "Old line");
+		const batch = join(tempWorkspace("md-rideprops-batch-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", markdown: "New **line**", "space-after": 6 })}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ spacing?: Record<string, number> }>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({ after: 120 });
+		// `style` is the one conflict, in batch too.
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", markdown: "# Heading", style: "Heading2" })}\n`,
+		);
+		const rejected = await runCli("edit", docPath, "--batch", batch);
+		expect(rejected.exitCode).toBe(2);
+		expect(JSON.parse(rejected.stdout).error).toContain(
+			'"style" can\'t be combined with "markdown"',
+		);
+	});
+});
+
+describe("docx edit — ride-along and measure edge cases", () => {
+	test("--markdown ride-along merges onto the inherited spacing/indent, never replaces it", async () => {
+		const docPath = join(tempWorkspace("md-ride-merge"), "out.docx");
+		await runCli("create", docPath, "--text", "Old line");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--space-before",
+			"12",
+			"--line-spacing",
+			"1.5",
+			"--indent-left",
+			"0.5",
+			"--hanging",
+			"0.25",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"New line",
+			"--space-after",
+			"6",
+			"--indent-right",
+			"0.5",
+		);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{
+				spacing?: Record<string, unknown>;
+				indent?: Record<string, number>;
+			}>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({
+			before: 240,
+			after: 120,
+			line: 360,
+			lineRule: "auto",
+		});
+		expect(ast.blocks[0]?.indent).toEqual({
+			left: 720,
+			right: 720,
+			hanging: 360,
+		});
+	});
+
+	test("a unit suffix that names an Object.prototype key is rejected, not written as NaN", async () => {
+		const docPath = join(tempWorkspace("measure-proto"), "out.docx");
+		await runCli("create", docPath, "--text", "Indented line.");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--indent-left",
+			"1constructor",
+		);
+		expect(result.exitCode).toBe(2);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("--runs folds the documented flag spellings (size/caps/smallcaps/underline) and rejects a bad break kind", async () => {
+		const docPath = join(tempWorkspace("runs-flag-spelling"), "out.docx");
+		await runCli("create", docPath, "--text", "x");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--runs",
+			JSON.stringify([
+				{
+					text: "X",
+					size: 12,
+					caps: true,
+					smallcaps: true,
+					underline: true,
+				},
+			]),
+		);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ runs: Array<Record<string, unknown>> }>;
+		};
+		expect(ast.blocks[0]?.runs[0]).toMatchObject({
+			text: "X",
+			sizeHalfPoints: 24,
+			allCaps: true,
+			smallCaps: true,
+			underline: "single",
+		});
+		const bad = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--runs",
+			JSON.stringify([{ type: "break", kind: "pagebreak" }]),
+		);
+		expect(bad.exitCode).toBe(2);
+		expect(JSON.parse(bad.stdout).error).toContain('break "kind"');
 	});
 });

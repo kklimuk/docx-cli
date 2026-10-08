@@ -130,28 +130,132 @@ export async function parseRunsArg(json: string): Promise<Run[] | number> {
 	if (!Array.isArray(parsed)) {
 		return fail("USAGE", "--runs must be a JSON array of Run objects");
 	}
-	const runs = parsed as Run[];
-	// Enum-valued run formatting (highlight/underline/vertAlign) must be valid
-	// or Word writes schema-invalid XML and silently drops it. The markdown
-	// `[text]{attrs}` path validates the same way; this closes the gap for the
-	// raw `--runs` ingress (shared sets in `@core/run-formatting`).
-	for (const run of runs) {
+	const normalized = normalizeRunSpecs(parsed);
+	if ("error" in normalized) {
+		return fail("USAGE", `--runs: ${normalized.error}`, normalized.hint);
+	}
+	return normalized.runs;
+}
+
+/** The `type` values the paragraph emitter builds (`RunElement`); anything else
+ *  is dropped by the emitter, which is how a typo'd or missing `type` used to
+ *  EMPTY the paragraph with exit 0. */
+const RUN_SPEC_TYPES: ReadonlySet<string> = new Set(["text", "break", "tab"]);
+
+/** `BreakRun.kind` — the emitter writes any other value verbatim into
+ *  `<w:br w:type>`, which is schema-invalid. */
+const BREAK_RUN_KINDS: ReadonlySet<string> = new Set([
+	"line",
+	"page",
+	"column",
+]);
+
+/** Validate + normalize a `--runs` / batch `"runs"` array into `Run[]` — the one
+ *  gate for both ingresses:
+ *  - a run with a string `text` and NO `type` is a text run (the shape agents
+ *    write by instinct: `{"text":"Intern","bold":true}` — a judge found the
+ *    typeless form printed `edit p23`, exit 0, and left `runs: []`),
+ *  - any other missing/unknown `type` is rejected, never silently dropped,
+ *  - the CLI-flag spellings `--runs --help` documents (`size` in points,
+ *    `caps`, `smallcaps`, `underline: true`) fold onto the `TextRun` fields the
+ *    emitter reads — they used to be silently dropped (or, for `underline:
+ *    true`, rejected as an invalid style),
+ *  - enum-valued formatting (highlight/underline/vertAlign) and a break's `kind`
+ *    must be valid or Word writes schema-invalid XML and drops it (shared sets in
+ *    `@core/run-formatting`, the same check the markdown `[text]{attrs}` path
+ *    makes). */
+export function normalizeRunSpecs(
+	value: unknown[],
+): { runs: Run[] } | BatchValueError {
+	const runs: Run[] = [];
+	for (const [position, raw] of value.entries()) {
+		if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+			return {
+				error: `run ${position} must be an object`,
+				hint: 'Each run is {"type":"text","text":"…", …}, {"type":"break"} or {"type":"tab"}.',
+			};
+		}
+		const run = { ...(raw as Record<string, unknown>) };
+		if (run.type === undefined && typeof run.text === "string") {
+			run.type = "text";
+		}
+		if (typeof run.type !== "string" || !RUN_SPEC_TYPES.has(run.type)) {
+			return {
+				error: `run ${position} has ${run.type === undefined ? "no" : `unknown`} "type"${run.type === undefined ? "" : ` "${String(run.type)}"`}`,
+				hint: `Use "type": "text" (with "text"), "break", or "tab".`,
+			};
+		}
 		if (
-			run !== null &&
-			typeof run === "object" &&
-			(run as { type?: unknown }).type === "text"
+			run.type === "break" &&
+			run.kind !== undefined &&
+			!BREAK_RUN_KINDS.has(String(run.kind))
 		) {
+			return {
+				error: `run ${position} has unknown break "kind" "${String(run.kind)}"`,
+				hint: 'Use "kind": "line" (the default), "page", or "column".',
+			};
+		}
+		if (run.type === "text" && typeof run.text !== "string") {
+			return {
+				error: `run ${position} is a text run without a string "text"`,
+			};
+		}
+		if (run.type === "text") {
+			const folded = foldFlagSpelledRunFormat(run, position);
+			if (folded) return folded;
 			const invalid = firstInvalidRunFormat(run as RunFormatEnums);
 			if (invalid) {
-				return fail(
-					"USAGE",
-					`Invalid ${invalid.field} "${invalid.value}" in a --runs text run`,
-					`Use ${invalid.valid}.`,
-				);
+				return {
+					error: `invalid ${invalid.field} "${invalid.value}" in text run ${position}`,
+					hint: `Use ${invalid.valid}.`,
+				};
 			}
 		}
+		runs.push(run as unknown as Run);
 	}
-	return runs;
+	return { runs };
+}
+
+/** Fold a text run's CLI-flag-spelled formatting (the shape `--runs --help`
+ *  documents) onto the `TextRun` field the emitter reads, in place. An explicit
+ *  `TextRun` field (`sizeHalfPoints`/`allCaps`/`smallCaps` — what `read --ast`
+ *  emits) wins over its flag spelling. */
+function foldFlagSpelledRunFormat(
+	run: Record<string, unknown>,
+	position: number,
+): BatchValueError | null {
+	if (run.size !== undefined) {
+		const sizeHalfPoints = parseHalfPointSize(run.size);
+		if (sizeHalfPoints === null) {
+			return {
+				error: `run ${position}: "size" must be a positive point size (e.g. 12 or 11.5)`,
+			};
+		}
+		run.sizeHalfPoints ??= sizeHalfPoints;
+		delete run.size;
+	}
+	// The flag spellings whose Run field differs (`caps` → `allCaps`, …).
+	for (const [key, field] of BOOLEAN_FORMAT_FIELDS) {
+		if (key === field || run[key] === undefined) continue;
+		if (run[key] === true) run[field] ??= true;
+		delete run[key];
+	}
+	if (run.underline === true) run.underline = "single";
+	if (run.underline === false) delete run.underline;
+	return null;
+}
+
+/** A JSON point size (number, or numeric string) → half-points, or null when
+ *  it isn't a positive number. Shared by `--runs` normalization and batch run
+ *  formatting so the two accept exactly the same values. */
+function parseHalfPointSize(value: unknown): number | null {
+	const points =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
+	return Number.isFinite(points) && points > 0 ? Math.round(points * 2) : null;
 }
 
 type RawValues = Record<
@@ -709,18 +813,13 @@ export function parseBatchRunFormat(
 	if (superscript) format.vertAlign = "superscript";
 	if (subscript) format.vertAlign = "subscript";
 	if (raw.size !== undefined) {
-		const points =
-			typeof raw.size === "number"
-				? raw.size
-				: typeof raw.size === "string" && raw.size.trim().length > 0
-					? Number(raw.size)
-					: Number.NaN;
-		if (!Number.isFinite(points) || points <= 0) {
+		const sizeHalfPoints = parseHalfPointSize(raw.size);
+		if (sizeHalfPoints === null) {
 			return {
 				error: `entry ${index}: "size" must be a positive point size (e.g. 12 or 11.5)`,
 			};
 		}
-		format.sizeHalfPoints = Math.round(points * 2);
+		format.sizeHalfPoints = sizeHalfPoints;
 	}
 
 	const invalid = firstInvalidRunFormat(format);
@@ -900,51 +999,92 @@ function readMeasure(
 	return convert(String(raw), flag);
 }
 
-/** Points → twips (×20). Accepts a bare number or an explicit `pt` suffix.
- *  Unsigned: `<w:before>`/`<w:after>` are `ST_TwipsMeasure` (non-negative). */
+/** Points by default (unsigned): `--space-before`/`--space-after`. */
 function pointsToTwips(raw: string, flag: string): number | SpacingIndentError {
-	const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(?:pt)?$/i);
-	if (!match) {
-		return {
-			error: `Invalid --${flag}: ${raw}`,
-			hint: "Use a point value, e.g. --space-after 6 (or 6pt).",
-		};
-	}
-	return Math.round(Number.parseFloat(match[1] as string) * TWIPS_PER_POINT);
+	return parseMeasure(raw, flag, "pt", false);
 }
 
-/** Inches → twips (×1440). Accepts a bare number or an explicit `in` suffix, and
- *  (for the signed indent slots) an optional leading `-`. `w:left`/`w:right`/
- *  `w:firstLine` are `ST_SignedTwipsMeasure` — a negative value is a deliberate
- *  outdent into the page margin, which Word produces and the reader surfaces, so
- *  the read→re-apply loop needs to accept it back. `w:hanging` is unsigned
- *  (`signed: false`), as is everything routed through `pointsToTwips`. */
-function inchesToTwips(
-	raw: string,
-	flag: string,
-	signed = true,
-): number | SpacingIndentError {
-	const pattern = signed
-		? /^(-?\d+(?:\.\d+)?)\s*(?:in)?$/i
-		: /^(\d+(?:\.\d+)?)\s*(?:in)?$/i;
-	const match = raw.trim().match(pattern);
-	if (!match) {
-		return {
-			error: `Invalid --${flag}: ${raw}`,
-			hint: "Use an inch value, e.g. --indent-left 0.5 (or 0.5in).",
-		};
-	}
-	return Math.round(Number.parseFloat(match[1] as string) * TWIPS_PER_INCH);
+/** Inches by default, signed: `--indent-left`/`--indent-right`/`--first-line`
+ *  and page margins. */
+function inchesToTwips(raw: string, flag: string): number | SpacingIndentError {
+	return parseMeasure(raw, flag, "in", true);
 }
 
-/** `--hanging` only — the unsigned inch converter (the hanging indent has no
+/** `--hanging` only — inches by default, unsigned (the hanging indent has no
  *  negative form; a negative first-line indent is `--first-line -N`). */
 function unsignedInchesToTwips(
 	raw: string,
 	flag: string,
 ): number | SpacingIndentError {
-	return inchesToTwips(raw, flag, false);
+	return parseMeasure(raw, flag, "in", false);
 }
+
+/** Parse one measure flag into twips. Accepts a bare number in the flag's
+ *  default unit, or a number with a unit suffix (`0.5in`, `1.27cm`, `6pt`,
+ *  `720tw`). For inch-default flags a bare number above `BARE_INCH_MAX` is
+ *  twips. `signed` admits a leading `-`: `w:left`/`w:right`/`w:firstLine` are
+ *  `ST_SignedTwipsMeasure` (a negative indent is a deliberate outdent into the
+ *  margin, which Word produces and the reader surfaces, so the read→re-apply
+ *  loop must accept it back); `w:hanging`/`w:before`/`w:after` are unsigned. */
+function parseMeasure(
+	raw: string,
+	flag: string,
+	defaultUnit: "in" | "pt",
+	signed: boolean,
+): number | SpacingIndentError {
+	const match = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*("|[a-z]+)?$/i);
+	const unit = match?.[2]?.toLowerCase();
+	// Own-property lookup only: a plain-object index would resolve `constructor`
+	// through the prototype and write `w:left="NaN"`.
+	const factor =
+		unit !== undefined && Object.hasOwn(MEASURE_UNIT_TWIPS, unit)
+			? MEASURE_UNIT_TWIPS[unit]
+			: undefined;
+	const number = match ? Number.parseFloat(match[1] as string) : Number.NaN;
+	if (
+		!match ||
+		(unit !== undefined && factor === undefined) ||
+		(!signed && number < 0)
+	) {
+		const example =
+			defaultUnit === "in"
+				? `--${flag} 0.5 (or 0.5in, 1.27cm, 720tw)`
+				: `--${flag} 6 (or 6pt, 0.1in, 120tw)`;
+		return {
+			error: `Invalid --${flag}: ${raw}`,
+			hint: `Use ${defaultUnit === "in" ? "inches" : "points"} by default, or a unit suffix (in, cm, mm, pt, tw): e.g. ${example}.`,
+		};
+	}
+	if (factor !== undefined) return Math.round(number * factor);
+	if (defaultUnit === "in" && Math.abs(number) > BARE_INCH_MAX) {
+		return Math.round(number);
+	}
+	return Math.round(
+		number * (defaultUnit === "in" ? TWIPS_PER_INCH : TWIPS_PER_POINT),
+	);
+}
+
+/** Twips per unit for an explicit suffix on a measure flag. `tw`/`twips`/`dxa`
+ *  are the raw OOXML unit — what `read --ast` reports, so an agent can feed an
+ *  AST value straight back with its unit named. */
+const MEASURE_UNIT_TWIPS: Readonly<Record<string, number>> = {
+	in: TWIPS_PER_INCH,
+	'"': TWIPS_PER_INCH,
+	cm: TWIPS_PER_INCH / 2.54,
+	mm: TWIPS_PER_INCH / 25.4,
+	pt: TWIPS_PER_POINT,
+	tw: 1,
+	twip: 1,
+	twips: 1,
+	dxa: 1,
+};
+
+/** A bare inch value above this is read as TWIPS. No paragraph indent or page
+ *  margin is 10+ inches on any real page, but 119 / 720 / 1440 are exactly the
+ *  twips values `read --ast` reports — a weak agent copies one into an inch flag
+ *  and (before this) got a 119-INCH indent that pushed three résumé entries off
+ *  the page, exit 0. */
+const BARE_INCH_MAX = 9;
 
 type LineRule = NonNullable<ParagraphOptions["spacing"]>["lineRule"];
 

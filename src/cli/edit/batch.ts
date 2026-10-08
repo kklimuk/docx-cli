@@ -19,13 +19,10 @@ import {
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
-import {
-	firstInvalidRunFormat,
-	type RunFormatEnums,
-} from "@core/run-formatting";
 import { ensureCellEndsWithParagraph, type Grid } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import {
+	normalizeRunSpecs,
 	parseBatchClearTags,
 	parseBatchRunFormat,
 	parseSpacingIndentFlags,
@@ -299,6 +296,9 @@ async function resolveEntry(
 	index: number,
 	opts: EntryOptions,
 ): Promise<ResolvedEntry> {
+	// Fold key spellings first, so an `At`/`AT` lands on "at" instead of
+	// tripping the "at is required" check below.
+	normalizeEntryKeys(raw, index);
 	const at = raw.at;
 	if (typeof at !== "string" || at.length === 0) {
 		throw new EntryError("USAGE", `entry ${index}: "at" is required`);
@@ -506,6 +506,61 @@ async function resolveEntry(
 	};
 }
 
+/** Every field a batch entry may carry. Legacy redirect keys (`task`, `code`,
+ *  `code-file`, `language`) are included so their targeted "moved to …" errors
+ *  fire instead of a generic unknown-field one. `underlineColor` is read by the
+ *  shared `parseBatchRunFormat` in its camelCase spelling. */
+const ENTRY_KEYS: ReadonlySet<string> = new Set([
+	"at",
+	"delete",
+	"author",
+	"task",
+	"code",
+	"code-file",
+	"language",
+	"clear",
+	"underlineColor",
+	...CONTENT_KEYS,
+	...SET_KEYS,
+	...PARAGRAPH_PROP_KEYS,
+]);
+
+/** Reject fields the entry schema doesn't know — after folding the spellings
+ *  agents reach for first onto the canonical kebab-case (`spaceAfter` /
+ *  `space_after` → `space-after`; `smallCaps`, the AST spelling, → `smallcaps`).
+ *  An unknown key used to be IGNORED: an entry `{at, text, spaceAfter}` filled
+ *  the text and silently skipped the spacing (exit 0), and a props-only
+ *  `{at, spaceAfter}` fell through to the unrelated "no content" error — the
+ *  résumé agents burned three passes guessing. */
+function normalizeEntryKeys(raw: Record<string, unknown>, index: number): void {
+	for (const key of Object.keys(raw)) {
+		if (ENTRY_KEYS.has(key)) continue;
+		const kebab = key
+			.replace(/_/g, "-")
+			.replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+			.toLowerCase();
+		const canonical = [kebab, kebab.replace(/-/g, "")].find((candidate) =>
+			ENTRY_KEYS.has(candidate),
+		);
+		if (canonical !== undefined) {
+			if (raw[canonical] !== undefined) {
+				throw new EntryError(
+					"USAGE",
+					`entry ${index}: "${key}" and "${canonical}" are the same field — pass it once`,
+				);
+			}
+			raw[canonical] = raw[key];
+			delete raw[key];
+			continue;
+		}
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: unknown field "${key}"`,
+			`Fields: at, text | markdown | runs, clear, delete, author, ${SET_KEYS.join(", ")}, underlineColor, ${PARAGRAPH_PROP_KEYS.join(", ")} (kebab-case, as the CLI flags are spelled).`,
+		);
+	}
+}
+
 /** Build the mutation closure for an entry once its locator is resolved. Spans
  *  accept only `text`/`clear`; whole paragraphs accept every content kind. */
 async function buildApply(
@@ -663,6 +718,14 @@ async function buildWholeParagraphContent(
 			);
 	}
 	// kind === "markdown" — pre-build blocks now so apply stays synchronous.
+	// Alignment/spacing/indent ride along (applied to every produced paragraph);
+	// `style` alone conflicts — the source's `# heading`/list owns its style.
+	if (raw.style !== undefined) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: "style" can't be combined with "markdown" (a heading or list in the source sets its own style) — put the style in the markdown, or use "text" with "style"`,
+		);
+	}
 	const source = requireString(raw.markdown, index, "markdown");
 	let blocks: XmlNode[];
 	try {
@@ -881,23 +944,15 @@ function readRuns(value: unknown, index: number): Run[] {
 			`entry ${index}: "runs" must be a JSON array of Run objects`,
 		);
 	}
-	for (const run of value) {
-		if (
-			run !== null &&
-			typeof run === "object" &&
-			(run as { type?: unknown }).type === "text"
-		) {
-			const invalid = firstInvalidRunFormat(run as RunFormatEnums);
-			if (invalid) {
-				throw new EntryError(
-					"USAGE",
-					`entry ${index}: invalid ${invalid.field} "${invalid.value}" in a run`,
-					`Use ${invalid.valid}.`,
-				);
-			}
-		}
+	const normalized = normalizeRunSpecs(value);
+	if ("error" in normalized) {
+		throw new EntryError(
+			"USAGE",
+			`entry ${index}: ${normalized.error}`,
+			normalized.hint,
+		);
 	}
-	return value as Run[];
+	return normalized.runs;
 }
 
 function resolveClearOrThrow(value: unknown, index: number): Set<string> {

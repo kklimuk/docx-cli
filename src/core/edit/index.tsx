@@ -3,6 +3,7 @@ import type { BlockRangeReference, BlockReference } from "../ast/document/body";
 import type { Run, SectionType } from "../ast/types";
 import {
 	applyParagraphOptionsInPlace,
+	applyParagraphOptionsToBlocks,
 	ensureParagraphProperties,
 	hasParagraphProperties,
 	injectPprChange,
@@ -197,6 +198,7 @@ export class Edit {
 			newParagraphs,
 			spec.paragraphOptions.style,
 		);
+		applyMarkdownRideAlong(spec, newParagraphs);
 		// `runs` is the explicit, byte-precise surface — the caller states each
 		// run's rPr, so inheriting the old paragraph's would silently override
 		// their choices (a `{"bold": false}` run can't opt out, since the emitter
@@ -492,6 +494,7 @@ export class Edit {
 			opts.authorFlag,
 		);
 		const newParagraphs = buildNewParagraphs(spec);
+		applyMarkdownRideAlong(spec, newParagraphs);
 		if (tracked) {
 			applyTrackedRangeReplace(
 				this.document,
@@ -613,14 +616,24 @@ function buildNewParagraphs(spec: ParagraphContentSpec): XmlNode[] {
 		];
 	}
 	if (spec.kind === "markdown-blocks") {
-		// Pre-built by the CLI via `MarkdownImport.blocks(...)`. The lens does
-		// nothing else — the markdown walker has already provisioned styles,
-		// allocated list numIds, registered footnote bodies, and minted image
-		// rels on the document. We just splice these blocks where the locator
-		// pointed.
+		// Pre-built by the CLI via `MarkdownImport.blocks(...)` — the markdown
+		// walker has already provisioned styles, allocated list numIds, registered
+		// footnote bodies, and minted image rels on the document. Its ride-along
+		// paragraph properties land later, in `applyMarkdownRideAlong`.
 		return spec.blocks;
 	}
 	return [<Paragraph runs={spec.runs} {...spec.paragraphOptions} />];
+}
+
+/** A markdown source's ride-along paragraph options (see
+ *  `applyParagraphOptionsToBlocks`); other content kinds apply theirs when built. */
+function applyMarkdownRideAlong(
+	spec: ParagraphContentSpec,
+	paragraphs: XmlNode[],
+): void {
+	if (spec.kind === "markdown-blocks") {
+		applyParagraphOptionsToBlocks(paragraphs, spec.paragraphOptions);
+	}
 }
 
 /** Which of the old paragraph's objects `liftObjectRuns` should leave with the

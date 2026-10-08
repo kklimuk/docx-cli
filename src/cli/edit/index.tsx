@@ -120,15 +120,18 @@ Content (required, UNLESS you pass only the formatting options below):
                     paragraph or span: \`--text "Delaware" --clear highlight\` fills
                     then un-highlights in one call. (Not tracked.)
 
-Formatting options (except --tabs, not combinable with --markdown /
---markdown-file; pass them ALONE to reformat a block in place, keeping its
-text — or add them to --text):
+Formatting options (pass them ALONE to reformat a block in place, keeping its
+text — or add them to --text / --markdown; with --markdown they apply to every
+paragraph it produces. Only --style can't combine with --markdown):
   --style NAME       Paragraph style (e.g., Heading1)
   --alignment ALIGN  left | center | right | justify
   --space-before PT / --space-after PT   Space above / below, in points
   --line-spacing N   A multiple (1, 1.5, 2), a name (single, double), or 15pt
   --indent-left IN / --indent-right IN   Indent, in inches (negative outdents)
   --first-line IN / --hanging IN         First-line / hanging indent, in inches
+                     Spacing/indent also take a unit suffix (in, cm, mm, pt,
+                     tw = twips, the read --ast unit); a bare inch value above
+                     9 is read as twips.
   --tabs SPEC        Replace the paragraph's tab stops. SPEC is one of:
                        right — a single RIGHT tab at the text margin
                        clear — remove all tab stops
@@ -881,26 +884,6 @@ async function validateSingleShotOptions(
 	};
 }
 
-/** Paragraph-level flags that are meaningless under `--markdown` /
- *  `--markdown-file` (the markdown source already encodes block styling).
- *  See `chooseContentSpec` in `cli/insert/index.tsx` for the symmetric
- *  rejection on the insert side. */
-// `--tabs` is deliberately ABSENT: `setTabsOnSpec`/`injectTabsIntoSpec` applies it
-// to a markdown spec on purpose (a tab-stop fix is orthogonal to block styling).
-// The spacing/indent flags ARE incompatible — the markdown source owns block-level
-// layout, so they'd be silently dropped; reject them up front like style/alignment.
-const MARKDOWN_INCOMPATIBLE_FLAGS = [
-	"style",
-	"alignment",
-	"space-before",
-	"space-after",
-	"line-spacing",
-	"indent-left",
-	"indent-right",
-	"first-line",
-	"hanging",
-] as const;
-
 const OPTION_SPEC = {
 	at: { type: "string" },
 	batch: { type: "string" },
@@ -1157,15 +1140,12 @@ async function validateParagraphEdit(
 	}
 
 	if (markdownInline !== undefined || markdownFile !== undefined) {
-		// Markdown encodes its own block styling — paragraph-level flags
-		// would be silently dropped. Reject up front.
-		const conflict = MARKDOWN_INCOMPATIBLE_FLAGS.find(
-			(flag) => values[flag] !== undefined,
-		);
-		if (conflict) {
+		// Only `--style` conflicts: a `# heading` / list item owns its paragraph
+		// style. Layout flags ride along (`applyParagraphOptionsToBlocks`).
+		if (values.style !== undefined) {
 			return fail(
 				"USAGE",
-				`--${conflict} can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)`,
+				"--style can't be combined with --markdown / --markdown-file (the markdown source controls block-level styling)",
 				EDIT_HELP,
 			);
 		}

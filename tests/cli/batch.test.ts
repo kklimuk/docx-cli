@@ -650,3 +650,100 @@ describe("--batch source resolution", () => {
 		expect(JSON.stringify(result.parsed)).not.toContain("ENOENT");
 	});
 });
+
+describe("edit --batch — entry fields are validated, never silently ignored", () => {
+	test("an unknown field is rejected with the list of valid ones", async () => {
+		const docPath = await newTableDoc("batch-unknown-key");
+		const workspace = tempWorkspace("batch-unknown-key-file");
+		const batch = join(workspace, "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", text: "x", spacing: 6 })}\n`,
+		);
+		const rejected = await runCli("edit", docPath, "--batch", batch);
+		expect(rejected.exitCode).toBe(2);
+		const failure = JSON.parse(rejected.stdout) as {
+			error: string;
+			hint: string;
+		};
+		expect(failure.error).toContain('unknown field "spacing"');
+		expect(failure.hint).toContain("space-after");
+		// Nothing written.
+		const ast = await blocks(docPath);
+		expect(ast[0]?.runs?.[0]?.text).toBe("Before");
+	});
+
+	test("camelCase / snake_case spellings fold onto the kebab-case field", async () => {
+		// `spaceAfter` used to be IGNORED next to a content key (text filled, spacing
+		// skipped, exit 0) — the résumé agents burned passes guessing the spelling.
+		const docPath = await newTableDoc("batch-camel-key");
+		const batch = join(tempWorkspace("batch-camel-key-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", text: "Filled", spaceAfter: 6 })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ spacing?: { after?: number }; runs?: RunAst[] }>;
+		};
+		expect(ast.blocks[0]?.runs?.[0]?.text).toBe("Filled");
+		expect(ast.blocks[0]?.spacing?.after).toBe(120);
+	});
+
+	test("a typeless run with text is a text run; an unknown run type is rejected", async () => {
+		const docPath = await newTableDoc("batch-runs-type");
+		const batch = join(tempWorkspace("batch-runs-type-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", runs: [{ text: "Intern", bold: true }, { text: "\tJun 2025" }] })}\n`,
+		);
+		const result = await runCli("edit", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		const ast = await blocks(docPath);
+		expect(ast[0]?.runs?.map((run) => run.text)).toEqual([
+			"Intern",
+			"\tJun 2025",
+		]);
+
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", runs: [{ type: "equation", text: "x" }] })}\n`,
+		);
+		const rejected = await runCli("edit", docPath, "--batch", batch);
+		expect(rejected.exitCode).toBe(2);
+		expect(JSON.parse(rejected.stdout).error).toContain(
+			'unknown "type" "equation"',
+		);
+		// The paragraph was NOT emptied.
+		expect((await blocks(docPath))[0]?.runs?.[0]?.text).toBe("Intern");
+	});
+});
+
+describe("edit --batch — key folding edge cases", () => {
+	test("underlineColor (read by the shared run-format parser) is still accepted", async () => {
+		const docPath = await newTableDoc("batch-underline-color");
+		const batch = join(tempWorkspace("batch-underline-color-file"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", underline: true, underlineColor: "FF0000" })}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain('w:color="FF0000"');
+	});
+
+	test("an AT key folds onto at; an alias plus its canonical key is rejected", async () => {
+		const docPath = await newTableDoc("batch-key-fold");
+		const batch = join(tempWorkspace("batch-key-fold-file"), "b.jsonl");
+		await Bun.write(batch, `${JSON.stringify({ AT: "p0", text: "Folded" })}\n`);
+		expect((await runCli("edit", docPath, "--batch", batch)).exitCode).toBe(0);
+		expect((await blocks(docPath))[0]?.runs?.[0]?.text).toBe("Folded");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", text: "x", spaceAfter: 6, "space-after": 12 })}\n`,
+		);
+		const rejected = await runCli("edit", docPath, "--batch", batch);
+		expect(rejected.exitCode).toBe(2);
+		expect(JSON.parse(rejected.stdout).error).toContain("same field");
+	});
+});

@@ -262,6 +262,22 @@ export function applyParagraphOptionsInPlace(
 	applyParagraphPropsToPPr(pPr, options);
 }
 
+/** Apply ride-along paragraph options (alignment/spacing/indent/tabs) to every
+ *  paragraph a markdown source produced — "fill this line AND give it 6pt
+ *  after" is one call. Run AFTER any pPr inheritance so a flag merges
+ *  attribute-by-attribute onto the inherited `<w:spacing>`/`<w:ind>` instead of
+ *  being replaced by the tag-level inheritance merge. `style` never rides
+ *  along: a `# heading` or list item owns its style. */
+export function applyParagraphOptionsToBlocks(
+	blocks: XmlNode[],
+	options: ParagraphOptions,
+): void {
+	for (const block of blocks) {
+		if (block.tag === "w:p")
+			applyParagraphOptionsInPlace(block.children, options);
+	}
+}
+
 /** Apply the `ParagraphOptions` (style/alignment/tabs/spacing/indent) onto an
  *  existing `<w:pPr>`, splicing each child at its CT_PPr slot. The placement-
  *  agnostic core of `applyParagraphOptionsInPlace`: that helper finds-or-creates
