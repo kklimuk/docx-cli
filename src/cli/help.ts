@@ -29,7 +29,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   code      …     Author or replace a syntax-highlighted code block ("code add FILE --after pN --code-file snippet.py --language go" / "code edit --at pN")
   equations …     Insert or edit a LaTeX equation ("equations add FILE --after pN --equation x^2" / "equations edit --at eqN")
   tasks     …     Author or toggle a GFM task-list checkbox ("tasks add FILE --after pN --text '…' [--checked]" / "tasks check --at pN" / "tasks uncheck --at pN")
-  comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply, resolve (--unset to reopen), delete, list (--thread cN)
+  comments  …     Add (--at LOCATOR | --anchor PHRASE | --batch), reply (--batch; "resolve":true closes the thread), resolve (--unset to reopen), delete, list (--thread cN)
   footnotes …     Add (--at | --anchor PHRASE), edit, delete, list footnotes (--text/--runs/--markdown bodies)
   endnotes  …     Add (--at | --anchor PHRASE), edit, delete, list endnotes (--text/--runs/--markdown bodies)
   headers   …     Set/list/clear page headers — --text, page numbers, date, fields; --first-page/--even; default = whole document
@@ -38,7 +38,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Create a table (create --after pN --rows N --cols M), then restructure — insert/delete rows & columns, merge/unmerge, set widths, borders, format
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"
-  track-changes …  Toggle (on|off FILE); list / accept / reject; "apply" finalizes a whole review (accept some + reject the rest) in ONE call; "read --current" shows changes inline
+  track-changes …  Toggle (on|off FILE); list / accept / reject; "apply" finalizes a whole review (accept some + reject the rest) in ONE call; redline many clauses with ONE "edit --batch" while tracking is on; "read --current" shows changes inline
   raw       …     LAST-RESORT escape hatch for OOXML no verb above covers. DO NOT USE THIS unless you've tried everything else.
   validate  FILE  Schema-check the document against the bundled ECMA-376 transitional XSDs (per-part errors; exit 0 = clean)
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
@@ -51,7 +51,7 @@ BATCH MANY CHANGES AFTER ONE READ: locator ids are positional and shift after st
 edits (insert/delete/section changes), so going one-at-a-time forces a re-read to refresh
 ids after each. Miss the change and the next command lands on the wrong block or errors
 BLOCK_NOT_FOUND. Skip all that: edit / insert / replace / delete and comments
-(add/resolve/delete) all take --batch FILE.jsonl (one JSON change per line; "-" reads
+(add/reply/resolve/delete) all take --batch FILE.jsonl (one JSON change per line; "-" reads
 stdin). Every locator addresses the document AS READ, so ids stay valid across the whole
 batch — one read, one write, no re-reading between changes. See "<command> --help".
 

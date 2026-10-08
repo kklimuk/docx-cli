@@ -1,5 +1,10 @@
 import { TrackChanges, TrackedChangeNotFoundError } from "@core/track-changes";
 import {
+	expandHandleFlags,
+	rejectStrayPositionals,
+	TRACK_HANDLE_FORMS,
+} from "../parse-helpers";
+import {
 	EXIT,
 	fail,
 	openOrFail,
@@ -25,7 +30,7 @@ export async function runApply(
 	help: string,
 ): Promise<number> {
 	const parsed = await tryParseArgs(
-		args,
+		expandHandleFlags(args, ["at"]),
 		{
 			at: { type: "string", multiple: true },
 			all: { type: "boolean" },
@@ -44,6 +49,12 @@ export async function runApply(
 
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", help);
+	const stray = await rejectStrayPositionals(
+		parsed.positionals,
+		help,
+		TRACK_HANDLE_FORMS,
+	);
+	if (stray !== null) return stray;
 
 	const atRaw = parsed.values.at as string[] | undefined;
 	const all = Boolean(parsed.values.all);

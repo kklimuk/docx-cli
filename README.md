@@ -387,6 +387,7 @@ docx comments add     FILE --at LOCATOR --text "..." [--author NAME] [--current 
 docx comments add     FILE --anchor "phrase" --text "..." [--occurrence N]
 docx comments add     FILE --batch reviews.jsonl                    # JSONL: { at | anchor (+occurrence), text, author? }
 docx comments reply   FILE --at cN --text "..."
+docx comments reply   FILE --batch replies.jsonl   # {"at":"c0","text":"...","resolve":true} per line — answer (and close) every thread in one call
 docx comments resolve FILE --at cN [--at cM ...] [--unset] | --batch resolutions.jsonl
 docx comments delete  FILE --at cN [--at cM ...]          | --batch removals.jsonl
 

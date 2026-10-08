@@ -116,6 +116,106 @@ export function resolveView(values: {
 	return "accepted";
 }
 
+/** A tracked-change handle as `track-changes list` prints it: `tcN` or `revN`. */
+const TRACK_HANDLE = /^(tc|rev)\d+$/i;
+
+/** Let a handle flag take SEVERAL handles at once: `--accept rev0 rev1 tc4`,
+ *  `--accept rev0,rev1`, `--accept=rev0 rev1`, or `--accept "rev0 rev1"` all
+ *  become the repeated `--accept rev0 --accept rev1 …` parseArgs wants. Only
+ *  tokens made entirely of handles (comma/space-separated) are swept up after
+ *  the flag's first value, so the FILE positional and other flags stay put.
+ *  Before this, `apply --accept rev0 rev1 tc4` kept `rev0`, left `rev1 tc4` as
+ *  ignored positionals, and exited 0 — the natural shape a weak agent writes
+ *  (the help even reads `--accept H ...`), silently finalizing the wrong set of
+ *  revisions. Handles are lower-cased (`REV1` → `rev1`) since the lookup is
+ *  case-sensitive. Run on argv BEFORE `tryParseArgs`, and pair it with
+ *  `rejectStrayPositionals` so a token the sweep doesn't recognize errors
+ *  instead of being dropped. */
+export function expandHandleFlags(
+	args: string[],
+	flags: readonly string[],
+): string[] {
+	const names = new Set(flags.map((flag) => `--${flag}`));
+	const out: string[] = [];
+	for (let index = 0; index < args.length; index++) {
+		const token = args[index] as string;
+		if (token === "--") {
+			out.push(...args.slice(index));
+			break;
+		}
+		const equals = token.indexOf("=");
+		const name = equals > 0 ? token.slice(0, equals) : token;
+		if (!names.has(name)) {
+			out.push(token);
+			continue;
+		}
+		let first: string;
+		if (equals > 0) {
+			first = token.slice(equals + 1);
+		} else {
+			const next = args[index + 1];
+			if (next === undefined || next.startsWith("-")) {
+				out.push(token);
+				continue;
+			}
+			first = next;
+			index++;
+		}
+		const values = splitHandleList(first);
+		// An empty/blank value (`--accept=`, `--accept ,`) keeps its raw form so
+		// the lookup errors on it — dropping the flag would silently narrow it.
+		if (values.length === 0) values.push(first);
+		while (index + 1 < args.length && isHandleList(args[index + 1] as string)) {
+			values.push(...splitHandleList(args[index + 1] as string));
+			index++;
+		}
+		for (const value of values) out.push(name, value);
+	}
+	return out;
+}
+
+/** Split one argv token on commas/whitespace (`rev0,rev1`, `"rev0 rev1"`),
+ *  lower-casing handle-shaped parts so `REV1` resolves like `rev1`. */
+function splitHandleList(token: string): string[] {
+	return listParts(token).map((part) =>
+		TRACK_HANDLE.test(part) ? part.toLowerCase() : part,
+	);
+}
+
+/** Is `token` nothing but handles (comma/space-separated)? The gate for
+ *  sweeping a token that FOLLOWS a handle flag's first value. */
+function isHandleList(token: string): boolean {
+	const parts = listParts(token);
+	return parts.length > 0 && parts.every((part) => TRACK_HANDLE.test(part));
+}
+
+function listParts(token: string): string[] {
+	return token.split(/[\s,]+/).filter((part) => part.length > 0);
+}
+
+/** Refuse positionals past FILE on a command that takes exactly one. parseArgs
+ *  runs with `allowPositionals`, so a stray token was silently dropped and the
+ *  command exited 0 having done LESS than asked. `expected` says what the
+ *  command's values look like, for the message. Returns a fail() exit code, or
+ *  null. */
+export async function rejectStrayPositionals(
+	positionals: string[],
+	help: string,
+	expected = "",
+): Promise<number | null> {
+	const stray = positionals.slice(1);
+	if (stray.length === 0) return null;
+	return await fail(
+		"USAGE",
+		`Unexpected argument${stray.length === 1 ? "" : "s"} after FILE: ${stray.join(" ")}${expected ? ` — ${expected}` : ""}`,
+		help,
+	);
+}
+
+/** What a tracked-change handle list looks like, for `rejectStrayPositionals`. */
+export const TRACK_HANDLE_FORMS =
+	"handles are tcN or revN (see 'docx track-changes list FILE'), several after one flag (tc0 tc2 rev1), comma-separated, or the flag repeated";
+
 /** Parse a `--runs JSON` argument into a `Run[]`. Shared by insert + edit.
  *  Returns a fail() exit code on malformed JSON or non-array shapes. */
 export async function parseRunsArg(json: string): Promise<Run[] | number> {

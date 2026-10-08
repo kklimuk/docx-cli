@@ -1,5 +1,10 @@
 import { TrackChanges, TrackedChangeNotFoundError } from "@core/track-changes";
 import {
+	expandHandleFlags,
+	rejectStrayPositionals,
+	TRACK_HANDLE_FORMS,
+} from "../parse-helpers";
+import {
 	EXIT,
 	fail,
 	openOrFail,
@@ -39,9 +44,9 @@ Handles are the same ones \`track-changes list\` prints: a tcN, or a revN that
 covers both halves of a del+ins replace pair. Both flags repeat.
 
 Targets (at least one required):
-  --accept H        A handle (tcN or revN) to accept. Repeat for several
-                    (--accept rev0 --accept rev1 --accept tc4).
-  --reject H        A handle (tcN or revN) to reject. Repeat for several.
+  --accept H ...    Handles (tcN or revN) to accept. Several at once, space- or
+                    comma-separated (--accept rev0 rev1 tc4), or repeat the flag.
+  --reject H ...    Handles (tcN or revN) to reject. Same forms as --accept.
 
 A handle may not appear in both lists. Unknown handles error before anything is
 written. Leftover changes you name in neither list stay tracked (apply finalizes
@@ -63,7 +68,7 @@ Output:
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
-		args,
+		expandHandleFlags(args, ["accept", "reject"]),
 		{
 			accept: { type: "string", multiple: true },
 			reject: { type: "string", multiple: true },
@@ -82,6 +87,12 @@ export async function run(args: string[]): Promise<number> {
 
 	const path = parsed.positionals[0];
 	if (!path) return fail("USAGE", "Missing FILE argument", HELP);
+	const stray = await rejectStrayPositionals(
+		parsed.positionals,
+		HELP,
+		TRACK_HANDLE_FORMS,
+	);
+	if (stray !== null) return stray;
 
 	const acceptRaw = (parsed.values.accept as string[] | undefined) ?? [];
 	const rejectRaw = (parsed.values.reject as string[] | undefined) ?? [];

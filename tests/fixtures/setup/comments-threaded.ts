@@ -36,8 +36,12 @@ const cliEntry = resolve(root, "src/index.ts");
 
 let invocation = 0;
 async function cli(...args: string[]): Promise<string> {
+	return await cliWithStdin("", ...args);
+}
+
+async function cliWithStdin(stdin: string, ...args: string[]): Promise<string> {
 	const seed = (0x1000 * ++invocation).toString(16).padStart(8, "0");
-	const result = await $`bun ${cliEntry} ${args}`
+	const result = await $`bun ${cliEntry} ${args} < ${new Response(stdin)}`
 		.env({ ...process.env, DOCX_CLI_PARA_ID_SEED: seed })
 		.quiet();
 	return result.stdout.toString();
@@ -79,27 +83,24 @@ await cli(
 	"--author",
 	"Bob",
 );
-await cli(
+// The rest of the thread lands in ONE `comments reply --batch` call (per-entry
+// authors; replying to reply c1 attaches to the thread root like Word does).
+await cliWithStdin(
+	[
+		{ at: "c0", text: "Seconded.", author: "Carol" },
+		{
+			at: "c1",
+			text: "Agreed, attaching to the thread root like Word does.",
+			author: "Dave",
+		},
+	]
+		.map((entry) => JSON.stringify(entry))
+		.join("\n"),
 	"comments",
 	"reply",
 	out,
-	"--at",
-	"c0",
-	"--text",
-	"Seconded.",
-	"--author",
-	"Carol",
-);
-await cli(
-	"comments",
-	"reply",
-	out,
-	"--at",
-	"c1",
-	"--text",
-	"Agreed, attaching to the thread root like Word does.",
-	"--author",
-	"Dave",
+	"--batch",
+	"-",
 );
 
 const verifyJson = await cli("comments", "list", out);
