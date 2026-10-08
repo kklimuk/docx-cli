@@ -4316,3 +4316,28 @@ describe("whole-paragraph edit over other authors' pending changes (#17)", () =>
 		expect(replaced.stderr).not.toContain("warning");
 	});
 });
+
+describe("tracked delete keeps the paragraph-mark rPr schema-valid", () => {
+	test("the del marker leads a mark rPr that already carries formatting", async () => {
+		// CT_ParaRPr puts ins/del/moveFrom/moveTo BEFORE formatting. Word marks
+		// nearly every paragraph's mark with `<w:rFonts>`/`<w:sz>`, and pushing
+		// the marker after them made `validate` flag every tracked delete.
+		const docPath = join(tempWorkspace("tracked-del-mark-rpr"), "doc.docx");
+		await runCli("create", docPath, "--text", "one");
+		await runCli("insert", docPath, "--at-end", "--text", "two");
+		await runCli(
+			"raw",
+			"replace",
+			docPath,
+			"--at",
+			"p1",
+			"--xml",
+			"<w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>two</w:t></w:r></w:p>",
+		);
+		await runCli("delete", docPath, "--at", "p1", "--track");
+		expect(await readDocumentXml(docPath)).toMatch(
+			/<w:pPr><w:rPr><w:del [^>]*\/><w:b\/><\/w:rPr><\/w:pPr>/,
+		);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+});

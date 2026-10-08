@@ -509,6 +509,12 @@ export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
  *  `<w:b>`/`<w:color>`/`<w:kern>` sit between them (CT_RPr puts sz well after
  *  those) — `insertAfter(rFonts)` would land sz too early. */
 export const RPR_CHILD_ORDER = [
+	// CT_ParaRPr (a paragraph MARK's rPr) leads with its revision markers; a
+	// run's CT_RPr never carries them, so one table serves both.
+	"w:ins",
+	"w:del",
+	"w:moveFrom",
+	"w:moveTo",
 	"w:rStyle",
 	"w:rFonts",
 	"w:b",

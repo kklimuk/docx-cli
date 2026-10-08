@@ -1,3 +1,4 @@
+import { insertPprChildInOrder, insertRprChildInOrder } from "../blocks";
 import { type JsxChild, w } from "../jsx";
 import type { XmlNode } from "../parser";
 import type { TrackedMeta } from "./index";
@@ -51,8 +52,13 @@ export function markParagraphMarkAs(
 	let rPr = pPr.findChild("w:rPr");
 	if (!rPr) {
 		rPr = <w.rPr />;
-		pPr.children.push(rPr);
+		// Ordered splices: the mark rPr precedes an inline `<w:sectPr>` (a tracked
+		// section-break sentinel already has one), and the revision marker leads
+		// the mark's formatting (CT_ParaRPr) — `push` wrote both out of order.
+		insertPprChildInOrder(pPr, rPr);
 	}
-	const marker = kind === "ins" ? <Ins meta={meta} /> : <Del meta={meta} />;
-	rPr.children.push(marker);
+	insertRprChildInOrder(
+		rPr,
+		kind === "ins" ? <Ins meta={meta} /> : <Del meta={meta} />,
+	);
 }

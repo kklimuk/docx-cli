@@ -226,3 +226,70 @@ describe("docx sections — body-level guard", () => {
 		expect((await sections(doc)).filter((s) => s.columns)).toHaveLength(0);
 	});
 });
+
+describe("docx sections — range wrap carries headers/footers into the new sections", () => {
+	test("a header set before the wrap shows on every section, not only the trailing one", async () => {
+		// Marginals inherit FORWARD in OOXML. Wrapping p2-p4 splits the single
+		// section into three, and the two NEW sections sit ahead of the one holding
+		// the header reference — so they inherited nothing and the header (and
+		// page-number footer) rendered only on the last page (the eliot-journal run).
+		const doc = join(tempWorkspace("sections-marginals"), "doc.docx");
+		await runCli(
+			"create",
+			doc,
+			"--text",
+			"Title",
+			"--header",
+			"RUNNING HEAD",
+			"--footer",
+			"Page {page}",
+		);
+		for (let index = 1; index <= 5; index++) {
+			await runCli("insert", doc, "--at-end", "--text", `para${index}`);
+		}
+		expect(
+			(await runCli("sections", doc, "--at", "p2-p4", "--columns", "2"))
+				.exitCode,
+		).toBe(0);
+		const headers = (await runCli("headers", "list", doc)).parsed as Array<{
+			sectionId: string;
+			text: string;
+		}>;
+		expect(headers.map((header) => header.sectionId).sort()).toEqual([
+			"s0",
+			"s1",
+			"s2",
+		]);
+		expect(new Set(headers.map((header) => header.text))).toEqual(
+			new Set(["RUNNING HEAD"]),
+		);
+		const footers = (await runCli("footers", "list", doc)).parsed as Array<{
+			sectionId: string;
+		}>;
+		expect(footers.map((footer) => footer.sectionId).sort()).toEqual([
+			"s0",
+			"s1",
+			"s2",
+		]);
+		// Uniform across sections → one head-level hint, not a per-section one.
+		const md = (await runCli("read", doc)).stdout;
+		expect(md.match(/docx:header/g)).toHaveLength(1);
+		expect((await runCli("validate", doc)).exitCode).toBe(0);
+	});
+});
+
+describe("docx sections — tracked range wrap", () => {
+	test("the sentinel's paragraph-mark rPr lands before its inline sectPr", async () => {
+		// CT_PPr orders rPr → sectPr. The tracked insert used to PUSH the
+		// paragraph-mark `<w:rPr><w:ins/></w:rPr>` after the sentinel's sectPr.
+		const doc = await makeDoc("columns-tracked-order", 6);
+		await runCli("track-changes", "on", doc);
+		expect(
+			(await runCli("sections", doc, "--at", "p2-p4", "--columns", "2"))
+				.exitCode,
+		).toBe(0);
+		expect((await runCli("validate", doc)).exitCode).toBe(0);
+		await runCli("track-changes", "reject", doc, "--all");
+		expect((await sections(doc)).filter((s) => s.columns)).toHaveLength(0);
+	});
+});

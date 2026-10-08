@@ -132,7 +132,7 @@ export {
 export {
 	applyPageGeometry,
 	getPageContentWidthEmu,
-	inheritPageGeometry,
+	inheritGoverningSection,
 	isSectionType,
 	isTrailingSectPr,
 	type PageGeometry,

@@ -6,7 +6,7 @@ import {
 	getPageContentWidthEmu,
 	Insert,
 	InsertError,
-	inheritPageGeometry,
+	inheritGoverningSection,
 	type Locator,
 	LocatorParseError,
 	type PageGeometry,
@@ -499,11 +499,9 @@ async function wrapRange(
 	}
 
 	const governing = governingColumns(parent, endIndex + 1);
-	// The section currently governing the wrapped range — its page geometry
-	// (size/orientation/margins) must flow into the fresh sentinel sectPrs, or
-	// the wrap silently reverts those new sections to portrait-Letter (the
-	// "landscape vanishes after adding columns" footgun).
-	const governingGeometry = governingSectPr(parent, endIndex + 1);
+	// The section currently governing the wrapped range — its geometry and
+	// header/footer references flow into the fresh sentinel sectPrs.
+	const governingSection = governingSectPr(parent, endIndex + 1);
 	const track = resolveTracked(document, opts.trackFlag);
 	const insert = new Insert(document);
 	// Shared allocator so the two tracked inserts don't mint duplicate revision
@@ -559,13 +557,10 @@ async function wrapRange(
 		throw error;
 	}
 
-	// Carry the governing section's page geometry onto every fresh sentinel sectPr
-	// so the wrap preserves the document's size/orientation/margins (each section's
-	// geometry is independent — without this the new sections revert to portrait).
-	if (governingGeometry) {
+	if (governingSection) {
 		for (const block of [...afterBlocks, ...beforeBlocks]) {
 			const sectPr = block.findChild("w:pPr")?.findChild("w:sectPr");
-			if (sectPr) inheritPageGeometry(sectPr, governingGeometry);
+			if (sectPr) inheritGoverningSection(sectPr, governingSection);
 		}
 	}
 
