@@ -1,5 +1,9 @@
 import { type Body, iterateBlocks } from "../ast/document/body";
 import type { Block, Paragraph, TrackedChange } from "../ast/types";
+import {
+	isRevisionVisible,
+	type RevisionView,
+} from "../track-changes/revision-visibility";
 import { replaceAcrossParagraphs } from "./replace-across";
 import type { ReplacementFormatting } from "./replace-span";
 
@@ -19,7 +23,7 @@ export type TextMatch = {
 	trackedChanges?: TrackedChange[];
 };
 
-export type FindView = "accepted" | "current" | "baseline";
+export type FindView = RevisionView;
 
 export type FindOptions = {
 	regex?: boolean;
@@ -348,7 +352,7 @@ export function findFormattedSpans(
 				offset += runViewText(run, view).length;
 				continue;
 			}
-			if (!isRunVisibleInView(run.trackedChange?.kind, view)) continue;
+			if (!isRevisionVisible(run.trackedChange, view)) continue;
 			if (runMatchesFilter(run, filter)) {
 				if (spanStart === null) spanStart = offset;
 				spanText += run.text;
@@ -484,27 +488,17 @@ function paragraphTextForView(paragraph: Paragraph, view: FindView): string {
  *  widths from this one function, so they can't disagree. */
 function runViewText(run: Paragraph["runs"][number], view: FindView): string {
 	if (run.type === "text") {
-		return isRunVisibleInView(run.trackedChange?.kind, view) ? run.text : "";
+		return isRevisionVisible(run.trackedChange, view) ? run.text : "";
 	}
 	if (run.type === "tab") {
-		return isRunVisibleInView(run.trackedChange?.kind, view) ? "\t" : "";
+		return isRevisionVisible(run.trackedChange, view) ? "\t" : "";
 	}
 	if (run.type === "break") {
-		return run.kind === "line" &&
-			isRunVisibleInView(run.trackedChange?.kind, view)
+		return run.kind === "line" && isRevisionVisible(run.trackedChange, view)
 			? "\n"
 			: "";
 	}
 	return "";
-}
-
-function isRunVisibleInView(
-	kind: TrackedChange["kind"] | undefined,
-	view: FindView,
-): boolean {
-	if (view === "current") return true;
-	if (view === "accepted") return kind !== "del" && kind !== "moveFrom";
-	return kind !== "ins" && kind !== "moveTo";
 }
 
 function normalizeQuery(query: string): {

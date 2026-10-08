@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
-import { freshFixture } from "./helpers";
+import { buildRawDoc, freshFixture, NESTED_REVISION_BODY } from "./helpers";
 
 describe("docx find", () => {
 	let docPath: string;
@@ -766,6 +766,66 @@ describe("docx find — bold / italic / underline formatting filters", () => {
 		const docPath = await formattedDoc("find-bold-italic");
 		expect(await locators(docPath, "--bold", "--italic", "--all")).toEqual([
 			"p1:22-27",
+		]);
+	});
+});
+
+describe("docx find — nested revisions follow the all-ancestors rule", () => {
+	// A `<w:del>` nested inside another author's `<w:ins>` is hidden in BOTH
+	// resolved views (rejecting the insertion removes the deletion with it), so
+	// `--baseline` must not match its text and the offsets of what follows must
+	// not count it. `--current` still sees everything.
+	async function locatorLines(
+		docPath: string,
+		...args: string[]
+	): Promise<string[]> {
+		const result = await runCli("find", docPath, ...args); // harness injects --json
+		return (
+			result.parsed as { matches: Array<{ locator: string }> }
+		).matches.map((match) => match.locator);
+	}
+
+	test("--baseline does not match the nested-deleted text", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.editorDelInIns,
+			"find-nested-editor",
+		);
+		expect(await locatorLines(docPath, "disputed", "--baseline")).toEqual([]);
+		// Accepted (the default) sees Editor's replacement text only.
+		expect(await locatorLines(docPath, "disputed")).toEqual(["p0:26-34"]);
+		// Current sees both the nested deletion and the replacement.
+		expect(await locatorLines(docPath, "disputed", "--current")).toEqual([
+			"p0:26-34",
+			"p0:41-49",
+		]);
+	});
+
+	test("the mirror (ins inside del) is invisible to both resolved views", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.insInDel,
+			"find-nested-ins-in-del",
+		);
+		expect(await locatorLines(docPath, "added")).toEqual([]);
+		expect(await locatorLines(docPath, "added", "--baseline")).toEqual([]);
+		expect(await locatorLines(docPath, "added", "--current")).toEqual([
+			"p0:22-27",
+		]);
+	});
+
+	test("a <w:br/> inside the nested deletion loses its offset slot too", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.breakInNestedDel,
+			"find-nested-break",
+		);
+		// baseline "Start end": the hidden break no longer pushes "end" to 7.
+		expect(await locatorLines(docPath, "end", "--baseline")).toEqual([
+			"p0:6-9",
+		]);
+		expect(await locatorLines(docPath, "beta", "--baseline")).toEqual([]);
+		// accepted "Start alphaend"; current "Start alpha\nbetaend".
+		expect(await locatorLines(docPath, "end")).toEqual(["p0:11-14"]);
+		expect(await locatorLines(docPath, "end", "--current")).toEqual([
+			"p0:16-19",
 		]);
 	});
 });

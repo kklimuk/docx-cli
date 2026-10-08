@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
+import { buildRawDoc, NESTED_REVISION_BODY } from "./helpers";
 
 describe("docx wc", () => {
 	let docPath: string;
@@ -215,5 +216,66 @@ describe("docx wc — tracked changes", () => {
 		);
 		// "This is a text with insertions." = 6 words.
 		expect((baseline.parsed as { words: number }).words).toBe(6);
+	});
+});
+
+describe("docx wc — nested revisions follow the all-ancestors rule", () => {
+	// `--baseline` counts what `reject --all` leaves, `--accepted` what
+	// `accept --all` leaves — a `<w:del>` nested in another author's `<w:ins>`
+	// is hidden in both.
+	async function words(docPath: string, ...args: string[]): Promise<number> {
+		const result = await runCli("wc", docPath, ...args);
+		expect(result.exitCode).toBe(0);
+		return (result.parsed as { words: number }).words;
+	}
+
+	async function resolvedCounts(
+		body: string,
+		label: string,
+	): Promise<{ afterRejectAll: number; afterAcceptAll: number }> {
+		const rejectPath = await buildRawDoc(body, `${label}-reject`);
+		await runCli("track-changes", "reject", rejectPath, "--all");
+		const acceptPath = await buildRawDoc(body, `${label}-accept`);
+		await runCli("track-changes", "accept", acceptPath, "--all");
+		return {
+			afterRejectAll: await words(rejectPath),
+			afterAcceptAll: await words(acceptPath),
+		};
+	}
+
+	test("Editor's del inside Reviewer A's ins", async () => {
+		const body = NESTED_REVISION_BODY.editorDelInIns;
+		const docPath = await buildRawDoc(body, "wc-nested-editor");
+		const resolved = await resolvedCounts(body, "wc-nested-editor");
+		// baseline "The Client " = 2; accepted "The Client may withhold a
+		// disputed sum." = 7; current counts every run = 8.
+		expect(await words(docPath, "--baseline")).toBe(2);
+		expect(await words(docPath, "--baseline")).toBe(resolved.afterRejectAll);
+		expect(await words(docPath, "--accepted")).toBe(7);
+		expect(await words(docPath, "--accepted")).toBe(resolved.afterAcceptAll);
+		expect(await words(docPath, "--current")).toBe(8);
+	});
+
+	test("Reviewer B's del inside Reviewer A's ins", async () => {
+		const body = NESTED_REVISION_BODY.bDelInAIns;
+		const docPath = await buildRawDoc(body, "wc-nested-b-in-a");
+		const resolved = await resolvedCounts(body, "wc-nested-b-in-a");
+		// baseline "Fees are due. " = 3; accepted "Fees are due. The Client may
+		// withhold disputed amount." = 9.
+		expect(await words(docPath, "--baseline")).toBe(3);
+		expect(await words(docPath, "--baseline")).toBe(resolved.afterRejectAll);
+		expect(await words(docPath, "--accepted")).toBe(9);
+		expect(await words(docPath, "--accepted")).toBe(resolved.afterAcceptAll);
+	});
+
+	test("the mirror — ins inside del", async () => {
+		const body = NESTED_REVISION_BODY.insInDel;
+		const docPath = await buildRawDoc(body, "wc-nested-ins-in-del");
+		const resolved = await resolvedCounts(body, "wc-nested-ins-in-del");
+		// baseline "Keep this. Old clause goes away." = 6; accepted "Keep this. " = 2.
+		expect(await words(docPath, "--baseline")).toBe(6);
+		expect(await words(docPath, "--baseline")).toBe(resolved.afterRejectAll);
+		expect(await words(docPath, "--accepted")).toBe(2);
+		expect(await words(docPath, "--accepted")).toBe(resolved.afterAcceptAll);
 	});
 });

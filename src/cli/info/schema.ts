@@ -170,6 +170,20 @@ const JSON_SCHEMA = {
 						author: { type: "string" },
 						date: { type: "string" },
 						revisionId: { type: "string" },
+						within: {
+							type: "array",
+							description:
+								"Enclosing revision wrappers, outermost first — present only when this wrapper is nested inside another; a run is visible in a view only when every entry is",
+							items: {
+								type: "object",
+								required: ["id", "kind", "author"],
+								properties: {
+									id: { type: "string" },
+									kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
+									author: { type: "string" },
+								},
+							},
+						},
 					},
 				},
 				hyperlink: { $ref: "#/$defs/Hyperlink" },
@@ -208,6 +222,18 @@ const JSON_SCHEMA = {
 						author: { type: "string" },
 						date: { type: "string" },
 						revisionId: { type: "string" },
+						within: {
+							type: "array",
+							items: {
+								type: "object",
+								required: ["id", "kind", "author"],
+								properties: {
+									id: { type: "string" },
+									kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
+									author: { type: "string" },
+								},
+							},
+						},
 					},
 				},
 			},

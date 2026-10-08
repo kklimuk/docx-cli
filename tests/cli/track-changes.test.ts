@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
-import { freshFixture as copyFixture } from "./helpers";
+import {
+	buildRawDoc,
+	freshFixture as copyFixture,
+	markdownProse,
+	NESTED_REVISION_BODY,
+} from "./helpers";
 
 describe("docx track-changes", () => {
 	test("on creates settings.xml and registers it", async () => {
@@ -1789,5 +1794,145 @@ describe("docx track-changes apply (mixed accept+reject)", () => {
 		expect(result.stdout).toContain("five years");
 		// The unaddressed rev1 replace is still pending (its two tcN halves).
 		expect(await listCount(docPath)).toBe(2);
+	});
+});
+
+describe("nested revisions — a run is visible only when EVERY enclosing wrapper is", () => {
+	// Word nests one author's `<w:del>` inside another's still-pending
+	// `<w:ins>`. Classifying the run by its innermost wrapper alone showed the
+	// deleted text in `--baseline` (rejecting the insertion removes everything
+	// inside it). The resolved views must equal `reject --all` / `accept --all`.
+	async function resolvedViews(
+		body: string,
+		label: string,
+	): Promise<{
+		baseline: string;
+		accepted: string;
+		rejectedAll: string;
+		acceptedAll: string;
+	}> {
+		const docPath = await buildRawDoc(body, `${label}-views`);
+		const baseline = markdownProse(
+			(await runCli("read", docPath, "--baseline")).stdout,
+		);
+		const accepted = markdownProse(
+			(await runCli("read", docPath, "--accepted")).stdout,
+		);
+		const rejectPath = await buildRawDoc(body, `${label}-reject`);
+		expect(
+			(await runCli("track-changes", "reject", rejectPath, "--all")).exitCode,
+		).toBe(0);
+		const rejectedAll = markdownProse(
+			(await runCli("read", rejectPath)).stdout,
+		);
+		const acceptPath = await buildRawDoc(body, `${label}-accept`);
+		expect(
+			(await runCli("track-changes", "accept", acceptPath, "--all")).exitCode,
+		).toBe(0);
+		const acceptedAll = markdownProse(
+			(await runCli("read", acceptPath)).stdout,
+		);
+		return { baseline, accepted, rejectedAll, acceptedAll };
+	}
+
+	test("Editor's del inside Reviewer A's ins: baseline ≡ reject --all, accepted ≡ accept --all", async () => {
+		const views = await resolvedViews(
+			NESTED_REVISION_BODY.editorDelInIns,
+			"nested-editor",
+		);
+		expect(views.baseline).toBe("The Client");
+		expect(views.baseline).toBe(views.rejectedAll);
+		expect(views.accepted).toBe("The Client may withhold a disputed sum.");
+		expect(views.accepted).toBe(views.acceptedAll);
+	});
+
+	test("Reviewer B's del inside Reviewer A's ins: baseline ≡ reject --all, accepted ≡ accept --all", async () => {
+		const views = await resolvedViews(
+			NESTED_REVISION_BODY.bDelInAIns,
+			"nested-b-in-a",
+		);
+		expect(views.baseline).toBe("Fees are due.");
+		expect(views.baseline).toBe(views.rejectedAll);
+		expect(views.accepted).toBe(
+			"Fees are due. The Client may withhold disputed amount.",
+		);
+		expect(views.accepted).toBe(views.acceptedAll);
+	});
+
+	test("the mirror — ins inside del — is hidden in BOTH resolved views", async () => {
+		const views = await resolvedViews(
+			NESTED_REVISION_BODY.insInDel,
+			"nested-ins-in-del",
+		);
+		expect(views.baseline).toBe("Keep this. Old clause goes away.");
+		expect(views.baseline).toBe(views.rejectedAll);
+		expect(views.accepted).toBe("Keep this.");
+		expect(views.accepted).toBe(views.acceptedAll);
+	});
+
+	test("--current still shows every nested run as CriticMarkup", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.editorDelInIns,
+			"nested-current",
+		);
+		const out = (await runCli("read", docPath, "--current")).stdout;
+		expect(out).toContain(
+			"{++may withhold a ++}[^tc0]{--disputed amount--}[^tc1]{++disputed sum++}[^tc2]{++.++}[^tc3]",
+		);
+	});
+
+	test("AST: the nested run keeps its innermost kind/id and carries the enclosing chain in `within`", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.editorDelInIns,
+			"nested-ast",
+		);
+		const result = await runCli("read", docPath, "--ast");
+		expect(result.exitCode).toBe(0);
+		const doc = result.parsed as {
+			blocks: Array<{
+				runs?: Array<{
+					text?: string;
+					trackedChange?: {
+						id: string;
+						kind: string;
+						within?: Array<{ id: string; kind: string; author: string }>;
+					};
+				}>;
+			}>;
+		};
+		const runs = doc.blocks[0]?.runs ?? [];
+		const nested = runs.find((run) => run.text === "disputed amount");
+		expect(nested?.trackedChange).toMatchObject({
+			id: "tc1",
+			kind: "del",
+			author: "Editor",
+			within: [{ id: "tc0", kind: "ins", author: "Reviewer A" }],
+		});
+		// Top-level wrappers carry no `within` at all, so an un-nested document's
+		// AST is byte-identical to before.
+		const outer = runs.find((run) => run.text === "may withhold a ");
+		expect(outer?.trackedChange).toMatchObject({ id: "tc0", kind: "ins" });
+		expect(outer?.trackedChange).not.toHaveProperty("within");
+		const plain = runs.find((run) => run.text === "The Client ");
+		expect(plain?.trackedChange).toBeUndefined();
+	});
+
+	test("`track-changes list` keeps its record shape (no `within`) for nested changes", async () => {
+		const docPath = await buildRawDoc(
+			NESTED_REVISION_BODY.editorDelInIns,
+			"nested-list",
+		);
+		const result = await runCli("track-changes", "list", docPath, "--json");
+		expect(result.exitCode).toBe(0);
+		const records = result.parsed as Array<Record<string, unknown>>;
+		expect(records.map((record) => record.id)).toEqual([
+			"tc0",
+			"tc1",
+			"tc2",
+			"tc3",
+		]);
+		for (const record of records) {
+			expect(record).not.toHaveProperty("within");
+		}
 	});
 });

@@ -13,7 +13,7 @@ type ParagraphPropsSummary = {
 	indent?: Record<string, number>;
 };
 
-export type TrackedChangeRecord = TrackedChange & {
+export type TrackedChangeRecord = Omit<TrackedChange, "within"> & {
 	blockId: string;
 	text: string;
 	prior?: SectionProperties | ParagraphPropsSummary;
@@ -39,8 +39,15 @@ export function collectTrackedChangeRecords(
 				existing.text += run.text;
 				continue;
 			}
+			// Explicit fields, not a spread: `TrackedChange.within` (the enclosing
+			// wrapper chain of a nested revision) is an AST/view concern and stays
+			// off the `list` record so its shape is the same for every change.
 			byId.set(change.id, {
-				...change,
+				id: change.id,
+				kind: change.kind,
+				author: change.author,
+				date: change.date,
+				revisionId: change.revisionId,
 				blockId: paragraph.id,
 				text: run.text,
 			});

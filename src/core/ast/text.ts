@@ -1,3 +1,4 @@
+import { isRevisionVisible } from "../track-changes/revision-visibility";
 import { iterateBlocks } from "./document/body";
 import type { Block, ImageRun, Paragraph } from "./types";
 
@@ -10,14 +11,13 @@ export function paragraphText(paragraph: Paragraph): string {
 }
 
 /** Concatenate text as it would read in the accepted view: skip runs inside
- * a tracked deletion (`<w:del>`) or a tracked-move source (`<w:moveFrom>`);
- * keep insertions and move destinations. */
+ * a tracked deletion (`<w:del>`) or a tracked-move source (`<w:moveFrom>`) —
+ * or nested anywhere inside one; keep insertions and move destinations. */
 export function paragraphTextAccepted(paragraph: Paragraph): string {
 	let out = "";
 	for (const run of paragraph.runs) {
 		if (run.type !== "text") continue;
-		const kind = run.trackedChange?.kind;
-		if (kind === "del" || kind === "moveFrom") continue;
+		if (!isRevisionVisible(run.trackedChange, "accepted")) continue;
 		out += run.text;
 	}
 	return out;
@@ -25,13 +25,13 @@ export function paragraphTextAccepted(paragraph: Paragraph): string {
 
 /** Concatenate text as it would read in the baseline (pre-change) view: skip
  * runs inside a tracked insertion (`<w:ins>`) or a tracked-move destination
- * (`<w:moveTo>`); keep deletions and move sources. */
+ * (`<w:moveTo>`) — or nested anywhere inside one; keep deletions and move
+ * sources. */
 export function paragraphTextBaseline(paragraph: Paragraph): string {
 	let out = "";
 	for (const run of paragraph.runs) {
 		if (run.type !== "text") continue;
-		const kind = run.trackedChange?.kind;
-		if (kind === "ins" || kind === "moveTo") continue;
+		if (!isRevisionVisible(run.trackedChange, "baseline")) continue;
 		out += run.text;
 	}
 	return out;
