@@ -58,11 +58,15 @@ export async function stageScenario(
 	// Copy the folder CONTENTS (task.md, the fixture, assets/) and then delete the
 	// answer key — criteria.md is the judge's rubric and must NEVER reach the
 	// agent's workspace (the judge reads it from the pristine source instead).
+	// `scratch/` is the agent's PRIVATE scratch dir (batch JSONL, drafts): the
+	// session scratchpad its system prompt offers is shared by every concurrent
+	// exercise agent, and same-named files there collided (mnda ran resume's
+	// `edits.jsonl` batch in run 2026.09.30-101057-r1).
 	// .nothrow() so a shell failure (permissions, disk full) degrades to a `missing`
 	// verdict + exit 1 instead of a thrown ShellError — the corpus runner loops over
 	// scenarios and must be able to skip-and-continue past a bad one.
 	const copy =
-		await Bun.$`mkdir -p ${dstDir} && cp -R ${srcDir}/. ${dstDir}/ && rm -f ${dstDir}/criteria.md`
+		await Bun.$`mkdir -p ${dstDir} && cp -R ${srcDir}/. ${dstDir}/ && rm -f ${dstDir}/criteria.md && mkdir -p ${dstDir}/scratch`
 			.quiet()
 			.nothrow();
 	if (copy.exitCode !== 0) {

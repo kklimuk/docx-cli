@@ -18,18 +18,19 @@
  *
  * Usage:
  *   exercise-metrics.ts <transcript_dir> <run_dir> <binary> [model]   # Claude
- *   exercise-metrics.ts --local <run_dir> [label]                     # local harness
+ *   exercise-metrics.ts --local <run_dir> [label] [--journal <transcript_dir>]  # local harness
  *
  * Writes <run_dir>/exercise-metrics.{md,json} (run-level), drops each scenario's row
  * into <run_dir>/<key>/metrics.json (so each per-task folder is self-contained), and
- * prints the Markdown section to stdout (the skill appends it to REPORT.md).
+ * prints the Markdown section to stdout (--append-report writes REPORT.md with it).
  */
 
-import { appendFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { readJsonl } from "./parse-local-ledger";
 
 const USAGE = `Usage:
   exercise-metrics.ts <transcript_dir> <run_dir> <binary> [model]   # Claude (from transcripts)
-  exercise-metrics.ts --local <run_dir> [label]                     # local harness (from exercise.json)
+  exercise-metrics.ts --local <run_dir> [label] [--journal <transcript_dir>]  # local harness (from exercise.json)
 
 Claude: [model] is the exercise-agent model substring to measure (default "haiku");
 pass the workflow's args.model (e.g. "sonnet") so the matching agents are measured.
@@ -38,9 +39,11 @@ Local: [label] names the harness/model in the output (default "local").
 Both write <run_dir>/exercise-metrics.{md,json}, drop each scenario's row into
 <run_dir>/<key>/metrics.json, and print the Markdown section to stdout.
 
---append-report (either mode): ALSO append the section to <run_dir>/REPORT.md, so
-the workflow's Metrics phase needs no shell redirect. The manual post-run form can
-use it too (equivalent to \`… >> REPORT.md\`).`;
+--append-report (either mode): ALSO write <run_dir>/REPORT.md = the synthesized
+report + this section. The synth agent can't write files (Claude Code blocks
+subagent report writes), so its report is read from the workflow's journal.jsonl:
+Claude mode finds it in <transcript_dir>; local mode needs --journal <transcript_dir>.
+Idempotent — a re-run replaces the metrics section instead of appending another.`;
 
 const FILE_TO_KEY: Record<string, string> = {
 	"mnda.docx": "mnda",
@@ -60,31 +63,46 @@ function parseTs(value: unknown): Date | null {
 	return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function firstUserText(lines: any[]): string {
-	// The agent's prompt: text of the first `user`-type message.
-	for (const obj of lines) {
-		if (obj?.type !== "user") {
-			continue;
-		}
-		const content = obj?.message?.content;
-		if (typeof content === "string") {
-			return content;
-		}
-		if (Array.isArray(content)) {
-			const out: string[] = [];
-			for (const part of content) {
-				if (part && typeof part === "object" && part.type === "text") {
-					out.push(part.text ?? "");
-				} else if (typeof part === "string") {
-					out.push(part);
-				}
-			}
-			if (out.length) {
-				return out.join("\n");
-			}
-		}
+function userTexts(lines: any[]): string {
+	// Every `user`-type text in the transcript, joined. The workflow harness can
+	// relay the ORIGINAL user request as the first user turn and the computed task
+	// prompt as the second, so the scenario marker isn't reliably in the first one.
+	return lines
+		.filter((obj) => obj?.type === "user")
+		.map((obj) => contentText(obj?.message?.content))
+		.filter(Boolean)
+		.join("\n");
+}
+
+// The text of one transcript message's `content` (a string, or an array of parts
+// whose text parts are joined) — tool_result and other non-text parts contribute "".
+function contentText(content: unknown): string {
+	if (typeof content === "string") {
+		return content;
 	}
-	return "";
+	return Array.isArray(content) ? content.map(partText).join("\n") : "";
+}
+
+function partText(part: any): string {
+	if (typeof part === "string") {
+		return part;
+	}
+	return part?.type === "text" ? (part.text ?? "") : "";
+}
+
+// The workflow labels each exercise agent `exercise:<key>`, and the runtime writes
+// that label as `description` in the transcript's sibling `<agent>.meta.json` —
+// the most direct scenario handle, so try it first.
+async function scenarioFromMeta(transcriptPath: string): Promise<string | null> {
+	const metaPath = transcriptPath.replace(/\.jsonl$/, ".meta.json");
+	try {
+		const meta = await Bun.file(metaPath).json();
+		const label = typeof meta?.description === "string" ? meta.description : "";
+		const match = label.match(/^exercise:([a-z0-9-]+)$/);
+		return match?.[1] ?? null;
+	} catch {
+		return null;
+	}
 }
 
 function classifyScenario(prompt: string): string | null {
@@ -99,6 +117,37 @@ function classifyScenario(prompt: string): string | null {
 		}
 	}
 	return null;
+}
+
+// Rough content-based output estimate (~3.5 chars/token for English + JSON). Used
+// ONLY when the transcript's usage block carries the stream-START snapshot of
+// output_tokens (1–4) rather than the final count — see measureAgent.
+const CHARS_PER_OUTPUT_TOKEN = 3.5;
+
+function estimateOutputTokens(content: unknown): number {
+	if (!Array.isArray(content)) {
+		return 0;
+	}
+	const chars = content.reduce((sum: number, part) => sum + emittedChars(part), 0);
+	return Math.round(chars / CHARS_PER_OUTPUT_TOKEN);
+}
+
+// The characters the model emitted in one content block: text, thinking, or a tool
+// call's name + JSON input. Anything else (tool results, images) is 0.
+function emittedChars(part: any): number {
+	if (!part || typeof part !== "object") {
+		return 0;
+	}
+	if (part.type === "text") {
+		return (part.text ?? "").length;
+	}
+	if (part.type === "thinking") {
+		return (part.thinking ?? "").length;
+	}
+	if (part.type === "tool_use") {
+		return JSON.stringify(part.input ?? {}).length + (part.name ?? "").length;
+	}
+	return 0;
 }
 
 function isDocxCall(toolName: unknown, toolInput: unknown, binary: string): boolean {
@@ -146,23 +195,27 @@ type AgentRow = {
 	docxToolCalls: number;
 	otherToolCalls: number;
 	totalToolCalls: number;
+	// Tool calls that reached OUTSIDE the scenario folder — the session scratchpad
+	// or /tmp (shared by every concurrent exercise agent), another scenario's folder,
+	// or any other path in the repo. Nonzero means the result may reflect another
+	// agent's files (run 2026.09.30-101057-r1: mnda ran resume's same-named
+	// scratchpad batch).
+	isolationBreaches: string[];
+	// The launching user message the Workflow runtime relayed into this agent
+	// ("[Workflow harness — user request] … this request wins"), or null. Any
+	// relay can steer the exercise ("run it 3 times" made a resume agent redo its
+	// task and copy a repo fixture) — the skill launches from a notification turn
+	// so there is none; this catches a launch that slipped.
+	relayedLaunchMessage: string | null;
 };
 
 // ── Claude source: reconstruct a row from one agent transcript ──────────────
-async function measureAgent(path: string, binary: string): Promise<AgentRow> {
-	const lines: any[] = [];
-	const text = await Bun.file(path).text();
-	for (const raw of text.split("\n")) {
-		const trimmed = raw.trim();
-		if (!trimmed) {
-			continue;
-		}
-		try {
-			lines.push(JSON.parse(trimmed));
-		} catch {
-			continue;
-		}
-	}
+async function measureAgent(
+	path: string,
+	binary: string,
+	runDir: string,
+): Promise<AgentRow> {
+	const lines = await readJsonl(path);
 
 	let model: string | null = null;
 	// The three input flavors bill very differently, so keep them apart instead of
@@ -174,8 +227,21 @@ async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 	let outTokens = 0;
 	let docxCalls = 0;
 	let otherCalls = 0;
+	const toolInputs: string[] = [];
 	let firstTs: Date | null = null;
 	let lastTs: Date | null = null;
+
+	// The transcript writes ONE LINE PER CONTENT BLOCK (thinking / text / tool_use),
+	// and every line of the same API message repeats that message's `usage` block —
+	// so summing usage per line counts each request 2–4×. Key the usage by the API
+	// message id and count it once. The repeated block is the stream-START snapshot:
+	// its input counts are final, but `output_tokens` is 1–4 (only the last message
+	// of the run carries the finished count), so output is ESTIMATED from the content
+	// the model actually produced whenever the reported figure is smaller.
+	const usageById = new Map<
+		string,
+		{ inFresh: number; cacheWrite: number; cacheRead: number; reportedOut: number; estimatedOut: number }
+	>();
 
 	for (const obj of lines) {
 		const ts = parseTs(obj?.timestamp);
@@ -195,14 +261,27 @@ async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 			model = message.model;
 		}
 		const usage = message.usage ?? {};
-		inFresh += usage.input_tokens || 0;
-		cacheWrite += usage.cache_creation_input_tokens || 0;
-		cacheRead += usage.cache_read_input_tokens || 0;
-		outTokens += usage.output_tokens || 0;
 		const content = message.content;
+		if (message.role === "assistant") {
+			const id = typeof message.id === "string" ? message.id : obj?.uuid ?? String(usageById.size);
+			const entry = usageById.get(id) ?? {
+				inFresh: 0,
+				cacheWrite: 0,
+				cacheRead: 0,
+				reportedOut: 0,
+				estimatedOut: 0,
+			};
+			entry.inFresh = Math.max(entry.inFresh, usage.input_tokens || 0);
+			entry.cacheWrite = Math.max(entry.cacheWrite, usage.cache_creation_input_tokens || 0);
+			entry.cacheRead = Math.max(entry.cacheRead, usage.cache_read_input_tokens || 0);
+			entry.reportedOut = Math.max(entry.reportedOut, usage.output_tokens || 0);
+			entry.estimatedOut += estimateOutputTokens(content);
+			usageById.set(id, entry);
+		}
 		if (Array.isArray(content)) {
 			for (const part of content) {
 				if (part && typeof part === "object" && part.type === "tool_use") {
+					toolInputs.push(JSON.stringify(part.input ?? {}));
 					if (isDocxCall(part.name, part.input, binary)) {
 						docxCalls += 1;
 					} else {
@@ -212,15 +291,22 @@ async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 			}
 		}
 	}
+	for (const entry of usageById.values()) {
+		inFresh += entry.inFresh;
+		cacheWrite += entry.cacheWrite;
+		cacheRead += entry.cacheRead;
+		outTokens += Math.max(entry.reportedOut, entry.estimatedOut);
+	}
 
-	const prompt = firstUserText(lines);
+	const prompt = userTexts(lines);
+	const scenario = (await scenarioFromMeta(path)) ?? classifyScenario(prompt);
 	const duration =
 		firstTs && lastTs
 			? Math.round(((lastTs.getTime() - firstTs.getTime()) / 1000) * 10) / 10
 			: null;
 	return {
 		model,
-		scenario: classifyScenario(prompt),
+		scenario,
 		taskSuccess: null, // filled in main() from verdict.json
 		inputTokens: inFresh,
 		cacheReadTokens: cacheRead,
@@ -231,7 +317,97 @@ async function measureAgent(path: string, binary: string): Promise<AgentRow> {
 		docxToolCalls: docxCalls,
 		otherToolCalls: otherCalls,
 		totalToolCalls: docxCalls + otherCalls,
+		isolationBreaches: findIsolationBreaches(toolInputs, runDir, scenario),
+		relayedLaunchMessage: findRelayedLaunchMessage(lines),
 	};
+}
+
+/** The relayed launch message in the agent's FIRST user turn, if the runtime
+ *  added one (the indented lines after the "[Workflow harness — user request]"
+ *  header, up to the computed-task header). */
+function findRelayedLaunchMessage(lines: any[]): string | null {
+	const first = lines.find((line) => line?.type === "user");
+	const text = contentText(first?.message?.content);
+	if (!text.startsWith("[Workflow harness — user request]")) return null;
+	const body = text.split("\n").slice(1);
+	const end = body.findIndex((line) => line.startsWith("[Workflow harness"));
+	// The runtime indents every relayed line by two spaces; strip that indent so a
+	// multi-line message quotes cleanly in the report.
+	const relayed = (end >= 0 ? body.slice(0, end) : body)
+		.map((line) => line.replace(/^ {2}/, ""))
+		.join("\n")
+		.trim();
+	return relayed || null;
+}
+
+// The scenario folders a run dir can hold. Only these count as "another scenario":
+// the run dir may also hold non-scenario dirs an agent legitimately uses (the
+// competitor arm's staged skill, the Node `docx` install's node_modules/).
+const SCENARIO_KEYS = new Set(Object.values(FILE_TO_KEY));
+
+// A path in the machine-wide temp dir (/tmp, or macOS's /private/tmp) — shared by
+// every concurrent agent, so same-named batch files collide exactly like the
+// scratchpad. The lookbehind keeps the repo's own `…/docx-cli/tmp/…` run dirs out.
+const SHARED_TMP_PATH = /(?<![\w.~-])(?:\/private)?\/tmp\/[\w./-]+/g;
+
+/** The distinct out-of-folder paths an exercise agent's tool calls referenced:
+ *  anything under a `…/scratchpad/` dir or /tmp (shared by every concurrent
+ *  agent), another scenario's folder in this run, or any other repo path. */
+function findIsolationBreaches(
+	toolInputs: string[],
+	runDir: string,
+	scenario: string | null,
+): string[] {
+	const breaches = new Set<string>();
+	const runRoot = runDir.replace(/\/+$/, "").replace(/^\.\//, "");
+	// The repo the run lives in (…/<repo>/tmp/docx-weak-agent-test/<ts>): any
+	// absolute path into it outside this scenario's folder and the built binary
+	// is a breach — the 2026.10.01 r1 resume agent copied
+	// tests/fixtures/resume-styling.docx over its deliverable.
+	const absoluteRun = resolve(runDir);
+	const repoRoot = absoluteRun.split("/tmp/docx-weak-agent-test")[0] ?? "";
+	// `dist` itself too: an agent may `cd` into the binary's folder to run `./docx`.
+	const allowed = [`${absoluteRun}/${scenario ?? ""}`, `${repoRoot}/dist`];
+	const repoPath =
+		repoRoot && repoRoot !== absoluteRun
+			? new RegExp(`${escapeRegExp(repoRoot)}/[^\\s"'\\\\]+`, "g")
+			: null;
+	// Another scenario folder in THIS run, with or without a trailing slash
+	// (`ls <run>/resume` roams just as much as `cat <run>/resume/task.md`).
+	const runChild = runRoot
+		? new RegExp(`${escapeRegExp(runRoot)}/([\\w-]+)`, "g")
+		: null;
+	for (const input of toolInputs) {
+		for (const match of repoPath ? input.matchAll(repoPath) : []) {
+			const path = match[0];
+			if (allowed.some((prefix) => path.startsWith(prefix))) continue;
+			if (path.startsWith(`${absoluteRun}/`)) continue; // other scenarios: below
+			breaches.add(`repo: ${path.slice(repoRoot.length + 1)}`);
+		}
+		for (const match of input.matchAll(/[\w./-]*\/scratchpad\/[\w.-]+/g)) {
+			breaches.add(match[0].replace(/^.*\/scratchpad\//, "scratchpad/"));
+		}
+		for (const match of input.matchAll(SHARED_TMP_PATH)) {
+			const path = match[0];
+			// The scratchpad (counted above) and Claude Code's own per-session dirs
+			// (background-task output files) live under /tmp/claude-<uid>/ — unique
+			// per agent, so not a collision risk.
+			if (/^(?:\/private)?\/tmp\/claude-\d+\//.test(path)) continue;
+			if (path.startsWith(`${absoluteRun}/`)) continue; // a run dir under /tmp
+			breaches.add(`tmp: ${path}`);
+		}
+		for (const match of runChild ? input.matchAll(runChild) : []) {
+			const key = match[1];
+			if (key && key !== scenario && SCENARIO_KEYS.has(key)) {
+				breaches.add(`${key}/ (another scenario)`);
+			}
+		}
+	}
+	return [...breaches].sort();
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ── Local source: build a row from one scenario's exercise.json `_local` block ──
@@ -272,6 +448,8 @@ async function measureLocalScenario(
 		docxToolCalls: docxCalls,
 		otherToolCalls: otherCalls,
 		totalToolCalls: docxCalls + otherCalls,
+		isolationBreaches: [], // the local runner confines the harness itself
+		relayedLaunchMessage: null, // no Workflow runtime in the local exercise
 	};
 }
 
@@ -436,6 +614,59 @@ function renderSection(
 	}
 	if (outliers.length) {
 		lines.push("", "### Outliers", "", ...outliers);
+	}
+
+	const relayed = rows.filter((row) => row.relayedLaunchMessage);
+	if (relayed.length) {
+		const messages = [
+			...new Set(relayed.map((row) => row.relayedLaunchMessage as string)),
+		];
+		lines.push(
+			"",
+			"### ⚠ Relayed launch message",
+			"",
+			`The Workflow runtime relayed the launching user message into ${relayed.length} exercise agent(s), framed as the user request that overrides their task — any count or instruction in it can steer them. Launch from a notification-triggered turn (SKILL.md step 3) and treat these results as possibly contaminated:`,
+			"",
+			...messages.map((message) => `> ${message.replace(/\n/g, "\n> ")}`),
+		);
+	}
+
+	const breached = rows.filter((row) => row.isolationBreaches.length > 0);
+	// The same SHARED-location path (scratchpad, /tmp) used by two scenarios is a
+	// real collision (one agent can run the other's batch), not just a risk. Two
+	// agents peeking at the same repo file or scenario folder only READ the same
+	// thing — each is a breach, but not a collision with the other.
+	const isShared = (path: string) =>
+		path.startsWith("scratchpad/") || path.startsWith("tmp: ");
+	const usersOf = new Map<string, Set<string>>();
+	for (const row of breached) {
+		for (const path of row.isolationBreaches.filter(isShared)) {
+			const users = usersOf.get(path) ?? new Set<string>();
+			users.add(row.scenario ?? "?");
+			usersOf.set(path, users);
+		}
+	}
+	if (breached.length) {
+		lines.push(
+			"",
+			"### ⚠ Isolation breaches",
+			"",
+			"These exercise agents reached outside their scenario folder — into the session scratchpad or /tmp (shared by every concurrent agent, so same-named files collide), another scenario's folder, or elsewhere in the repo (fixtures, the pristine scenarios, older runs). Treat their results as possibly contaminated and check the transcript before reading them as tool behavior.",
+			"",
+			...breached.map(
+				(row) =>
+					`- \`${row.scenario ?? "?"}\`: ${row.isolationBreaches
+						.map((path) => {
+							const others = [...(usersOf.get(path) ?? [])].filter(
+								(key) => key !== row.scenario,
+							);
+							return others.length > 0
+								? `**\`${path}\` — COLLISION with ${others.join(", ")}**`
+								: `\`${path}\``;
+						})
+						.join(", ")}`,
+			),
+		);
 	}
 
 	if (extras.comparison) {
@@ -616,6 +847,7 @@ async function collectClaudeRows(
 	transcriptDir: string,
 	binary: string,
 	modelFilter: string,
+	runDir: string,
 ): Promise<AgentRow[]> {
 	const paths: string[] = [];
 	for await (const path of new Bun.Glob("agent-*.jsonl").scan({
@@ -629,7 +861,9 @@ async function collectClaudeRows(
 	// Read the transcripts concurrently (each is an independent file), then keep only
 	// the exercise agents (matched by model substring) — the opus/fable stage/render/
 	// judge/synth agents don't count.
-	const measured = await Promise.all(paths.map((path) => measureAgent(path, binary)));
+	const measured = await Promise.all(
+		paths.map((path) => measureAgent(path, binary, runDir)),
+	);
 	const rows = measured.filter(
 		(row) => row.model && row.model.toLowerCase().includes(modelFilter),
 	);
@@ -667,7 +901,13 @@ async function main(): Promise<void> {
 	// mode-specific positional parsing so it works in either invocation form.
 	const rawArgv = Bun.argv.slice(2);
 	const appendReport = rawArgv.includes("--append-report");
-	const argv = rawArgv.filter((arg) => arg !== "--append-report");
+	const journalFlag = rawArgv.indexOf("--journal");
+	const journalDir = journalFlag >= 0 ? (rawArgv[journalFlag + 1] ?? "") : "";
+	const argv = rawArgv.filter(
+		(arg, index) =>
+			arg !== "--append-report" &&
+			(journalFlag < 0 || (index !== journalFlag && index !== journalFlag + 1)),
+	);
 	const isLocal = argv[0] === "--local";
 
 	let rows: AgentRow[];
@@ -700,9 +940,14 @@ async function main(): Promise<void> {
 		// agents are the ones measured, not silently filtered out.
 		modelLabel = (argv[3] || "haiku").toLowerCase();
 		backend = "claude";
-		measuredFrom = "transcripts";
+		measuredFrom = "transcripts; input per API message, output estimated from emitted content at ~3.5 chars/token";
 		sourceDir = transcriptDir ?? "";
-		rows = await collectClaudeRows(transcriptDir ?? "", binary ?? "", modelLabel);
+		rows = await collectClaudeRows(
+			transcriptDir ?? "",
+			binary ?? "",
+			modelLabel,
+			runDir,
+		);
 	}
 
 	rows.sort((a, b) => {
@@ -773,15 +1018,72 @@ async function main(): Promise<void> {
 	// (which has no trailing newline) and turn it into a setext heading.
 	const appendable = `\n\n---\n\n${section}`;
 	console.log(appendable);
-	// --append-report writes the section straight into REPORT.md (what the workflow's
-	// Metrics phase uses, so it needs no shell redirect). Without the flag, the caller
-	// redirects stdout (`… >> REPORT.md`) instead.
+	// --append-report (re)writes REPORT.md as the synthesized report + this section.
+	// Without the flag, only stdout carries the section.
 	if (appendReport) {
-		appendFileSync(`${runDir}/REPORT.md`, appendable);
+		const reportPath = `${runDir}/REPORT.md`;
+		const body = await synthesizedReport(
+			isLocal ? journalDir : journalDir || sourceDir,
+			reportPath,
+		);
+		await Bun.write(reportPath, `${body}${appendable}`);
 	}
 	console.error(
-		`[wrote ${outMd} and ${outJson}${appendReport ? ` and appended to ${runDir}/REPORT.md` : ""}]`,
+		`[wrote ${outMd} and ${outJson}${appendReport ? ` and wrote ${runDir}/REPORT.md (report + metrics)` : ""}]`,
 	);
+}
+
+// The synthesized report body for REPORT.md. Claude Code refuses to let a subagent
+// write report files, so the synth agent only RETURNS its report — the workflow
+// journal (in the transcript dir) records that return value, and this pulls it out.
+// Falls back to an existing REPORT.md with any earlier metrics section stripped, so
+// re-running --append-report replaces the section instead of stacking a second one.
+async function synthesizedReport(journalDir: string, reportPath: string): Promise<string> {
+	const fromJournal = journalDir ? await synthResultFromJournal(`${journalDir}/journal.jsonl`) : null;
+	if (fromJournal) {
+		return stripPreamble(fromJournal).trimEnd();
+	}
+	const existing = Bun.file(reportPath);
+	if (!(await existing.exists())) {
+		process.stderr.write(
+			`exercise-metrics: no synthesized report found (journal: ${journalDir || "none"}) — REPORT.md will hold only the metrics section.\n`,
+		);
+		return "";
+	}
+	const text = await existing.text();
+	const metricsStart = text.indexOf(METRICS_SEPARATOR);
+	return (metricsStart >= 0 ? text.slice(0, metricsStart) : text).trimEnd();
+}
+
+const METRICS_SEPARATOR = "\n\n---\n\n## Run metrics";
+
+async function synthResultFromJournal(journalPath: string): Promise<string | null> {
+	// A torn last line (read mid-write, or after a crash) is skipped rather than
+	// throwing away the whole REPORT.md write.
+	const entries = await readJsonl(journalPath);
+	const synthAgentIds = new Set(
+		entries
+			.filter((entry) => entry.type === "started" && entry.label === "synthesize")
+			.map((entry) => entry.agentId),
+	);
+	// The LAST synth result wins: a re-issued synth supersedes an earlier attempt.
+	const result = entries.findLast(
+		(entry) => entry.type === "result" && synthAgentIds.has(entry.agentId),
+	)?.result;
+	return typeof result === "string" && result.trim() ? result : null;
+}
+
+// The synth is told to open with the report's `# ` title, but a model that hit a
+// refused write tends to lead with an apology paragraph — drop that prose. Only
+// prose: if a code fence or a sub-heading comes before the first `# ` line, that
+// line is not the title (a `# comment` inside a bash block, say) and nothing is cut.
+function stripPreamble(report: string): string {
+	const titleMatch = /^# /m.exec(report);
+	if (!titleMatch) {
+		return report;
+	}
+	const preamble = report.slice(0, titleMatch.index);
+	return /^(?:```|#{2,} )/m.test(preamble) ? report : report.slice(titleMatch.index);
 }
 
 await main();

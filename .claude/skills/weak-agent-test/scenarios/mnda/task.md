@@ -5,7 +5,10 @@ We're about to sign a mutual non-disclosure agreement with Acme, and the cover p
 
 The blanks are the yellow-highlighted placeholders on the cover page (and the two
 signature blocks). Fill each one with the right value — and clear the yellow as you go,
-so nothing stays highlighted once it's filled.
+so nothing stays highlighted once it's filled. The square brackets are part of the
+blank, not part of the answer: `[1 year(s)]` becomes `2 year(s)`,
+`[choose 1: Effective Date || the date of last disclosure]` becomes just
+`Effective Date`, and so on — a finished value has no brackets around it.
 
 Important: change ONLY the placeholder values and the highlight. Everything else about
 how the document looks — every typeface, size, and color — must stay exactly as it is

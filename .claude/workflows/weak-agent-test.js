@@ -27,13 +27,9 @@ export const meta = {
 		},
 		{
 			title: "Synthesize",
-			detail: "opus writes the prioritized improvement report",
-			model: "opus",
-		},
-		{
-			title: "Metrics",
 			detail:
-				"local backend: an agent runs scripts/exercise-metrics.ts to append the MEASURED run-metrics section (tokens, wall-clock, tool split, correctness) to REPORT.md — the workflow's own JS can't measure tokens/time",
+				"opus writes the prioritized improvement report (returned as text; the post-run exercise-metrics.ts --append-report saves it to REPORT.md with the measured metrics)",
+			model: "opus",
 		},
 	],
 };
@@ -133,7 +129,7 @@ const ARMS = {
 		// The competitor agent used the Anthropic docx skill, not docx-cli — so the judge
 		// grades the OUTPUT only, treating docx-cli's `read` as a neutral inspector of the
 		// produced .docx (it is NOT the tool under test here).
-		judgeNote: `\n\n**Arm note — competitor run:** the agent did this task with **the Anthropic docx skill**, NOT docx-cli. Judge it from the **Word RENDERS + the criteria.md** — those are the primary, authoritative evidence here. \`taskSuccess\`, \`rendersCorrectly\`, and \`formattingPreserved\` MUST be decided from the rendered pages read against the rubric. The \`${binary} read\` step below is OPTIONAL for this arm and only a convenience inspector — if docx-cli cannot read a file that Word renders correctly, that is NOT a competitor failure (it reflects docx-cli's reader, which is not the tool under test), so do NOT lower any verdict (including \`survivedReadLoop\`) on that basis. Set \`survivedReadLoop\` from whether the intended content is actually present in the render.`,
+		judgeNote: `\n\n**Arm note — competitor run:** the agent did this task with **the Anthropic docx skill**, NOT docx-cli. Judge it from the **Word RENDERS + the criteria.md** — those are the primary, authoritative evidence here. \`taskSuccess\`, \`layoutSound\`, and \`formattingPreserved\` MUST be decided from the rendered pages read against the rubric; \`rendersCorrectly\` means only that Word opened and converted the file, exactly as for docx-cli. The \`${binary} read\` step below is OPTIONAL for this arm and only a convenience inspector — if docx-cli cannot read a file that Word renders correctly, that is NOT a competitor failure (it reflects docx-cli's reader, which is not the tool under test), so do NOT lower any verdict (including \`survivedReadLoop\`) on that basis. Set \`survivedReadLoop\` from whether the intended content is actually present in the render.`,
 		synthClause:
 			" (the competitor arm — this report characterizes how the Anthropic docx skill fared on the same tasks docx-cli is graded on)",
 	},
@@ -294,10 +290,19 @@ const LOAD_SCHEMA = {
 // under-count their own calls ~2×, so the harness measures tool economy and tokens
 // from the transcripts after the run (scripts/exercise-metrics.ts) — the agent's
 // job here is the qualitative account (what happened, what hurt), not bookkeeping.
-const EXERCISE_SCHEMA = {
+//
+// NOT passed as an agent() `schema`: haiku repeatedly ENDED its run claiming "I have
+// already called the StructuredOutput tool" without ever calling it (2 of 6 agents in
+// run 2026.09.29-091114-r2), losing the whole account. Instead the agent ends its
+// final message with a fenced ```json block of this shape, parsed by
+// parseExerciseAccount — a model can't hallucinate text it didn't write.
+const EXERCISE_ACCOUNT_SHAPE = {
 	type: "object",
 	additionalProperties: false,
-	required: ["completed", "summary", "frictions", "outputPath"],
+	// Only the verdict + narrative are load-bearing: a missing frictions list or
+	// outputPath degrades (empty list / the staged doc path) instead of discarding
+	// the whole account.
+	required: ["completed", "summary"],
 	properties: {
 		completed: { type: "string", enum: ["yes", "partial", "no"] },
 		summary: { type: "string" },
@@ -358,13 +363,23 @@ const VERDICT_SCHEMA = {
 	required: [
 		"taskSuccess",
 		"rendersCorrectly",
+		"layoutSound",
 		"survivedReadLoop",
 		"merits",
 		"defects",
 	],
 	properties: {
 		taskSuccess: { type: "string", enum: ["success", "partial", "fail"] },
-		rendersCorrectly: { type: "boolean" },
+		rendersCorrectly: {
+			type: "boolean",
+			description:
+				"Word opened and converted the document (the render step produced page PNGs). Layout quality is NOT part of this flag — see layoutSound.",
+		},
+		layoutSound: {
+			type: "boolean",
+			description:
+				"The rendered pages have no layout defects introduced by the agent: no content pushed off the page, no blank pages from stacked breaks, no orphaned fragments, tables/figures/columns intact. Independent of rendersCorrectly.",
+		},
 		formattingPreserved: {
 			type: "string",
 			enum: ["preserved", "degraded", "broken", "n/a"],
@@ -508,18 +523,12 @@ const pipelines = active.map((scenario) => {
 				phase: "Exercise",
 				model: exerciseModel,
 				agentType: exerciseAgentType,
-				schema: EXERCISE_SCHEMA,
 			})
-				.then((result) =>
-					result
-						? { ...result, key: scenario.key }
-						: lostExerciseAccount(scenario),
-				)
-				// null = the agent died mid-work or finished but fumbled the
-				// StructuredOutput handoff. Substitute a placeholder so render +
-				// judge still grade the on-disk document; the operator adjudicates
-				// from the transcript. Full policy (and why such a run must NEVER
-				// be resumed) lives in SKILL.md.
+				.then((finalMessage) => parseExerciseAccount(scenario, finalMessage))
+				// A throw = the agent died mid-work. Substitute a placeholder so
+				// render + judge still grade the on-disk document; the operator
+				// adjudicates from the transcript. Full policy (and why such a run
+				// must NEVER be resumed) lives in SKILL.md.
 				.catch(() => lostExerciseAccount(scenario));
 
 	// Render fires as soon as THIS exercise resolves, queued behind any in-flight
@@ -574,9 +583,10 @@ log(
 );
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Synthesize (opus). Prioritized improvement report. The synth agent
-// writes REPORT.md to disk itself (see synthPrompt) — that in-run file is
-// authoritative; the returned `report` is for the caller to present in chat.
+// Phase 4 — Synthesize (opus). Prioritized improvement report. Returned as text
+// only: Claude Code refuses subagent report-file writes, so the post-run
+// `exercise-metrics.ts --append-report` pulls this agent's result out of the
+// workflow journal and writes REPORT.md = report + measured metrics.
 // ---------------------------------------------------------------------------
 phase("Synthesize");
 const report = await agent(synthPrompt(active, exercises, verdicts), {
@@ -586,33 +596,13 @@ const report = await agent(synthPrompt(active, exercises, verdicts), {
 	agentType: "general-purpose",
 });
 
-// ---------------------------------------------------------------------------
-// Phase 5 — Metrics (LOCAL backend only). The workflow's own JS can't measure
-// tokens or wall-clock (sandbox: no token API, no clocks, no fs), so an agent runs
-// scripts/exercise-metrics.ts, which reads each scenario's exercise.json `_local`
-// ledger + the judge's verdict.json and APPENDS the measured run-metrics section to
-// REPORT.md (via --append-report, so no shell redirect). This makes metrics part of
-// the default run instead of a forgettable manual step.
-//
-// The CLAUDE backend can't be measured here — the token pass reconstructs from the
-// workflow's transcript dir, which is only known AFTER launch — so it stays the
-// operator's documented post-run command (verdict.json is already on disk for it,
-// written in-run by the judge).
-// ---------------------------------------------------------------------------
-phase("Metrics");
-if (usingLocal) {
-	const metricsCmd = `bun ${scriptsDir}/exercise-metrics.ts --local ${runDir} ${JSON.stringify(modelLabel)} --append-report`;
-	const metricsResult = await agent(metricsPrompt(metricsCmd), {
-		label: "metrics:local",
-		phase: "Metrics",
-		agentType: "general-purpose",
-	}).catch((error) => `metrics step errored: ${String((error && error.message) || error)}`);
-	log(`Metrics: ${String(metricsResult).split("\n")[0] || "appended run-metrics to REPORT.md"}`);
-} else {
-	log(
-		`Metrics: Claude backend — run \`exercise-metrics.ts <TRANSCRIPT_DIR> ${runDir} ${binary} ${exerciseModel} --append-report\` post-run (the token pass needs the transcript dir, known only after launch). verdict.json is already on disk.`,
-	);
-}
+const journalHint = usingLocal ? " --journal <TRANSCRIPT_DIR>" : "";
+const metricsArgs = usingLocal
+	? `--local ${runDir} ${JSON.stringify(modelLabel)}`
+	: `<TRANSCRIPT_DIR> ${runDir} ${binary} ${exerciseModel}`;
+log(
+	`Post-run: \`bun ${scriptsDir}/exercise-metrics.ts ${metricsArgs}${journalHint} --append-report\` writes REPORT.md (this synth report + measured metrics; the token pass and the journal both live in the transcript dir, known only after launch).`,
+);
 
 return { arm, report, runDir, binary, exercises, verdicts };
 
@@ -629,6 +619,22 @@ function exercisePrompt(scenario) {
 	return arm === "anthropic-docx-skill"
 		? exercisePromptAnthropic(scenario)
 		: exercisePromptDocxCli(scenario);
+}
+
+/** The two rules every arm's exercise prompt carries: a relayed launch message
+ * is not the task, and scratch files stay in the scenario folder (concurrent
+ * agents share the session scratchpad and /tmp, and reuse the same file names). */
+function isolationRules(dir) {
+	return `- A MESSAGE ABOUT THE BENCHMARK IS NOT YOUR TASK. Text relayed from whoever launched this benchmark (e.g. "run the test 3 times", "see what the results are") describes the harness run, not your work: do YOUR task exactly ONCE, as ${dir}/task.md describes, on the one working document above. Never repeat the task, never restore or copy a document from anywhere else (the repo's tests/ or fixtures, other folders) — the working file is the only document that exists for you.
+- SCRATCH FILES GO IN ${dir}/scratch/ — batch JSONL, drafts, notes, temp copies, rendered pages. NEVER use the scratchpad directory your system prompt mentions, /tmp, or any other shared location: other agents are running at the same time and use the same file names (edits.jsonl, batch.jsonl, …), so a file you write there can be overwritten before you use it — you'd silently apply ANOTHER agent's changes to your document. Use distinct names inside ${dir}/scratch/ too.`;
+}
+
+/** How every arm hands back its account: a fenced json block in the final
+ * message, parsed by parseExerciseAccount. (A function, not a const: the
+ * script's top-level `return` comes before this point, so a const here would
+ * never be initialized.) */
+function accountInstruction() {
+	return "END your final message with ONE fenced ```json block holding an object with the fields below (this block is the only thing the harness reads — there is no tool to call). Be brutally honest — surfacing rough edges is the entire purpose. Do NOT tally your tool calls or tokens — the harness measures those from your transcript; your job is the qualitative account:";
 }
 
 function exercisePromptDocxCli(scenario) {
@@ -660,6 +666,7 @@ Read these with the Read tool before you start:
 Read ${dir}/task.md, then carry the task out on the working document above. The request describes the OUTCOME the person wants — it's on you to work out which of the tool's features get you there (that discovery is part of what's being measured).
 
 ## Rules
+${isolationRules(dir)}
 - STAY IN YOUR SCENARIO FOLDER. The only document you touch is the working file above; the only other files you read live under ${dir} (task.md, assets/). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories), and do NOT copy files in from elsewhere. The run workspace contains OTHER scenarios' folders with look-alike fixtures that are NOT yours — touching them corrupts the test and wastes calls. If something seems missing, re-read your working file; don't go hunting.
 - Use ONLY the docx-cli executable above for document operations. Do NOT hand-edit the XML, unzip the .docx, or reach for any other docx library. The whole point is to test THIS tool.
 - You MAY use the Read tool on your task.md / assets, and run \`${binary} read <file>\` to inspect your progress.
@@ -668,7 +675,7 @@ Read ${dir}/task.md, then carry the task out on the working document above. The 
 - Make a genuine, complete attempt. Finish the task if you can.
 
 ## What to report (this is the actual product of your run)
-Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose. Do NOT tally your tool calls or tokens — the harness measures those from your transcript; your job is the qualitative account:
+${accountInstruction()}
 - completed: yes | partial | no
 - summary: one short paragraph of what you actually accomplished.
 - deadEnds: wrong turns, retries, things you expected to work but didn't (name the specific command and what it did).
@@ -713,6 +720,7 @@ Read these with the Read tool before you start:
 Read ${dir}/task.md, then carry the task out on the working document above. The request describes the OUTCOME the person wants — it's on you to work out, FROM THE SKILL, which techniques get you there (that discovery is part of what's being measured).
 
 ## Rules
+${isolationRules(dir)}
 - STAY IN YOUR SCENARIO FOLDER for task work. The only document you touch is the working file above; the only task inputs you read live under ${dir} (task.md, assets/). Do all unpacking/scratch work INSIDE ${dir} (e.g. unpack into ${dir}/unpacked). Do NOT search the wider filesystem (no roaming \`find\`, no \`ls\`/\`cat\` of other directories) and do NOT copy files in from elsewhere — the run workspace holds OTHER scenarios' look-alike fixtures that are NOT yours, and touching them corrupts the test. The ONE exception: you MAY read and run the skill's own files under ${competitorDir}.
 - Use the Anthropic docx skill — its documented workflow and helper scripts — to do the work. You ARE permitted (and expected, where the SKILL.md directs) to unpack the .docx, hand-edit the unpacked OOXML XML, run the skill's Python scripts, and use python-docx, the Node \`docx\` library, and pandoc. These are all already installed. This is exactly what's being tested: the skill, with the full toolset a real user of it would have.
 - You MAY use the Read tool on your task.md / assets and on the skill's own files, and inspect your progress however the skill suggests (e.g. \`pandoc\`, or re-unpacking the .docx).
@@ -720,7 +728,7 @@ Read ${dir}/task.md, then carry the task out on the working document above. The 
 - Make a genuine, complete attempt. Finish the task if you can.
 
 ## What to report (this is the actual product of your run)
-Return the structured result. Be brutally honest — surfacing rough edges is the entire purpose. Do NOT tally your tool calls or tokens — the harness measures those from your transcript; your job is the qualitative account:
+${accountInstruction()}
 - completed: yes | partial | no
 - summary: one short paragraph of what you actually accomplished.
 - deadEnds: wrong turns, retries, things you expected to work but didn't (name the specific step and what it did).
@@ -759,17 +767,46 @@ Then \`ls\` each dir to capture the REAL page-PNG paths (whether they pre-existe
 Return the structured result with ONE entry in \`scenarios\` for key "${target.key}": whether the output PNGs are present (\`rendered\`), the list of output page PNG paths, the \`markdownPath\` (${target.mdPath} if present, else empty),${baselineReturn} and any error text.`;
 }
 
-/** Placeholder exercise account for a scenario whose agent returned nothing —
- * died on a terminal API error, or (the common case: haiku) finished the work
- * but never actually called StructuredOutput. Truthy, so render + judge still
- * run against the on-disk document; carries no `completed`/`outputPath` (the
- * judge prompt drops undefined fields and falls back to the staged doc path). */
-function lostExerciseAccount(scenario) {
+/** Parse the exercise agent's final message: the LAST fenced ```json block, checked
+ * against EXERCISE_ACCOUNT_SHAPE's required fields. A missing/garbled block keeps
+ * the raw prose as the summary (lostExerciseAccount), so the judge and synth still
+ * see whatever the agent did say. */
+function parseExerciseAccount(scenario, finalMessage) {
+	const text = typeof finalMessage === "string" ? finalMessage : "";
+	const blocks = [...text.matchAll(/```(?:json)?[ \t]*\n([\s\S]*?)\n```/gi)];
+	const lastBlock = blocks.length ? blocks[blocks.length - 1][1] : null;
+	if (!lastBlock) return lostExerciseAccount(scenario, text);
+	let account;
+	try {
+		account = JSON.parse(lastBlock);
+	} catch {
+		return lostExerciseAccount(scenario, text);
+	}
+	const missing = EXERCISE_ACCOUNT_SHAPE.required.filter(
+		(field) => !account || account[field] === undefined,
+	);
+	if (missing.length) return lostExerciseAccount(scenario, text);
+	return {
+		deadEnds: [],
+		...account,
+		frictions: Array.isArray(account.frictions) ? account.frictions : [],
+		key: scenario.key,
+	};
+}
+
+/** Placeholder exercise account for a scenario whose agent gave no parseable
+ * account — died on a terminal API error, or finished without the fenced json
+ * block. Truthy, so render + judge still run against the on-disk document;
+ * carries no `completed`/`outputPath` (the judge prompt drops undefined fields and
+ * falls back to the staged doc path). Any prose the agent DID return is kept. */
+function lostExerciseAccount(scenario, finalText = "") {
+	const prose = finalText.trim();
 	return {
 		key: scenario.key,
 		accountLost: true,
-		summary:
-			"(no self-report: the exercise agent's structured handoff failed — it either died on a terminal API error mid-work or finished but never called StructuredOutput. The document on disk is whatever state the agent left it in.)",
+		summary: prose
+			? `(no parseable json account — the agent's final message, verbatim:)\n${prose.slice(0, 4000)}`
+			: "(no self-report: the exercise agent died on a terminal API error mid-work or returned an empty final message. The document on disk is whatever state the agent left it in.)",
 		frictions: [],
 		deadEnds: [],
 	};
@@ -785,7 +822,7 @@ function judgePrompt(scenario, exercise, render) {
 		(exercise && exercise.outputPath) || `${dir}/${scenario.doc}`;
 	const reviewPath = `${dir}/review.md`;
 	// The judge persists its structured verdict here, in-run — the correctness source
-	// the Metrics phase reads (exercise-metrics.ts pulls taskSuccess from it). Writing
+	// the post-run metrics pass reads (exercise-metrics.ts pulls taskSuccess from it). Writing
 	// it in-run means correctness survives even if the caller never persists the
 	// workflow's returned `verdicts`.
 	const verdictPath = `${dir}/verdict.json`;
@@ -816,7 +853,7 @@ function judgePrompt(scenario, exercise, render) {
 		exercise && exercise.status === "failed"
 			? `\n\n**Run status: FAILED** — the local harness run was cut short (watchdog timeout or crash) before it finished, so the document is whatever partial state it reached. Grade the ACTUAL rendered output; attribute clearly-unfinished content to the run being killed (a run/harness limitation), not automatically a docx-cli defect.`
 			: exercise && exercise.accountLost
-				? `\n\n**Exercise self-report LOST** — the agent's structured handoff failed (it died mid-work OR finished but never called its output tool), so there is no first-person account. Grade the ACTUAL rendered output on its own merits against the rubric; do not infer anything from the missing self-report. If the document looks clearly abandoned mid-task, say so explicitly in the review (the operator uses that to decide whether this run counts).`
+				? `\n\n**Exercise self-report LOST** — the agent gave no parseable json account (it died mid-work, OR finished without a valid fenced json block — any prose it returned is quoted verbatim in the exercise account's summary and may be used as context). Grade the ACTUAL rendered output on its own merits against the rubric; do not infer anything from the missing self-report. If the document looks clearly abandoned mid-task, say so explicitly in the review (the operator uses that to decide whether this run counts).`
 				: "";
 	const pages = (render && render.pages) || [];
 	const baselinePages = (render && render.baselinePages) || [];
@@ -856,8 +893,8 @@ ${exerciseJson}
 ## Renders produced (Word)
 ${renderLine}
 
-**\`rendersCorrectly\` is decided by the render outcome above — not by the zip being parseable.**
-- \`Rendered: true\` with visible output page PNGs → judge \`rendersCorrectly\` from what the pages actually look like (layout, no leftover placeholders/highlights, tables/figure/columns intact).
+**\`rendersCorrectly\` means ONE thing: Word opened and converted the document. It is decided by the render outcome above — not by the zip being parseable, and NOT by how the pages look.**
+- \`Rendered: true\` with visible output page PNGs → \`rendersCorrectly = true\`, full stop. Then judge the PAGES separately as \`layoutSound\`: false when the agent introduced a layout defect a reader would see (content pushed off the page, a blank page from a page break stacked on a next-page section break, an orphaned fragment, a broken table/figure/column flow); true otherwise. A layout defect is a demerit and may lower \`taskSuccess\`/\`formattingPreserved\`; it never lowers \`rendersCorrectly\`.
 - \`Rendered: false\` → Word could NOT open and convert this document. Set \`rendersCorrectly = false\` and record a demerit quoting the render error ("Word could not open the document: <error>"). A structurally-valid zip that Word refuses to open does NOT render correctly — do NOT infer \`rendersCorrectly = true\` from \`read\` succeeding, from the file unzipping, or from the markdown read view. \`rendersCorrectly = true\` REQUIRES actual output PNGs you have looked at.
   - **Document defect vs environment failure:** a render error specific to THIS file — Word opened it but rejected it ("unreadable content"), or it timed out on this file **while the pristine BASELINE rendered fine** — is a real document defect → \`rendersCorrectly = false\`. But if the SAME failure also hit the baseline, or the error clearly names a broken environment (automation-permission denied, Word not installed), then Word never got to judge this document: say so in the review and treat \`rendersCorrectly\` as not-determinable (flag it), rather than scoring the document a render failure.
 
@@ -883,10 +920,10 @@ The CLI executable for your verification commands: ${binary}
 After you've judged, use the Write tool TWICE:
   1. A human-readable Markdown review to EXACTLY this path:
      ${reviewPath}
-     It must include: the scenario key + bucket, your verdict (task success, renders correctly, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Frictions** section (the agent's reported frictions/dead-ends and your one-line read on whether the path to the result was smooth or a slog). Make it complete and self-contained. ${judgeMetricsNote}
+     It must include: the scenario key + bucket, your verdict (task success, renders correctly = Word opened it, layout sound, formatting preserved, survived read loop), a **Merits** section (what went right), a **Demerits** section (each defect with its severity and the concrete evidence you saw in the render or read output), and a **Frictions** section (the agent's reported frictions/dead-ends and your one-line read on whether the path to the result was smooth or a slog). Make it complete and self-contained. ${judgeMetricsNote}
   2. The structured verdict as JSON to EXACTLY this path:
      ${verdictPath}
-     Write the SAME object you return below (at minimum \`taskSuccess\`, \`rendersCorrectly\`, \`formattingPreserved\`, \`survivedReadLoop\`). This is the correctness source the run-metrics step reads — it must land on disk.
+     Write the SAME object you return below (at minimum \`taskSuccess\`, \`rendersCorrectly\`, \`layoutSound\`, \`formattingPreserved\`, \`survivedReadLoop\`). This is the correctness source the run-metrics step reads — it must land on disk.
 		 
 Then return the structured verdict. Record BOTH sides for this task:
 - merits: what went right (what the tool made easy, what the agent got correct, parts of the output that are well-formed). Always list at least one if anything worked.
@@ -931,7 +968,7 @@ ${payload}
 Write a thorough, prioritized Markdown report with these sections:
 
 1. **Executive summary** — can weak agents use docx-cli today? Overall pass rate, the headline strengths, and the 2–3 biggest problems.
-2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly | formatting preserved | top merit | top demerit.
+2. **Scoreboard** — a Markdown table: scenario | bucket | task success (success/partial/fail) | renders correctly (Word opened it) | layout sound | formatting preserved | top merit | top demerit.
 2b. **Per-task merits & demerits** — for EVERY scenario, a short block listing its merits (what worked) and its demerits (defects/failures) from the judge verdicts. The user explicitly wants both sides for each task.
 3. **Cross-cutting themes** — group findings into: Discoverability, CLI ergonomics / surface, Correctness & bugs, Formatting fidelity / preservation, Missing capabilities. Rank themes by impact. For each, give the EVIDENCE (which scenarios, specific commands, judge defects, verbatim friction quotes) and a concrete, actionable recommendation.
 4. **Prioritized fixes** — a numbered top 5–8 list, highest leverage first, each tied to the evidence above and phrased as something the maintainer can act on (ideally pointing at the command/flag/output to change).
@@ -941,10 +978,8 @@ ${synthMetricsNote}
 
 Cite scenario keys throughout and quote agent friction verbatim where it's illuminating.
 
-## Write your report to disk
-After you've written the report, WRITE it to EXACTLY this path (use the Write tool):
-  ${runDir}/REPORT.md
-This is the saved run-level report the maintainer reads — the workflow itself does no file I/O, so if you don't write it, it is lost. Then ALSO return the COMPLETE report as your final message.`;
+## Return the report as your final message
+Your final message IS the report: return the COMPLETE Markdown report, starting with its \`# \` title line — no preamble, no sign-off. Do NOT write any file (subagents can't write report files here); the harness saves your returned report to ${runDir}/REPORT.md after the run.`;
 }
 
 // Local backend only: read each scenario's pre-produced exercise.json off disk and
@@ -961,18 +996,6 @@ Files (one per scenario):
 ${lines}
 
 Return { exercises: [ … ] } where each array item is the EXACT parsed JSON object from one file — copy every field VERBATIM: key, status (older files may say completed instead — keep whichever is present), summary, deadEnds, frictions, outputPath (plus any extra fields the file carries, e.g. docxCommands and _local — keep them as-is). Do NOT summarize, truncate, reorder, or invent anything. If a file is missing or unreadable, OMIT that scenario rather than fabricating a result.`;
-}
-
-// Local backend only: run the metrics rollup command verbatim. exercise-metrics.ts
-// reads the on-disk exercise.json ledgers + verdict.json and appends the run-metrics
-// section to REPORT.md itself (--append-report), so the agent runs ONE command and
-// relays — no shell redirect, no measurement logic in the (sandboxed) workflow.
-function metricsPrompt(command) {
-	return `You are the METRICS step of an evaluation harness. Run EXACTLY this one command — it reads the run's on-disk ledgers and verdicts and appends a MEASURED run-metrics section (tokens, wall-clock, tool split, correctness) to REPORT.md:
-
-  ${command}
-
-Run it once. It writes exercise-metrics.{md,json} + each scenario's metrics.json AND appends the section to REPORT.md via the --append-report flag — you do NOT need any shell redirect (\`>>\`). If it exits nonzero, report its stderr; do not retry more than once. Then confirm it ran in one line (the totals line from its output is enough).`;
 }
 
 // Build the stage agent's prompt: run scripts/stage-scenario.ts once per active

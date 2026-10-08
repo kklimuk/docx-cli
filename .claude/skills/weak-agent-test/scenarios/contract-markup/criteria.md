@@ -2,9 +2,11 @@
 
 ## Pass conditions
 
-1. **Tracked changes enabled** — the document's revision-tracking flag is on (verifiable
-   via `docx track-changes list`; the list is non-empty and the document setting is
-   active).
+1. **Changes are tracked** — the clause edits exist as real tracked revisions
+   (`docx track-changes list` is non-empty). Either route counts: the document-level
+   toggle (`track-changes on`) OR per-call `--track` on each edit. The document's
+   toggle being OFF at the end is NOT a failure by itself — what matters is that the
+   wording changes are visible redlines.
 
 2. **≥ 3 tracked text edits or deletions** — at least three of the following egregious
    terms are revised as tracked changes (visible redlines, not silent edits):
@@ -16,12 +18,15 @@
    Verified by: `docx track-changes list` shows ≥ 3 entries of type `insertion` or
    `deletion` touching the relevant clause paragraphs.
 
-3. **§9 line spacing increased as a tracked change** — the §9 Limitation of Liability
-   paragraph's line spacing is opened up (to roughly 1.5, and/or extra space added
-   after) and the change is tracked, not applied silently. `docx track-changes list`
-   includes an entry on that paragraph whose `current` spacing is larger than its
-   `prior` spacing. Restructuring §9's wording or leaving it cramped does not satisfy
-   this — the spacing on that paragraph must actually increase, as a visible revision.
+3. **§9 line spacing increased** — the §9 Limitation of Liability paragraph's line
+   spacing is opened up (to roughly 1.5, and/or extra space added after). Tracking
+   this formatting fix is OPTIONAL: a human reviewer applies house-style and
+   legibility fixes directly and redlines only the wording, so an untracked spacing
+   change (`docx read --ast` shows `spacing.line` ≈ 360 with `lineRule` auto, or a
+   `docx:p … line-spacing="1.5"` hint) passes exactly like a tracked one (a
+   `track-changes list` entry whose `current` spacing exceeds its `prior`).
+   Restructuring §9's wording or leaving it cramped does not satisfy this — the
+   spacing on that paragraph must actually increase.
 
 4. **≥ 4 anchored comments** — comments attached to text in at least four of:
    - §4 IP over-assignment
@@ -49,15 +54,16 @@
 ## How to verify
 
 ```
-# 1. Check tracked changes (redlines + the §9 spacing change)
+# 1. Check tracked changes (the clause redlines; the §9 spacing may or may not be here)
 docx track-changes list contract.docx
 
 # 2. Check anchored comments
 docx comments list contract.docx
 
-# 3. Spot-check §9 for the tracked line-spacing increase — a spacing entry whose
-#    values go up (e.g. "spacing.line ·→360", "spacing.after 80→240")
+# 3. Spot-check §9 for the line-spacing increase — tracked (a spacing entry whose
+#    values go up, e.g. "spacing.line ·→360") OR applied directly (the docx:p hint)
 docx track-changes list contract.docx | grep -iE 'format|spacing'
+docx read contract.docx | grep -E 'line-spacing='
 
 # 4. Confirm the IP sub-points are lower-roman (level-1 list items)
 docx read contract.docx --ast | grep -o '"format":"lower-roman"'
