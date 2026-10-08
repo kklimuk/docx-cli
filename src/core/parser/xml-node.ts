@@ -223,6 +223,13 @@ const PARSE_OPTIONS = {
 	parseTagValue: false,
 	trimValues: false,
 	processEntities: true,
+	// Numeric character references (`&#8226;`, `&#x2013;`) are only decoded
+	// with this on; without it they survive parsing as literal text and the
+	// builder re-escapes their `&`, turning a bullet into the text "&#8226;"
+	// on the next save (issue #12). Decoding happens once, so an escaped
+	// `&amp;#8226;` still reads back as the literal text "&#8226;". HTML named
+	// entities (`&nbsp;`) decode too — undefined in XML, so harmless here.
+	htmlEntities: true,
 	ignoreDeclaration: false,
 };
 
@@ -232,4 +239,33 @@ const BUILD_OPTIONS = {
 	preserveOrder: true,
 	suppressEmptyNode: true,
 	format: false,
+	// We escape in the value processors (one pass per value) instead of the
+	// builder's `entities` table, which treats text and attributes alike —
+	// and attribute values need more than text: a decoded `&#xA;`/`&#9;`/
+	// `&#13;` in an attribute (Word writes alt-text line breaks as
+	// `descr="a&#xA;b"`) must go back out as a reference, since
+	// attribute-value normalization turns a raw tab/newline into a space on
+	// the next read.
+	processEntities: false,
+	tagValueProcessor: (_name: string, value: unknown) =>
+		escapeValue(value, /[&<>'"]/g),
+	attributeValueProcessor: (_name: string, value: unknown) =>
+		escapeValue(value, /[&<>'"\t\n\r]/g),
+};
+
+/** Replace each character `pattern` matches with its entry in `ESCAPES`. */
+function escapeValue(value: unknown, pattern: RegExp): unknown {
+	if (typeof value !== "string") return value;
+	return value.replace(pattern, (character) => ESCAPES[character] ?? character);
+}
+
+const ESCAPES: Record<string, string> = {
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	"'": "&apos;",
+	'"': "&quot;",
+	"\t": "&#9;",
+	"\n": "&#10;",
+	"\r": "&#13;",
 };

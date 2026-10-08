@@ -30,6 +30,46 @@ describe("XmlNode", () => {
 		expect(root?.collectText()).toBe("Hostile: <script> & 'quotes' \"here\"");
 	});
 
+	test("decodes numeric character references in text and attributes (#12)", () => {
+		const xml =
+			'<w:lvl><w:lvlText w:val="&#8226;"/><w:t>&#8226; &#x2013; &#x1F600; done</w:t></w:lvl>';
+		const root = XmlNode.findRoot(XmlNode.parse(xml), "w:lvl");
+		expect(root?.findChild("w:lvlText")?.getAttribute("w:val")).toBe("•");
+		expect(root?.findChild("w:t")?.collectText()).toBe("• – 😀 done");
+		const serialized = XmlNode.serialize([root as XmlNode]);
+		expect(serialized).not.toContain("&amp;#");
+		expect(serialized).toContain('w:val="•"');
+	});
+
+	test("an escaped reference stays literal text, decoded exactly once", () => {
+		const xml = '<w:t a="&amp;#8226;">&amp;#8226; &amp;nbsp;</w:t>';
+		const node = XmlNode.findRoot(XmlNode.parse(xml), "w:t");
+		expect(node?.getAttribute("a")).toBe("&#8226;");
+		expect(node?.collectText()).toBe("&#8226; &nbsp;");
+		const serialized = XmlNode.serialize([node as XmlNode]);
+		expect(serialized).toBe(
+			'<w:t a="&amp;#8226;">&amp;#8226; &amp;nbsp;</w:t>',
+		);
+	});
+
+	test("a decoded whitespace reference in an attribute is re-referenced on serialize", () => {
+		const xml = '<wp:docPr descr="line one&#xA;line&#9;two&#13;"/>';
+		const node = XmlNode.findRoot(XmlNode.parse(xml), "wp:docPr");
+		expect(node?.getAttribute("descr")).toBe("line one\nline\ttwo\r");
+		expect(XmlNode.serialize([node as XmlNode])).toBe(
+			'<wp:docPr descr="line one&#10;line&#9;two&#13;"/>',
+		);
+	});
+
+	test("only tab/newline/CR become references, and only in attributes", () => {
+		const node = XmlNode.element("w:t", { a: "x\u000065;" }, [
+			XmlNode.textNode("a\tb\nc\u000065;"),
+		]);
+		expect(XmlNode.serialize([node])).toBe(
+			'<w:t a="x\u000065;">a\tb\nc\u000065;</w:t>',
+		);
+	});
+
 	test("escapes special chars on serialize", () => {
 		const node = XmlNode.element("w:t", {}, [XmlNode.textNode('< & > "')]);
 		const xml = XmlNode.serialize([node]);

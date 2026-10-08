@@ -6,7 +6,12 @@ import { Pkg } from "@core/ast/document/package";
 import type { XmlNode } from "@core/parser";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml, readMarkdown } from "./helpers";
+import {
+	buildRawDoc,
+	freshFixture,
+	readDocumentXml,
+	readMarkdown,
+} from "./helpers";
 
 /**
  * Pillar invariant tests: any element we don't actively model survives every
@@ -1071,5 +1076,40 @@ describe("markup-compatibility wrappers — multiple Choices and spanning replac
 			"Hi Globex team, welcome. <!-- p0 -->",
 		);
 		expect(await readDocumentXml(docPath)).not.toContain("Acme");
+	});
+});
+
+describe("numeric character references (#12)", () => {
+	test("a write leaves &#NNNN; / &#xHHHH; text as the character, not escaped literal text", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>` +
+				`<w:p><w:r><w:t xml:space="preserve">&#8226; &#x2013; done</w:t></w:r></w:p>`,
+			"char-refs",
+		);
+		expect(await readMarkdown(docPath)).toContain("• – done <!-- p1 -->");
+		const result = await runCli("replace", docPath, "Alpha", "Beta");
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("&amp;#");
+		expect(xml).toContain("• – done");
+	});
+
+	test("a write leaves a numbering.xml lvlText reference as the bullet, not literal text", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>` +
+				`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>First item</w:t></w:r></w:p>`,
+			"char-refs-numbering",
+		);
+		const zip = await JSZip.loadAsync(await Bun.file(docPath).arrayBuffer());
+		zip.file(
+			"word/numbering.xml",
+			`<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="&#8226;"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`,
+		);
+		await Bun.write(docPath, await zip.generateAsync({ type: "uint8array" }));
+		const result = await runCli("replace", docPath, "Alpha", "Beta");
+		expect(result.exitCode).toBe(0);
+		const saved = await JSZip.loadAsync(await Bun.file(docPath).arrayBuffer());
+		const numbering = await saved.file("word/numbering.xml")?.async("string");
+		expect(numbering).toContain('<w:lvlText w:val="•"/>');
 	});
 });

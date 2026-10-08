@@ -67,9 +67,18 @@ function localName(tag: string): string {
  * (they'd resolve against the SVG's location, which after embedding is the
  * docx — effectively inert). `data:image/svg+xml` is *not* allowed because the
  * inline SVG itself can carry script — e.g. `<use href="data:image/svg+xml,
- * <svg onload=evil()/>"/>` would bypass an `image/*` allowlist. */
+ * <svg onload=evil()/>"/>` would bypass an `image/*` allowlist.
+ *
+ * Tab/CR/LF are deleted before classifying, as a browser's URL parser deletes
+ * them anywhere in the input: `java&#9;script:` decodes to `java<TAB>script:`,
+ * the serializer writes that tab back out as `&#9;` (an attribute's raw tab
+ * would normalize to a space), and the rendering browser then reads
+ * `javascript:`. */
 function isAllowedUrl(url: string): boolean {
-	const trimmed = url.trim().toLowerCase();
+	const trimmed = url
+		.replace(/[\t\n\r]/g, "")
+		.trim()
+		.toLowerCase();
 	if (trimmed.length === 0) return true;
 	if (trimmed.startsWith("#")) return true;
 	if (/^data:image\/(png|jpe?g|gif|webp|bmp)[;,]/.test(trimmed)) return true;
