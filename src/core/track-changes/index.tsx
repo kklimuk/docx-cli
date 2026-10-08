@@ -200,10 +200,14 @@ export class TrackChanges {
  * here, and by the range-replace machinery in [replace.tsx](./replace.tsx)
  * to preserve walker-emitted inner `<w:ins>` / `<w:del>` (e.g. CriticMarkup
  * from `edit --markdown`) instead of nesting them inside a fresh outer
- * wrapper that would clobber their author/revisionId metadata. */
+ * wrapper that would clobber their author/revisionId metadata. `isTrackable`
+ * narrows what gets wrapped (the span replace wraps only `<w:r>`, leaving an
+ * equation inside the cut alone, as its untracked path does). */
 export function wrapContiguousTrackable(
 	children: XmlNode[],
 	build: (runs: XmlNode[]) => XmlNode,
+	isTrackable: (child: XmlNode) => boolean = (child) =>
+		TRACKABLE_PARAGRAPH_CHILDREN.has(child.tag),
 ): XmlNode[] {
 	const out: XmlNode[] = [];
 	let buffer: XmlNode[] = [];
@@ -213,7 +217,7 @@ export function wrapContiguousTrackable(
 		buffer = [];
 	};
 	for (const child of children) {
-		if (TRACKABLE_PARAGRAPH_CHILDREN.has(child.tag)) {
+		if (isTrackable(child)) {
 			buffer.push(child);
 			continue;
 		}

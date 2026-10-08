@@ -28,6 +28,31 @@ export async function trackedKinds(path: string): Promise<string[]> {
 	);
 }
 
+/** The inner XML of every `<w:ins>`/`<w:del>` revision wrapper `author` wrote,
+ *  in document order — for asserting multi-author attribution. */
+export function revisionWrappersBy(
+	xml: string,
+	tag: "ins" | "del",
+	author: string,
+): string[] {
+	// `(?<!/)>` skips a self-closing paragraph-mark `<w:ins …/>`, which would
+	// otherwise swallow everything up to the next closing tag.
+	const escapedAuthor = author.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = new RegExp(
+		`<w:${tag} [^>]*w:author="${escapedAuthor}"[^>]*(?<!/)>(.*?)</w:${tag}>`,
+		"gs",
+	);
+	return [...xml.matchAll(pattern)].map((match) => match[1] ?? "");
+}
+
+/** Every `w:id` on an `<w:ins>`/`<w:del>` wrapper — duplicates corrupt the
+ *  revision list, so splitting a wrapper must mint a fresh id for one half. */
+export function revisionIds(xml: string): string[] {
+	return [...xml.matchAll(/<w:(?:ins|del) [^>]*w:id="(\d+)"/g)].map(
+		(match) => match[1] ?? "",
+	);
+}
+
 /** A fresh, mutable temp copy of a committed fixture (so tests never write to
  *  `tests/fixtures/` in place). */
 export async function freshFixture(

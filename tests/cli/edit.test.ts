@@ -4,7 +4,13 @@ import { Pkg } from "@core/ast/document/package";
 import { clearFormatting, resolveClearTags } from "@core/edit/clear-formatting";
 import { XmlNode } from "@core/parser";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml, trackedKinds } from "./helpers";
+import {
+	buildRawDoc,
+	freshFixture,
+	readDocumentXml,
+	revisionWrappersBy,
+	trackedKinds,
+} from "./helpers";
 
 const FIXTURE = "tests/fixtures/word-formatted.docx";
 // Layout (built by tests/fixtures/setup/word-formatted.ts):
@@ -711,6 +717,70 @@ describe("docx edit --at pN:S-E — character-span edit", () => {
 			),
 		).toBe(true);
 		expect(changes.every((change) => change.author === "Reviewer")).toBe(true);
+	});
+
+	test("tracked span inside another author's insertion gets the editor's own <w:ins>", async () => {
+		// Shares replace's span engine (issue #13): the nested deletion by a
+		// third author must not shift the span, and the replacement must not
+		// land bare inside Reviewer A's insertion.
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>',
+			"span-in-ins",
+		);
+		const locator = await firstLocator(docPath, "disputed amount");
+		expect(locator).toBe("p0:38-53");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			locator,
+			"--text",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "del", "Editor")).toEqual([
+			expect.stringContaining(">disputed amount</w:delText>"),
+		]);
+		expect(revisionWrappersBy(xml, "ins", "Editor")).toEqual([
+			expect.stringContaining("disputed sum"),
+		]);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"Fees are due. The Client may withhold disputed sum.",
+		);
+	});
+
+	test("an empty span inserts AT the point, tracked, with no phantom deletion", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>Hello</w:t></w:r><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p><w:p><w:r><w:t>Hello world</w:t></w:r></w:p>',
+			"span-empty",
+		);
+		// p0:5-5 sits on a run boundary; p1:5-5 inside a single run.
+		for (const locator of ["p0:5-5", "p1:5-5"]) {
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				locator,
+				"--text",
+				",",
+				"--track",
+			);
+			expect(result.exitCode).toBe(0);
+		}
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout.match(/Hello, world/g)).toHaveLength(2);
+		const changes = (await runCli("track-changes", "list", docPath))
+			.parsed as Array<{ kind: string; text: string }>;
+		expect(changes.map((change) => [change.kind, change.text])).toEqual([
+			["ins", ","],
+			["ins", ","],
+		]);
 	});
 
 	test("out-of-range span fails with INVALID_LOCATOR", async () => {

@@ -9,6 +9,18 @@ export function isSubtractiveTrackedChangeWrapper(tag: string): boolean {
 	return tag === "w:del" || tag === "w:moveFrom";
 }
 
+/** Every run-level revision wrapper: additive `<w:ins>`/`<w:moveTo>` plus the
+ *  subtractive pair above. Each carries its own author and `w:id`, so new
+ *  content must never be left bare inside one — it would inherit that
+ *  revision's attribution (issue #13). */
+export function isTrackedChangeWrapper(tag: string): boolean {
+	return (
+		tag === "w:ins" ||
+		tag === "w:moveTo" ||
+		isSubtractiveTrackedChangeWrapper(tag)
+	);
+}
+
 export function runTextLength(run: XmlNode): number {
 	return runChildrenTextWidth(run.children);
 }

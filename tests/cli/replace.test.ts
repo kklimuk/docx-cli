@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import {
+	buildRawDoc,
+	readDocumentXml,
+	revisionIds,
+	revisionWrappersBy,
+} from "./helpers";
 
 type Body = {
 	blocks: Array<{
@@ -1200,4 +1205,220 @@ test("replace and replace batch apply complex-script override only to replacemen
 			)
 		).exitCode,
 	).toBe(2);
+});
+
+// Issue #13: a tracked replace whose match lies inside ANOTHER author's
+// pending `<w:ins>` must put the replacement in the replacing author's own
+// `<w:ins>` — splitting the surrounding insertion around it, as Word does —
+// instead of leaving it bare inside the other author's insertion (attributed
+// to them). The cut's `<w:del>` stays nested in the surrounding insertion, and
+// a third author's nested deletion must neither shift the span nor change.
+describe("docx replace --track inside another author's insertion", () => {
+	const reviewerA = 'w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"';
+	const reviewerBDeletion =
+		'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>';
+
+	test("replacement lands in the replacer's own <w:ins>, splitting the other author's", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"replace-in-ins",
+		);
+		const result = await replaceTrackedAsEditor(docPath);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		const editorInsertions = revisionWrappersBy(xml, "ins", "Editor");
+		expect(editorInsertions).toEqual([expect.stringContaining("disputed sum")]);
+		// Reviewer A's insertion is split around Editor's: the leading half
+		// carries the nested Editor deletion, a trailing half holds ".".
+		const reviewerInsertions = revisionWrappersBy(xml, "ins", "Reviewer A");
+		expect(reviewerInsertions).toHaveLength(2);
+		expect(reviewerInsertions[0]).toContain("may withhold a ");
+		expect(reviewerInsertions[0]).toMatch(
+			/<w:del [^>]*w:author="Editor"[^>]*>.*<w:delText[^>]*>disputed amount<\/w:delText>/s,
+		);
+		expect(reviewerInsertions[0]).not.toContain("disputed sum");
+		expect(reviewerInsertions[1]).toMatch(/<w:t[^>]*>\.<\/w:t>/);
+		expect(xml.indexOf("disputed sum")).toBeLessThan(
+			xml.search(/<w:t[^>]*>\.<\/w:t>/),
+		);
+		const ids = revisionIds(xml);
+		expect(new Set(ids).size).toBe(ids.length);
+
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"The Client may withhold a disputed sum.",
+		);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("The Client");
+		expect(baseline.stdout).not.toContain("withhold");
+	});
+
+	test("a third author's nested deletion before the match doesn't shift the span", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r><w:ins w:id="1" ${reviewerA}><w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>${reviewerBDeletion}<w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"replace-in-ins-nested-del",
+		);
+		const result = await replaceTrackedAsEditor(docPath);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain(reviewerBDeletion);
+		expect(xml).toContain("The Client may withhold ");
+		expect(revisionWrappersBy(xml, "del", "Editor")).toEqual([
+			expect.stringContaining(">disputed amount</w:delText>"),
+		]);
+		expect(revisionWrappersBy(xml, "ins", "Editor")).toEqual([
+			expect.stringContaining("disputed sum"),
+		]);
+		const ids = revisionIds(xml);
+		expect(new Set(ids).size).toBe(ids.length);
+
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(
+			"Fees are due. The Client may withhold disputed sum.",
+		);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("Fees are due.");
+		expect(baseline.stdout).not.toContain("withhold");
+	});
+
+	test("an insertion Word nested in a hyperlink splits inside the link", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:hyperlink w:anchor="terms"><w:ins w:id="1" ${reviewerA}><w:r><w:t>the disputed amount clause</w:t></w:r></w:ins></w:hyperlink></w:p>`,
+			"replace-in-link-ins",
+		);
+		const result = await replaceTrackedAsEditor(docPath);
+		expect(result.exitCode).toBe(0);
+
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "ins", "Editor")).toEqual([
+			expect.stringContaining("disputed sum"),
+		]);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer A")).toHaveLength(2);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer A").join("")).not.toContain(
+			"disputed sum",
+		);
+		const ids = revisionIds(xml);
+		expect(new Set(ids).size).toBe(ids.length);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("[the disputed sum clause](#terms)");
+	});
+
+	test("--current: a deletion inside the span keeps its place in document order", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:ins w:id="1" ${reviewerA}><w:r><w:t xml:space="preserve">may withhold </w:t></w:r>${reviewerBDeletion}<w:r><w:t>disputed amounts.</w:t></w:r></w:ins></w:p>`,
+			"replace-current-nested-del",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"hold any disputed",
+			"keep",
+			"--current",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		// Editor's two deletions bracket B's, in the order the text ran.
+		expect(xml.indexOf(">hold </w:delText>")).toBeLessThan(
+			xml.indexOf(">any </w:delText>"),
+		);
+		expect(xml.indexOf(">any </w:delText>")).toBeLessThan(
+			xml.indexOf(">disputed</w:delText>"),
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("may withkeep amounts.");
+	});
+
+	test("--current: a replacement inside another author's deletion gets its own <w:ins>", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:del w:id="1" ${reviewerA}><w:r><w:delText>gone words</w:delText></w:r></w:del></w:p>`,
+			"replace-in-del",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"gone",
+			"back",
+			"--current",
+			"--track",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "ins", "Editor")).toEqual([
+			expect.stringContaining("back"),
+		]);
+		expect(revisionWrappersBy(xml, "del", "Reviewer A").join("")).not.toContain(
+			"back",
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("Keep back");
+	});
+
+	function replaceTrackedAsEditor(docPath: string) {
+		return runCli(
+			"replace",
+			docPath,
+			"disputed amount",
+			"disputed sum",
+			"--track",
+			"--author",
+			"Editor",
+		);
+	}
+});
+
+describe("docx replace --track inside a hyperlink", () => {
+	test("the replacement is tracked inside the link; reject restores the cut", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t>here now</w:t></w:r></w:hyperlink></w:p>',
+			"replace-in-link",
+		);
+		const result = await runCli("replace", docPath, "here", "there", "--track");
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "ins", "Reviewer")).toEqual([
+			expect.stringContaining("there"),
+		]);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("[here now](#x)");
+	});
+
+	test("cut link text across the link edge stays as a tracked deletion", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Click </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t>here now</w:t></w:r></w:hyperlink></w:p>',
+			"replace-across-link",
+		);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Click here",
+			"Tap",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(revisionWrappersBy(xml, "del", "Reviewer").join("")).toContain(
+			">here</w:delText>",
+		);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain("Click ");
+		expect(baseline.stdout).toContain("here");
+	});
+
+	test("a nested revision ahead of the span inside the link doesn't shift it", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:hyperlink w:anchor="x"><w:ins w:id="1" w:author="A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">the </w:t></w:r></w:ins><w:r><w:t>docs here</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>',
+			"replace-link-nested-offset",
+		);
+		const result = await runCli("replace", docPath, "here tail", "Q");
+		expect(result.exitCode).toBe(0);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain("[the docs Q](#x)");
+	});
 });

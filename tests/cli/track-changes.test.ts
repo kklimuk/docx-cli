@@ -979,7 +979,9 @@ const MULTI_FIX = "tests/fixtures/multi-tracked.docx";
 //   p0: "Aleph is first."  — tc0 (del "Alpha") + tc1 (ins "Aleph")
 //   p1: "Bet is second."   — tc2 (del "Beta")  + tc3 (ins "Bet")
 //   p2: "Gimel is third."  — tc4 (del "Gamma") + tc5 (ins "Gimel")
-// Six tracked changes, ids tc0..tc5 in document order. Picking
+//   p3: "Delta is fourth & final." — tc6..tc10, a cross-author span replace
+//       inside another author's pending insertion (see the builder)
+// Eleven tracked changes; p0..p2 hold tc0..tc5 in document order. Picking
 // non-adjacent ids (tc0, tc2, tc4) targets one wrapper per paragraph.
 
 const freshMulti = (label: string) => copyFixture(label, MULTI_FIX);
@@ -1015,8 +1017,8 @@ describe("docx track-changes accept --at (batch)", () => {
 	test("repeated --at accepts each id atomically against the pre-mutation tree", async () => {
 		const docPath = await freshMulti("batch-accept");
 		const before = await listTracked(docPath);
-		// 3 replaces × 2 wrappers each = 6 tracked changes.
-		expect(before).toHaveLength(6);
+		// 3 replaces × 2 wrappers each on p0..p2, plus p3's 5 wrappers.
+		expect(before).toHaveLength(11);
 		const ids = before.map((change) => change.id);
 		const targets = [ids[0], ids[2], ids[4]].filter(
 			(id): id is string => id !== undefined,
@@ -1044,9 +1046,9 @@ describe("docx track-changes accept --at (batch)", () => {
 		};
 		expect(payload.applied.map((entry) => entry.id)).toEqual(targets);
 
-		// 3 of the original 6 changes accepted → 3 remain.
+		// 3 of the original 11 changes accepted → 8 remain.
 		const after = await listTracked(docPath);
-		expect(after).toHaveLength(3);
+		expect(after).toHaveLength(8);
 	});
 
 	test("dedupes repeated ids", async () => {
