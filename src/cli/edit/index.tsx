@@ -48,6 +48,7 @@ import {
 	writeStdout,
 } from "../respond";
 import { runEditBatch } from "./batch";
+import { warnPendingRevisions } from "./pending-revisions-warning";
 import {
 	parseTabsValue,
 	resolveTabsDirective,
@@ -304,7 +305,7 @@ export async function run(args: string[]): Promise<number> {
 				document,
 				opts.locator,
 			);
-			return commitBlockEdit(document, paragraph, opts, cell.parent);
+			return commitBlockEdit(document, paragraph, opts, cell);
 		} catch (error) {
 			if (error instanceof CellTargetError) {
 				return fail(error.code, error.message, error.hint);
@@ -434,16 +435,18 @@ async function commitSpanEdit(
 
 /** Single-block edit: paragraph content / props dispatch through the Edit
  * lens. The lens handles tracked-vs-untracked, style ensures, and the
- * formatting-preservation decision. */
+ * formatting-preservation decision. `cell` is set for a bare-cell target
+ * (`tN:rRcC`), whose sole paragraph is the edited block. */
 async function commitBlockEdit(
 	document: Document,
 	blockRef: BlockReference,
 	opts: ValidatedOptions,
-	cellParent?: XmlNode[],
+	cell?: { id: string; parent: XmlNode[] },
 ): Promise<number> {
 	if (opts.dryRun) return respondDryRun(opts);
 
 	const track = resolveTracked(document, opts.trackFlag);
+	let resolvedAuthors: string[] = [];
 	try {
 		const edit = new Edit(document);
 		// The paragraph node the content edit produced — a combined `--clear`
@@ -451,19 +454,27 @@ async function commitBlockEdit(
 		// node, not the original blockRef).
 		let resultNode: XmlNode | null = null;
 		if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
-			resultNode = edit.paragraph(blockRef, opts.spec, {
-				authorFlag: opts.authorFlag,
-				noFormatting: opts.noFormatting,
-				track,
-			});
+			({ node: resultNode, resolvedAuthors } = edit.paragraph(
+				blockRef,
+				opts.spec,
+				{
+					authorFlag: opts.authorFlag,
+					noFormatting: opts.noFormatting,
+					track,
+				},
+			));
 		} else if (opts.spec.kind === "markdown") {
 			const resolved = await resolveMarkdownBlocks(document, opts.spec);
 			if (typeof resolved === "number") return resolved;
-			resultNode = edit.paragraph(blockRef, resolved, {
-				authorFlag: opts.authorFlag,
-				noFormatting: opts.noFormatting,
-				track,
-			});
+			({ node: resultNode, resolvedAuthors } = edit.paragraph(
+				blockRef,
+				resolved,
+				{
+					authorFlag: opts.authorFlag,
+					noFormatting: opts.noFormatting,
+					track,
+				},
+			));
 		} else if (opts.spec.kind === "removeLine") {
 			// Empty `--text` on a whole paragraph removes the line (cell-safe — a
 			// table cell's last paragraph is blanked, not deleted). Same path as
@@ -505,8 +516,12 @@ async function commitBlockEdit(
 		throw error;
 	}
 
-	if (cellParent) ensureCellEndsWithParagraph(cellParent);
+	if (cell) ensureCellEndsWithParagraph(cell.parent);
 	await document.save(opts.outputPath);
+	await warnPendingRevisions(opts.locator, resolvedAuthors, {
+		paragraphLocator: cell ? `${cell.id}:p0` : opts.locator,
+		tracked: track,
+	});
 	return emitEditAck(opts);
 }
 
@@ -566,10 +581,12 @@ async function commitRangeEdit(
 		return fail("USAGE", "Unsupported edit spec for range locator");
 	}
 
+	const track = resolveTracked(document, opts.trackFlag);
+	let resolvedAuthors: string[];
 	try {
-		new Edit(document).range(rangeRef, spec, {
+		resolvedAuthors = new Edit(document).range(rangeRef, spec, {
 			authorFlag: opts.authorFlag,
-			track: resolveTracked(document, opts.trackFlag),
+			track,
 		});
 	} catch (error) {
 		if (error instanceof EditError) {
@@ -579,6 +596,10 @@ async function commitRangeEdit(
 	}
 
 	await document.save(opts.outputPath);
+	await warnPendingRevisions(opts.locator, resolvedAuthors, {
+		paragraphLocator: null,
+		tracked: track,
+	});
 	return emitEditAck(opts);
 }
 

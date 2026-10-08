@@ -52,6 +52,7 @@ import {
 	TrackChanges,
 	type TrackedMeta,
 } from "../track-changes";
+import { watchPendingRevisions } from "../track-changes/pending-authors";
 import {
 	applyFormattingPreservingEdit,
 	applyTrackedRangeReplace,
@@ -129,7 +130,7 @@ export class Edit {
 		blockRef: BlockReference,
 		spec: ParagraphContentSpec,
 		opts: { authorFlag?: string; noFormatting?: boolean; track?: boolean } = {},
-	): XmlNode {
+	): ParagraphEditResult {
 		const targetIndex = blockRef.parent.indexOf(blockRef.node);
 		if (targetIndex === -1) {
 			throw new EditError(
@@ -137,6 +138,15 @@ export class Edit {
 				"Block reference is stale (parent does not contain it)",
 			);
 		}
+		// Snapshot BEFORE the rebuild: the single-author content rebuild resolves
+		// other authors' pending revisions without review (issue #17), so the
+		// caller can warn about whichever ones didn't survive.
+		const listResolvedAuthors = watchPendingRevisions(
+			blockRef.parent,
+			targetIndex,
+			targetIndex,
+			opts.authorFlag,
+		);
 
 		this.document
 			.ensureStyles()
@@ -163,7 +173,7 @@ export class Edit {
 			);
 			this.reanchorComments(blockRef.node, commentMarkers);
 			// Mutated in place — the same <w:p> node is the result.
-			return blockRef.node;
+			return { node: blockRef.node, resolvedAuthors: listResolvedAuthors() };
 		}
 
 		if (spec.kind === "code") {
@@ -226,7 +236,10 @@ export class Edit {
 		}
 		// The spliced-in first paragraph is the result (a following clear in a
 		// combined content+clear edit targets this node, not the replaced one).
-		return anchorTarget ?? blockRef.node;
+		return {
+			node: anchorTarget ?? blockRef.node,
+			resolvedAuthors: listResolvedAuthors(),
+		};
 	}
 
 	/** Properties-only edit: re-apply paragraph properties (`--style`/`--alignment`/
@@ -417,12 +430,13 @@ export class Edit {
 	 * cross-paragraph LCS, and we match it). Rejects tracked ranges that span
 	 * a non-paragraph block (most commonly a table) because the tracked-range
 	 * walker injects `<w:pPr>` into every span block, which would corrupt
-	 * `<w:tbl>`. */
+	 * `<w:tbl>`. Returns the other authors whose pending revisions the replace
+	 * resolved without review (issue #17), for the caller to warn about. */
 	range(
 		rangeRef: BlockRangeReference,
 		spec: ParagraphContentSpec,
 		opts: { authorFlag?: string; track?: boolean } = {},
-	): void {
+	): string[] {
 		this.document
 			.ensureStyles()
 			.ensureReferencedStyle(spec.paragraphOptions.style);
@@ -449,6 +463,12 @@ export class Edit {
 			}
 		}
 
+		const listResolvedAuthors = watchPendingRevisions(
+			rangeRef.parent,
+			rangeRef.startIndex,
+			rangeRef.endIndex,
+			opts.authorFlag,
+		);
 		const newParagraphs = buildNewParagraphs(spec);
 		if (tracked) {
 			applyTrackedRangeReplace(
@@ -467,8 +487,13 @@ export class Edit {
 				newParagraphs,
 			);
 		}
+		return listResolvedAuthors();
 	}
 }
+
+/** `Edit.paragraph`'s result: the paragraph node the content edit produced,
+ *  and the other authors whose pending revisions the rebuild resolved. */
+export type ParagraphEditResult = { node: XmlNode; resolvedAuthors: string[] };
 
 /** The paragraph-content specs that produce one or more new paragraphs.
  * Shared between `Edit.paragraph` (single block) and `Edit.range` (block

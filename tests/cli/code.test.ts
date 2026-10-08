@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { buildRawDoc, readDocumentXml } from "./helpers";
 
 type AstParagraph = {
 	id: string;
@@ -450,6 +450,28 @@ describe("docx code edit", () => {
 		);
 		const xml = await readDocumentXml(docPath);
 		expect(xml).toMatch(/<w:(ins|del)\b/);
+	});
+
+	test("warns when the replaced paragraph held another author's pending change (#17)", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p><w:r><w:t xml:space="preserve">x = </w:t></w:r><w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>1</w:t></w:r></w:ins></w:p>`,
+			"code-edit-pending",
+		);
+		const result = await runCli(
+			"code",
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--code",
+			"x = 2",
+			"--author",
+			"Editor",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain(
+			"warning: p0 had pending tracked changes by Reviewer A;",
+		);
 	});
 });
 
