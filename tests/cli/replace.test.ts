@@ -1725,8 +1725,8 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 
 	test("a span CROSSING out of the ins keeps the general walker's shape", async () => {
 		// Only a match wholly inside the wrapper is gated; this one starts in the
-		// plain run before it. The expected string is main's output, pinned
-		// verbatim (its reuse of w:id="1" on both halves is pre-existing).
+		// plain run before it. The half of the ins after the cut is a second
+		// revision, so it gets a fresh id (it reused w:id="1" before #16).
 		const docPath = await trackedReplace(
 			SINGLE_RUN,
 			"ins-crossing",
@@ -1738,7 +1738,7 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 				'<w:del w:id="2" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">Client </w:delText></w:r></w:del>' +
 				'<w:ins w:id="3" w:author="Editor" w:date="NOW"><w:r><w:t xml:space="preserve">disputed sum</w:t></w:r></w:ins>' +
 				`${INS_A}<w:del w:id="4" w:author="Editor" w:date="NOW"><w:r><w:delText xml:space="preserve">may</w:delText></w:r></w:del></w:ins>` +
-				`${INS_A}<w:r><w:t xml:space="preserve"> withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
+				'<w:ins w:id="5" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve"> withhold a disputed amount.</w:t></w:r></w:ins></w:p>',
 		);
 	});
 
@@ -1757,5 +1757,170 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 				'<w:r><w:t xml:space="preserve">disputed sum</w:t></w:r>' +
 				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
 		);
+	});
+});
+
+// Issue #16: an UNTRACKED replace whose match starts in plain text inside
+// another author's pending <w:ins> and ends inside a <w:hyperlink> nested in
+// that same ins. Main split the ins around the match (both halves kept
+// w:id="1"), put the replacement BETWEEN the halves as plain original text,
+// and never descended the nested link — so the link's part of the match
+// survived and the order scrambled ("may [a disputed](#x)keep aamount.").
+// Untracked, a revision wrapper is now cut IN PLACE (no split, so no id is
+// duplicated) and the replacement lands where the match started — inside the
+// ins, credited to its author, as it already did for a match wholly inside it.
+describe("docx replace across a wrapper nested in another author's insertion (#16)", () => {
+	const INS_A =
+		'<w:ins w:id="1" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z">';
+	// A <w:hyperlink> directly under <w:ins> is what the issue reported, but the
+	// ECMA schema only allows the reverse nesting, so this body fails `validate`
+	// before any edit — those cases skip the schema check.
+	const INS_LINK = `<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t xml:space="preserve">may withhold </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t>a disputed</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> amount.</w:t></w:r></w:ins></w:p>`;
+
+	async function paragraphXml(docPath: string): Promise<string> {
+		const xml = await readDocumentXml(docPath);
+		return xml.match(/<w:p>.*?<\/w:p>/s)?.[0] ?? "";
+	}
+
+	function revisionIds(xml: string): string[] {
+		return [...xml.matchAll(/<w:(?:ins|del) w:id="(\d+)"/g)].map(
+			(match) => match[1] ?? "",
+		);
+	}
+
+	async function replaceIn(
+		body: string,
+		label: string,
+		pattern: string,
+		replacement: string,
+		...flags: string[]
+	): Promise<string> {
+		const docPath = await buildRawDoc(body, label);
+		const result = await runCli(
+			"replace",
+			docPath,
+			pattern,
+			replacement,
+			...flags,
+		);
+		expect(result.exitCode).toBe(0);
+		if (body !== INS_LINK) {
+			expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		}
+		return docPath;
+	}
+
+	test("the link's part of the match is cut and the replacement stays in the ins", async () => {
+		const docPath = await replaceIn(
+			INS_LINK,
+			"ins-link",
+			"withhold a",
+			"keep a",
+		);
+		expect(await paragraphXml(docPath)).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may </w:t></w:r>` +
+				'<w:r><w:t xml:space="preserve">keep a</w:t></w:r>' +
+				'<w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve"> disputed</w:t></w:r></w:hyperlink>' +
+				'<w:r><w:t xml:space="preserve"> amount.</w:t></w:r></w:ins></w:p>',
+		);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain(
+			"The Client may keep a[ disputed](#x) amount.",
+		);
+		const ids = revisionIds(await paragraphXml(docPath));
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	test("a match starting inside the nested link keeps the replacement in the link", async () => {
+		const docPath = await replaceIn(
+			INS_LINK,
+			"ins-link-start",
+			"disputed amount",
+			"sum",
+		);
+		expect(await paragraphXml(docPath)).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may withhold </w:t></w:r>` +
+				'<w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve">a </w:t></w:r><w:r><w:t xml:space="preserve">sum</w:t></w:r></w:hyperlink>' +
+				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+	});
+
+	test("a match crossing OUT of the ins cuts it in place without duplicating its id", async () => {
+		const docPath = await replaceIn(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> a disputed amount.</w:t></w:r></w:p>`,
+			"ins-out",
+			"withhold a",
+			"keep a",
+		);
+		expect(await paragraphXml(docPath)).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">may </w:t></w:r>` +
+				'<w:r><w:t xml:space="preserve">keep a</w:t></w:r></w:ins>' +
+				'<w:r><w:t xml:space="preserve"> disputed amount.</w:t></w:r></w:p>',
+		);
+	});
+
+	test("an ins the match covers entirely is removed, not left empty", async () => {
+		const docPath = await replaceIn(
+			`<w:p><w:r><w:t xml:space="preserve">The Client may </w:t></w:r>${INS_A}<w:r><w:t>not</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> pay.</w:t></w:r></w:p>`,
+			"ins-covered",
+			"may not pay",
+			"must pay",
+		);
+		expect(await paragraphXml(docPath)).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">must pay</w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:p>',
+		);
+	});
+
+	test("a match in a LATER run of a multi-run ins cuts the right words", async () => {
+		const docPath = await replaceIn(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t xml:space="preserve">may withhold </w:t></w:r><w:r><w:t>a disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"ins-multirun",
+			"disputed",
+			"contested",
+		);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain(
+			"The Client may withhold a contested amount.",
+		);
+	});
+
+	test("a match in a later run of a multi-run hyperlink cuts the right words", async () => {
+		const docPath = await replaceIn(
+			'<w:p><w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:r><w:t>beta gamma</w:t></w:r></w:hyperlink></w:p>',
+			"link-multirun",
+			"gamma",
+			"DELTA",
+		);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("[alpha beta DELTA](#x)");
+	});
+
+	test("a run after a link nested in the ins keeps its offset", async () => {
+		const docPath = await buildRawDoc(
+			`<w:p>${INS_A}<w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve">link </w:t></w:r></w:hyperlink><w:r><w:t>beta gamma</w:t></w:r></w:ins></w:p>`,
+			"ins-link-after",
+		);
+		expect((await runCli("replace", docPath, "gamma", "DELTA")).exitCode).toBe(
+			0,
+		);
+		const read = await runCli("read", docPath, "--accepted");
+		expect(read.stdout).toContain("alpha [link ](#x)beta DELTA");
+	});
+
+	test("tracked, the half of the ins after the match gets a fresh id", async () => {
+		const docPath = await replaceIn(
+			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"ins-tracked-out",
+			"Client may",
+			"Client must",
+			"--track",
+		);
+		const ids = revisionIds(await paragraphXml(docPath));
+		expect(new Set(ids).size).toBe(ids.length);
 	});
 });
