@@ -45,16 +45,38 @@ Open **mnda-reviewed.docx** in Word and choose **Review → All Markup**. You sh
 
 ## Use it from the terminal
 
-Install a standalone binary on macOS or Linux:
+**Bun package (npm registry)** — the simplest path with Bun >= 1.3:
 
 ```sh
-curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
-sh install.sh
+bun add -g bun-docx
+# or run without installing:
+bunx bun-docx read doc.docx
+```
+
+**Standalone binary** (macOS/Linux, no Bun required). Every release publishes prebuilt binaries, the installer, and a `SHA256SUMS` manifest covering all of them. Download and verify the installer before running it, using the same release tag throughout:
+
+```sh
+DOCX_VERSION=v0.27.0
+curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/install.sh" &&
+curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/SHA256SUMS" &&
+shasum -a 256 -c SHA256SUMS --ignore-missing &&
+VERSION="$DOCX_VERSION" REQUIRE_CHECKSUM=1 sh install.sh
+```
+
+Use `sha256sum -c SHA256SUMS --ignore-missing` if your system has `sha256sum` instead of `shasum`. Continue only when verification reports `install.sh: OK`; the `&&` chain stops on a failed download or checksum. The installer then downloads the prebuilt binary and **verifies its SHA-256 before installing**. `REQUIRE_CHECKSUM=1` makes it refuse installation if no checksum tool is available.
+
+The default destination is `$HOME/.local/bin`; set `PREFIX` to choose another directory. Add the destination to your `PATH`:
+
+```sh
 export PATH="$HOME/.local/bin:$PATH"
 docx --version
 ```
 
-For Windows, download `docx-windows-x64.exe` from [Releases](https://github.com/kklimuk/docx-cli/releases/latest). Already use Bun? Run `bun add -g bun-docx`. The project is **docx-cli**, its npm package is **bun-docx**, and its command is **docx**.
+To install manually, download the binary for your platform and `SHA256SUMS` from [Releases](https://github.com/kklimuk/docx-cli/releases/latest), verify the checksum, and put the binary on `PATH`. On macOS/Linux, rename it to `docx` and run `chmod +x docx`; on Windows, use `docx-windows-x64.exe` (rename it to `docx.exe` for the commands below). macOS binaries are ad-hoc signed and signature-verified before checksumming; they are not Developer ID-signed or notarized.
+
+On macOS/Linux, **`docx upgrade`** updates a standalone binary in place using the installer embedded at build time, with release-tag pinning and SHA-256 verification. Use `--dry-run` to preview or `--to v0.27.0` to select a release. Update a Bun/npm install through its package manager.
+
+The project is **docx-cli**, its npm package is **bun-docx**, and its command is **docx**. See [installation and updates](guides/installation.md) and [install integrity](SECURITY.md#install-integrity) for details.
 
 Try the same review yourself (macOS/Linux shell):
 

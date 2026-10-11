@@ -4,7 +4,7 @@
 
 ## Install
 
-**Bun package (npm registry)** — requires Bun >= 1.3:
+**Bun package (npm registry)** — the simplest path with Bun >= 1.3:
 
 ```sh
 bun add -g bun-docx
@@ -12,28 +12,32 @@ bun add -g bun-docx
 bunx bun-docx read doc.docx
 ```
 
-**Standalone binary** (no Bun required). Every release publishes prebuilt binaries, the installer, and a `SHA256SUMS` manifest covering all of them; the installer **verifies the binary's SHA-256** before installing:
+**Standalone binary** (macOS/Linux, no Bun required). Every release publishes prebuilt binaries, the installer, and a `SHA256SUMS` manifest covering all of them. Download and verify the installer before running it, using the same release tag throughout:
 
 ```sh
-curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
-sh install.sh
+DOCX_VERSION=v0.27.0
+curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/install.sh" &&
+curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/SHA256SUMS" &&
+shasum -a 256 -c SHA256SUMS --ignore-missing &&
+VERSION="$DOCX_VERSION" REQUIRE_CHECKSUM=1 sh install.sh
 ```
 
-`install.sh` is a release asset, not a file served from a moving branch — so it is immutable per release and listed in that release's `SHA256SUMS`. (Published from v0.23.0 onward; on earlier releases use the npm path above.) To verify it before running it:
+Use `sha256sum -c SHA256SUMS --ignore-missing` if your system has `sha256sum` instead of `shasum`. Continue only when verification reports `install.sh: OK`; the `&&` chain stops on a failed download or checksum. The installer then downloads the prebuilt binary and **verifies its SHA-256 before installing**. `REQUIRE_CHECKSUM=1` makes it refuse installation if no checksum tool is available.
+
+Choose a tag from [Releases](https://github.com/kklimuk/docx-cli/releases) to change `DOCX_VERSION`. `install.sh` has been published as a release asset since v0.23.0. The installer honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`); the example pins both the installer and binary to the same tag. Add the destination to your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/SHA256SUMS
-shasum -a 256 -c SHA256SUMS --ignore-missing   # or: sha256sum -c …
-sh install.sh
+export PATH="$HOME/.local/bin:$PATH"
+docx --version
 ```
 
 macOS artifacts built by the current release workflow are ad-hoc signed and signature-verified before checksumming; they are not Developer ID-signed or notarized.
 
-Honors `PREFIX` (default `$HOME/.local/bin`) and `VERSION` (default `latest`). Pre-built for linux/x64, linux/arm64, darwin/x64, darwin/arm64, windows/x64.
+Prebuilt binaries are available for linux/x64, linux/arm64, darwin/x64, darwin/arm64, and windows/x64.
 
-Once installed, **`docx upgrade`** updates a standalone binary — it replaces the binary wherever it already lives (`PREFIX` does not apply), running the same installer embedded in the binary at build time rather than fetched, so the download stays pinned to a release tag and SHA-256-verified. `--to v0.23.0` pins a version, `--dry-run` reports what would change. On an npm/bun install it tells you to use the package manager instead.
+On macOS/Linux, **`docx upgrade`** updates a standalone binary — it replaces the binary wherever it already lives (`PREFIX` does not apply), running the same installer embedded in the binary at build time rather than fetched, so the download stays pinned to a release tag and SHA-256-verified. `--to v0.27.0` pins a version, `--dry-run` reports what would change. On an npm/bun install it tells you to use the package manager instead.
 
-Prefer to skip the script entirely? Download `docx-<platform>` + `SHA256SUMS` from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest), verify, `chmod +x`, and put it on `PATH`.
+To install manually, download the binary for your platform and `SHA256SUMS` from [Releases](https://github.com/kklimuk/docx-cli/releases/latest), verify the checksum, and put the binary on `PATH`. On macOS/Linux, rename it to `docx` and run `chmod +x docx`; on Windows, use `docx-windows-x64.exe` (rename it to `docx.exe`). See [install integrity](../SECURITY.md#install-integrity) for the verification policy.
 
 ## Use as an agent skill
 

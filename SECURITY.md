@@ -18,7 +18,7 @@ bun add -g bun-docx
 # or: npm install -g bun-docx
 ```
 
-On a standalone-binary install, run **`docx upgrade`** — it replaces the binary in place, pinned and checksum-verified. (Or re-run the installer by hand from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest).) The skill's `scripts/bootstrap.sh` self-updates a stale binary at session start.
+On a macOS/Linux standalone-binary install, run **`docx upgrade`** — it replaces the binary in place, pinned and checksum-verified. (Or re-run the installer by hand from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest).) On Windows, download and verify the replacement binary from Releases. The skill's `scripts/bootstrap.sh` self-updates a stale binary at session start.
 
 ## Install integrity
 
@@ -36,7 +36,7 @@ The one behavioral difference is a parameter, not a second code path — what to
 | `install.sh` run by hand | you | warns and installs **unverified**, so a minimal box still has a path |
 | `scripts/bootstrap.sh` | the agent skill, at session start | sets `REQUIRE_CHECKSUM=1` → **aborts**, never installs unverified |
 
-An agent can't weigh that trade-off, so it doesn't get the lenient default. Set `REQUIRE_CHECKSUM=1` yourself to get the strict behavior by hand.
+An agent can't weigh that trade-off, so it doesn't get the lenient default. Set `REQUIRE_CHECKSUM=1` yourself to get the strict behavior by hand. The README's standalone example sets this flag and pins the installer, checksum manifest, and binary to the same release tag; it verifies the installer before running it.
 
 **Neither script fetches or executes remote code.** `bootstrap.sh` reads the GitHub releases API to resolve the latest tag, then runs its local sibling `install.sh`, which downloads that release's binary and `SHA256SUMS` assets directly.
 
