@@ -1912,6 +1912,30 @@ describe("docx replace across a wrapper nested in another author's insertion (#1
 		expect(read.stdout).toContain("alpha [link ](#x)beta DELTA");
 	});
 
+	// Issue #22: a match AFTER another author's deletion nested in the ins. The
+	// deletion's text is absent from the accepted view, so the offset mapping
+	// must skip it — main cut "The Client may " instead of the match.
+	test("a match after a deletion nested in the ins cuts the right words (#22)", async () => {
+		const DEL_B =
+			'<w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del>';
+		const docPath = await replaceIn(
+			`<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>${INS_A}<w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>${DEL_B}<w:r><w:t>disputed amount.</w:t></w:r></w:ins></w:p>`,
+			"ins-del-after",
+			"disputed amount",
+			"disputed sum",
+		);
+		expect(await paragraphXml(docPath)).toBe(
+			'<w:p><w:r><w:t xml:space="preserve">Fees are due. </w:t></w:r>' +
+				`${INS_A}<w:r><w:t xml:space="preserve">The Client may withhold </w:t></w:r>${DEL_B}` +
+				'<w:r><w:t xml:space="preserve">disputed sum</w:t></w:r>' +
+				'<w:r><w:t xml:space="preserve">.</w:t></w:r></w:ins></w:p>',
+		);
+		const read = await runCli("read", docPath, "--accepted");
+		expect(read.stdout).toContain(
+			"Fees are due. The Client may withhold disputed sum.",
+		);
+	});
+
 	test("tracked, the half of the ins after the match gets a fresh id", async () => {
 		const docPath = await replaceIn(
 			`<w:p><w:r><w:t xml:space="preserve">The Client </w:t></w:r>${INS_A}<w:r><w:t>may withhold a disputed amount.</w:t></w:r></w:ins></w:p>`,
