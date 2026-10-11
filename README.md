@@ -4,6 +4,25 @@
 
 Fill templates, revise contracts, and leave comments in existing `.docx` files. Open the result in Word to accept or reject the edits. docx-cli edits the document’s XML in place to preserve surrounding formatting and content.
 
+## Why choose docx-cli for Word?
+
+In our October 10, 2026 Word-task benchmark, **docx-cli scored 18/18 successful attempts (100%) versus OfficeCLI’s 14/18 (77.8%), with 41% fewer tool calls**. The Anthropic docx skill also scored 18/18; docx-cli matched that result with **21% fewer tool calls**.
+
+| docx-cli 0.27.0 reductions | vs. Anthropic docx skill | vs. OfficeCLI 1.0.156 |
+| --- | ---: | ---: |
+| Tool calls | **21% fewer** | **41% fewer** |
+| Effective input tokens¹ | **22% fewer** | **53% fewer** |
+| Output tokens² | **41% fewer** | **49% fewer** |
+| Cumulative task time³ | **27% less** | **50% less** |
+
+We used the same Haiku 5.5 model for six tasks, each repeated three times per tool: fill an NDA, edit an invoice, restyle a résumé, redline a contract, finalize a review, and author a journal. Reductions are calculated from unrounded averages per six-task run, then rounded to whole percentages.
+
+¹ Cache-weighted input proxy, not dollar cost. ² Includes estimates where final token usage is unavailable. ³ Sum of task durations, not elapsed batch time.
+
+All 54 outputs opened in Microsoft Word. All 18 docx-cli outputs received sound-layout and preserved-formatting judgments. This is our development corpus, and model judges knew which tool produced each output; success does not mean every output was defect-free. Results apply to the exact tested builds.
+
+[Absolute measurements, ranges, per-task outcomes, and limitations](benchmarks/officecli/results/2026-10-10.md) · [Comparison protocol](benchmarks/officecli/README.md) · [Earlier benchmarks](guides/benchmarks.md)
+
 [![Watch: Claude filling out and redlining an NDA](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
 
 ## Try it with your agent
@@ -65,25 +84,6 @@ Commands edit files in place unless you use `-o/--output`; keep an original copy
 | Create a document | Word output from Markdown, including tables, equations, and images |
 
 Agents discover commands through `docx --help` and address document content with locators from `docx read`. Locators can shift after structural edits; re-read before the next edit.
-
-## Benchmark: six Word tasks
-
-On October 10, 2026, we ran the same six tasks three times per tool with Haiku 5.5: fill an NDA, edit an invoice, restyle a résumé, redline a contract, finalize a review, and author a journal. **docx-cli and the Anthropic docx skill both scored 18/18; OfficeCLI scored 14/18.** docx-cli used about **21% fewer tool calls than the Anthropic skill** and **41% fewer than OfficeCLI**.
-
-| Measured outcome | docx-cli 0.27.0 | Anthropic docx skill | OfficeCLI 1.0.156 |
-| --- | ---: | ---: | ---: |
-| Tasks marked successful by the model judge | 18/18 | 18/18 | 14/18 |
-| Outputs opened in Microsoft Word | 18/18 | 18/18 | 18/18 |
-| Average tool calls | **98** | 124 | 165 |
-| Average effective input tokens¹ | **902k** | 1.15M | 1.92M |
-| Average output tokens² | **32k** | 54k | 63k |
-| Average cumulative task time³ | **914 s** | 1,254 s | 1,834 s |
-
-Effort averages are per six-task run. ¹ Cache-weighted input proxy, not dollar cost. ² Includes estimates where final token usage is unavailable. ³ Sum of task durations, not elapsed batch time.
-
-All 18 docx-cli outputs received sound-layout and preserved-formatting judgments. This is our development corpus, and judges knew which tool produced each output; success does not mean every output was defect-free. Results apply to the exact tested builds.
-
-[Results, ranges, per-task outcomes, and limitations](benchmarks/officecli/results/2026-10-10.md) · [Comparison protocol](benchmarks/officecli/README.md) · [Earlier benchmarks](guides/benchmarks.md)
 
 ## Documentation
 
