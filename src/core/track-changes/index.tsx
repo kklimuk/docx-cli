@@ -79,7 +79,7 @@ export class TrackChanges {
 		};
 	}
 
-	/** Toggle `<w:trackChanges/>` in word/settings.xml. Turning ON
+	/** Toggle `<w:trackRevisions/>` in word/settings.xml. Turning ON
 	 * materializes the settings part if absent; turning OFF on a doc with
 	 * no settings part is a no-op (absence already implies tracking is off). */
 	setEnabled(on: boolean): void {

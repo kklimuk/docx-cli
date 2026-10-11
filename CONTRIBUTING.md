@@ -7,6 +7,7 @@ bun install && bun run prepare      # set up + git hooks
 bun dev <subcommand>                # run via source
 bun run check                       # biome + knip + tsc
 bun run test:unit                   # core + cli tests (fast)
+bun run test:benchmark              # comparison harness checks + types; no model calls
 bun run test:integration            # LibreOffice round-trip (needs `soffice` on PATH)
 bun test                            # everything
 bun run build                       # produce dist/index.js (npm bundle)
@@ -101,7 +102,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs these jobs on push to `main` an
 | Job                 | What                                                        |
 | ------------------- | ----------------------------------------------------------- |
 | `check`             | `biome check . && knip-bun && tsc --noEmit`                 |
-| `unit-tests`        | `bun run test:unit` (core + cli, fast)                      |
+| `unit-tests`        | `bun run test:unit` and `bun run test:benchmark` (no model calls) |
 | `macos-output`      | Output contract and real-pipe regressions on macOS with Bun 1.3.10 and latest |
 | `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
 | `build-binary`      | Builds on Linux and native Intel/ARM macOS; signs/verifies macOS binaries; runs version/help, read, and schema-validation smoke checks |

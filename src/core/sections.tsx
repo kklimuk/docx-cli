@@ -238,20 +238,32 @@ export function applyPageGeometry(
 	}
 }
 
-/** Copy a source sectPr's page geometry (`<w:pgSz>` size/orientation + `<w:pgMar>`
- *  margins) into `target`, but ONLY for the parts `target` doesn't already set.
- *  Page geometry is per-section in OOXML, so splitting a section (a column wrap
- *  minting fresh sentinel sectPrs) would otherwise drop the document's size/
- *  orientation/margins and silently revert those sections to the portrait-Letter
- *  default — the landscape-disappears-after-columns footgun. Clones the whole node
- *  (preserving attrs we don't model: header/footer/gutter). */
-export function inheritPageGeometry(target: XmlNode, source: XmlNode): void {
-	for (const tag of ["w:pgSz", "w:pgMar"] as const) {
+/** Copy what a section carries FORWARD from the section that governed the
+ *  range into a fresh sentinel sectPr, for each kind `target` doesn't set
+ *  itself: page geometry (`<w:pgSz>`/`<w:pgMar>`, cloned whole to keep unmodeled
+ *  attrs — geometry is per-section, so a column wrap otherwise reverts the new
+ *  sections to portrait-Letter) and the header/footer references + `<w:titlePg>`
+ *  (marginals inherit forward, so new sections AHEAD of the referencing one
+ *  showed no header; several sections may share one header part). */
+export function inheritGoverningSection(
+	target: XmlNode,
+	source: XmlNode,
+): void {
+	for (const tag of INHERITED_SECTPR_TAGS) {
 		if (target.findChild(tag)) continue;
-		const node = source.findChild(tag);
-		if (node) insertSectPrChildInOrder(target, node.clone());
+		for (const node of source.findChildren(tag)) {
+			insertSectPrChildInOrder(target, node.clone());
+		}
 	}
 }
+
+const INHERITED_SECTPR_TAGS = [
+	"w:headerReference",
+	"w:footerReference",
+	"w:pgSz",
+	"w:pgMar",
+	"w:titlePg",
+] as const;
 
 /** Find a sectPr child by tag, or create + splice it at its CT_SectPr slot. */
 function findOrCreateSectPrChild(sectPr: XmlNode, tag: string): XmlNode {

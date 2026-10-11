@@ -29,7 +29,9 @@ only when the thing under test holds _regardless of which verb runs_:
   (quiet-vs-verbose, exit codes, bare-minted-locator, 64 KB boundary, `--help`
   matrix), exercised at the real process boundary. Its bounded POSIX shell-pipe
   probes also cover large UTF-8 writes after `process.stdout`/`stderr` is
-  accessed, flushing before exit, and an early-closing consumer (issue #8).
+  accessed, flushing before exit (issue #8), and an early-closing consumer: the
+  sink swallows EPIPE, so the producer exits quietly with the command's OWN code
+  (0 for a successful `read | head`, nonzero for a failure), never an EPIPE crash.
   Ordinary subprocess capture may use sockets and miss the OS-pipe bug.
 - [invariants.test.ts](invariants.test.ts) — the in-place-mutation **invariant**
   (unmodeled-XML survival, transparent wrappers, docx validity).

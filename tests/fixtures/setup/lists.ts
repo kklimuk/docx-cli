@@ -136,6 +136,12 @@ await cli(
 await cli("lists", "set", out, "--at", "p23", "--continue");
 await cli("lists", "set", out, "--at", "p27", "--restart");
 
+// Dogfood positional (default) markdown authoring: a "1. item" inserted after a
+// list item joins THAT list (p28 continues the restarted sequence rather than
+// minting a fresh one), and a trailing heading takes the document's look.
+await cli("insert", out, "--after", "p27", "1. Phase three");
+await cli("insert", out, "--after", "p28", "## Appendix");
+
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);
 console.log(`  bullet numId=${bulletNumId}`);

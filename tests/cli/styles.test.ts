@@ -481,6 +481,27 @@ describe("docx styles set", () => {
 		expect(detail.indentLeftIn).toBe(0.5);
 	});
 
+	test("--alignment justify writes ST_Jc `both` and reads back as justify", async () => {
+		const docPath = await docWithHeading1("set-justify");
+		await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Heading1",
+			"--alignment",
+			"justify",
+		);
+		const styles = await (await Pkg.open(docPath)).readText("word/styles.xml");
+		expect(styles).toContain('<w:jc w:val="both"/>');
+		expect(styles).not.toContain('w:val="justify"');
+		// The readback is the `--alignment` vocabulary, so it can be passed back.
+		const detail = (
+			await runCli("styles", docPath, "--at", "Heading1", "--json")
+		).parsed as { alignment?: string };
+		expect(detail.alignment).toBe("justify");
+	});
+
 	test("updates metadata (--name / --based-on)", async () => {
 		const docPath = await docWithHeading1("set-meta");
 		await runCli(

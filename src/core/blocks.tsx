@@ -262,6 +262,22 @@ export function applyParagraphOptionsInPlace(
 	applyParagraphPropsToPPr(pPr, options);
 }
 
+/** Apply ride-along paragraph options (alignment/spacing/indent/tabs) to every
+ *  paragraph a markdown source produced — "fill this line AND give it 6pt
+ *  after" is one call. Run AFTER any pPr inheritance so a flag merges
+ *  attribute-by-attribute onto the inherited `<w:spacing>`/`<w:ind>` instead of
+ *  being replaced by the tag-level inheritance merge. `style` never rides
+ *  along: a `# heading` or list item owns its style. */
+export function applyParagraphOptionsToBlocks(
+	blocks: XmlNode[],
+	options: ParagraphOptions,
+): void {
+	for (const block of blocks) {
+		if (block.tag === "w:p")
+			applyParagraphOptionsInPlace(block.children, options);
+	}
+}
+
 /** Apply the `ParagraphOptions` (style/alignment/tabs/spacing/indent) onto an
  *  existing `<w:pPr>`, splicing each child at its CT_PPr slot. The placement-
  *  agnostic core of `applyParagraphOptionsInPlace`: that helper finds-or-creates
@@ -304,40 +320,63 @@ export function applyParagraphPropsToPPr(
 	if (options.alignment) {
 		const existingJc = pPr.findChild("w:jc");
 		if (existingJc) {
-			existingJc.setAttribute("w:val", options.alignment);
+			existingJc.setAttribute("w:val", jcValue(options.alignment));
 		} else {
 			insertPprChildInOrder(
 				pPr,
-				new XmlNode("w:jc", { "w:val": options.alignment }),
+				new XmlNode("w:jc", { "w:val": jcValue(options.alignment) }),
 			);
 		}
 	}
 	if (options.spacing) {
-		const node = findOrCreatePprChild(pPr, "w:spacing");
 		const { before, after, line, lineRule } = options.spacing;
-		if (before !== undefined) node.setAttribute("w:before", String(before));
-		if (after !== undefined) node.setAttribute("w:after", String(after));
-		if (line !== undefined) {
-			node.setAttribute("w:line", String(line));
-			node.setAttribute("w:lineRule", lineRule ?? "auto");
-		}
+		overlayParagraphAttributes(findOrCreatePprChild(pPr, "w:spacing"), {
+			...(before !== undefined ? { "w:before": String(before) } : {}),
+			...(after !== undefined ? { "w:after": String(after) } : {}),
+			...(line !== undefined
+				? { "w:line": String(line), "w:lineRule": lineRule ?? "auto" }
+				: {}),
+		});
 	}
 	if (options.indent) {
-		const node = findOrCreatePprChild(pPr, "w:ind");
 		const { left, right, firstLine, hanging } = options.indent;
-		if (left !== undefined) node.setAttribute("w:left", String(left));
-		if (right !== undefined) node.setAttribute("w:right", String(right));
-		// firstLine and hanging share a slot — setting one clears the other.
-		if (firstLine !== undefined) {
-			node.setAttribute("w:firstLine", String(firstLine));
-			delete node.attributes["w:hanging"];
-		}
-		if (hanging !== undefined) {
-			node.setAttribute("w:hanging", String(hanging));
-			delete node.attributes["w:firstLine"];
-		}
+		overlayParagraphAttributes(findOrCreatePprChild(pPr, "w:ind"), {
+			...(left !== undefined ? { "w:left": String(left) } : {}),
+			...(right !== undefined ? { "w:right": String(right) } : {}),
+			...(firstLine !== undefined ? { "w:firstLine": String(firstLine) } : {}),
+			...(hanging !== undefined ? { "w:hanging": String(hanging) } : {}),
+		});
 	}
 }
+
+/** Lay `attributes` onto a `<w:spacing>`/`<w:ind>` attribute bag, first
+ *  dropping any existing attribute a new value supersedes (unless it's being
+ *  set too): kept, they'd silently void the new setting — `beforeAutospacing`
+ *  makes Word ignore `before` (common on HTML-pasted text), `*Lines`/`*Chars`
+ *  win over twips, and firstLine/hanging share one slot. The one rule both the
+ *  in-place flag applier and pPr inheritance follow. */
+export function overlayParagraphAttributes(
+	node: XmlNode,
+	attributes: Record<string, string>,
+): void {
+	for (const [key, value] of Object.entries(attributes)) {
+		for (const superseded of SUPERSEDED_BY[key] ?? []) {
+			if (attributes[superseded] === undefined) {
+				delete node.attributes[superseded];
+			}
+		}
+		node.setAttribute(key, value);
+	}
+}
+
+const SUPERSEDED_BY: Readonly<Record<string, readonly string[]>> = {
+	"w:before": ["w:beforeAutospacing", "w:beforeLines"],
+	"w:after": ["w:afterAutospacing", "w:afterLines"],
+	"w:left": ["w:leftChars", "w:start", "w:startChars"],
+	"w:right": ["w:rightChars", "w:end", "w:endChars"],
+	"w:firstLine": ["w:firstLineChars", "w:hanging", "w:hangingChars"],
+	"w:hanging": ["w:hangingChars", "w:firstLine", "w:firstLineChars"],
+};
 
 /** Find a `<w:pPr>` child by tag, or create + splice it at its CT_PPr slot.
  *  Returns the live node so the caller can merge attributes onto it (preserving
@@ -509,6 +548,12 @@ export function insertPprChildInOrder(pPr: XmlNode, child: XmlNode): void {
  *  `<w:b>`/`<w:color>`/`<w:kern>` sit between them (CT_RPr puts sz well after
  *  those) — `insertAfter(rFonts)` would land sz too early. */
 export const RPR_CHILD_ORDER = [
+	// CT_ParaRPr (a paragraph MARK's rPr) leads with its revision markers; a
+	// run's CT_RPr never carries them, so one table serves both.
+	"w:ins",
+	"w:del",
+	"w:moveFrom",
+	"w:moveTo",
 	"w:rStyle",
 	"w:rFonts",
 	"w:b",
@@ -576,6 +621,47 @@ export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 	else rPr.children.splice(at, 0, child);
 }
 
+/** Inherit one reference `<w:rPr>` child onto a run's own rPr without
+ *  overriding what the run states. Most children are single values — inherited
+ *  only when the run has none. `<w:rFonts>` is a BAG of independent script slots
+ *  (ascii / hAnsi / eastAsia / cs, each explicit or `…Theme`): a run that states
+ *  only its complex-script face still needs the Latin one. The read view writes
+ *  exactly that shape back (`<span data-font-complex-script="Calibri">` → an
+ *  rFonts with just `w:cs`), and treating "has rFonts" as "has its font" let a
+ *  line copied from `read` and passed back to `edit` fall through to the style
+ *  chain's Times New Roman (résumé, haiku 2026.09.30 r3). Each empty slot takes
+ *  the reference's value; a slot the run sets (explicitly or via theme) wins. */
+export function inheritRprChild(rPr: XmlNode, inherited: XmlNode): void {
+	const own = rPr.findChild(inherited.tag);
+	if (!own) {
+		insertRprChildInOrder(rPr, inherited.clone());
+		return;
+	}
+	if (inherited.tag !== "w:rFonts") return;
+	for (const [slot, theme] of FONT_SLOTS) {
+		if (own.getAttribute(slot) !== undefined) continue;
+		if (own.getAttribute(theme) !== undefined) continue;
+		const explicit = inherited.getAttribute(slot);
+		const themed = inherited.getAttribute(theme);
+		if (explicit !== undefined) own.setAttribute(slot, explicit);
+		if (themed !== undefined) own.setAttribute(theme, themed);
+	}
+	const hint = inherited.getAttribute("w:hint");
+	if (hint !== undefined && own.getAttribute("w:hint") === undefined) {
+		own.setAttribute("w:hint", hint);
+	}
+}
+
+/** Each `<w:rFonts>` script slot with its theme twin. The complex-script twin
+ *  is spelled `w:cstheme` (lowercase t) in ECMA-376 §17.3.2.26 — a
+ *  `${slot}Theme` template would look for a `w:csTheme` no producer writes. */
+const FONT_SLOTS = [
+	["w:ascii", "w:asciiTheme"],
+	["w:hAnsi", "w:hAnsiTheme"],
+	["w:eastAsia", "w:eastAsiaTheme"],
+	["w:cs", "w:cstheme"],
+] as const;
+
 /** Whether an `<w:rPr>` child may be INHERITED when cloning a reference run's
  *  formatting onto fresh content. Excludes two markers: `<w:highlight>` (a
  *  placeholder-fill marker — re-stamping it recreates the todo the fill was
@@ -586,6 +672,38 @@ export function insertRprChildInOrder(rPr: XmlNode, child: XmlNode): void {
 export function isInheritableRunProperty(child: XmlNode): boolean {
 	return child.tag !== "w:highlight" && child.tag !== "w:rPrChange";
 }
+
+/** Whether an inheritable `<w:rPr>` child is TYPOGRAPHY (see `TYPOGRAPHY_TAGS`)
+ *  — what an inserted paragraph takes from its neighbor, as opposed to the
+ *  neighbor's own emphasis. */
+export function isTypographyRunProperty(child: XmlNode): boolean {
+	return TYPOGRAPHY_TAGS.has(child.tag);
+}
+
+/** The run properties a NEW paragraph takes from its neighbor: typography only
+ * (face, size, color, language, character spacing) — what makes inserted text
+ * "blend in". Emphasis toggles (`<w:b>`/`<w:i>`/`<w:u>`/strike/caps/vertAlign)
+ * and a character style are the neighbor's OWN decoration, not the document's
+ * look: `insert --text "plain"` after an italic paragraph came out italic with
+ * no `--italic` passed (the eliot-journal run), a silent formatting leak an agent
+ * only catches with `--ast`. Word itself continues the face/size when you press
+ * Enter at the end of a paragraph, and this is the same contract. Distinct from
+ * `edit`'s whole-paragraph inheritance, which keeps a fully-bold line bold on
+ * purpose — there the emphasis IS the replaced paragraph's look. The script
+ * settings (`<w:rtl>`/`<w:cs>`) ride along like `<w:lang>`: they are how an
+ * Arabic/Hebrew line reads, not decoration. */
+const TYPOGRAPHY_TAGS: ReadonlySet<string> = new Set([
+	"w:rFonts",
+	"w:sz",
+	"w:szCs",
+	"w:color",
+	"w:lang",
+	"w:kern",
+	"w:spacing",
+	"w:w",
+	"w:rtl",
+	"w:cs",
+]);
 
 /** A paragraph rendered as a horizontal rule — empty body with a bottom border.
  * Word renders this as a thin line spanning the page width.
@@ -721,10 +839,49 @@ function ParagraphProperties({
 			)}
 			{spacingAttrs && <w.spacing {...spacingAttrs} />}
 			{indentAttrs && <w.ind {...indentAttrs} />}
-			{options.alignment && <w.jc w-val={options.alignment} />}
+			{options.alignment && <w.jc w-val={jcValue(options.alignment)} />}
 		</w.pPr>
 	);
 }
+
+/** The `<w:jc w:val>` token for a CLI alignment. Our vocabulary says `justify`;
+ *  ST_Jc (ECMA-376 §17.18.44) spells it `both` — `justify` is not in the enum,
+ *  so emitting it verbatim wrote schema-invalid XML that `validate` flagged and
+ *  Word silently ignored (the eliot-journal run). The reader maps `both` back. */
+export function jcValue(
+	alignment: NonNullable<ParagraphOptions["alignment"]>,
+): string {
+	return alignment === "justify" ? "both" : alignment;
+}
+
+/** The inverse of `jcValue`: a `<w:jc w:val>` token in our alignment vocabulary,
+ *  so the AST reader, `styles --at`, and the tracked `pPrChange` summary all
+ *  report a value `--alignment` accepts (`both` → `justify`, never the raw
+ *  OOXML spelling). The pre-fix `justify` and the distributed/kashida
+ *  justifications read as `justify`; the LTR-aware `start`/`end` read as
+ *  `left`/`right`, exactly as `normalizeTabAlign` treats them. Undefined for a
+ *  missing or unmodeled token (`numTab`). Keep every PARAGRAPH `w:jc` reader
+ *  going through THIS function (a table's `w:jc` is ST_JcTable — see
+ *  `readTableAlign`). */
+export function alignmentFromJc(
+	value: string | undefined,
+): ParagraphOptions["alignment"] {
+	if (value === "left" || value === "start") return "left";
+	if (value === "right" || value === "end") return "right";
+	if (value === "center") return "center";
+	if (value !== undefined && JUSTIFIED_JC_VALUES.has(value)) return "justify";
+	return undefined;
+}
+
+const JUSTIFIED_JC_VALUES = new Set([
+	"both",
+	"justify",
+	"distribute",
+	"lowKashida",
+	"mediumKashida",
+	"highKashida",
+	"thaiDistribute",
+]);
 
 /** Build the `<w:spacing>` attribute map from a `ParagraphSpacing`, or null if it
  *  sets nothing. `before`/`after` are emitted in twips; `line` carries its

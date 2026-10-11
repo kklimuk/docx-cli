@@ -13,16 +13,6 @@ const SETTINGS_CONTENT_TYPE =
 const W_NAMESPACE =
 	"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-/** The document-level track-changes toggle: `<w:trackRevisions/>` is the real
- *  CT_Settings element (§17.15.1.90 — what Word writes); `w:trackChanges` is
- *  the misnamed element earlier docx-cli versions emitted (Word ignores it).
- *  Read both so those documents still report tracking-on; write only the real
- *  one and drop the legacy on toggle. */
-const TRACK_TOGGLE_TAGS = new Set<string>([
-	"w:trackRevisions",
-	"w:trackChanges",
-]);
-
 /** The full CT_Settings child sequence (ECMA-376 §17.15.1.78), extracted from
  *  the bundled transitional `wml.xsd` — the settings analog of
  *  `PPR_CHILD_ORDER`/`SECTPR_CHILD_ORDER`. Every settings toggle splices via
@@ -155,6 +145,8 @@ export class SettingsView {
 
 	constructor(tree: XmlNode[]) {
 		this.tree = tree;
+		const root = XmlNode.findRoot(tree, "w:settings");
+		if (root) migrateLegacyTrackToggle(root);
 	}
 
 	/** Load this view from a package; returns undefined if the part is absent. */
@@ -168,7 +160,8 @@ export class SettingsView {
 		return xml ? new SettingsView(XmlNode.parse(xml)) : undefined;
 	}
 
-	/** Serialize this view's tree into the package's `word/settings.xml`. */
+	/** Serialize this view's tree into the package's `word/settings.xml` (with
+	 *  any legacy track toggle already migrated on load). */
 	writeTo(pkg: Pkg): void {
 		pkg.writeText(SETTINGS_PART_NAME, XmlNode.serialize(this.tree));
 	}
@@ -195,39 +188,21 @@ export class SettingsView {
 		// Reading mere presence as on would silently track every edit on a doc whose
 		// author turned tracking off — a high-cost wrong guess.
 		return root.children.some(
-			(child) => TRACK_TOGGLE_TAGS.has(child.tag) && child.isToggleOn(),
+			(child) => child.tag === "w:trackRevisions" && child.isToggleOn(),
 		);
 	}
 
-	/** Toggle the document-level track-changes setting. The real CT_Settings
-	 *  element is `<w:trackRevisions/>` (§17.15.1.90 — what Word itself writes;
-	 *  `w:trackChanges` does not exist in the schema). Earlier docx-cli versions
-	 *  emitted the misnamed `<w:trackChanges/>`, which Word ignores — so we READ
-	 *  both (a doc we toggled still reads as tracking-on) and MIGRATE the legacy
-	 *  element to the real one whenever the toggle runs. */
+	/** Toggle the document-level track-changes setting via the real CT_Settings
+	 *  element `<w:trackRevisions/>` (§17.15.1.90 — what Word itself writes). */
 	setTrackChangesEnabled(on: boolean): void {
 		const root = this.ensureSettingsRoot();
-		if (!on) {
-			root.children = root.children.filter(
-				(child) => !TRACK_TOGGLE_TAGS.has(child.tag),
-			);
+		if (on) {
+			ensureToggleOn(root, <w.trackRevisions />);
 			return;
 		}
-		// Migrate the legacy misnamed element to the real one and force an ON
-		// toggle: a present-but-off `<w:trackRevisions w:val="false"/>` must have its
-		// `w:val` flipped, not be left disabled — `track-changes on` can't no-op on
-		// mere presence.
 		root.children = root.children.filter(
-			(child) => child.tag !== "w:trackChanges",
+			(child) => child.tag !== "w:trackRevisions",
 		);
-		const existing = root.children.find(
-			(child) => child.tag === "w:trackRevisions",
-		);
-		if (existing) {
-			if (!existing.isToggleOn()) existing.setToggleOn();
-			return;
-		}
-		insertSettingsChildInOrder(root, <w.trackRevisions />);
 	}
 
 	/** Ensure `<w:footnotePr>` / `<w:endnotePr>` is present, declaring the
@@ -257,17 +232,9 @@ export class SettingsView {
 	 *  marginal is ignored and the default applies to every page). Idempotent;
 	 *  spliced at its CT_Settings slot. */
 	ensureEvenAndOddHeaders(): void {
-		const root = this.ensureSettingsRoot();
-		const existing = root.children.find(
-			(child) => child.tag === "w:evenAndOddHeaders",
-		);
-		if (existing) {
-			// A present-but-off `<w:evenAndOddHeaders w:val="false"/>` would keep Word
-			// ignoring the even marginal we're provisioning — flip it on, not skip.
-			if (!existing.isToggleOn()) existing.setToggleOn();
-			return;
-		}
-		insertSettingsChildInOrder(root, <w.evenAndOddHeaders />);
+		// A present-but-off `<w:evenAndOddHeaders w:val="false"/>` would keep Word
+		// ignoring the even marginal we're provisioning — flip it on, not skip.
+		ensureToggleOn(this.ensureSettingsRoot(), <w.evenAndOddHeaders />);
 	}
 
 	/** Remove `<w:evenAndOddHeaders/>` — the counterpart to `ensureEvenAndOddHeaders`,
@@ -289,4 +256,36 @@ export class SettingsView {
 		this.tree.push(fresh);
 		return fresh;
 	}
+}
+
+/** Earlier docx-cli versions wrote the misnamed `<w:trackChanges/>` (not in
+ *  CT_Settings, so schema-invalid; Word ignores it) instead of the real
+ *  `<w:trackRevisions/>` (§17.15.1.90). Migrate it ON LOAD, so everything else
+ *  only ever sees the real element and any save heals the file. Any ON toggle
+ *  wins — an ON legacy element flips even a present-but-off real one, or the
+ *  document would read tracking OFF where it read ON before — while an OFF one
+ *  is simply dropped (absence is off). No-op without the legacy tag, so a clean
+ *  file serializes byte-identically. */
+function migrateLegacyTrackToggle(root: XmlNode): void {
+	const legacy = root.children.filter(
+		(child) => child.tag === "w:trackChanges",
+	);
+	if (legacy.length === 0) return;
+	root.children = root.children.filter(
+		(child) => child.tag !== "w:trackChanges",
+	);
+	if (legacy.some((child) => child.isToggleOn())) {
+		ensureToggleOn(root, <w.trackRevisions />);
+	}
+}
+
+/** Make a CT_OnOff settings toggle present and ON: flip a present-but-off
+ *  `w:val="false"`, else splice `toggle` in at its CT_Settings slot. */
+function ensureToggleOn(root: XmlNode, toggle: XmlNode): void {
+	const existing = root.children.find((child) => child.tag === toggle.tag);
+	if (!existing) {
+		insertSettingsChildInOrder(root, toggle);
+		return;
+	}
+	if (!existing.isToggleOn()) existing.setToggleOn();
 }

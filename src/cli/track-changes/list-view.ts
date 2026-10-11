@@ -1,5 +1,6 @@
 import type { SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
+import { alignmentFromJc } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
 import { TrackChanges } from "@core/track-changes";
 import { revisionGroups } from "./groups";
@@ -310,7 +311,8 @@ function readParagraphPropsSummary(children: XmlNode[]): ParagraphPropsSummary {
 	const alignment = children
 		.find((child) => child.tag === "w:jc")
 		?.getAttribute("w:val");
-	if (alignment) out.alignment = alignment;
+	// Same vocabulary as `read --ast` (`both` → `justify`).
+	if (alignment) out.alignment = alignmentFromJc(alignment) ?? alignment;
 
 	const spacingNode = children.find((child) => child.tag === "w:spacing");
 	if (spacingNode) {

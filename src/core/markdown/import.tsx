@@ -194,7 +194,7 @@ function visitNodes(
 }
 
 /** For each footnote definition: mint a numeric id, build the body XmlNode
- * (tracked-wrapped when `<w:trackChanges/>` is on), and append it to
+ * (tracked-wrapped when `<w:trackRevisions/>` is on), and append it to
  * `footnotes.xml`. The minted ids are stored in `ctx.mintedNoteIds` keyed by
  * the markdown identifier so inline `footnoteReference` walks find them. */
 async function registerFootnotes(

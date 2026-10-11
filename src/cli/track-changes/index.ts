@@ -31,6 +31,17 @@ their edits as tracked changes (attributed via --author or $DOCX_AUTHOR on
 those commands, not on the on/off toggle). Accept/reject themselves bypass
 tracking — they're review decisions, not edits.
 
+A REVIEW IS A FEW BATCHED CALLS, from ONE read (ids never shift mid-batch):
+  Marking up:  docx track-changes on FILE
+               docx edit FILE --batch redlines.jsonl     # every clause rewrite, tracked
+               docx comments add FILE --batch notes.jsonl
+  Finalizing:  docx track-changes apply FILE --accept tc0 tc2 --reject tc1
+               docx comments reply FILE --batch replies.jsonl   # "resolve":true closes a thread
+Each JSONL line is one change:
+  redlines.jsonl  {"at":"p7","markdown":"…"}               (the paragraph's new text)
+  notes.jsonl     {"at":"p7","text":"…"}                   (a comment body)
+  replies.jsonl   {"at":"c0","text":"…","resolve":true}    (a reply; resolve is optional)
+
 Run "docx track-changes <verb> --help" for verb-specific help.
 `;
 

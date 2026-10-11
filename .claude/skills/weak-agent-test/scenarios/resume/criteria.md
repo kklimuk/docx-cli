@@ -11,6 +11,11 @@ the request in `task.md`. Judge the finished document against these checks.
   values in `brief.md`. No template placeholder text remains.
 - **[Note: ...] helpers gone** — no `[Note: ...]` bracketed helper text remains
   anywhere in the document (`docx read` or `docx read --ast` shows none).
+- **Skills & Interests section removed** — the "Skills & Interests" heading and its
+  template prompt lines ("Technical: List computer software…", "Language: List foreign
+  languages…", "Laboratory: …", "Interests: List activities…") are ABSENT. The task
+  asks for the whole section to go, so removing it is correct, not a demerit; leaving
+  any of those prompt lines is a placeholder-text failure.
 - **[drawing] element survives** — the `[drawing]` element is still present in the
   document body; it must not have been deleted.
 - **Date tab stops preserved** — right-aligning tab stops on date fields survive;
@@ -31,10 +36,6 @@ the request in `task.md`. Judge the finished document against these checks.
 - **Page margins** — all four margins set to 0.5 inch (720 twips). `docx read --ast`
   shows the trailing section's `marginTop`, `marginRight`, `marginBottom`, `marginLeft`
   all equal 720. `docx read` shows `docx:page … margins="0.5in …"`.
-
-- **Independent Arabic font** — the contact line contains “مرحبا”; its run has
-  `w:rFonts w:cs="Amiri"` without `w:cstheme`. Existing Latin font settings on
-  the English contact details remain unchanged. AST reports `fontComplexScript`.
 
 ## How to verify
 

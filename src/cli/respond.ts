@@ -50,14 +50,38 @@ const sinks = { stdout, stderr };
 
 function outputSink(file: Bun.BunFile): (text: string) => Promise<void> {
 	let writer: Bun.FileSink | undefined;
+	let readerGone = false;
 	return async (text) => {
+		if (readerGone) return;
 		writer ??= file.writer();
 		// BunFile.write/Bun.write can repeat bytes or spin on a large pipe write
 		// after process.stdout/stderr is accessed (issue #8). FileSink handles
 		// partial writes; flush MUST finish before src/index.ts calls exit().
-		await writer.write(text);
-		await writer.flush();
+		try {
+			await writer.write(text);
+			await writer.flush();
+		} catch (error) {
+			// The reader closed the pipe (`read … | head`): stop writing, keep the
+			// command's exit code. Rethrowing reached main's catch-all, which wrote
+			// to the same dead pipe and crashed.
+			if (isBrokenPipe(error)) {
+				readerGone = true;
+				return;
+			}
+			throw error;
+		}
 	};
+}
+
+/** POSIX reports a write to a pipe with no reader as EPIPE. libuv hands a
+ *  spawned child its stdio as an AF_UNIX socketpair (how Node/Bun-hosted agent
+ *  harnesses run us), where a peer that closed with unread data can surface as
+ *  ECONNRESET instead. On Windows libuv maps ERROR_BROKEN_PIPE to EOF — assumed
+ *  from libuv's mapping, untested here (the pipe tests skip win32); a write has
+ *  no other reason to fail with EOF. */
+function isBrokenPipe(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "EPIPE" || code === "ECONNRESET" || code === "EOF";
 }
 
 /** Redirect CLI stdout/stderr (for in-process testing). */
@@ -308,7 +332,7 @@ function pkgOpenError(err: unknown): Promise<number> {
 
 /** Resolve whether one mutating command should emit tracked changes. The
  *  per-command `--track` flag forces tracking on for that command regardless
- *  of the document's global `<w:trackChanges/>` setting; without the flag, the
+ *  of the document's global `<w:trackRevisions/>` setting; without the flag, the
  *  global setting decides. Every mutator (edit/insert/delete/replace, the note
  *  verbs, images delete, the tables verbs) resolves through this one helper so
  *  `--track` behaves identically everywhere. */

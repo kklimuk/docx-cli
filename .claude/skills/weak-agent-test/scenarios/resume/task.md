@@ -47,6 +47,9 @@ but **Experience** was left as plain bold centered text. Fix it in two steps:
 ## The rest of the polish
 
 - **Remove the `[Note: ...]` helper text** throughout once you've handled it.
+- **Drop the Skills & Interests section entirely** — heading and all of its lines. Priya
+  hasn't given me anything for it yet, and the template's "List computer software…"
+  prompts can't go out as they are.
 - **Leave the `[drawing]` element alone** — it's part of the template.
 - **Add a little space after each entry line** (the org / title / date lines in the
   Experience and Leadership sections, and the contact line directly under the name) so
@@ -55,11 +58,6 @@ but **Experience** was left as plain bold centered text. Fix it in two steps:
 - **Set the page margins to 0.5 inch** on all four sides so everything fits on one
   page. This is a page setup change for the whole document, not a per-paragraph change.
 - **Keep the right-aligned date tab stops and the bullet lists** exactly as they are.
-
-## Bilingual contact detail
-
-Add the Arabic greeting “مرحبا” at the end of the contact line. Use Amiri for
-that Arabic text while retaining the existing font for the English contact details.
 
 ## What "done" looks like
 

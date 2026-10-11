@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	freshFixture,
 	readDocumentXml,
 	readMarkdown,
 	storyXml,
+	trackedKinds,
 	wordTextBoxParagraphXml,
 } from "./helpers";
 
@@ -425,5 +427,289 @@ describe("text boxes — the anchor paragraph and the box survive each other", (
 			(await runCli("find", docPath, "Anchor text. \\nCONFIDENTIAL")).stdout,
 		);
 		expect(across.matches).toHaveLength(0);
+	});
+});
+
+describe("text boxes — whole-paragraph replacement of the ANCHOR keeps the box", () => {
+	let docPath: string;
+
+	beforeEach(async () => {
+		const workspace = tempWorkspace("text-boxes-anchor-edit");
+		docPath = join(workspace, "out.docx");
+		await runCli(
+			"create",
+			docPath,
+			"--text",
+			"Notes: thank you for your business.",
+		);
+		const fragment = join(workspace, "box.xml");
+		await Bun.write(fragment, wordTextBoxParagraphXml(BOX_LINES));
+		await runCli(
+			"raw",
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--xml-file",
+			fragment,
+		);
+		// Give the anchor paragraph (p1, which holds only the box) some text so a
+		// replacement has something to replace.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Payment terms follow.",
+		);
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:textbox tbx0 anchor="p1"',
+		);
+	});
+
+	test("edit --markdown on the anchor paragraph keeps tbx0 (it deleted it before)", async () => {
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--markdown",
+			"*Payment due within 30 days.* Wire details on request.",
+		);
+		expect(result.exitCode).toBe(0);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain('<!-- docx:textbox tbx0 anchor="p1"');
+		expect(markdown).toContain("CONFIDENTIAL <!-- tbx0:p0 -->");
+		expect(markdown).toContain(
+			"*Payment due within 30 days.* Wire details on request.",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<mc:AlternateContent>/g)).toHaveLength(1);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("edit --runs on the anchor paragraph keeps tbx0 too", async () => {
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--runs",
+			JSON.stringify([{ type: "text", text: "Rebuilt", bold: true }]),
+		);
+		expect(result.exitCode).toBe(0);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain("**Rebuilt**");
+		expect(markdown).toContain('<!-- docx:textbox tbx0 anchor="p1"');
+	});
+
+	test("under --track the box stays untracked on the live paragraph; reject restores the text", async () => {
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--markdown",
+			"Tracked *rewrite*.",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain('<!-- docx:textbox tbx0 anchor="p1"');
+		expect(markdown).toContain("Tracked *rewrite*.");
+		const xml = await readDocumentXml(docPath);
+		// Exactly one box, and it is not inside an insertion or deletion.
+		expect(xml.match(/<mc:AlternateContent>/g)).toHaveLength(1);
+		expect(xml).not.toMatch(
+			/<w:(ins|del)\b[^>]*>(?:(?!<\/w:(?:ins|del)>).)*<mc:AlternateContent>/s,
+		);
+		const list = await runCli("track-changes", "list", docPath);
+		expect(
+			(list.parsed as Array<{ kind: string }>).map((change) => change.kind),
+		).toEqual(["del", "ins"]);
+		await runCli("track-changes", "reject", docPath, "--all");
+		const restored = await readMarkdown(docPath);
+		expect(restored).toContain("Payment terms follow.");
+		expect(restored).toContain('<!-- docx:textbox tbx0 anchor="p1"');
+	});
+});
+
+describe("text boxes — deleting the ANCHOR paragraph re-anchors the box, never drops it", () => {
+	async function docWithBoxOn(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Before the notes.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Notes: thank you for your business.",
+		);
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--text",
+			"After the notes.",
+		);
+		const fragment = join(workspace, "box.xml");
+		await Bun.write(fragment, wordTextBoxParagraphXml(BOX_LINES));
+		await runCli(
+			"raw",
+			"insert",
+			docPath,
+			"--after",
+			"p1",
+			"--xml-file",
+			fragment,
+		);
+		// The raw box lands in its own paragraph p2, between the Notes line and the
+		// trailing line; give it text so it reads as an ordinary line whose removal
+		// must re-anchor the box on a neighbor.
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--text",
+			"Anchor line to remove.",
+		);
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:textbox tbx0 anchor="p2"',
+		);
+		return docPath;
+	}
+
+	test("delete --at anchor moves the box onto the previous paragraph", async () => {
+		const docPath = await docWithBoxOn("tbx-delete-anchor");
+		expect((await runCli("delete", docPath, "--at", "p2")).exitCode).toBe(0);
+		const md = await readMarkdown(docPath);
+		expect(md).not.toContain("Anchor line to remove.");
+		expect(md).toContain('docx:textbox tbx0 anchor="p1"');
+		expect(md).toContain("CONFIDENTIAL <!-- tbx0:p0 -->");
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test('edit --text "" on the anchor (the line-removal idiom) does the same', async () => {
+		const docPath = await docWithBoxOn("tbx-blank-anchor");
+		expect(
+			(await runCli("edit", docPath, "--at", "p2", "--text", "")).exitCode,
+		).toBe(0);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain('docx:textbox tbx0 anchor="p1"');
+		expect(md).toContain(
+			"Confidential - Acme Corporation internal use only. <!-- tbx0:p1 -->",
+		);
+	});
+
+	test("with no previous paragraph the box moves onto the next one", async () => {
+		const workspace = tempWorkspace("tbx-delete-first");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Second line.");
+		const fragment = join(workspace, "box.xml");
+		await Bun.write(fragment, wordTextBoxParagraphXml(BOX_LINES));
+		await runCli(
+			"raw",
+			"insert",
+			docPath,
+			"--before",
+			"p0",
+			"--xml-file",
+			fragment,
+		);
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:textbox tbx0 anchor="p0"',
+		);
+		expect((await runCli("delete", docPath, "--at", "p0")).exitCode).toBe(0);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain('docx:textbox tbx0 anchor="p0"');
+		expect(md).toContain("Second line.");
+	});
+});
+
+describe("the anchor-object lift is scoped to what Markdown can't show", () => {
+	const IMAGES_FIXTURE = join(import.meta.dir, "..", "fixtures", "images.docx");
+	const PNG =
+		"c66efa7d4b6e23f30939ed48fa6b529f5b7e7756c5372fd01cb0b84fb36d684e.png";
+
+	test("delete --at on a picture-only paragraph still removes the picture", async () => {
+		const docPath = await freshFixture("lift-delete-picture", IMAGES_FIXTURE);
+		expect((await runCli("delete", docPath, "--at", "p2")).exitCode).toBe(0);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain("PNG from a file path <!-- p1 -->");
+		expect(md).not.toContain("![Sample PNG]");
+	});
+
+	test("a tracked edit that re-states the picture keeps the original in the deletion, so reject restores it", async () => {
+		const docPath = await freshFixture("lift-tracked-restate", IMAGES_FIXTURE);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--markdown",
+			`![Sample PNG](${PNG}) Caption`,
+			"--track",
+		);
+		expect(await trackedKinds(docPath)).toEqual(["del", "ins"]);
+		await runCli("track-changes", "reject", docPath, "--all");
+		const md = await readMarkdown(docPath);
+		expect(md).toContain(`![Sample PNG](${PNG})`);
+		expect(md).not.toContain("Caption");
+	});
+
+	test("a tracked-deleted picture is not resurrected by a later whole-paragraph edit", async () => {
+		const docPath = await freshFixture("lift-deleted-picture", IMAGES_FIXTURE);
+		await runCli("images", "delete", docPath, "--at", "img0", "--track");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p2",
+			"--markdown",
+			"Replaced *text*",
+		);
+		const md = await readMarkdown(docPath);
+		expect(md).toContain("Replaced *text* <!-- p2 -->");
+		expect(md).not.toContain("![Sample PNG]");
+	});
+
+	test("an object-free markdown edit that builds only a table gains no blank paragraph", async () => {
+		const docPath = await freshFixture("lift-table-only", IMAGES_FIXTURE);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"| a | b |\n|---|---|\n| 1 | 2 |",
+		);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ id: string }>;
+		};
+		expect(ast.blocks[0]?.id).toBe("t0");
+	});
+
+	test("ride-along run formatting on a tracked replace touches only the new runs", async () => {
+		const docPath = await freshFixture("lift-tracked-format", IMAGES_FIXTURE);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--markdown",
+			"Fresh text",
+			"--size",
+			"20",
+			"--track",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		const md = await readMarkdown(docPath);
+		expect(md).toContain("PNG from a file path <!-- p1 -->");
+		expect(md).not.toContain("font-size:20pt");
 	});
 });

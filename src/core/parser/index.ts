@@ -8,6 +8,7 @@ export {
 	runTextLength,
 	sliceRun,
 	sumRunBearingTextLength,
+	TRACKED_CHANGE_WRAPPER_TAGS,
 	wrapperContent,
 	wrapperContentNode,
 } from "./run-ops";

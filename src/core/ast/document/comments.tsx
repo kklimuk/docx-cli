@@ -30,6 +30,15 @@ export class CommentsView {
 	constructor(tree: XmlNode[] = [<CommentsRoot />], extendedTree?: XmlNode[]) {
 		this.tree = tree;
 		this.extendedTree = extendedTree;
+		// `w14:paraId`/`w14:textId` (Word's threading keys, written on every comment
+		// body) are valid only when `w14` rides the root's `mc:Ignorable`. A part
+		// that came WITH the document — from Word, which often omits it here, or an
+		// earlier docx-cli — may not declare it, so every `comments add`/`reply`
+		// made `docx validate` flag a file the agent hadn't broken. Declaring it on
+		// load (idempotent; an unused Ignorable prefix is harmless) heals any file
+		// we save.
+		const root = XmlNode.findRoot(tree, "w:comments");
+		if (root) declareW14(root);
 	}
 
 	/** Load this view (and its extended sidecar) from a package; returns
@@ -138,8 +147,8 @@ export class CommentsView {
 		return lastParagraph(this.findById(numericId))?.getAttribute("w14:paraId");
 	}
 
-	/** Read a comment's `w14:paraId`, minting + persisting one (and the
-	 * `xmlns:w14` declaration on the root) if absent. reply/resolve key off
+	/** Read a comment's `w14:paraId`, minting + persisting one if absent (the
+	 * root's `w14` declaration is established on load). reply/resolve key off
 	 * paraId, so this guarantees one exists. Returns undefined only when the
 	 * comment itself is missing. Accepts the `cN` or bare-`N` id form. */
 	ensureParaId(commentId: string): string | undefined {
@@ -153,13 +162,6 @@ export class CommentsView {
 		if (existing) return existing;
 		const fresh = generateParaId();
 		paragraph.setAttribute("w14:paraId", fresh);
-		if (!root.attributes["xmlns:w14"]) {
-			root.setAttribute("xmlns:w14", NS_W14);
-		}
-		// An adopted part (not built by CommentsRoot) may lack the
-		// markup-compatibility registration the w14 attribute needs — see
-		// CommentsRoot.
-		ensureIgnorable(root, "w14");
 		return fresh;
 	}
 
@@ -387,6 +389,13 @@ export class CommentsView {
 		this.extendedTree = [<CommentsExRoot />];
 		return this.extendedTree;
 	}
+}
+
+/** Declare `xmlns:w14` and register `w14` in `mc:Ignorable` on the part root.
+ *  Idempotent. */
+function declareW14(root: XmlNode): void {
+	if (!root.getAttribute("xmlns:w14")) root.setAttribute("xmlns:w14", NS_W14);
+	ensureIgnorable(root, "w14");
 }
 
 function CommentsRoot(): XmlNode {

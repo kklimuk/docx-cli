@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 import { freshFixture } from "./helpers";
 
@@ -87,5 +88,143 @@ describe("every fixture validates clean", () => {
 		const result = await runCli("validate", `tests/fixtures/${name}`);
 		expect(result.stdout.trim()).toMatch(/^valid/);
 		expect(result.exitCode).toBe(0);
+	});
+});
+
+describe("legacy schema noise self-heals on any save", () => {
+	test("a misnamed <w:trackChanges> and an undeclared w14 comments part are repaired by an unrelated edit", async () => {
+		// Documents produced by earlier docx-cli versions (and some Word files)
+		// carry two defects our views can fix: the schema-invalid legacy
+		// `<w:trackChanges/>` toggle, and comment paragraphs with `w14:paraId`
+		// while the root omits `mc:Ignorable`. An agent that runs `validate` after
+		// its own edit read those as "I broke the file." Every save now heals both,
+		// so ANY mutation leaves the document clean.
+		const legacy = join(workspace, "legacy.docx");
+		await runCli("create", legacy, "--text", "Clause one. Clause two.");
+		await runCli("track-changes", "on", legacy);
+		await runCli("comments", "add", legacy, "--at", "p0", "--text", "note");
+		const pkg = await Pkg.open(legacy);
+		pkg.writeText(
+			"word/settings.xml",
+			(await pkg.readText("word/settings.xml"))
+				.replace(/<w:trackRevisions\/>/, "")
+				.replace(/(<w:settings[^>]*>)/, "$1<w:trackChanges/>"),
+		);
+		pkg.writeText(
+			"word/comments.xml",
+			(await pkg.readText("word/comments.xml")).replace(
+				/ mc:Ignorable="[^"]*"/,
+				"",
+			),
+		);
+		await pkg.save();
+		const before = await runCli("validate", legacy);
+		expect(before.exitCode).toBe(1);
+		expect(before.stdout).toContain("word/settings.xml");
+		expect(before.stdout).toContain("word/comments.xml");
+		// Tracking still reads as ON through the legacy element.
+		expect((await runCli("read", legacy)).stdout).toContain(
+			"docx:track-changes on",
+		);
+
+		// An unrelated mutation — no toggle, no comment — heals both parts.
+		await runCli(
+			"edit",
+			legacy,
+			"--at",
+			"p0",
+			"--text",
+			"Clause one, amended.",
+		);
+		const after = await runCli("validate", legacy);
+		expect(after.exitCode).toBe(0);
+		expect(after.stdout).toMatch(/^valid/);
+		const healed = await Pkg.open(legacy);
+		const settings = await healed.readText("word/settings.xml");
+		expect(settings).toContain("<w:trackRevisions/>");
+		expect(settings).not.toContain("w:trackChanges");
+		expect(await healed.readText("word/comments.xml")).toMatch(
+			/<w:comments[^>]*mc:Ignorable="[^"]*w14/,
+		);
+		// The tracked edit landed as a real revision (tracking stayed on).
+		expect((await runCli("read", legacy)).stdout).toContain(
+			"docx:track-changes on",
+		);
+		const revisions = (await runCli("track-changes", "list", legacy, "--json"))
+			.parsed as unknown[];
+		expect(revisions.length).toBeGreaterThan(0);
+	});
+
+	test("a legacy ON toggle beside a present-but-off <w:trackRevisions> stays ON after an unrelated save", async () => {
+		// An earlier docx-cli's `track-changes on` added the misnamed element next
+		// to a producer's `w:val="false"` real one. `read` reports ON (any ON
+		// toggle wins), so the save-time migration must keep it ON — not let the
+		// stale OFF element win and silently flip tracking off.
+		const legacy = join(workspace, "conflict.docx");
+		await runCli("create", legacy, "--text", "Clause one.");
+		const pkg = await Pkg.open(legacy);
+		pkg.writeText(
+			"word/settings.xml",
+			(await pkg.readText("word/settings.xml"))
+				.replace(/(<w:settings[^>]*>)/, "$1<w:trackChanges/>")
+				// The real element at its CT_Settings slot (before defaultTabStop).
+				.replace(/(<w:defaultTabStop)/, '<w:trackRevisions w:val="false"/>$1'),
+		);
+		await pkg.save();
+		expect((await runCli("read", legacy)).stdout).toContain(
+			"docx:track-changes on",
+		);
+
+		await runCli(
+			"edit",
+			legacy,
+			"--at",
+			"p0",
+			"--text",
+			"Clause one, amended.",
+		);
+		expect((await runCli("read", legacy)).stdout).toContain(
+			"docx:track-changes on",
+		);
+		const settings = await (await Pkg.open(legacy)).readText(
+			"word/settings.xml",
+		);
+		expect(settings).toContain("<w:trackRevisions/>");
+		expect(settings).not.toContain("w:trackChanges");
+		expect((await runCli("validate", legacy)).exitCode).toBe(0);
+	});
+});
+
+describe("justified alignment emits ST_Jc `both`", () => {
+	test("every paragraph emitter writes a schema-valid justify that reads back", async () => {
+		// ST_Jc has no `justify` — Word's spelling is `both`. The image and
+		// equation paragraphs build their own <w:pPr>, so they must map it too.
+		await runCli("edit", docPath, "--at", "p0", "--alignment", "justify");
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			join(import.meta.dir, "..", "fixtures", "assets", "sample.png"),
+			"--alignment",
+			"justify",
+		);
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--at-end",
+			"--equation",
+			"x^2",
+			"--alignment",
+			"justify",
+		);
+		const result = await runCli("validate", docPath);
+		expect(result.stdout).toMatch(/^valid/);
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown.match(/align="justify"/g)).toHaveLength(3);
 	});
 });

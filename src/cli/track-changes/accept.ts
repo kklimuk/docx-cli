@@ -26,10 +26,11 @@ Out of scope: run-formatting changes Word tracked (bold/color tweaks) aren't
 modeled; --all silently skips them.
 
 Target (one required, mutually exclusive):
-  --at tcN          Accept a tracked change by id. Repeat for multiple ids
-                    (--at tc1 --at tc2 --at tc3) — all targets are resolved
-                    against the pre-mutation tree, so renumbering during the
-                    batch is not a concern. Supports:
+  --at tcN ...      Accept tracked changes by id. Several at once, space- or
+                    comma-separated (--at tc1 tc2 tc3), or repeat the flag.
+                    All targets are resolved against the pre-mutation tree,
+                    so renumbering during the batch is not a concern.
+                    Supports:
 ${AT_FORMS}
                     See \`docx info locators\`.
   --at revN         Accept a del+ins REPLACE pair in one call (both halves of one

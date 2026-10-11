@@ -187,7 +187,9 @@ async function newestSession(sessionsRoot: string): Promise<string | null> {
 	return newest?.dir ?? null;
 }
 
-async function readJsonl(path: string): Promise<any[]> {
+/** Every parseable line of a JSONL file; a missing file is `[]`, and a blank or
+ *  torn line (read mid-write, or after a crash) is skipped. */
+export async function readJsonl(path: string): Promise<any[]> {
 	const file = Bun.file(path);
 	if (!(await file.exists())) return [];
 	const out: any[] = [];

@@ -169,11 +169,16 @@ spacing/indent (`space-before`/`space-after`/`line-spacing`/`indent-left`/
 read a value and re-apply it through the matching `edit`/`insert` flag). Like
 `docx:cell`, the note carries the locator as its leading token, so a paragraph
 WITH a `docx:p` note does NOT also get the bare `<!-- pN -->` locator — that would
-duplicate `pN`. Plain paragraphs (no note) keep the bare locator. Every paragraph
+duplicate `pN`. Plain paragraphs (no note) keep the bare locator. An EMPTY paragraph prints NOTHING — with one exception: a paragraph holding only a manual `<w:br w:type="page"/>` prints its `docx:p` note with a bare `page-break` token, so a stray break (one stacked on a next-page section break shipped a blank page nobody could see) is visible and `delete --at pN` removes it. Printing every spacer's locator was tried and reverted: agents wrote the résumé's name into the first addressable line, a 1pt spacer, and deleted the real name paragraph. Every paragraph
 shows its addressable `pN` exactly once, either bare or as the note's leading token.
 Full contract in [src/core/markdown/CLAUDE.md](../core/markdown/CLAUDE.md). New
 structural annotation? Use `formatNote`, keep it deviation-only, and remember the
 importer won't reconstruct it — NO comment is parse-back, not even `docx:base`.
+
+## Help leads with markdown; `--text` is the literal escape hatch
+
+The read view is Markdown, so the natural write-back is markdown — and it's the DEFAULT: `edit`/`insert` take the content as a POSITIONAL argument after the flags (`docx edit FILE --at p3 "Net **30** days"`), which `adoptPositionalMarkdown` (`cli/parse-helpers.ts`) folds into `values.markdown` before validation so every downstream check sees one path; `--markdown` stays as an alias. A second content positional is REFUSED (an unquoted phrase would otherwise silently truncate to its first word), as is positional + `--markdown` or positional + `--batch`. The `edit`/`insert` help (and the top-level one-liners) show the positional form FIRST, in the usage line and the examples, and describe `--text` as the LITERAL channel (`--text "**bold**"` writes the asterisks) for values Markdown would mangle or for a character span. Weak agents copy `**…**` from the read view straight into `--text`/`replace` and ship literal asterisks (the résumé b2-r3 run); three of five agents also read `edit --help` through `head -50`/`head -80`, so the contract sits in the first ten lines. Alignment/spacing/indent/tabs ride along with `--markdown` on both verbs (applied to every paragraph the source produces); only `--style` (and insert's `--list`) is refused next to it, because a `# heading` or list item owns those. `insert` also blends a new paragraph into its neighbor like Word's Enter key — font/size plus tabs, indent, alignment and spacing (`inheritParagraphLayout` in `core/insert/inherit.ts`) — unless the caller sets them; a heading anchor lends nothing, a list anchor lends no layout.
+
 
 ## Hyperlink/image edits emit audit comments under track-changes
 

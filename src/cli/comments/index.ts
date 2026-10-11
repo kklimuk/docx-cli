@@ -24,6 +24,11 @@ Verbs:
 
 See comments in context: \`docx read FILE --comments\` (bodies as footnotes).
 
+Several comments? Batch them — one call, every id from ONE read:
+  docx comments add     FILE --batch notes.jsonl     # {"at":"p7","text":"…"} or {"anchor":"phrase","text":"…"}
+  docx comments reply   FILE --batch replies.jsonl   # {"at":"c0","text":"…","resolve":true}
+  docx comments resolve FILE --at c1 --at c3         # or --batch
+
 Run "docx comments <verb> --help" for verb-specific help.
 `;
 

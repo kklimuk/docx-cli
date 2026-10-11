@@ -1936,3 +1936,119 @@ describe("nested revisions — a run is visible only when EVERY enclosing wrappe
 		}
 	});
 });
+
+describe("docx track-changes — several handles after one flag", () => {
+	async function twoReplaces(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "doc.docx");
+		await runCli("create", docPath, "--text", "Payment due Net 90 today.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--text",
+			"Term is five years total.",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Payment due Net 30 today.",
+		);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Term is one year total.",
+		);
+		return docPath;
+	}
+
+	test("apply --accept rev0 rev1 applies BOTH (extra handles used to be silently dropped, exit 0)", async () => {
+		const docPath = await twoReplaces("apply-multi");
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+			"rev1",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("track-changes", "list", docPath)).parsed).toEqual([]);
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).toContain("Net 30");
+		expect(read).toContain("one year");
+	});
+
+	test("comma-separated and mixed accept/reject lists resolve against the original ids", async () => {
+		const docPath = await twoReplaces("apply-comma");
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"tc0,tc1",
+			"--reject",
+			"rev1",
+		);
+		expect(result.exitCode).toBe(0);
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).toContain("Net 30");
+		expect(read).toContain("five years");
+	});
+
+	test("accept --at rev0 rev1 FILE sweeps handle-shaped tokens only (FILE after stays FILE)", async () => {
+		const docPath = await twoReplaces("accept-multi");
+		const result = await runCli(
+			"track-changes",
+			"accept",
+			"--at",
+			"rev0",
+			"rev1",
+			docPath,
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("track-changes", "list", docPath)).parsed).toEqual([]);
+	});
+
+	test("--accept=rev0 rev1 and --accept rev0 REV1 take both handles", async () => {
+		for (const handles of [
+			["--accept=rev0", "rev1"],
+			["--accept", "rev0", "REV1"],
+		]) {
+			const docPath = await twoReplaces("apply-equals");
+			const result = await runCli(
+				"track-changes",
+				"apply",
+				docPath,
+				...handles,
+			);
+			expect(result.exitCode).toBe(0);
+			expect((await runCli("track-changes", "list", docPath)).parsed).toEqual(
+				[],
+			);
+		}
+	});
+
+	test("a token the sweep doesn't recognize errors instead of being dropped", async () => {
+		const docPath = await twoReplaces("apply-stray");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"track-changes",
+			"apply",
+			docPath,
+			"--accept",
+			"rev0",
+			"rev1;",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("rev1;");
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+	});
+});

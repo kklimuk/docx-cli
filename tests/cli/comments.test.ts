@@ -10,6 +10,48 @@ async function readPart(docPath: string, partName: string): Promise<string> {
 	return await pkg.readText(partName);
 }
 
+describe("docx comments — schema hygiene of the comments part", () => {
+	test("add on a comments part lacking mc:Ignorable registers w14 so validate stays clean", async () => {
+		// Word-authored comments.xml declares xmlns:w14 but often omits
+		// `mc:Ignorable`; our `w14:paraId`/`w14:textId` are then schema errors the
+		// validator can't strip — every `comments add` made `validate` fail on a file
+		// the agent hadn't broken. Simulate: strip the declaration our fresh root
+		// carries, then add again.
+		const workspace = tempWorkspace("comments-ignorable");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Clause one. Clause two.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "first");
+		const pkg = await Pkg.open(docPath);
+		const stripped = (await pkg.readText("word/comments.xml")).replace(
+			/ mc:Ignorable="[^"]*"/,
+			"",
+		);
+		expect(stripped).not.toContain("mc:Ignorable");
+		pkg.writeText("word/comments.xml", stripped);
+		await pkg.save();
+		// Sanity: the stripped part now fails validation on its own.
+		expect((await runCli("validate", docPath)).exitCode).not.toBe(0);
+
+		const added = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"second",
+		);
+		expect(added.exitCode).toBe(0);
+		const validation = await runCli("validate", docPath);
+		expect(validation.exitCode).toBe(0);
+		const root = (await readPart(docPath, "word/comments.xml")).match(
+			/<w:comments[^>]*>/,
+		)?.[0];
+		expect(root).toContain("w14");
+		expect(root).toMatch(/mc:Ignorable="[^"]*w14/);
+	});
+});
+
 describe("docx comments", () => {
 	let docPath: string;
 
@@ -1160,5 +1202,171 @@ describe("docx comments — inline escape decoding (--text)", () => {
 		const list = await runCli("comments", "list", docPath);
 		const comment = (list.parsed as Array<{ text: string }>)[0];
 		expect(comment?.text).toBe("c1\nc2");
+	});
+});
+
+describe("docx comments reply --batch", () => {
+	async function seedTwoComments(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "doc.docx");
+		await runCli("create", docPath, "--text", "Alpha clause. Beta clause.");
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"Alpha",
+			"--text",
+			"Narrow this",
+		);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"Beta",
+			"--text",
+			"Why?",
+		);
+		return docPath;
+	}
+
+	test("answers several threads in one call, resolving the ones marked resolve", async () => {
+		const docPath = await seedTwoComments("reply-batch");
+		const batch = join(tempWorkspace("reply-batch-jsonl"), "replies.jsonl");
+		writeFileSync(
+			batch,
+			[
+				JSON.stringify({ at: "c0", text: "Narrowed.", resolve: true }),
+				JSON.stringify({ at: "c1", text: "Keeping it." }),
+			].join("\n"),
+		);
+		const result = await spawnCli(
+			"comments",
+			"reply",
+			docPath,
+			"--batch",
+			batch,
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim().split("\n")).toEqual(["c2", "c3"]);
+
+		const comments = (await listComments(docPath)) as Array<{
+			id: string;
+			parentId: string | null;
+			resolved: boolean;
+			text: string;
+		}>;
+		const byId = new Map(comments.map((comment) => [comment.id, comment]));
+		expect(byId.get("c2")).toMatchObject({ parentId: "c0", text: "Narrowed." });
+		expect(byId.get("c3")).toMatchObject({
+			parentId: "c1",
+			text: "Keeping it.",
+		});
+		expect(byId.get("c0")?.resolved).toBe(true);
+		expect(byId.get("c1")?.resolved).toBe(false);
+	});
+
+	test("an unknown parent aborts the whole batch before anything is written", async () => {
+		const docPath = await seedTwoComments("reply-batch-bad");
+		const before = await Bun.file(docPath).bytes();
+		const batch = join(tempWorkspace("reply-batch-bad-jsonl"), "replies.jsonl");
+		writeFileSync(
+			batch,
+			[
+				JSON.stringify({ at: "c0", text: "ok" }),
+				JSON.stringify({ at: "c9", text: "nope" }),
+			].join("\n"),
+		);
+		const result = await runCli("comments", "reply", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(3);
+		expect(result.stdout).toContain("entry 1");
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+	});
+
+	test('"resolved" (the spelling comments list prints) closes the thread too', async () => {
+		const docPath = await seedTwoComments("reply-batch-resolved");
+		const batch = join(
+			tempWorkspace("reply-batch-resolved-jsonl"),
+			"replies.jsonl",
+		);
+		writeFileSync(
+			batch,
+			JSON.stringify({ at: "c1", text: "Done.", resolved: true }),
+		);
+		const result = await runCli("comments", "reply", docPath, "--batch", batch);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({ resolved: ["c1"] });
+		const comments = (await listComments(docPath)) as Array<{
+			id: string;
+			resolved: boolean;
+		}>;
+		expect(comments.find((comment) => comment.id === "c1")?.resolved).toBe(
+			true,
+		);
+	});
+
+	test("an unknown field or a non-boolean resolve is refused, not ignored", async () => {
+		const docPath = await seedTwoComments("reply-batch-unknown");
+		const before = await Bun.file(docPath).bytes();
+		const workspace = tempWorkspace("reply-batch-unknown-jsonl");
+		for (const entry of [
+			{ at: "c0", text: "ok", close: true },
+			{ at: "c0", text: "ok", resolve: "true" },
+		]) {
+			const batch = join(workspace, "replies.jsonl");
+			writeFileSync(batch, JSON.stringify(entry));
+			const result = await runCli(
+				"comments",
+				"reply",
+				docPath,
+				"--batch",
+				batch,
+			);
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout).toContain("entry 0");
+		}
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+	});
+
+	test("--dry-run previews the reply ids the real run mints", async () => {
+		const docPath = await seedTwoComments("reply-batch-dry");
+		const batch = join(tempWorkspace("reply-batch-dry-jsonl"), "replies.jsonl");
+		writeFileSync(
+			batch,
+			[
+				JSON.stringify({ at: "c0", text: "a" }),
+				JSON.stringify({ at: "c1", text: "b", resolve: true }),
+			].join("\n"),
+		);
+		const result = await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--batch",
+			batch,
+			"--dry-run",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			batch: [
+				{ commentId: "c2", parentId: "c0" },
+				{ commentId: "c3", parentId: "c1" },
+			],
+			resolved: ["c1"],
+		});
+	});
+
+	test("--batch refuses a CLI --at/--text alongside it", async () => {
+		const docPath = await seedTwoComments("reply-batch-mixed");
+		const result = await runCli(
+			"comments",
+			"reply",
+			docPath,
+			"--batch",
+			"-",
+			"--at",
+			"c0",
+		);
+		expect(result.exitCode).toBe(2);
 	});
 });

@@ -15,7 +15,7 @@ import { mathmlToOmml } from "./mathml-to-omml";
  * sites with `new Equations(document)`; holds only a back-reference. Reads from
  * `document.body.equationReferences` (populated by the AST reader) and splices
  * a recompiled `<m:oMath>` / `<m:oMathPara>` back in place. Tracking-aware:
- * when `<w:trackChanges/>` is on, the edit lands as a paired
+ * when `<w:trackRevisions/>` is on, the edit lands as a paired
  * `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same
  * parent. */
 export class Equations {

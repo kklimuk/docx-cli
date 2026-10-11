@@ -32,9 +32,10 @@ const SKILL_SUBPATH = "skills/docx";
 // (and then never re-fetch to self-heal).
 const REQUIRED = [
 	"SKILL.md",
-	"scripts/office/unpack.py",
-	"scripts/office/pack.py",
+	"scripts/merge_runs.py",
+	"scripts/office/validate.py",
 	"scripts/comment.py",
+	"scripts/accept_changes.py",
 ];
 
 let failed = false;
@@ -68,6 +69,11 @@ await installPythonDeps();
 await installNodeDocx(skillDest, runDir);
 await ensurePandoc();
 await ensureImageTooling();
+// The skill unpacks/repacks with plain unzip/zip (its pack.py/unpack.py were retired).
+for (const tool of ["zip", "unzip"]) {
+	if (Bun.which(tool)) note(`${tool} present`);
+	else fail(`${tool} not found — the skill's unpack/repack workflow needs it`);
+}
 
 console.log("");
 if (failed) {

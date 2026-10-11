@@ -10,8 +10,8 @@ import { resolveAuthor } from "./index";
  *
  *  Before/after instead of predicting: each rebuild path keeps a different
  *  subset — the `--text` diff carries text boxes and inline content controls
- *  through and keeps the pPr; the `--markdown`/`--runs` replace drops the box
- *  and a pPrChange, and under tracking keeps an existing `<w:del>` but drops
+ *  through and keeps the pPr; the `--markdown`/`--runs` replace keeps the box
+ *  but drops a pPrChange, and under tracking keeps an existing `<w:del>` but drops
  *  every `<w:ins>` — so only diffing what survived stays accurate as those
  *  paths change. A revision is matched by tag + `w:id` + author + date, so a
  *  CLONED survivor (the paragraph-mark marker an inherited pPr carries over)

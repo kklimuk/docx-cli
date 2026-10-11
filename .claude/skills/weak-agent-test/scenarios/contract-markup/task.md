@@ -54,5 +54,7 @@ our contracts — please switch those over to match.
 It comes back marked up and ready to send: our changes to the unacceptable terms are
 visible as tracked edits (they'll see exactly what we struck or rewrote), my objections
 show up as notes pinned to the clauses I flagged, section 9 is legible, and the IP
-sub-points read as i, ii, iii. Nothing is changed silently — they can see and respond to
-every edit and every note.
+sub-points read as i, ii, iii. None of the wording is changed silently — every change to
+what the contract says shows as a tracked edit they can see and respond to, and every
+objection is a note. The two house-style fixes (the spacing and the numerals) are just
+formatting; do them however is cleanest.

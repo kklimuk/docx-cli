@@ -27,6 +27,7 @@ export async function renderReadMarkdown(
 		showComments: options.showComments,
 		defaultSizeHalfPoints: document.styles?.defaultSizeHalfPoints(),
 		defaultFont: document.styles?.defaultFont(),
+		resolveFont: document.styles?.resolveFont.bind(document.styles),
 		trackChangesOn: document.isTrackChangesEnabled(),
 	});
 }
