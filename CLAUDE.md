@@ -85,6 +85,7 @@ on the write-back path.
 
 ```bash
 bun run test:unit         # core + cli (~3s)
+bun run test:benchmark    # comparison harness checks + types; no model calls
 bun run test:integration  # LibreOffice round-trip (auto-skips if no soffice)
 bun test                  # everything
 bun run check             # biome + knip + tsc
@@ -115,7 +116,7 @@ When a feature's natural brute-force path already works for weak agents (verifie
 
 Three docs, each for a different reader — don't cross the streams. When you change one, check the others:
 
-- **README.md** — user-facing: install, examples, command reference, "How It Works."
+- **README.md** — user-facing introduction and quickstart; detailed installation, first-use, benchmark evidence, and command reference live in `guides/`. The OfficeCLI comparison protocol lives in `benchmarks/officecli/README.md`.
 - **CONTRIBUTING.md** — dev-facing: setup/test commands, LibreOffice install, project-structure tree, CI table.
 - **CLAUDE.md** _(this file + nested)_ — agent-facing: conventions, invariants, per-subsystem playbooks.
 

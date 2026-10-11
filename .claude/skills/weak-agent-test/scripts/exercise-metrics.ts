@@ -854,13 +854,12 @@ async function collectClaudeRows(
 		cwd: transcriptDir,
 		absolute: true,
 	})) {
-		paths.push(path);
+		if (await isExerciseTranscript(path)) paths.push(path);
 	}
 	paths.sort();
 
-	// Read the transcripts concurrently (each is an independent file), then keep only
-	// the exercise agents (matched by model substring) — the opus/fable stage/render/
-	// judge/synth agents don't count.
+	// Identify the role before filtering by model: stage and render agents can use
+	// the same model as exercises. A filename in their prompt is not an exercise.
 	const measured = await Promise.all(
 		paths.map((path) => measureAgent(path, binary, runDir)),
 	);
@@ -874,6 +873,19 @@ async function collectClaudeRows(
 		);
 	}
 	return rows;
+}
+
+async function isExerciseTranscript(path: string): Promise<boolean> {
+	const metadata = Bun.file(path.replace(/\.jsonl$/, ".meta.json"));
+	if (await metadata.exists()) {
+		const meta = await metadata.json();
+		if (typeof meta.description === "string") {
+			return /^exercise:[a-z0-9-]+$/.test(meta.description);
+		}
+	}
+	// Older runtimes did not write metadata. Their exercise prompts still carry
+	// this explicit marker; rendering/staging prompts only mention filenames.
+	return /\(scenario:\s*[a-z0-9-]+\)/.test(userTexts(await readJsonl(path)));
 }
 
 // Collect the rows for a local run by reading every scenario's exercise.json.

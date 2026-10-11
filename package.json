@@ -53,6 +53,7 @@
 		"test": "bun test",
 		"test:unit": "bun test tests/core tests/cli",
 		"test:integration": "bun test tests/integration",
+		"test:benchmark": "bun test benchmarks/officecli && bunx tsc --noEmit -p benchmarks/officecli/tsconfig.json",
 		"prepack": "bun run build",
 		"prepare": "husky"
 	},

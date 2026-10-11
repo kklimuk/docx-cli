@@ -119,11 +119,17 @@ const scriptsDir = `${String(scenariosDir).replace(/\/scenarios\/?$/, "")}/scrip
 // provisioned with its deps by scripts/stage-competitor.ts.
 const arm = parsedArgs.arm || "docx-cli";
 const competitorDir = parsedArgs.competitorDir || null;
+const competitorBinary = parsedArgs.competitorBinary || null;
 // Everything that differs between arms lives HERE — toolName plus the two prompt
 // fragments the judge/synth builders splice in. A new arm is one object literal; the
 // builders just read ARMS[arm].* (no scattered `arm === …` ternaries at the use sites).
 const ARMS = {
 	"docx-cli": { toolName: "docx-cli", judgeNote: "", synthClause: "" },
+	officecli: {
+		toolName: "OfficeCLI",
+		judgeNote: `\n\n**OfficeCLI comparison:** Judge the output against the same task and rubric, using Word renders and independent OOXML inspection where needed. Rubric commands mentioning docx-cli are suggested inspection methods, NOT required ways to achieve the result. A failure of docx-cli's reader is not an OfficeCLI failure. Do not penalize different internal XML representations that produce equivalent requested behavior. Verify pending revisions and comment anchors in the file; pictures alone cannot establish accept/reject behavior.`,
+		synthClause: " (OfficeCLI comparison arm; same tasks and grading as docx-cli)",
+	},
 	"anthropic-docx-skill": {
 		toolName: "the Anthropic docx skill",
 		// The competitor agent used the Anthropic docx skill, not docx-cli — so the judge
@@ -143,6 +149,9 @@ if (arm === "anthropic-docx-skill" && !competitorDir) {
 	throw new Error(
 		"arm 'anthropic-docx-skill' requires args.competitorDir — the staged Anthropic docx skill folder (run scripts/stage-competitor.ts first).",
 	);
+}
+if (arm === "officecli" && (!competitorDir || !competitorBinary)) {
+	throw new Error("arm 'officecli' requires competitorDir and competitorBinary from benchmarks/officecli/stage.ts");
 }
 const toolName = ARMS[arm].toolName;
 
@@ -616,6 +625,7 @@ return { arm, report, runDir, binary, exercises, verdicts };
 // docx skill (read its SKILL.md, run its scripts, hand-edit OOXML) instead of the
 // docx-cli binary.
 function exercisePrompt(scenario) {
+	if (arm === "officecli") return exercisePromptOfficeCli(scenario);
 	return arm === "anthropic-docx-skill"
 		? exercisePromptAnthropic(scenario)
 		: exercisePromptDocxCli(scenario);
@@ -706,7 +716,7 @@ The docx skill is installed at this absolute path:
 Start by orienting yourself — READ the skill's instructions and follow them:
   ${competitorDir}/SKILL.md     (the skill itself — read it FULLY before you start; it defines the workflow, the helper scripts, and the conventions)
 The skill's helper scripts live under:
-  ${competitorDir}/scripts/      (e.g. scripts/office/unpack.py, scripts/office/pack.py, scripts/comment.py, scripts/accept_changes.py — resolve the SKILL.md's relative paths against ${competitorDir})
+  ${competitorDir}/scripts/      (e.g. scripts/merge_runs.py, scripts/comment.py, scripts/accept_changes.py, scripts/office/validate.py — resolve the SKILL.md's relative paths against ${competitorDir})
 
 ${workLine}
 
@@ -736,6 +746,31 @@ ${accountInstruction()}
 - outputPath: the absolute path to the .docx you produced (it should be ${dir}/${scenario.doc}).`;
 }
 
+function exercisePromptOfficeCli(scenario) {
+	const dir = `${runDir}/${scenario.key}`;
+	return `You are stress-testing OfficeCLI, a tool for editing Office files. You are a capable-but-fresh agent. Discover its syntax from its own instructions and help.
+
+The PINNED executable is ${competitorBinary}. Set OFFICECLI_SKIP_UPDATE=1 on EVERY invocation. Do not install or upgrade it.
+Read ${competitorDir}/SKILL.md FULLY first. Its specialized skills are available under ${competitorDir}; follow them where relevant. Use the executable's built-in help and the documentation linked by the skill as needed. Use this executable in place of the bare officecli name in its examples.
+
+Your task (scenario: ${scenario.key}): read ${dir}/task.md and inspect ${dir}/assets/.
+${scenario.kind === "edit" ? "Edit the private working copy IN PLACE" : "Create the requested document from scratch"} at ${dir}/${scenario.doc}.
+
+Rules:
+${isolationRules(dir)}
+- Task work stays inside ${dir}. Do not read other scenario folders, the source fixtures, or grading rubrics. You may read OfficeCLI's own documentation/skills at ${competitorDir} and its linked documentation.
+- Use ONLY OfficeCLI for document operations, including its documented raw-XML escape hatch if needed. Do not use docx-cli or other document libraries.
+- Keep the default resident behavior. Before finishing, run OFFICECLI_SKIP_UPDATE=1 ${competitorBinary} close ${dir}/${scenario.doc} to flush pending edits before Word reads the file.
+- On friction, try at most about three reasonable alternatives before recording it and moving on. Make a complete attempt.
+
+${accountInstruction()}
+- completed: yes | partial | no
+- summary: what you actually accomplished.
+- deadEnds: specific failed steps.
+- frictions: concrete issues with severity (blocker | major | minor) and a suggested fix.
+- outputPath: ${dir}/${scenario.doc}.`;
+}
+
 function renderPrompt(target) {
 	const baselineBlock = target.baselineDoc
 		? `\n  3. BASELINE PNGs → ${target.baselineOutDir}: if that dir already holds \`*.png\`, SKIP; else \`mkdir -p\` it and \`${binary} render ${target.baselineDoc} --engine word --out ${target.baselineOutDir}\` (the pristine "before" the output is compared against).
@@ -748,6 +783,8 @@ function renderPrompt(target) {
 	return `You are the RENDER step of an evaluation harness. Your job is to ENSURE that, for the finished .docx AND (when there's a pristine source) its "before" baseline, two artifacts exist on disk: (1) page PNGs from docx-cli's render command, driven by Microsoft **Word**, and (2) a markdown read view saved to a file. Both the OUTPUT and the BASELINE get their own PNGs + read.md so the judge can compare before/after visually and textually.
 
 **This step is IDEMPOTENT — skip work that's already done.** The local corpus runner renders + reads each doc as it finishes, so these artifacts may ALREADY be on disk. For EACH item below, CHECK FIRST (\`ls\` the dir / test the file) and only run the command if the artifact is MISSING — never re-render a doc whose PNGs already exist (Word rendering is slow; reusing them is the whole point). Either way, COLLECT the real paths and return them.
+
+${arm === "officecli" ? `Before inspecting the output, flush OfficeCLI's resident session: run OFFICECLI_SKIP_UPDATE=1 ${competitorBinary} close ${target.output}. Record any failure; never silently grade a stale disk copy. Do not otherwise edit the output.` : ""}
 
 The CLI executable:
   ${binary}

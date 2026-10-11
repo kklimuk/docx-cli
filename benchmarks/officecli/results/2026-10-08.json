@@ -1,0 +1,1990 @@
+{
+  "date": "2026-10-08",
+  "scope": "Six existing Word regression tasks, three fresh repetitions per tool; development corpus, non-blinded model judge.",
+  "exerciseModel": "claude-haiku-5-5",
+  "judgeModel": "claude-opus-5-5",
+  "runtime": "Claude Code 2.1.294",
+  "docx": {
+    "version": "docx 0.26.0",
+    "commit": "385878b0bbf3f52ba78a244416ce78edad96b2ab",
+    "sha256": "d302940c4bdc5198d970c53e958adda6a717ac20bffb981c7b983f9fde41e4a6"
+  },
+  "officecli": {
+    "tag": "v1.0.155",
+    "commit": "8d079c777ed6bea35b922c3d893758d3c2081137",
+    "sha256": "6b83cac55120995019f299b632d9a7c9e89268f382b726e1dad123864e3b57aa"
+  },
+  "worktreePatchSha256": "898c2a508ba7b0aa79f0f54692655b4d7af9646a6abdb25ef300d1de4318f442",
+  "reportingCorrection": {
+    "reason": "Role filtering correction: select exercise metadata before model. No exercises, prompts, tools, or rubrics changed.",
+    "files": {
+      "parse-local-ledger.ts": "4404c89f885a8ac723321244b2a2baa3e551d5e62de7320d633d1f1cb7c22096",
+      "exercise-metrics.ts": "8d65f946b7ace184b7911dc32ff3e18f12d2e736555c95d7806633e573a04992"
+    }
+  },
+  "frozenHarnessHashes": {
+    "weak-agent-test.js": "e04150bbba1b41f4e2d91edc52b0b086d8e6ac6ea8c019aed10b67cbf0f39669",
+    "agents.json": "2707dd1a2bd6e08da95bec9f4b48c35586902d62b5940a82d028c8e05516ac41",
+    "weak-exercise.md": "3be20d090f821fb731fb0d81d2ddd2568203d56d327b9c53a59e54cdc5992af3",
+    "skill/SKILL.md": "7136e184c44f5561aa3cf835d5f4f7029663dad00efd27104487ab52f26ae6ea",
+    "skill/scenarios/invoice/criteria.md": "7cf9f1021e27f73a5bedc72f577fcd33684603f649a2a4d78b148e2872235c35",
+    "skill/scenarios/invoice/invoice.docx": "af23fff89be5d664ded556e1ac8ccb5b46f4e1adb4ce4611fc6bb82ffed96878",
+    "skill/scenarios/invoice/task.md": "02fd9792c321f56cda044cb1ae5ff9a312780a0611c5e16dc7b42891366f718c",
+    "skill/scenarios/invoice/assets/logo.svg": "3d1e64e10171f37e90c576dc18a0f4769827fa6e1b6c8970ec8fd8933a49c9bb",
+    "skill/scenarios/eliot-journal/criteria.md": "b70458ff90717f492468217974e275dea424ed48ea0f5b5abdd182ba5443d987",
+    "skill/scenarios/eliot-journal/task.md": "9a43f4307364fe4418211043ad3e1e6bc02f6ef51a540f13f563d7b614d5ffe7",
+    "skill/scenarios/eliot-journal/assets/eliot-poems.md": "4cae2b3a84faba34927e3d71a5a4695fb63286927f0cb30929d92c3d0c12fc5d",
+    "skill/scenarios/eliot-journal/assets/frontispiece.svg": "a20fd247c2f30c72fc402ed7d3967aba8a8f3d70fee1224bbf52b5d18edea08d",
+    "skill/scenarios/mnda/criteria.md": "1e2a8ec6219ebd244f856088eb331a011e204d74118595763fa5a3a218a2320c",
+    "skill/scenarios/mnda/task.md": "e7324591f7457803c81b7ffa918b706b59eafecc43b3d516cbfd35fb6a1107f8",
+    "skill/scenarios/mnda/mnda.docx": "18e07001c3ebfc749833e10836eda4fe0d302ab0a7519a0388696be3df86b566",
+    "skill/scenarios/resume/resume.docx": "acb7d106b353c2910561e93789a41682536b868bc59c2d885c9aeb5de236ebe4",
+    "skill/scenarios/resume/criteria.md": "79df2b69a2e8e818777980bae90f7a0f3fbfeb71eea403001aad97ff23ecc044",
+    "skill/scenarios/resume/task.md": "e36e3af590069dd135522b52c07fd9dcfffe9fd48097667ca4911169638cda4e",
+    "skill/scenarios/contract-markup/contract.docx": "eebda55f7be3eb5e9ae41c36c4764753122e4f0dfb91ef729f9e900670606f42",
+    "skill/scenarios/contract-markup/criteria.md": "86e4b601fd18d8a9d63618fe24f39a85b9d82e8b4588a5a17e321159054bc056",
+    "skill/scenarios/contract-markup/task.md": "6725c8ae35041622be138f07e8b9b5560c79835e67658b6e5ebaee6343b9760c",
+    "skill/scenarios/contract-finalize/contract-redlined.docx": "982a748a4884a5ca5b15fc0793835523c8cf5832a92138608a9dd58ee4888c40",
+    "skill/scenarios/contract-finalize/criteria.md": "a06bb31c4915f203d9cf6e5127c8741aa1272ba05f485a6c73052a2bb816a15b",
+    "skill/scenarios/contract-finalize/task.md": "7090553d077f8cedc3b2e505469c804c1cdea7c2abd140e29d9d7f65b985e9b1",
+    "skill/scripts/stage-competitor.ts": "a6e6a20f7e75b6933e633f6701eb68a9a5db6091db46114af15c3432628b5129",
+    "skill/scripts/run-local-corpus.ts": "415f586ef46468a597a8b7d13ba0bbc05dcdd2ef36cc1d062b34829057d71d34",
+    "skill/scripts/parse-local-ledger.ts": "4404c89f885a8ac723321244b2a2baa3e551d5e62de7320d633d1f1cb7c22096",
+    "skill/scripts/local-exercise-prompt.md": "a9f94c8e5bf68f679033f9e42c8cd70bd1861f66ae05dc6258faa8576544a3f6",
+    "skill/scripts/stage-scenario.ts": "dfab394b32b4e100e0de777a91d8a1144e21ffcef82df0fdd0ee268325c66e14",
+    "skill/scripts/collect-exercises.ts": "07f4d0f4abad51301a59c1afc941a3541c0a3c500368343f4ce4d6322735dd57",
+    "skill/scripts/tsconfig.json": "a20c838a1a2078d20f08a36703f3d6b85ffba85b8db0cc6c1d88537040f8bbcb",
+    "skill/scripts/exercise-metrics.ts": "8df1df62de5f5736792a99dd665f0ea034b275e5ae792fa2867fb1fa17505eba"
+  },
+  "runs": [
+    {
+      "name": "docx-cli-r1",
+      "arm": "docx-cli",
+      "workflow": "wf_7af085ef-807",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 68,
+        "otherToolCalls": 8,
+        "totalToolCalls": 76,
+        "inputTokens": 142,
+        "cacheReadTokens": 3065018,
+        "cacheWriteTokens": 359205,
+        "outputTokens": 79863,
+        "effectiveInputTokens": 755650,
+        "durationSec": 400.9,
+        "graded": 6,
+        "success": 6,
+        "partial": 0,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 22,
+            "cacheReadTokens": 408198,
+            "cacheWriteTokens": 48631,
+            "outputTokens": 8050,
+            "effectiveInputTokens": 101631,
+            "durationSec": 40,
+            "docxToolCalls": 11,
+            "otherToolCalls": 1,
+            "totalToolCalls": 12,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All five tracked-change decisions are correct. Net 30 and 'one (1) year' are clean text, the liability cap reads 'one hundred dollars ($100)', and \u00a711 Personal Guarantee (heading and body) is restored. The indemnification paragraph keeps line-spacing=1.5 as live formatting. `track-changes list` prints 'no tracked changes'.",
+              "Did all tracked-change work in one batched `track-changes apply` call (--accept rev0 rev1 tc4 --reject rev2 tc7 tc8 tc9) after a --dry-run. The revN pairing handles worked as designed.",
+              "All 4 parent comments have exactly one reply (c7->c0, c5->c1, c6->c2, c10->c3). Each reply has a parentId and a non-empty anchor.startBlockId (p3/p12/p22/p30). Each reply shows in `read --comments` as its own [^cN] with a '\u21b3 cN' marker.",
+              "c0 (auto-renewal) and c3 (arbitration) are resolved (w15:done=1 on the roots). c1 (IP) and c2 (indemnification) stay open.",
+              "Deleted duplicate replies (c4/c8/c9) left no orphaned markers. document.xml commentRangeStart/End/Reference ids match comments.xml exactly, and `docx validate` reports valid.",
+              "Word rendered all 3 pages. Header, footer, table, numbering and signature block are unchanged from the baseline. List numbering correctly renumbers 11 to 15 after \u00a711 is restored. The Word render shows the reply bubbles threaded under the parent comments."
+            ],
+            "defects": [
+              {
+                "what": "Company replies are attributed to the default author 'Reviewer', not to the Company (Nimbus Freight Systems).",
+                "severity": "minor",
+                "evidence": "comments list: c5/c6/c7/c10 have author 'Reviewer', initials 'R'. The Word render shows 'Commented [R2]' etc. The agent's friction notes it didn't know to pass --author."
+              },
+              {
+                "what": "The replies on the two resolved comments say 'Declined' even though the task framed these as comments the Company 'fully addressed'. This is semantically odd, but the task's own example allowed 'Declined \u2014 standard term.' and the rubric doesn't grade wording.",
+                "severity": "minor",
+                "evidence": "c7: 'Declined \u2014 automatic renewal is a standard term; notice mechanics stay as drafted.' c10: 'Declined \u2014 arbitration fee terms are a standard term; stays as drafted.'"
+              },
+              {
+                "what": "Agent workflow slog. The first reply batch had garbled wording, and a re-run batch duplicated the c1/c2 replies. Both needed `comments delete` cleanup. There's no `comments edit` verb for correcting a reply.",
+                "severity": "minor",
+                "evidence": "Agent deadEnds: duplicate replies c8/c9 deleted via `comments delete --at c8 --at c9`; c0/c3 replies deleted and re-posted."
+              }
+            ],
+            "notes": "Every rubric condition (1-13) passes when checked directly: track-changes list is empty, comments list shows the parent/reply/resolved state, read --comments shows the \u21b3 markers, and validate is clean. The output render matches the baseline except for the intended changes. The agent correctly flagged that the pricing table still says 'Net 90 after final acceptance'. That text is untracked and out of scope, so it's not counted against the run.",
+            "weakAgentStruggle": "Moderate on comments, smooth on tracked changes. The batched apply went right the first time. The reply phase needed two clean-up rounds (garbled text, then duplicate replies from re-submitting the full JSONL) because there's no reply-edit verb. The default 'Reviewer' author went unnoticed."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 762786,
+            "cacheWriteTokens": 71390,
+            "outputTokens": 19106,
+            "effectiveInputTokens": 165546,
+            "durationSec": 91.3,
+            "docxToolCalls": 14,
+            "otherToolCalls": 1,
+            "totalToolCalls": 15,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All four must-change clauses (Net 90->Net 30 incl. schedule cell, non-compete narrowed + LD struck, indemnity negligence carve-out, mutual liability cap) are real tracked insertions/deletions (20 changes / 11 logical in track-changes list)",
+              "9 anchored comments covering every flagged clause (IP, counsel waiver, guarantee, arbitration, amendment) plus the redlined clauses",
+              "Section 9 body at line=360 auto (1.5) and visibly roomier in the Word render; tracked as a format change",
+              "IP sub-points p11-p14 list.format=lower-roman, render (i)-(iv); top-level numbering 1-15 intact",
+              "Header, footer, table styling, signature block and 3-page layout preserved; docx validate clean"
+            ],
+            "defects": [
+              {
+                "what": "Comments anchored on clause headings rather than the objectionable sentences",
+                "severity": "minor",
+                "evidence": "comments list: c6 anchor p27 offsets 0-19 ('Personal Guarantee.'), likewise c1 p9, c3 p19, c7 p29, c8 p31"
+              },
+              {
+                "what": "Section 11 still references 'liquidated-damages obligations' after the Section 6 LD sentence was struck",
+                "severity": "minor",
+                "evidence": "read.md p28 text unchanged"
+              },
+              {
+                "what": "Tool: read view shows the lower-roman hint only on the first sub-item; p12-p14 show decimal 2./3./4. with plain docx:p hints",
+                "severity": "minor",
+                "evidence": "output read.md lines 40-46 vs AST format=lower-roman on p11-p14"
+              },
+              {
+                "what": "Tool: lists set --restart on a sub-item silently restarted the following top-level clauses; the agent had to repair it with --continue",
+                "severity": "minor",
+                "evidence": "agent deadEnds; final state correct (p15 numId 2, renders 5.)"
+              }
+            ],
+            "notes": "All 5 rubric conditions pass. Render matches baseline except the intended redlines, comments, Section 9 spacing and roman sub-points.",
+            "weakAgentStruggle": "Moderate. The agent hit a self-inflicted -o dead end on comments add --batch, and lists set --restart cascaded into the top-level numbering. The agent detected and fixed both, with no impact on the final output."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 670343,
+            "cacheWriteTokens": 63284,
+            "outputTokens": 12727,
+            "effectiveInputTokens": 146169,
+            "durationSec": 66,
+            "docxToolCalls": 16,
+            "otherToolCalls": 3,
+            "totalToolCalls": 19,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "success",
+            "inputTokens": 22,
+            "cacheReadTokens": 490316,
+            "cacheWriteTokens": 66339,
+            "outputTokens": 19553,
+            "effectiveInputTokens": 131977,
+            "durationSec": 95.3,
+            "docxToolCalls": 10,
+            "otherToolCalls": 1,
+            "totalToolCalls": 11,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All placeholder families removed (find: no TEMPLATE/DO NOT SEND/Item/Customer name/Your; only legit $0.00 Shipping/Other remain)",
+              "Header, Bill To/Ship To, totals and Notes filled correctly; the extra address line and Description sub-lines were removed with no empty paragraphs left",
+              "Fourth row inserted above totals; widths 3.2/0.9/1.3/1.2/1.2in; no dollar value wraps in render",
+              "Header shading F2F2F2, right-aligned Price/Amount, repeat-header r0 all present",
+              "Stamp text box tbx0 kept with new wording and red/bold/centered formatting",
+              "Logo swapped to SVG at the same size and position; footer PayPal png (rId2) intact; exactly two media parts",
+              "read output identical to the post-run read view; docx validate passes"
+            ],
+            "defects": [
+              {
+                "what": "SVG logo embedded as plain a:blip with no svgBlip extension or PNG fallback; Word 365 renders it, but older consumers may not",
+                "severity": "minor",
+                "evidence": "<a:blip r:embed=\"rId6\"> -> media/image1.svg"
+              },
+              {
+                "what": "images list omits the footer image, so the rubric's two-entry check fails through that verb",
+                "severity": "minor",
+                "evidence": "images list returns only img0; footer1.xml.rels has rId2 -> media/image2.png"
+              },
+              {
+                "what": "'Tax total (8.75%)' label wraps in the narrowed Price column (a label, not a dollar value)",
+                "severity": "minor",
+                "evidence": "output page-001.png totals block"
+              }
+            ],
+            "notes": "Everything in the rubric passes. The header shading and right alignment were already in the template.",
+            "weakAgentStruggle": "Low: one dead end on 'tables insert-row' syntax; the agent had to use raw get to confirm the footer image because images list is body-only."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 20,
+            "cacheReadTokens": 394808,
+            "cacheWriteTokens": 58071,
+            "outputTokens": 10741,
+            "effectiveInputTokens": 112090,
+            "durationSec": 50.4,
+            "docxToolCalls": 9,
+            "otherToolCalls": 1,
+            "totalToolCalls": 10,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 8 cover-page placeholders filled with correct values, brackets removed, checkbox brackets left intact",
+              "Cover-page fills kept the original Arial 8pt black run look",
+              "Zero w:highlight left in document.xml; find --highlight any returns no matches",
+              "All 10 signature values in the correct t2 c1/c3 cells for r2-r6, both dates filled, a single p0 per cell, c0/c2/r1 untouched",
+              "Untouched text (Georgia title, bold labels, gray sub-labels, header/footer, page 2) identical to baseline",
+              "Efficient batch edit path using clear:highlight on spans"
+            ],
+            "defects": [
+              {
+                "what": "Signature-table values render at 12pt (docDefaults sz=24), much larger than the 9pt labels and 8pt body, because the agent's clear:size pass left the runs with no sz",
+                "severity": "major",
+                "evidence": "XML run <w:rPr><w:rFonts Arial/></w:rPr> without w:sz; styles.xml docDefaults <w:sz w:val=\"24\"/>; page-001.png shows 'Dana Okafor' etc. visibly oversized vs 'Print Name'"
+              },
+              {
+                "what": "Read view and AST hide the effective 12pt size: values show as plain text under docx:base size=8pt, so the agent could not see the drift",
+                "severity": "major",
+                "evidence": "read.md line 34 'Dana Okafor <!-- t2:r2c1:p0 -->' with no size span; AST run has no sizeHalfPoints; render shows 12pt"
+              },
+              {
+                "what": "Empty-cell fill stamped 9pt instead of the document base 8pt; the only offered cure (--clear size) falls through to the docDefaults 12pt",
+                "severity": "minor",
+                "evidence": "Agent friction report; paragraph-mark rPr sz=18"
+              },
+              {
+                "what": "Underline on the filled cover-page spans was dropped (acceptable, since the underline was part of the placeholder look)",
+                "severity": "minor",
+                "evidence": "baseline <mark>[<u>...</u>]</mark> vs output plain text"
+              }
+            ],
+            "notes": "All rubric pass conditions met. Main issue is a read-view fidelity bug: run size resolved from docDefaults (12pt) differs from the docx:base hint (8pt) and is not surfaced, which misled the agent's size cleanup.",
+            "weakAgentStruggle": "Moderate: the cover-page batch worked on the first try; the signature cells needed a second clear:size batch that made the size worse without the agent being able to see it in read."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "success",
+            "inputTokens": 18,
+            "cacheReadTokens": 338567,
+            "cacheWriteTokens": 51490,
+            "outputTokens": 9686,
+            "effectiveInputTokens": 98237,
+            "durationSec": 57.9,
+            "docxToolCalls": 8,
+            "otherToolCalls": 1,
+            "totalToolCalls": 9,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All candidate data (name, contact, both education entries, both experience entries with bullets, leadership entry with bullet) landed correctly; no template placeholders remain",
+              "No [Note: ...] text survives (find 'Note' -> no matches); Skills & Interests heading and all four prompt lines are gone",
+              "Experience heading converted to Heading1; all three headings (p8, p16, p28) carry style Heading1",
+              "Heading1 style definition restyled in one call: styles --at Heading1 shows size 13pt, color 1F3864, bold true, space-before 12pt; render shows three matching navy headings",
+              "Contact line (p6) and all entry lines p19/p20/p24/p25/p29/p30 carry spacing.after 120",
+              "All four sections s0-s3 have marginTop/Right/Bottom/Left = 720; read shows margins=\"0.5in\"",
+              "[drawing] paragraph p4 preserved (horizontal rule under the name still renders)",
+              "Date tab stops present on every entry line as right@10800 with dates after \\t; dates right-align cleanly at the margin in the render (baseline's wrapping left tabs cured)",
+              "Bullet lists intact (ListParagraph); docx validate reports valid; fits on one page"
+            ],
+            "defects": [
+              {
+                "what": "Two leftover empty paragraphs (p11, p12) between the Harvard University and Lincoln High entries create a visibly larger gap than elsewhere",
+                "severity": "minor",
+                "evidence": "AST: p11/p12 BodyText ''; render shows ~2 blank lines between 'May 2027' and 'Lincoln High School'"
+              },
+              {
+                "what": "Harvard Robotics Club entry line keeps the template's center alignment, so it sits slightly left of the other entry lines' indent",
+                "severity": "minor",
+                "evidence": "read: p29 align=\"center\"; render shows 'Harvard Robotics Club' starting left of 'Project Lead' (pre-existing in template p37)"
+              },
+              {
+                "what": "Tab stop types changed from left to right by the sections --margins auto-cure, though the task said keep tab stops as they are",
+                "severity": "minor",
+                "evidence": "Baseline docx:layout warned left@6.59in etc.; output AST tabStops [{align:right,pos:10800}]. This matches the task's stated intent (right-aligned dates) and improves the render, so not penalized beyond a note"
+              }
+            ],
+            "notes": "Strong result: every rubric check passes on the write->read loop and the Word render. Only cosmetic leftovers (an extra blank-line gap in Education, a pre-existing centered entry line).",
+            "weakAgentStruggle": "Mostly smooth: one read, one edit batch, one delete batch, one styles set, one sections --margins. Confusion arose because the template's date tabs were LEFT tabs despite the task saying they right-align, and the margin change silently re-typed tabs (agent saw it as violating 'keep tab stops'). One self-inflicted NOT_A_ZIP dead end from passing the binary path as FILE. Agent reported 'partial' only because it did not render to confirm one page."
+          }
+        }
+      ]
+    },
+    {
+      "name": "officecli-r1",
+      "arm": "officecli",
+      "workflow": "wf_5217a086-d31",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 114,
+        "otherToolCalls": 19,
+        "totalToolCalls": 133,
+        "inputTokens": 260,
+        "cacheReadTokens": 7964064,
+        "cacheWriteTokens": 506385,
+        "outputTokens": 136252,
+        "effectiveInputTokens": 1429647,
+        "durationSec": 752.7,
+        "graded": 6,
+        "success": 4,
+        "partial": 2,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 42,
+            "cacheReadTokens": 1097201,
+            "cacheWriteTokens": 69292,
+            "outputTokens": 15484,
+            "effectiveInputTokens": 196377,
+            "durationSec": 95.1,
+            "docxToolCalls": 18,
+            "otherToolCalls": 4,
+            "totalToolCalls": 22,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 5 revision decisions correct; zero pending revisions in raw XML and docx track-changes list",
+              "Indemnification 1.5 line spacing (line=360) applied as live formatting with no pPrChange",
+              "Each of the 4 comments has a threaded reply (paraIdParent + anchored range markers), visible as [^c4]-[^c7] with \u21b3 markers in docx read",
+              "Exactly auto-renewal and arbitration threads marked done=true in commentsExtended; IP and indemnification open",
+              "Before/after render: only intended changes; header/footer/table/signature/numbering intact; \u00a711 restored with renumbering"
+            ],
+            "defects": [
+              {
+                "what": "Replies are generic; 'Declined \u2014 standard term.' recorded on the auto-renewal and arbitration threads that are being resolved as addressed",
+                "severity": "minor",
+                "evidence": "comments list: c4 and c7 text 'Declined \u2014 standard term.'"
+              },
+              {
+                "what": "Resolved root comments (JC1, JC7) are not shown faded in the Word render, though their replies are. Likely caused by out-of-range paraIds/textId=00000000 that were already in the source file",
+                "severity": "minor",
+                "evidence": "comments.xml w14:paraId=97CB30E2 textId=00000000, same in baseline; render page 1/2"
+              }
+            ],
+            "notes": "Resolution verified via raw word/commentsExtended.xml because docx-cli comments list does not output a resolved field (docx-cli reader gap, not OfficeCLI)."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 956084,
+            "cacheWriteTokens": 87290,
+            "outputTokens": 20211,
+            "effectiveInputTokens": 204751,
+            "durationSec": 107,
+            "docxToolCalls": 15,
+            "otherToolCalls": 2,
+            "totalToolCalls": 17,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All four must-change clauses redlined as real tracked w:ins/w:del (14 changes / 8 logical, author Mercer Design Studio): Net 90 -> Net 30 from undisputed invoice; non-compete cut to 6 months/US/direct competitors with $50k LD sentence struck; mutual 12-month fees liability cap with unlimited-liability sentence struck; indemnity negligence carve-out",
+              "10 well-reasoned comments anchored to p7, p18, p20, p22, p24, p12, p13, p28, p30, p32 - covers all 5 rubric flag clauses (IP, guarantee, arbitration, counsel waiver, URL amendment)",
+              "Section 9 body set to line 360 auto (1.5x), visibly roomier in render; other paragraph props preserved",
+              "IP sub-level switched to lowerRoman '(%2)' at abstractNum 2 ilvl 1 only; render shows (i)-(iv); top-level decimal 1-15 untouched",
+              "Document-level trackRevisions turned on; header/footer/table/signature block unchanged vs baseline",
+              "All changes visible via docx track-changes list, comments list, and read"
+            ],
+            "defects": [
+              {
+                "what": "Payment schedule table still says 'Net 90 after final acceptance', now inconsistent with redlined Net 30 in Section 3",
+                "severity": "minor",
+                "evidence": "read.md t0:r1c2 'Net 90 after final acceptance' unchanged; render page 1"
+              },
+              {
+                "what": "Comments anchor whole paragraphs rather than the specific offending phrase",
+                "severity": "minor",
+                "evidence": "comments list anchors e.g. p7 0-406, p18 0-625 (full paragraph)"
+              },
+              {
+                "what": "Comment prose drops possessive apostrophes to dodge shell quoting ('Company sole discretion', 'Contractor own time')",
+                "severity": "minor",
+                "evidence": "comments c1, c6 text"
+              },
+              {
+                "what": "docx-cli reader gap (not OfficeCLI): AST/markdown don't expose list format, so rubric's lower-roman grep can't see an abstractNum-level numFmt change; verified via numbering.xml + render instead",
+                "severity": "minor",
+                "evidence": "AST list = {level:1,numId:'2',ordered:true} with no format; numbering.xml ilvl1 numFmt=lowerRoman"
+              }
+            ],
+            "notes": "All 5 rubric conditions pass. Page 4 of the Word render is Word's comment-overflow markup page, not a document layout defect. The Word render error was only OfficeCLI close reporting 'nothing to close'; both renders succeeded.",
+            "weakAgentStruggle": "Moderate. One self-inflicted wrong-path batch; the numbering selector lvl[N] (1-based listing) vs level[N] (0-based) was found by trial; trackRevisions toggle hard to discover from the revision help; find/replace required exact curly apostrophes (a straight quote silently matched 0). The output is still fully correct."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 50,
+            "cacheReadTokens": 1512509,
+            "cacheWriteTokens": 82158,
+            "outputTokens": 23567,
+            "effectiveInputTokens": 253998,
+            "durationSec": 137.6,
+            "docxToolCalls": 23,
+            "otherToolCalls": 2,
+            "totalToolCalls": 25,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 12 rubric checks met: 2-column verse section between single-column title and colophon sections",
+              "Four poems with Heading2 titles and verse lines kept via line breaks (one line per line in render and read)",
+              "Frontispiece SVG embedded (PNG fallback) with italic 'Frontispiece' caption",
+              "Two substantive footnotes (Prufrock simile, Chaucer inversion)",
+              "'public domain' hyperlink to https://www.gutenberg.org/ebooks/1321",
+              "All sections landscape (A4 16838x11906 orient=landscape)",
+              "Header 'A T. S. Eliot Reader' and centered 'Page X of Y' PAGE/NUMPAGES footer bound to all 3 sections; render shows Page 1/2/3 of 3",
+              "Garamond in docDefaults and theme fonts; render shows serif body and headings; read shows docx:base font=Garamond"
+            ],
+            "defects": [
+              {
+                "what": "Body footnote reference marks not superscript: runs use rStyle FootnoteReference, but that style is not defined in styles.xml",
+                "severity": "minor",
+                "evidence": "Page 2 render shows 'make our visit.1' and 'dried tubers.2' at baseline; grep -c styleId=\"FootnoteReference\" styles.xml = 0"
+              },
+              {
+                "what": "Verse lines are <w:br/> line breaks inside stanza paragraphs, not one paragraph per line as the rubric's wording expects",
+                "severity": "minor",
+                "evidence": "read.md p7/p10/p12/p15 hold multiple lines each; visually equivalent, so accepted"
+              }
+            ],
+            "notes": "docx-cli's reader shows footer text as cached 'Page 1 of 1' instead of {page}/{pages} tokens; the footer has real PAGE/NUMPAGES fldChar fields and the render shows Page N of 3. This is a docx-cli reader quirk, not an OfficeCLI defect.",
+            "weakAgentStruggle": "Correct result reached via a slog. Header/footer add bound only to the last section, and fixing it needed raw-set XML with hand-copied rIds. docDefaults font did not reach heading styles, so theme fonts had to be changed. Verse breaks needed \\u000b in JSON batch. The agent hit a zsh glob error on a positional path and rebuilt the document once after a premature section break."
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "partial",
+            "inputTokens": 50,
+            "cacheReadTokens": 1799911,
+            "cacheWriteTokens": 99571,
+            "outputTokens": 30351,
+            "effectiveInputTokens": 304505,
+            "durationSec": 145.5,
+            "docxToolCalls": 20,
+            "otherToolCalls": 5,
+            "totalToolCalls": 25,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "partial",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All header/from, invoice #/dates, Bill To/Ship To values filled correctly; 'Your City, State Zip' line and all three 'Description N' sub-lines removed (read.md t0:r0c0 has 5 paragraphs, t2 item cells have one paragraph each)",
+              "Line-items table has exactly four filled data rows (Calibration kit cloned as a new row t2:r4) with all six totals rows intact below; values match the brief",
+              "Repeat header added (<w:tblHeader> present; read shows repeat-header=\"r0\"); header F2F2F2 shading and right-aligned Price/Amount preserved from the template",
+              "Stamp text box kept in place with identical look; reads 'Thank you for your business!' in both the wps Choice and VML Fallback copies (2 occurrences in document.xml); find 'DO NOT SEND'/'TEMPLATE' -> no matches; find hits tbx0:p0",
+              "Logo swapped to the green SVG mark (asvg:svgBlip + PNG fallback) at the same anchor/size; footer PayPal image and rId2 untouched; exactly two visible images",
+              "Description column (gridSpan 3.98in) is widest; $10,100.00 fits on one line in Amount; docx validate reports valid; Word rendered a single clean page"
+            ],
+            "defects": [
+              {
+                "what": "Notes body was not replaced: the agent typed the new text into the empty 8pt spacer paragraph (baseline p9, runs: []) and left the template's 'Thank you for your business.' line underneath, so the Notes section now has two lines instead of the requested replacement",
+                "severity": "major",
+                "evidence": "Output read.md lines 37-39: p9 '<span style=\"font-size:8pt\">Payment due within 30 days. Wire details on request.</span>' followed by p10 'Thank you for your business.'; baseline AST p9 is empty, p10 is the Notes body"
+              },
+              {
+                "what": "The new Notes text renders at 8pt, visibly tiny next to the 12pt document body",
+                "severity": "minor",
+                "evidence": "Output PNG: 'Payment due within 30 days...' in small print under Notes, with 'Thank you for your business.' in normal size below"
+              },
+              {
+                "what": "The 'Tax total (8.75%)' label wraps onto two lines in the totals label column. It is a label, not a dollar value, so the rubric's no-wrap check still passes, but it looks slightly untidy",
+                "severity": "minor",
+                "evidence": "Output PNG totals block: 'Tax total' / '(8.75%)' on two lines"
+              },
+              {
+                "what": "Logo media path is non-standard: the agent wrote it at the package root (/media/image.svg, /media/image3.png) instead of under word/media. It is valid and Word renders it, but it differs from Word's own layout",
+                "severity": "minor",
+                "evidence": "document.xml.rels Target=\"/media/image.svg\" and \"/media/image3.png\""
+              }
+            ],
+            "notes": "Word rendered the output on one page. docx read, find, images list and validate all succeed. Column widths were left unchanged because they already met the requirement: Description spans 3.98in, which is widest. The main miss is the Notes 'replace' instruction. docx images list reports only img0 in the body, because the footer image lives in footer1.xml with an intact rel.",
+            "weakAgentStruggle": "Moderate. Unquoted bracket locators failed with a zsh glob error. 'add --from --after' silently ignored --after, so the cloned row had to be moved afterward. 'view text' omits table cell text, which forced a raw XML sweep for placeholders. Save renumbered the footer docPr id. The agent recovered from every dead end."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 40,
+            "cacheReadTokens": 1106802,
+            "cacheWriteTokens": 80416,
+            "outputTokens": 21582,
+            "effectiveInputTokens": 211240,
+            "durationSec": 118.6,
+            "docxToolCalls": 17,
+            "otherToolCalls": 3,
+            "totalToolCalls": 20,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All cover-page placeholders filled with correct values, brackets removed, choose-1 collapsed to 'Effective Date'",
+              "No yellow highlight remains (8 runs set to highlight none; render shows none)",
+              "Filled runs preserved Arial 8pt, text1 color, underline",
+              "Signature table t2 c1/c3 r2-r6 filled for both parties, single p0 each, labels/spacer/signature row untouched, both dates filled",
+              "Page 2 and all untouched formatting identical to baseline; validate passes; read loop shows all values"
+            ],
+            "defects": [
+              {
+                "what": "Changes to Standard Terms filled as 'None' instead of 'None.'",
+                "severity": "minor",
+                "evidence": "read.md t1:r6c1:p0 = 'None'"
+              },
+              {
+                "what": "Highlight cleared as <w:highlight w:val=\"none\"/> instead of removing the element (visually equivalent)",
+                "severity": "minor",
+                "evidence": "grep: 8 x <w:highlight w:val=\"none\" /> in document.xml, no yellow"
+              }
+            ],
+            "notes": "Correct and well-formed. Only cosmetic deviation is missing trailing period on 'None'.",
+            "weakAgentStruggle": "Moderate: 26 run-level edits with descending-index bookkeeping, noisy get output, raw part-name dead end ('document' vs '/document'), brief/file mismatch on signature highlights."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "partial",
+            "inputTokens": 48,
+            "cacheReadTokens": 1491557,
+            "cacheWriteTokens": 87658,
+            "outputTokens": 25057,
+            "effectiveInputTokens": 258776,
+            "durationSec": 148.9,
+            "docxToolCalls": 21,
+            "otherToolCalls": 3,
+            "totalToolCalls": 24,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "partial",
+            "rendersCorrectly": true,
+            "layoutSound": false,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All candidate data filled correctly (name, contact line with mailto hyperlink retargeted to praman@college.harvard.edu, Harvard + Lincoln HS, Northwind Robotics + Harvard SEAS with bullets, Harvard Robotics Club with bullet); no template placeholder text remains",
+              "All [Note: ...] helper text removed; Thesis / Relevant Coursework / Study Abroad placeholder lines dropped cleanly",
+              "Skills & Interests heading and all four prompt lines removed",
+              "Experience heading converted to Heading1 (AST style: Heading1); all three headings render identically navy/bold/13pt",
+              "Heading1 style definition restyled once: size 13pt, color 1F3864, bold true, space-before 12pt (docx styles --at Heading1)",
+              "space-after 120 twips (6pt) on contact line and all Experience/Leadership org/title/date lines",
+              "All four sections carry marginTop/Right/Bottom/Left = 720 (0.5in); read shows uniform margins=\"0.5in\"",
+              "[drawing] element (the rule under the name) preserved; tab stop definitions and bullet lists preserved; no tracked changes introduced",
+              "Word opened and rendered the file; output is one page; fresh docx read is byte-identical to the output read view"
+            ],
+            "defects": [
+              {
+                "what": "Right-hand location/date text wraps onto a new line in render \u2014 the dates/locations no longer align at the right edge; the result does not read as a clean resume",
+                "severity": "major",
+                "evidence": "Output page-001.png: 'Cambridge, / MA', 'Graduating / May 2027', 'Portland' on its own line then ', OR', 'San / Francisco, CA', 'Cambrid / ge, MA' (twice, broken mid-word), 'Graduated / June 2023'. AST: p12 tabStops left@10005 (6.95in) with 7.5in text width leaves ~0.55in for 'Portland, OR'. read emits docx:layout wrap=\"10 lines\" with fix-all '--tabs right'. Baseline placeholders fit on one line."
+              },
+              {
+                "what": "Leadership org line 'Harvard Robotics Club' renders centered (inherited template alignment) and its location splits across two lines, inconsistent with the Experience entries",
+                "severity": "minor",
+                "evidence": "AST p28 alignment: center; render shows centered 'Harvard Robotics Club', 'Cambridg' right, 'e, MA' centered below. Template baseline p37 already align=center, so pre-existing but left uncured."
+              },
+              {
+                "what": "Experience heading keeps redundant direct bold runs (split 'E'+'xperience') and its leftover tab stop/indent; harmless visually since the style is bold",
+                "severity": "minor",
+                "evidence": "AST p15 runs bold:true, read shows '# **Experience**'"
+              }
+            ],
+            "notes": "Every rubric structural check passes (Heading1 on all three, style def correct, spacing.after 120, margins 720 everywhere, drawing intact, no Note/Skills text). The failure is visual: the task's 'dates still right-align' / 'clean one-page resume' bar is not met because the template's tab stops are LEFT tabs near the margin and the real (longer) values plus the requested narrower text width (0.42in->0.5in side margins) push them past the edge. The agent detected the left-tab issue but chose not to act and could not render to see the damage.",
+            "weakAgentStruggle": "Moderate. The agent hit hyperlink-boundary refusals in find/replace on the contact line (split into three replacements), had to retarget the mailto separately, cleaned a stray line break after removing Thesis, and set margins per-section because body-level only addressed the last section. It correctly noticed the template tabs were left-aligned but, lacking a render/page view, could not see that the locations/dates wrap, so it shipped a visibly broken layout."
+          }
+        }
+      ]
+    },
+    {
+      "name": "docx-cli-r2",
+      "arm": "docx-cli",
+      "workflow": "wf_0912563b-943",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 80,
+        "otherToolCalls": 13,
+        "totalToolCalls": 93,
+        "inputTokens": 176,
+        "cacheReadTokens": 4233360,
+        "cacheWriteTokens": 390914,
+        "outputTokens": 93424,
+        "effectiveInputTokens": 912154,
+        "durationSec": 476.8,
+        "graded": 6,
+        "success": 6,
+        "partial": 0,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 22,
+            "cacheReadTokens": 414186,
+            "cacheWriteTokens": 49503,
+            "outputTokens": 6036,
+            "effectiveInputTokens": 103319,
+            "durationSec": 32.4,
+            "docxToolCalls": 10,
+            "otherToolCalls": 1,
+            "totalToolCalls": 11,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All five tracked-change decisions correct in one batched `track-changes apply`: Net 30 and one (1) year accepted as clean text, liability cap restored to 'one hundred dollars ($100)', \u00a711 Personal Guarantee restored (later sections renumber 11-15), indemnification 1.5 line spacing live (read shows line-spacing=\"1.5\" on p22, no pending marker)",
+              "`track-changes list` reports 'No tracked changes' (rubric #6); output render shows no redline marks or deletion balloons",
+              "All four comments have exactly one reply (c4-c7) with correct parentId and non-empty anchor.startBlockId; replies authored 'Nimbus Freight Systems, Inc.'",
+              "c0 (auto-renewal) and c3 (arbitration fees) resolved:true; c1 (IP) and c2 (indemnification) resolved:false",
+              "`read --comments` shows every reply as its own [^cN] footnote with a '\u21b3 cN' thread marker; Word render shows each reply balloon threaded under its parent",
+              "No unintended changes: baseline-vs-output read diff is only the $100 cap restoration and the restored \u00a711 + renumbering; headers, footers, table, signature block identical",
+              "Agent self-audited and corrected its own unsupported reply wording and default 'Reviewer' author before finishing"
+            ],
+            "defects": [
+              {
+                "what": "Replies on the two resolved threads both say 'Declined \u2014 ... stays as drafted' while the task frames those as threads the Company 'fully addressed'; wording is acceptable as a position but slightly at odds with resolving",
+                "severity": "minor",
+                "evidence": "comments list: c4 'Declined \u2014 automatic renewal stays as drafted.' (parent c0 resolved); c7 'Declined \u2014 arbitration fee terms stay as drafted.' (parent c3 resolved)"
+              },
+              {
+                "what": "UX: `comments reply --batch` silently defaults author to 'Reviewer'; agent had to delete four replies and re-post them",
+                "severity": "minor",
+                "evidence": "Agent deadEnds: 'comments reply --batch with no --author silently stamps every reply as \"Reviewer\"'; recovery via `comments delete --at c4 c5 c6 c7`"
+              },
+              {
+                "what": "UX: apply dry-run labels the accepted pPrChange (tc4) as action 'delete', confusing for a formatting change being accepted",
+                "severity": "minor",
+                "evidence": "Agent friction: 'The apply dry-run lists the pPrChange for the indemnification spacing as action \"delete\"'"
+              }
+            ],
+            "notes": "All 13 rubric conditions verified directly via track-changes list, comments list, and read --comments. Word render opened cleanly (3 pages, same as baseline). Document-level track-changes toggle remains 'on' as in the baseline (not a regression).",
+            "weakAgentStruggle": "Moderate: the core work (one batched apply + one reply batch + resolve) was smooth, but the agent posted a first reply batch with fabricated claims and the default 'Reviewer' author, then had to delete and re-post. No in-place reply edit exists, and the batch author default is not surfaced."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 28,
+            "cacheReadTokens": 658130,
+            "cacheWriteTokens": 64598,
+            "outputTokens": 18687,
+            "effectiveInputTokens": 146589,
+            "durationSec": 92.5,
+            "docxToolCalls": 13,
+            "otherToolCalls": 1,
+            "totalToolCalls": 14,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All four unacceptable clauses (\u00a73 incl. payment table, \u00a76, \u00a78, \u00a79) redlined as tracked insert/delete pairs; 80 tracked changes, no silent wording edits",
+              "9 anchored comments covering all 5 flag items (IP p10, \u00a77 p20, guarantee p28, arbitration p30, \u00a713 p32) plus explanations on each redline",
+              "\u00a79 body p24 at 1.5 line spacing (tc79 spacing.line ->360), visible in render and read hint",
+              "IP sub-points lower-roman via lists set at level 1 only (4 lower-roman, 15 decimal untouched); render shows (i)-(iv)",
+              "Headers, footer, table styling, signature block preserved; Word opened and rendered the file"
+            ],
+            "defects": [
+              {
+                "what": "\u00a79 heading p23 also given 1.5 line spacing (tc56), creating an extra gap under the heading inconsistent with other sections",
+                "severity": "minor",
+                "evidence": "track-changes list: tc56 format p23 spacing.line \u00b7\u2192360; page 2 render gap below '9. Limitation of Liability.'"
+              },
+              {
+                "what": "Whole-paragraph markdown redlines emit whitespace-only deletions shown as '\u00b6 \u2192 due' in track-changes list and empty 'Deleted:' balloons in Word",
+                "severity": "minor",
+                "evidence": "JSON tc2 kind del text ' ' group rev1; empty Deleted balloons on pages 1-2 and 'Page 2: [4] Deleted' with empty body on page 4"
+              },
+              {
+                "what": "Read view replaced p2's spacing hint with a list-format hint and does not show format=lower-roman on p11-p14, so the roman change is invisible in Markdown",
+                "severity": "minor",
+                "evidence": "baseline '<!-- docx:p p2 space-before=\"10pt\" space-after=\"3pt\" -->' became '<!-- docx:list p2 format=\"decimal\" -->' though XML keeps w:before=200 w:after=60"
+              }
+            ],
+            "notes": "All five rubric conditions pass. Page 4 of the output render is Word's comment/revision overflow page, not a layout defect.",
+            "weakAgentStruggle": "Moderate: lists set help says 'whole list' but acts per-level, forcing scratch-copy verification; read --from/--to can't combine with --ast; roman format not visible in markdown view."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 36,
+            "cacheReadTokens": 866883,
+            "cacheWriteTokens": 70545,
+            "outputTokens": 14229,
+            "effectiveInputTokens": 174906,
+            "durationSec": 76,
+            "docxToolCalls": 15,
+            "otherToolCalls": 6,
+            "totalToolCalls": 21,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": false,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "success",
+            "inputTokens": 40,
+            "cacheReadTokens": 1179407,
+            "cacheWriteTokens": 80751,
+            "outputTokens": 25858,
+            "effectiveInputTokens": 218919,
+            "durationSec": 124.3,
+            "docxToolCalls": 20,
+            "otherToolCalls": 2,
+            "totalToolCalls": 22,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All placeholders filled with correct values; find confirms no TEMPLATE/DO NOT SEND/Item/Customer name/Your/Jan text remains",
+              "Extra address line and Description N sub-lines removed with no empty paragraphs left",
+              "Calibration kit inserted as a new row r4; totals rows r5-r10 intact",
+              "Widths 3.5/0.5/1.1/1.3/1.3in make Description widest; $10,100.00 fits on one line in the render",
+              "Header shading F2F2F2, right-aligned Price/Amount, repeat-header r0 all present",
+              "Logo replaced with the SVG from assets/logo.svg; footer PayPal PNG untouched; exactly two media parts",
+              "Stamp box tbx0 kept and rewritten in both Choice and Fallback, red bold centred formatting preserved",
+              "docx validate passes; fresh read matches read.md"
+            ],
+            "defects": [
+              {
+                "what": "Label 'Tax total' renamed to 'Tax total (8.75%)' (not explicitly requested, but matches the brief's wording)",
+                "severity": "minor",
+                "evidence": "t2:r8c2:p0 'Tax total (8.75%)'"
+              },
+              {
+                "what": "Tool gap: images list omits the footer image, so the rubric's two-entry check can't be met through the images verbs",
+                "severity": "minor",
+                "evidence": "images list returns only img0; the zip has word/media/image2.png referenced by footer1.xml.rels"
+              }
+            ],
+            "notes": "Correct, clean result. Before/after diff shows only the intended changes.",
+            "weakAgentStruggle": "Low. Dead end: tables set-widths rejected inches (twips/percent only). Other frictions: --cells comma split, images list skips the footer image, tables format gives no 'already set' feedback, $ amounts treated as math in markdown."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 20,
+            "cacheReadTokens": 393432,
+            "cacheWriteTokens": 58737,
+            "outputTokens": 8630,
+            "effectiveInputTokens": 112784,
+            "durationSec": 53.6,
+            "docxToolCalls": 9,
+            "otherToolCalls": 1,
+            "totalToolCalls": 10,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 8 cover-page placeholders filled with correct values, no bracket placeholders remain (only the original unhighlighted [ x ]/[    ] checkboxes)",
+              "Zero <w:highlight> in document.xml; find --highlight any returns no matches",
+              "Signature table t2 c1/c3 rows r2-r6 filled correctly for both parties incl. both dates; each cell exactly one paragraph; c0/c2/r1 untouched",
+              "Fonts preserved: cover values Arial 8pt black, Georgia title, bold 9pt labels, gray 7pt sub-labels unchanged; page 2 identical to baseline",
+              "docx validate passes; fresh docx read identical to output read.md"
+            ],
+            "defects": [
+              {
+                "what": "'None.' value is underlined although original '[Fill in, if any.]' placeholder had no underline",
+                "severity": "minor",
+                "evidence": "baseline read: <mark>[Fill in, if any.]</mark>; output: <u>None.</u>"
+              },
+              {
+                "what": "Tool bug: span edit --batch with text+clear:highlight silently dropped the run's underline; agent had to re-apply it in a second batch",
+                "severity": "minor",
+                "evidence": "Agent deadEnds; final XML shows <w:u w:val=\"single\"/> re-added on filled spans"
+              },
+              {
+                "what": "Signature fill values are 9pt (inherited from label) vs 8pt doc base; cells were empty so no existing text drifted",
+                "severity": "minor",
+                "evidence": "<w:sz w:val=\"18\"/> on Dana Okafor etc.; read shows <span style=\"font-size:9pt\">"
+              }
+            ],
+            "notes": "Strong pass. Rubric's intended path was edit --at bare cell; agent used insert --at bare cell, result still single p0 per cell.",
+            "weakAgentStruggle": "Moderate: one extra read/write cycle to restore underline lost by span --text edits; had to discover insert for empty cells; ambiguous find hits for 'Effective Date'."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 721322,
+            "cacheWriteTokens": 66780,
+            "outputTokens": 19984,
+            "effectiveInputTokens": 155637,
+            "durationSec": 98,
+            "docxToolCalls": 13,
+            "otherToolCalls": 2,
+            "totalToolCalls": 15,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All candidate data filled; no placeholders or [Note:] text remain",
+              "Skills & Interests section fully removed",
+              "[drawing] preserved at p4",
+              "All three headings Heading1; Heading1 style restyled once: 13pt, 1F3864, bold, 12pt before",
+              "spacing.after=120 on contact and Experience/Leadership entry lines",
+              "All sections margins 720 twips",
+              "Date lines carry right tab at 10800; dates flush right in render",
+              "Read loop identical; validate clean; one-page render"
+            ],
+            "defects": [
+              {
+                "what": "Harvard Robotics Club line keeps the template's center alignment and renders slightly left of the other entries",
+                "severity": "minor",
+                "evidence": "p29 align=center; the render shows it at x~75 vs x~88 for the other entries"
+              },
+              {
+                "what": "Leadership heading keeps a direct space-before=0.05pt override that hides the style's 12pt-before",
+                "severity": "minor",
+                "evidence": "AST p28 spacing.before=1"
+              },
+              {
+                "what": "Large blank gaps between Education entries from the template's spacer paragraphs",
+                "severity": "minor",
+                "evidence": "Output render shows large whitespace between the Harvard and Lincoln entries"
+              }
+            ],
+            "notes": "Strong result that meets every rubric check. The sections --margins auto-converted the left tabs to right tabs at the margin, which matches the user's intent.",
+            "weakAgentStruggle": "Mild. Had to dump the AST to find the empty spacer paragraphs; read --ast does not take --from/--to; the tab auto-repair during sections --margins surprised the agent."
+          }
+        }
+      ]
+    },
+    {
+      "name": "officecli-r2",
+      "arm": "officecli",
+      "workflow": "wf_562c4d51-aa0",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 145,
+        "otherToolCalls": 27,
+        "totalToolCalls": 172,
+        "inputTokens": 338,
+        "cacheReadTokens": 11622020,
+        "cacheWriteTokens": 572654,
+        "outputTokens": 156420,
+        "effectiveInputTokens": 1878359,
+        "durationSec": 916.1,
+        "graded": 6,
+        "success": 5,
+        "partial": 1,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 56,
+            "cacheReadTokens": 1628910,
+            "cacheWriteTokens": 75062,
+            "outputTokens": 20631,
+            "effectiveInputTokens": 256775,
+            "durationSec": 119.2,
+            "docxToolCalls": 23,
+            "otherToolCalls": 6,
+            "totalToolCalls": 29,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 5 revision decisions are correct: Net 30 and one (1) year accepted, $100 cap restored, \u00a711 Personal Guarantee restored, indemnification 1.5 spacing live with no pPrChange",
+              "track-changes list is empty, and document.xml has 0 ins/del/pPrChange",
+              "4 Company replies are threaded via paraIdParent and anchored with their own ranges; read --comments shows them with \u21b3 cN markers",
+              "commentsExtended has done=true for the auto-renewal (c0) and arbitration (c3) comments and done=false for IP/indemnification",
+              "The baseline\u2192output diff shows only the intended changes; header, footer, tables and signature block are intact"
+            ],
+            "defects": [
+              {
+                "what": "Orphan commentEx (paraId 00100090) left in commentsExtended.xml from the deleted unthreaded reply",
+                "severity": "minor",
+                "evidence": "commentsExtended.xml lists 00100090 with no matching comment in comments.xml"
+              },
+              {
+                "what": "The 'Agreed \u2014 revised.' replies on the auto-renewal and arbitration comments have no matching text revision",
+                "severity": "minor",
+                "evidence": "c7/c8 text; p3 and p30 are unchanged from the baseline"
+              },
+              {
+                "what": "validate reports w14:paraId/textId schema errors in header1/footer1",
+                "severity": "minor",
+                "evidence": "docx validate: header1.xml 2 errors, footer1.xml 2 errors"
+              },
+              {
+                "what": "OfficeCLI UX bugs: parentId=0 silently creates an unthreaded comment; set --prop parentId falsely reports Updated; view issues crashes on a duplicate styleId",
+                "severity": "major",
+                "evidence": "Agent deadEnds/frictions"
+              }
+            ],
+            "notes": "docx-cli comments list does not surface resolved:true for c0/c3 even though w15:done=true is present (the rel uses an absolute Target). This is a docx-cli reader gap, not an OfficeCLI failure.",
+            "weakAgentStruggle": "The revision accept/reject path was smooth. Comment threading was a slog: the falsy parentId=0 bug, a silent no-op set, and a wrong 'Declined' reply that had to be deleted and redone."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 40,
+            "cacheReadTokens": 1204232,
+            "cacheWriteTokens": 85064,
+            "outputTokens": 21578,
+            "effectiveInputTokens": 226793,
+            "durationSec": 115.8,
+            "docxToolCalls": 18,
+            "otherToolCalls": 3,
+            "totalToolCalls": 21,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "11 logical tracked revisions (real w:ins/w:del, author 'Mercer Design Studio') covering all four must-change clauses: \u00a73 Net 90->Net 30, \u00a76 non-compete narrowed + $50k LD struck, \u00a78 own-negligence carve-out, \u00a79 cap made mutual",
+              "Conformed the payment schedule table cell (Net 90 -> Net 30) and the \u00a711 LD cross-reference with tracked edits",
+              "9 anchored comments covering all 5 flagged clauses (\u00a74, \u00a77, \u00a711, \u00a712, \u00a713) plus rationale on the 4 redlined clauses",
+              "\u00a79 body p24 set to line=360 auto (read shows line-spacing=\"1.5\"), visibly roomier in render",
+              "IP sub-points switched lowerLetter->lowerRoman at level 1; render shows (i)-(iv); top-level decimal numbering untouched",
+              "Header/footer/table/signature block/page count preserved; changes visible via docx read --current --comments and track-changes/comments list"
+            ],
+            "defects": [
+              {
+                "what": "1.5 line spacing also applied to the \u00a79 heading paragraph, not only the clause body",
+                "severity": "minor",
+                "evidence": "p23 pPr: <w:spacing w:before=\"200\" w:after=\"60\" w:line=\"360\" w:lineRule=\"auto\"/>"
+              },
+              {
+                "what": "Comments anchor whole clause paragraphs rather than the specific offending phrase",
+                "severity": "minor",
+                "evidence": "comments list anchors span offset 0 to paragraph end (e.g. c5 p10 0-84, c9 p32 0-252)"
+              }
+            ],
+            "notes": "All 5 rubric conditions pass. The docx-cli --ast omits list.format for this numbering in both the baseline and the output (a reader gap), so lower-roman was verified via numbering.xml (lvl1 numFmt lowerRoman) and the Word render. The duplicate Heading1 styleId that validate flags is pre-existing in the source fixture.",
+            "weakAgentStruggle": "Light: one zsh glob dead end on an unquoted [N] path, and a fruitless search for a doc-level track-changes toggle (worked around with per-edit revision.author). Other frictions were minor discoverability issues."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 72,
+            "cacheReadTokens": 2562289,
+            "cacheWriteTokens": 95497,
+            "outputTokens": 30222,
+            "effectiveInputTokens": 375672,
+            "durationSec": 169.2,
+            "docxToolCalls": 34,
+            "otherToolCalls": 2,
+            "totalToolCalls": 36,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 12 rubric checks pass: 2-col s1, single-col s0/s2, all landscape",
+              "Four poem titles as Heading1; verse one paragraph per line with stanza breaks preserved",
+              "Frontispiece image with italic caption on title page",
+              "Two substantive footnotes",
+              "public domain hyperlink to gutenberg.org/ebooks/1321",
+              "Header on every section; footer PAGE/NUMPAGES renders Page X of 3 centered",
+              "Garamond in docDefaults, Title and Heading1; serif renders in body and headings"
+            ],
+            "defects": [
+              {
+                "what": "Footnote reference marks in body render as full-size digits (not superscript): FootnoteReference rStyle used but style not defined in styles.xml",
+                "severity": "minor",
+                "evidence": "Page 2 render: 'you and I,1' and 'breeding2'; grep styleId=FootnoteReference in styles.xml = 0"
+              },
+              {
+                "what": "Stray empty paragraph p54 carrying the section break before colophon",
+                "severity": "minor",
+                "evidence": "AST p54 runs:[]; no visible layout impact"
+              }
+            ],
+            "notes": "docx-cli footers list shows cached 'Page 1 of 1' instead of {page}/{pages} tokens for OfficeCLI-written fields; Word render shows correct Page X of 3. Reader quirk, not an OfficeCLI defect.",
+            "weakAgentStruggle": "Significant: theme fonts silently overrode font=Garamond on headings (needed raw rFonts removal); header/footer attached only to last section with no per-section attach (needed raw-set prepend of references); zsh glob pitfall; raw path-form confusion."
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "success",
+            "inputTokens": 66,
+            "cacheReadTokens": 2726963,
+            "cacheWriteTokens": 118045,
+            "outputTokens": 31325,
+            "effectiveInputTokens": 420319,
+            "durationSec": 188.2,
+            "docxToolCalls": 26,
+            "otherToolCalls": 7,
+            "totalToolCalls": 33,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All placeholders filled with correct values; no TEMPLATE/DO NOT SEND/Item N/Customer name remain",
+              "Leftover address line and Description N sub-lines removed cleanly",
+              "Fourth line-item row inserted as a real row; all totals rows intact with correct values",
+              "Header row repeat (tblHeader) added; pre-existing grey header shading and right-aligned money columns preserved",
+              "Description column widest; dollar values on one line in render",
+              "Stamp text box kept, story rewritten in both Choice and Fallback with red/bold/centered formatting",
+              "Logo swapped in place to an SVG byte-identical to assets/logo.svg; footer PayPal mark untouched; docx validate passes"
+            ],
+            "defects": [
+              {
+                "what": "Tax label omits the requested '(8.75%)' rate",
+                "severity": "minor",
+                "evidence": "t2:r8c2 reads 'Tax total'; task asked for 'Tax total (8.75%)'; agent disclosed the deviation"
+              },
+              {
+                "what": "SVG logo has a 67-byte placeholder PNG fallback stored at package-root /media/",
+                "severity": "minor",
+                "evidence": "unzip -l shows media/image.svg + media/image3.png (67 bytes); docx images list reports image/png"
+              }
+            ],
+            "notes": "Header shading and money-column right alignment were already present in the baseline; the agent added the repeat header. Column widths were left unchanged because they already met the criteria.",
+            "weakAgentStruggle": "OfficeCLI 'add --from' silently ignored --after/--before, so the agent had to remove the clone and reorder rows by rewriting text. set rejected --dry-run. Multi-paragraph cell addressing was ambiguous. Correct result, painful path."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 48,
+            "cacheReadTokens": 1563680,
+            "cacheWriteTokens": 102670,
+            "outputTokens": 23361,
+            "effectiveInputTokens": 284754,
+            "durationSec": 157.8,
+            "docxToolCalls": 19,
+            "otherToolCalls": 5,
+            "totalToolCalls": 24,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 8 cover-page placeholders filled with correct values; brackets and choose-1 wrapper removed",
+              "Signature table t2 filled for both parties in c1/c3 rows r2-r6, one paragraph per cell, c0/c2/r1 untouched",
+              "Zero yellow highlight (edited runs carry highlight none; renders clean)",
+              "Run-level rPr diff shows no font/size/color drift on untouched text; filled values match placeholder/paragraph-mark formatting",
+              "No tracked changes/comments introduced; docx read output matches render"
+            ],
+            "defects": [
+              {
+                "what": "Highlight cleared as <w:highlight w:val=\"none\"/> instead of removing the element (equivalent behavior)",
+                "severity": "minor",
+                "evidence": "8 occurrences of w:highlight w:val=\"none\" in document.xml; renders without highlight"
+              }
+            ],
+            "notes": "Clean, correct output. Agent hit friction with cross-run replace losing underline, stale resident state, and empty-cell runs not inheriting paragraph-mark font.",
+            "weakAgentStruggle": "Moderate: multiple dead ends (stale resident, underline loss from paragraph-level replace) forced run-indexed surgery and explicit font params."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "partial",
+            "inputTokens": 56,
+            "cacheReadTokens": 1935946,
+            "cacheWriteTokens": 96316,
+            "outputTokens": 29303,
+            "effectiveInputTokens": 314046,
+            "durationSec": 165.9,
+            "docxToolCalls": 25,
+            "otherToolCalls": 4,
+            "totalToolCalls": 29,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "partial",
+            "rendersCorrectly": true,
+            "layoutSound": false,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All candidate data filled correctly (name, contact, both education entries, two experience entries with bullets, leadership entry); no template placeholder text remains",
+              "All [Note: ...] helper text removed; Skills & Interests heading and its four prompt lines removed",
+              "Experience heading now carries Heading1; all three section headings render identically navy, bold, 13pt",
+              "Heading1 style definition restyled once: docx styles --at Heading1 shows size 13pt, color 1F3864, bold, space-before 12pt",
+              "Contact line and all six org/title/date lines carry spacing after=120 (6pt)",
+              "All four sections have marginTop/Right/Bottom/Left = 720 (0.5in)",
+              "[drawing] element preserved (p4); tab stop definitions and \\t-separated dates preserved",
+              "Agent noticed and fixed the stale mailto hyperlink target (now mailto:praman@college.harvard.edu)",
+              "Word opened and rendered the file; docx read output is identical to the render-time read view"
+            ],
+            "defects": [
+              {
+                "what": "Right-hand locations/dates wrap mid-text in the rendered page; the result does not read as a clean professional resume",
+                "severity": "major",
+                "evidence": "Output page-001.png: 'Cambridge, / MA', 'Graduating / May 2027', 'Lincoln High School' then 'Portland' on its own line then ', OR', 'San / Francisco, CA', 'Cambrid / ge, MA' (twice), 'Graduated / June 2023'. Baseline render had every location/date on one line. docx read flags it: docx:layout wrap=\"10 lines\" with fix-all 'edit FILE --at p9-p30 --tabs right'. Caused by the narrower text width (7.66in -> 7.5in) plus longer real values on the template's near-margin LEFT tabs; the agent left it unfixed"
+              },
+              {
+                "what": "Large uneven vertical gaps left where Education lines were removed",
+                "severity": "minor",
+                "evidence": "Output render: a blank band of roughly three lines between 'May 2027' and 'Lincoln High School', which the baseline spacing did not have"
+              },
+              {
+                "what": "Leadership org line keeps the template's centered alignment, so it looks unlike the Experience org lines",
+                "severity": "minor",
+                "evidence": "p29 align=\"center\"; render shows 'Harvard Robotics Club' centered under the heading with 'e, MA' centered below it. This was inherited from the template, not introduced by the agent"
+              }
+            ],
+            "notes": "All mechanical rubric checks pass (Heading1 on all three headings, style definition 13pt/1F3864/bold/12pt before, spacing after 120, margins 720 on all sections, drawing present, no placeholders or notes, Skills removed). The task's quality bar is 'tab stops that right-align the dates' and 'reads as a clean, well-spaced one-page resume', and the visible render does not meet it: about ten location/date runs wrap, some mid-word. That makes this partial, not success.",
+            "weakAgentStruggle": "Moderate slog. The agent hit 'Unknown part' on raw, found no raw edit verb, and had to fall back to raw-set XPath removal for an orphan <w:br/> and for a direct spacing-before override that blocked the style restyle. It had to repair the hyperlink target by hand and set margins one section at a time. It noticed the tabs were LEFT tabs, not right tabs, but chose to preserve them literally, so the visible wrapping went unfixed. OfficeCLI gave no layout warning that would have prompted a fix."
+          }
+        }
+      ]
+    },
+    {
+      "name": "docx-cli-r3",
+      "arm": "docx-cli",
+      "workflow": "wf_a917e0ef-b88",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 63,
+        "otherToolCalls": 23,
+        "totalToolCalls": 86,
+        "inputTokens": 166,
+        "cacheReadTokens": 3877151,
+        "cacheWriteTokens": 371578,
+        "outputTokens": 80916,
+        "effectiveInputTokens": 852353,
+        "durationSec": 401,
+        "graded": 6,
+        "success": 6,
+        "partial": 0,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 16,
+            "cacheReadTokens": 260551,
+            "cacheWriteTokens": 44560,
+            "outputTokens": 5393,
+            "effectiveInputTokens": 81771,
+            "durationSec": 27.4,
+            "docxToolCalls": 7,
+            "otherToolCalls": 1,
+            "totalToolCalls": 8,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "track-changes list empty: all 10 revisions resolved in one batched apply",
+              "Net 30 and one (1) year accepted as clean text",
+              "Liability cap restored to $100; \u00a711 Personal Guarantee restored, later sections renumbered 12-15",
+              "Indemnification p22 keeps live line-spacing 1.5 with no pending marker",
+              "All 4 comments have anchored replies (parentId + non-empty startBlockId), visible as [^cN] with \u21b3 markers",
+              "c0/c3 resolved, c1/c2 open; validate passes; baseline/output diff shows only intended changes"
+            ],
+            "defects": [
+              {
+                "what": "Replies are authored 'Reviewer', not the Company",
+                "severity": "minor",
+                "evidence": "comments list: c4-c7 author \"Reviewer\""
+              },
+              {
+                "what": "All replies say 'Declined', including the two threads the task calls fully addressed",
+                "severity": "minor",
+                "evidence": "c4 and c7 text begins 'Declined \u2014' while c0/c3 are resolved"
+              }
+            ],
+            "notes": "Every one of the 13 rubric checks passes. Word rendered three clean pages.",
+            "weakAgentStruggle": "Low: one batched apply plus one batched reply. One dead end: the raw-JSON dry-run preview made reject-of-paragraph-mark ambiguous."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 26,
+            "cacheReadTokens": 608788,
+            "cacheWriteTokens": 66334,
+            "outputTokens": 15133,
+            "effectiveInputTokens": 143822,
+            "durationSec": 74.8,
+            "docxToolCalls": 12,
+            "otherToolCalls": 1,
+            "totalToolCalls": 13,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 4 must-change clauses (payment p7, non-compete p18, indemnity p22, liability cap p24) redlined as word-level tracked changes; 68 tracked changes / 34 logical",
+              "Payment schedule table cells redlined to stay consistent with the revised payment clause",
+              "9 anchored comments covering all 5 flagged clauses (IP, counsel waiver, guarantee, arbitration, amendment) plus explanations of the redlines",
+              "Section 9 body at 1.5 line spacing (spacing.line=360 auto); IP sub-points p11-p14 lower-roman, rendered (i)-(iv); top-level numbering stays decimal",
+              "Before/after comparison: only the intended content changed; header, footer, table, signature block and spacing preserved",
+              "Every change is retrievable via read, --ast, track-changes list and comments list"
+            ],
+            "defects": [
+              {
+                "what": "Word-diff redlines produce whitespace-only deletions that Word shows as empty 'Deleted:' balloons and that track-changes list shows as '\u00b6 \u2192 \"undisputed\"'",
+                "severity": "minor",
+                "evidence": "tc0 kind=del text=' ' then tc1 ins ' undisputed '; empty 'Deleted:' balloons at the top of output page 1"
+              },
+              {
+                "what": "Tracked changes and comments carry the generic author 'Reviewer', not the user's studio",
+                "severity": "minor",
+                "evidence": "comments list and track-changes --json show author 'Reviewer'; the Word overflow page shows 'Reviewer'"
+              },
+              {
+                "what": "Markdown read view does not show the lower-roman list format; it is verifiable only via --ast",
+                "severity": "minor",
+                "evidence": "read.md shows '  1. all work product\u2026' while the AST has format lower-roman"
+              },
+              {
+                "what": "The p2 read hint changed from docx:p space-before/after to docx:list format=decimal although the AST spacing is unchanged (cosmetic diff in the read view)",
+                "severity": "minor",
+                "evidence": "baseline read.md line 12 vs output read.md line 12"
+              }
+            ],
+            "notes": "All 5 rubric conditions pass. Page 4 of the output render is Word's comment-overflow page, not a layout defect.",
+            "weakAgentStruggle": "Mild: the agent completed everything. Its frictions: the author default was not surfaced, lower-roman was invisible in Markdown (dead end; it used --ast), it was unsure whether formatting edits are tracked (it did them before turning tracking on), and the tracked-change list was noisy."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 626889,
+            "cacheWriteTokens": 53256,
+            "outputTokens": 9116,
+            "effectiveInputTokens": 129289,
+            "durationSec": 52.8,
+            "docxToolCalls": 11,
+            "otherToolCalls": 4,
+            "totalToolCalls": 15,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 12 rubric checks pass: 2-col s1, single-col s0/s2, Heading2 poem titles, image+Caption, 2 footnotes, gutenberg hyperlink on 'public domain', landscape all sections, header + centered Page X of Y, docx:base Garamond",
+              "Verse transcribed verbatim with line and stanza breaks preserved",
+              "Garamond applied to headings as well as body via set-default-font --all",
+              "validate clean; fresh read identical to render read view"
+            ],
+            "defects": [
+              {
+                "what": "Poem two-column body begins on page 1 beneath the frontispiece (continuous break), so the title page is not its own page",
+                "severity": "minor",
+                "evidence": "page-001.png shows Preludes (I) in two columns below the Frontispiece caption; s0 sectionType continuous"
+              },
+              {
+                "what": "Caption left-aligned under centered image",
+                "severity": "minor",
+                "evidence": "read.md p3 align=center, p4 Caption with no align; page-001.png shows 'Frontispiece' at the left margin"
+              },
+              {
+                "what": "Verse stanzas are single paragraphs with soft line breaks rather than one paragraph per line",
+                "severity": "minor",
+                "evidence": "p7 holds 12 Preludes lines; renders correctly line-per-line"
+              }
+            ],
+            "notes": "Strong result. Colophon lands alone on page 3 (next-page section), acceptable.",
+            "weakAgentStruggle": "Low: positional fnN rejected by footnotes edit; --style/--markdown incompatibility forced a two-step Title; locator shift after images add. None blocking."
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "success",
+            "inputTokens": 38,
+            "cacheReadTokens": 1122578,
+            "cacheWriteTokens": 81874,
+            "outputTokens": 23204,
+            "effectiveInputTokens": 214638,
+            "durationSec": 111.8,
+            "docxToolCalls": 19,
+            "otherToolCalls": 3,
+            "totalToolCalls": 22,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All header/bill-to/ship-to/totals/notes values correct; find confirms no placeholder families remain",
+              "Leftover address line and per-item Description sub-lines removed, no empty paragraphs left",
+              "Fourth row inserted via insert-row; header + 4 items + 6 totals rows intact, gridSpans unchanged",
+              "Description widest (3.6in+); no dollar value wraps in render",
+              "Header F2F2F2 shading, Price/Amount halign=right on all rows, repeat-header=r0",
+              "Text box tbx0 rewritten in place to 'Thank you for your business!' with red bold centered formatting; Choice and Fallback both updated",
+              "Logo img0 swapped to sanitized logo.svg; exactly two media parts; footer PayPal image rel intact",
+              "Fresh read identical to output read.md; validate clean"
+            ],
+            "defects": [
+              {
+                "what": "SVG logo embedded as a plain a:blip pointing at an .svg part, with no PNG fallback or svgBlip extension; older consumers may not display it",
+                "severity": "minor",
+                "evidence": "document.xml <a:blip r:embed=\"rId6\"> -> media/image1.svg; Word 365 rendered it fine"
+              },
+              {
+                "what": "images list does not report the footer image, so the agent could not confirm the two-image count",
+                "severity": "minor",
+                "evidence": "images list returns only img0; the footer image is visible only via raw get ftr0"
+              }
+            ],
+            "notes": "All rubric checks pass. The agent needed one extra set-widths pass after a render showed 'Tax total (8.75%)' wrapping.",
+            "weakAgentStruggle": "Light. set-widths uses raw grid columns, and the header and data rows have mismatched gridSpans, so the first width attempt wrapped a totals label and the agent needed a second pass. Otherwise smooth."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 26,
+            "cacheReadTokens": 595315,
+            "cacheWriteTokens": 67966,
+            "outputTokens": 12682,
+            "effectiveInputTokens": 144515,
+            "durationSec": 63.8,
+            "docxToolCalls": 1,
+            "otherToolCalls": 12,
+            "totalToolCalls": 13,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All cover-page placeholders filled with correct values; no [ ... ] placeholder brackets remain (checkbox [ x ] glyphs correctly kept)",
+              "Zero w:highlight in document.xml; no <mark> in read view",
+              "Signature table t2 r2-r6 c1/c3 filled as single p0 paragraphs; c0, c2 spacer, r1 signature row untouched; both dates filled",
+              "Font fidelity preserved: Georgia title, bold 9pt labels, gray 7pt sub-labels, Arial 8pt body unchanged; filled values keep underline like the placeholders",
+              "Signature values at 9pt match each empty cell's own paragraph-mark rPr (sz=18) in the baseline, so this is correct look-at-position inheritance",
+              "Fresh docx read identical to output read.md; docx validate passes"
+            ],
+            "defects": [
+              {
+                "what": "Tool UX: a span --text edit whose range starts on the non-underlined '[' bracket inherits that run's rPr and silently drops the placeholder's underline; the agent needed a second corrective batch",
+                "severity": "minor",
+                "evidence": "Reproduced on pristine copy: edit --at t1:r4c1:p0:25-40 --text Delaware --clear highlight -> read shows plain 'Delaware' without <u>, whereas the placeholder text was <u>fill in state</u>"
+              }
+            ],
+            "notes": "Output is correct on every rubric check. The agent's 9pt signature-size friction is a misdiagnosis: the baseline empty cells' paragraph marks are already sz=18.",
+            "weakAgentStruggle": "Mild: one extra corrective batch to restore underline after span edits dropped it. The agent also wrongly suspected that the 9pt signature size was drift."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "success",
+            "inputTokens": 30,
+            "cacheReadTokens": 663030,
+            "cacheWriteTokens": 57588,
+            "outputTokens": 15388,
+            "effectiveInputTokens": 138318,
+            "durationSec": 70.4,
+            "docxToolCalls": 13,
+            "otherToolCalls": 2,
+            "totalToolCalls": 15,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "officecli-r3",
+      "arm": "officecli",
+      "workflow": "wf_4b0b8441-b0c",
+      "totals": {
+        "agents": 6,
+        "docxToolCalls": 144,
+        "otherToolCalls": 31,
+        "totalToolCalls": 175,
+        "inputTokens": 344,
+        "cacheReadTokens": 12501500,
+        "cacheWriteTokens": 600621,
+        "outputTokens": 175563,
+        "effectiveInputTokens": 2001271,
+        "durationSec": 1038.7,
+        "graded": 6,
+        "success": 4,
+        "partial": 2,
+        "fail": 0
+      },
+      "tasks": [
+        {
+          "scenario": "contract-finalize",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-finalize",
+            "taskSuccess": "success",
+            "inputTokens": 36,
+            "cacheReadTokens": 894320,
+            "cacheWriteTokens": 64731,
+            "outputTokens": 14157,
+            "effectiveInputTokens": 170382,
+            "durationSec": 80,
+            "docxToolCalls": 16,
+            "otherToolCalls": 1,
+            "totalToolCalls": 17,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 7 revision halves resolved correctly; track-changes list empty, no ins/del/pPrChange in document.xml",
+              "Net 30 and one (1) year accepted as clean text",
+              "Liability cap restored to $100; $100,000 insertion removed",
+              "Personal Guarantee section restored with heading and body; renumbering 12-15 correct",
+              "Indemnification 1.5 line spacing live (w:line=360) with no pending marker",
+              "Four Company replies c4-c7 with correct parentId and real body anchors; visible as [^cN] with \u21b3 markers in read --comments",
+              "commentsExtended registered in rels and content types; c0 and c3 threads done=true, c1 and c2 done=false",
+              "No unintended visual or text changes vs baseline"
+            ],
+            "defects": [
+              {
+                "what": "docx comments list does not surface resolved status for w15:done=\"true\" (a valid ST_OnOff value); this is a docx-cli reader gap, not an OfficeCLI defect",
+                "severity": "minor",
+                "evidence": "commentsExtended.xml has w15:done=\"true\" on paraId 97CB30E2/EC14166F; comments list JSON has no resolved field"
+              },
+              {
+                "what": "In the Word render, resolved root comments appear at normal contrast while their replies are greyed (cosmetic)",
+                "severity": "minor",
+                "evidence": "page-001 JC1 normal vs NFS2 faded; page-002 JC7 normal vs NFS8 faded"
+              },
+              {
+                "what": "view issues crashes on the duplicate Heading1 styleId (OfficeCLI robustness bug that hit the agent)",
+                "severity": "minor",
+                "evidence": "agent deadEnd: 'An item with the same key has already been added. Key: Heading1'"
+              }
+            ],
+            "notes": "Every rubric condition is met in the file. Resolve state was verified directly in commentsExtended.xml because docx-cli's reader does not report done=\"true\".",
+            "weakAgentStruggle": "Moderate. No reply verb (parentId prop), resolve did not cascade to replies, thread state was hidden without --json, view issues crashed, and one reply was mis-worded and had to be redone."
+          }
+        },
+        {
+          "scenario": "contract-markup",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "contract-markup",
+            "taskSuccess": "success",
+            "inputTokens": 42,
+            "cacheReadTokens": 1255516,
+            "cacheWriteTokens": 85644,
+            "outputTokens": 21904,
+            "effectiveInputTokens": 232649,
+            "durationSec": 120.7,
+            "docxToolCalls": 18,
+            "otherToolCalls": 3,
+            "totalToolCalls": 21,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "23 tracked revisions (12 logical) by 'Mercer Design Studio' cover all four must-change terms: Net 90->Net 30 (incl. schedule cell), non-compete narrowed + $50k LDs deleted, indemnity own-negligence carve-out + cap, mutual liability cap",
+              "10 comments anchored to clause paragraphs covering all five flag items (IP, Sec 7 counsel waiver, guarantee, arbitration, Sec 13 amendment) plus the redlined clauses",
+              "Sec 9 paragraph (and heading) set to w:line=360 auto; read shows line-spacing=\"1.5\" on p24; render visibly roomier",
+              "IP sub-points switched via numbering level (abstractNum 2 ilvl 1 -> lowerRoman '(%2)'); Word renders (i)-(iv); top-level decimal untouched",
+              "Baseline vs output read.md diff limited to p7, t0:r1c2, p18, p22, p24 \u2014 no collateral changes; headers/footers/table/signature block identical"
+            ],
+            "defects": [
+              {
+                "what": "Comments anchored to whole paragraphs rather than the specific offending phrases",
+                "severity": "minor",
+                "evidence": "comments list anchors all span offset 0 to paragraph end (e.g. c2 p12 0-235)"
+              },
+              {
+                "what": "Consequential-damages exclusion in Sec 9 left one-way ('the Contractor waives no such damages'), so liability fairness only partly addressed",
+                "severity": "minor",
+                "evidence": "output read.md p24 still ends 'The Company is not liable for any indirect... the Contractor waives no such damages.'"
+              },
+              {
+                "what": "docx-cli read --ast does not surface list level format (no 'format' key), so rubric's lower-roman grep returns nothing although OOXML/render are correct \u2014 docx-cli reader gap, not an OfficeCLI defect",
+                "severity": "minor",
+                "evidence": "AST list objects: {\"level\":1,\"numId\":\"2\",\"ordered\":true}; numbering.xml ilvl 1 numFmt=lowerRoman"
+              }
+            ],
+            "notes": "All five rubric conditions verified via track-changes list, comments list, read (line-spacing hint), numbering.xml inspection, and Word render showing (i)-(iv). Doc-level tracking toggle off; revisions are real w:ins/w:del.",
+            "weakAgentStruggle": "Moderate: silent zero-match find/replace on auto-numbered '(a)' labels (exit 0), positional /body/p[N] not matching view text numbering (switched to @paraId), inconsistent numbering level indexing between get and set, no warning on shared abstractNum edit, view text hides redlines."
+          }
+        },
+        {
+          "scenario": "eliot-journal",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "eliot-journal",
+            "taskSuccess": "success",
+            "inputTokens": 88,
+            "cacheReadTokens": 3926681,
+            "cacheWriteTokens": 127012,
+            "outputTokens": 39770,
+            "effectiveInputTokens": 551521,
+            "durationSec": 233.7,
+            "docxToolCalls": 36,
+            "otherToolCalls": 9,
+            "totalToolCalls": 45,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "3 landscape sections: single-column title, 2-column verse (w:num=2), single-column colophon; render shows real two-column flow",
+              "Centered Title, subtitle, editor's note, frontispiece img0 3.2in with 'Frontispiece' caption",
+              "Four Heading2 poem titles rendered in serif; verse line breaks preserved exactly",
+              "3 footnotes with substantive glosses",
+              "'public domain' hyperlinked to https://www.gutenberg.org/ebooks/1321",
+              "Header 'A T. S. Eliot Reader' and centered live 'Page X of Y' (PAGE/NUMPAGES) on every page",
+              "Garamond in docDefaults and theme major/minor; docx:base font=Garamond; headings and title render serif"
+            ],
+            "defects": [
+              {
+                "what": "Footnote reference marks render as plain non-superscript digits because rStyle FootnoteReference is not defined in styles.xml (OfficeCLI emitter bug)",
+                "severity": "minor",
+                "evidence": "Render p2/p3: 'In our dry cellar.1', 'Michelangelo.2', 'tubers.3'; styles.xml has 0 occurrences of FootnoteReference"
+              },
+              {
+                "what": "Verse lines are joined with w:br inside one paragraph per stanza instead of one paragraph per line (rubric item 4 wording); looks the same rendered",
+                "severity": "minor",
+                "evidence": "document.xml stanza runs contain <w:br/> between lines; read view shows multi-line paragraphs p7, p10, p12, p15"
+              },
+              {
+                "what": "Unbalanced column ending leaves page 3 almost empty (2 verse lines + footnote) before the next-page colophon",
+                "severity": "minor",
+                "evidence": "page-003.png"
+              }
+            ],
+            "notes": "All 12 rubric items substantively met. docx-cli footers list shows cached 'Page 1 of 1' for the complex fields; that is a reader limitation, not OfficeCLI's fault.",
+            "weakAgentStruggle": "Many dead ends: header/footer on / attached only to the last section (fixed via /section[1] by trial); Heading styles absent in a blank doc; theme fonts needed for Garamond headings; conflicting \\n/\\v line-break docs; stray section break and run created then removed; preview renderer blanked the 2-column section."
+          }
+        },
+        {
+          "scenario": "invoice",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "invoice",
+            "taskSuccess": "partial",
+            "inputTokens": 74,
+            "cacheReadTokens": 2982647,
+            "cacheWriteTokens": 118744,
+            "outputTokens": 39773,
+            "effectiveInputTokens": 446769,
+            "durationSec": 257.9,
+            "docxToolCalls": 31,
+            "otherToolCalls": 7,
+            "totalToolCalls": 38,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "partial",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All header, Bill To/Ship To, invoice #/dates and totals values are correct; the extra 'Your City, State Zip' line and all three 'Description N' sub-lines are gone (no empty leftover paragraphs in those cells)",
+              "Fourth line item (Calibration kit / 2 / $300.00 / $600.00) inserted as a new row above the totals block; it keeps the gridSpan=2 Quantity cell and top/bottom borders; all six totals rows intact with correct values",
+              "Header row shaded D9D9D9, tblHeader set (read shows repeat-header=\"r0\"), and Price/Amount right-aligned on every row",
+              "Description column is the widest (tblGrid 5300/800/1200/1900/2026 twips, header span 6100), and no dollar value wraps in the Word render",
+              "Stamp text box kept with its fill, red border, bold red C00000 centered text. Both mc:Choice and mc:Fallback read 'Thank you for your business!'; find 'DO NOT SEND'/'TEMPLATE' returns no matches; find returns tbx0:p0:0-28",
+              "Top-left logo swapped to assets/logo.svg (svgBlip; old image1 removed); footer PayPal mark (image2.png) and its relationship untouched",
+              "docx validate: valid. docx read of the file is byte-identical to the output read view (survives the write-read loop)"
+            ],
+            "defects": [
+              {
+                "what": "The Notes body was not replaced. The original body line 'Thank you for your business.' (p10, the stamp's anchor) remains. The new text went into the empty 8pt spacer paragraph above it, so the Notes section shows two lines.",
+                "severity": "major",
+                "evidence": "Output read.md: p9 '<span style=\"font-size:8pt\">Payment due within 30 days. Wire details on request.</span>' followed by p10 'Thank you for your business.'. The render shows tiny 8pt text above a 12pt 'Thank you for your business.' line."
+              },
+              {
+                "what": "The new Notes text is set at 8pt, inherited from the spacer paragraph. It is visibly smaller than the 12pt body text and looks like a footnote rather than the Notes body.",
+                "severity": "minor",
+                "evidence": "Output page-001.png, under 'Notes'. Baseline body text is 12pt (docx:base size=12pt)."
+              },
+              {
+                "what": "The SVG logo's raster fallback is a 67-byte 1x1 transparent PNG. Consumers that don't render SVG (and docx-cli's image manifest) see a blank logo. Word renders the SVG correctly.",
+                "severity": "minor",
+                "evidence": "Zip: media/image.svg (1275 B) plus media/image3.png (67 B). docx images list reports img0 as image/png, hash 2b1da20a\u2026"
+              }
+            ],
+            "notes": "Word opened and rendered the document. The layout is clean on one page: tables intact, no wrapped money values, footer mark preserved. Every rubric check passes except the Notes replacement, where the old Notes body line was kept and the new text sits in a shrunken spacer paragraph. OfficeCLI also wrote docProps/custom.xml (OfficeCLI.Version), which is harmless.",
+            "weakAgentStruggle": "Moderate slog on table structure. add --type row --after produced a malformed 5-cell row with no gridSpan or borders on a merged-grid table and gave no warning, so the agent cloned with --from and then used move. Setting the width of a gridSpan cell split the width evenly and desynced tblGrid, which forced a raw-set setattr on each gridCol through an undocumented 'attr=value' form. Swapping the SVG gave a blank PNG fallback with no set-level fallback= option. The agent also flagged the Notes/anchor question as a judgment call and chose wrongly."
+          }
+        },
+        {
+          "scenario": "mnda",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "mnda",
+            "taskSuccess": "success",
+            "inputTokens": 52,
+            "cacheReadTokens": 1638548,
+            "cacheWriteTokens": 98600,
+            "outputTokens": 28895,
+            "effectiveInputTokens": 287157,
+            "durationSec": 163.3,
+            "docxToolCalls": 20,
+            "otherToolCalls": 6,
+            "totalToolCalls": 26,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "success",
+            "rendersCorrectly": true,
+            "layoutSound": true,
+            "formattingPreserved": "preserved",
+            "survivedReadLoop": true,
+            "merits": [
+              "All 7 cover-page placeholders filled with correct values; brackets and choice text removed (e.g. 'Effective Date' chosen from the choose-1 blank)",
+              "Original Arial 8pt black + underline kept on cover values; 'None.' kept original unformatted look",
+              "Signature table t2 c1/c3 rows r2-r6 filled for both parties, one p0 paragraph per cell, label/spacer/signature row untouched; both dates filled",
+              "No yellow highlight remains (8 runs carry w:highlight w:val=none, i.e. explicit no-highlight); render shows none",
+              "Page 2 and all labels/title/gray sub-labels visually identical to baseline; docx validate passes; no tracked changes; read output matches pre-recorded read view"
+            ],
+            "defects": [
+              {
+                "what": "Highlight cleared by writing <w:highlight w:val=\"none\"/> rather than removing the element",
+                "severity": "minor",
+                "evidence": "grep of word/document.xml: 8 x <w:highlight w:val=\"none\" />; renders without highlight and docx read shows no <mark>"
+              },
+              {
+                "what": "Signature values carry explicit Arial 9pt run props without w:cs; added runs did not inherit paragraph mark formatting automatically",
+                "severity": "minor",
+                "evidence": "Dana Okafor run: <w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"18\"/>; visually matches 9pt labels"
+              }
+            ],
+            "notes": "Correct, clean result. Agent path required run-index juggling and a stale-resident dead end in OfficeCLI.",
+            "weakAgentStruggle": "Moderate: set --find across bracket runs dropped underline, so agent replaced value text then removed bracket runs by positional index in reverse order; stale resident served old content after external overwrite; no verb to remove highlight; added runs in empty cells needed explicit font/size."
+          }
+        },
+        {
+          "scenario": "resume",
+          "metrics": {
+            "model": "claude-haiku-5-5",
+            "scenario": "resume",
+            "taskSuccess": "partial",
+            "inputTokens": 52,
+            "cacheReadTokens": 1803788,
+            "cacheWriteTokens": 105890,
+            "outputTokens": 31064,
+            "effectiveInputTokens": 312793,
+            "durationSec": 183.1,
+            "docxToolCalls": 23,
+            "otherToolCalls": 5,
+            "totalToolCalls": 28,
+            "isolationBreaches": [],
+            "relayedLaunchMessage": null
+          },
+          "verdict": {
+            "taskSuccess": "partial",
+            "rendersCorrectly": true,
+            "layoutSound": false,
+            "formattingPreserved": "degraded",
+            "survivedReadLoop": true,
+            "merits": [
+              "All rubric checks pass in the file: data filled, notes removed, Skills & Interests removed, drawing kept, Heading1 on all three headings, Heading1 style def = 13pt/1F3864/bold/12pt before, space-after 120 on contact + entry lines, 720 margins on all four sections",
+              "In-place find/replace preserved template runs, bold, tab stops and bullet numbering",
+              "Hyperlink display text and mailto target both updated",
+              "docx validate passes; changes survive docx read loop"
+            ],
+            "defects": [
+              {
+                "what": "Location/date columns on left tabs wrap after the margin change (Cambridge,/MA; Graduating/May 2027; Portland/, OR; Graduated/June 2023; San/Francisco, CA; Cambrid/ge, MA broken mid-word); baseline was single-line",
+                "severity": "major",
+                "evidence": "output page-001.png vs baseline page-001.png; read.md docx:layout warnings on p9..p30"
+              },
+              {
+                "what": "Leftover blank spacing gap between Harvard and Lincoln entries after the optional lines were deleted",
+                "severity": "minor",
+                "evidence": "output page-001.png Education section"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
