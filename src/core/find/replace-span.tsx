@@ -137,11 +137,9 @@ export function replaceSpanInParagraph(
 	}
 
 	if (allSameParent) {
-		const containerStart =
-			firstParent === paragraph ? 0 : firstSlot.offsetBefore;
 		rebuildContainer(
 			firstParent,
-			containerStart,
+			firstSlot.parentStart,
 			span,
 			replacement,
 			inheritedProperties,
@@ -166,6 +164,8 @@ export function replaceSpanInParagraph(
 
 type RunSlot = {
 	parent: XmlNode;
+	/** Offset at which `parent`'s content starts (0 for the paragraph). */
+	parentStart: number;
 	run: XmlNode;
 	offsetBefore: number;
 	length: number;
@@ -175,11 +175,13 @@ function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
 	const slots: RunSlot[] = [];
 	let offset = 0;
 	function walk(parent: XmlNode, children: XmlNode[]): void {
+		const parentStart = offset;
 		for (const child of children) {
 			if (child.tag === "w:r") {
 				const length = runTextLength(child);
 				slots.push({
 					parent,
+					parentStart,
 					run: child,
 					offsetBefore: offset,
 					length,
@@ -256,7 +258,7 @@ function rebuildContainer(
 			}
 			continue;
 		}
-		if (isParagraph && isWrapperVisibleInView(child.tag, view)) {
+		if (isWrapperVisibleInView(child.tag, view)) {
 			offset += sumVisibleTextLength(wrapperContent(child), view);
 			newChildren.push(child);
 			continue;
@@ -277,22 +279,59 @@ function rebuildAcrossBoundaries(
 	view: FindView,
 	formatting?: ReplacementFormatting,
 ): void {
+	const across: AcrossSpan = {
+		span,
+		replacement,
+		runProperties,
+		tracked,
+		view,
+		formatting,
+		placed: false,
+	};
+	paragraph.children = rebuildChildrenAcrossSpan(
+		paragraph.children,
+		0,
+		across,
+		true,
+	);
+	if (!across.placed) {
+		paragraph.children.push(...placedReplacement(across, true));
+	}
+}
+
+/** One cross-boundary replace's shared state. `placed` is shared across the
+ *  recursion so the replacement lands exactly once, in the container that
+ *  holds the span's first character. */
+type AcrossSpan = {
+	span: Span;
+	replacement: string;
+	runProperties: XmlNode | null;
+	tracked: TrackedReplaceOptions | null;
+	view: FindView;
+	formatting: ReplacementFormatting | undefined;
+	placed: boolean;
+};
+
+/** The span removed from `children` (which start at offset `baseOffset`),
+ *  with the replacement placed where the span starts. `isParagraph` gates the
+ *  tracked replacement's own `<w:ins>`: only a paragraph-level replacement is
+ *  wrapped (the recursion into a wrapper's content runs untracked only). */
+function rebuildChildrenAcrossSpan(
+	children: XmlNode[],
+	baseOffset: number,
+	across: AcrossSpan,
+	isParagraph: boolean,
+): XmlNode[] {
+	const { span, tracked, view } = across;
 	const newChildren: XmlNode[] = [];
-	let offset = 0;
-	let placed = false;
+	let offset = baseOffset;
 
 	const placeReplacement = (): void => {
-		if (placed) return;
-		placed = true;
-		const runs = replacementRuns(runProperties, replacement, formatting);
-		if (tracked) {
-			newChildren.push(<Ins meta={mintMeta(tracked)}>{runs}</Ins>);
-			return;
-		}
-		newChildren.push(...runs);
+		if (across.placed) return;
+		newChildren.push(...placedReplacement(across, isParagraph));
 	};
 
-	for (const child of paragraph.children) {
+	for (const child of children) {
 		if (child.tag === "w:r") {
 			const length = runTextLength(child);
 			const runStart = offset;
@@ -326,41 +365,40 @@ function rebuildAcrossBoundaries(
 			continue;
 		}
 
-		// Tracked-change wrappers invisible in the chosen view pass through
-		// untouched — their inner text contributes nothing to the offset and
-		// the span never slices into them.
-		if (
-			(child.tag === "w:ins" ||
-				child.tag === "w:del" ||
-				child.tag === "w:moveFrom" ||
-				child.tag === "w:moveTo") &&
-			!isWrapperVisibleInView(child.tag, view)
-		) {
+		// Wrappers invisible in the chosen view (and any non-wrapper child)
+		// pass through untouched — their inner text contributes nothing to the
+		// offset and the span never slices into them.
+		if (!isWrapperVisibleInView(child.tag, view)) {
 			newChildren.push(child);
 			continue;
 		}
 
-		if (
-			child.tag === "w:ins" ||
-			child.tag === "w:del" ||
-			child.tag === "w:moveFrom" ||
-			child.tag === "w:moveTo"
-		) {
-			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
-			const wrapperStart = offset;
-			const wrapperEnd = offset + innerLength;
-			offset = wrapperEnd;
+		const innerLength = sumVisibleTextLength(wrapperContent(child), view);
+		const wrapperStart = offset;
+		const wrapperEnd = offset + innerLength;
+		offset = wrapperEnd;
 
-			if (wrapperEnd <= span.start) {
-				newChildren.push(child);
+		if (wrapperEnd <= span.start) {
+			newChildren.push(child);
+			continue;
+		}
+		if (wrapperStart >= span.end) {
+			placeReplacement();
+			newChildren.push(child);
+			continue;
+		}
+
+		if (isTrackedChangeWrapper(child.tag)) {
+			if (!tracked) {
+				cutRevisionInPlace(
+					child,
+					wrapperStart,
+					across,
+					newChildren,
+					placeReplacement,
+				);
 				continue;
 			}
-			if (wrapperStart >= span.end) {
-				placeReplacement();
-				newChildren.push(child);
-				continue;
-			}
-
 			splitWrapperAcrossSpan(
 				child,
 				wrapperStart,
@@ -373,35 +411,12 @@ function rebuildAcrossBoundaries(
 		}
 
 		if (child.tag === "w:hyperlink") {
-			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
-			const wrapperStart = offset;
-			const wrapperEnd = offset + innerLength;
-			offset = wrapperEnd;
-
-			if (wrapperEnd <= span.start) {
-				newChildren.push(child);
-				continue;
-			}
-			if (wrapperStart >= span.end) {
-				placeReplacement();
-				newChildren.push(child);
-				continue;
-			}
-
 			splitHyperlinkAcrossSpan(
 				child,
 				wrapperStart,
-				span,
-				runProperties,
-				replacement,
-				tracked,
-				view,
-				formatting,
+				across,
 				newChildren,
 				placeReplacement,
-				() => {
-					placed = true;
-				},
 			);
 			continue;
 		}
@@ -412,52 +427,91 @@ function rebuildAcrossBoundaries(
 		// fldSimple would technically duplicate the field instruction, but
 		// Word re-evaluates fields on next render and any other behavior
 		// would silently drop the user's replacement intent.
-		if (isRunBearingWrapper(child.tag)) {
-			const innerLength = sumVisibleTextLength(wrapperContent(child), view);
-			const wrapperStart = offset;
-			const wrapperEnd = offset + innerLength;
-			offset = wrapperEnd;
-
-			if (wrapperEnd <= span.start) {
-				newChildren.push(child);
-				continue;
-			}
-			if (wrapperStart >= span.end) {
-				placeReplacement();
-				newChildren.push(child);
-				continue;
-			}
-
-			splitTransparentWrapperAcrossSpan(
-				child,
-				wrapperStart,
-				span,
-				newChildren,
-				placeReplacement,
-			);
-			continue;
-		}
-
-		newChildren.push(child);
+		splitTransparentWrapperAcrossSpan(
+			child,
+			wrapperStart,
+			span,
+			newChildren,
+			placeReplacement,
+		);
 	}
 
-	if (!placed) placeReplacement();
-	paragraph.children = newChildren;
+	return newChildren;
+}
+
+/** The replacement's runs, marking it placed. `wrapTracked` puts a tracked
+ *  replacement in the editor's own `<w:ins>` (paragraph level, or inside a
+ *  hyperlink it inherits); inside another revision's content it stays bare. */
+function placedReplacement(
+	across: AcrossSpan,
+	wrapTracked: boolean,
+): XmlNode[] {
+	across.placed = true;
+	const runs = replacementRuns(
+		across.runProperties,
+		across.replacement,
+		across.formatting,
+	);
+	if (across.tracked && wrapTracked) {
+		return [<Ins meta={mintMeta(across.tracked)}>{runs}</Ins>];
+	}
+	return runs;
+}
+
+function isTrackedChangeWrapper(tag: string): boolean {
+	return (
+		tag === "w:ins" ||
+		tag === "w:del" ||
+		tag === "w:moveFrom" ||
+		tag === "w:moveTo"
+	);
+}
+
+/** Untracked, a revision wrapper the span crosses is cut IN PLACE rather than
+ *  split (issue #16): splitting it would put its `w:id` on both halves (an
+ *  untracked replace has no revision-id allocator) and the replacement
+ *  between them as plain original text. An additive wrapper (`<w:ins>` /
+ *  `<w:moveTo>`) loses the span's text — descending nested hyperlinks,
+ *  fields and revisions through the same walker — and keeps the replacement
+ *  when the span starts inside it, credited to its author exactly as a match
+ *  wholly inside it is; one left with no children is dropped. A subtractive
+ *  wrapper's text is already deleted, so it stays whole and a replacement
+ *  starting inside it lands right after it. */
+function cutRevisionInPlace(
+	wrapper: XmlNode,
+	wrapperStart: number,
+	across: AcrossSpan,
+	out: XmlNode[],
+	placeReplacement: () => void,
+): void {
+	if (isSubtractiveTrackedChangeWrapper(wrapper.tag)) {
+		out.push(wrapper);
+		placeReplacement();
+		return;
+	}
+	wrapper.children = rebuildChildrenAcrossSpan(
+		wrapper.children,
+		wrapperStart,
+		across,
+		false,
+	);
+	if (wrapper.children.length > 0) out.push(wrapper);
 }
 
 function splitWrapperAcrossSpan(
 	wrapper: XmlNode,
 	wrapperStart: number,
 	span: Span,
-	tracked: TrackedReplaceOptions | null,
+	tracked: TrackedReplaceOptions,
 	out: XmlNode[],
 	placeReplacement: () => void,
 ): void {
 	// Subtractive wrappers (w:del, w:moveFrom) hold content that's already
 	// considered deleted — the cut portion stays in the pre-half wrapper.
-	// Additive wrappers (w:ins, w:moveTo) hold "live" content; under tracking
-	// the cut needs a new <w:del> wrapper nested inside, preserving the
-	// surrounding author's insert/move-to attribution.
+	// Additive wrappers (w:ins, w:moveTo) hold "live" content; the cut needs a
+	// new <w:del> wrapper nested inside, preserving the surrounding author's
+	// insert/move-to attribution. (Known gap: a wrapper NESTED in this one —
+	// a hyperlink, another revision — rides the pre-half whole, uncounted.)
 	const isSubtractive = isSubtractiveTrackedChangeWrapper(wrapper.tag);
 	const preInner: XmlNode[] = [];
 	const cutInner: XmlNode[] = [];
@@ -494,7 +548,7 @@ function splitWrapperAcrossSpan(
 	const preChildren = preInner.slice();
 	if (isSubtractive) {
 		preChildren.push(...cutInner);
-	} else if (tracked && cutInner.length > 0) {
+	} else if (cutInner.length > 0) {
 		for (const cutRun of cutInner) convertRunTextToDelText(cutRun);
 		preChildren.push(<Del meta={mintMeta(tracked)}>{cutInner}</Del>);
 	}
@@ -507,7 +561,13 @@ function splitWrapperAcrossSpan(
 	placeReplacement();
 
 	if (postInner.length > 0) {
-		const postWrapper = new XmlNode(wrapper.tag, { ...wrapper.attributes });
+		// Two revisions can't share a w:id: when the pre-half kept it, the
+		// post-half is a new revision with a fresh one.
+		const postAttributes = { ...wrapper.attributes };
+		if (preChildren.length > 0 && postAttributes["w:id"] !== undefined) {
+			postAttributes["w:id"] = String(tracked.allocator.next());
+		}
+		const postWrapper = new XmlNode(wrapper.tag, postAttributes);
 		postWrapper.children = postInner;
 		out.push(postWrapper);
 	}
@@ -566,16 +626,11 @@ function splitTransparentWrapperAcrossSpan(
 function splitHyperlinkAcrossSpan(
 	wrapper: XmlNode,
 	wrapperStart: number,
-	span: Span,
-	runProperties: XmlNode | null,
-	replacement: string,
-	tracked: TrackedReplaceOptions | null,
-	view: FindView,
-	formatting: ReplacementFormatting | undefined,
+	across: AcrossSpan,
 	out: XmlNode[],
 	placeReplacement: () => void,
-	markReplacementPlaced: () => void,
 ): void {
+	const { span, view } = across;
 	const wrapperEnd =
 		wrapperStart + sumVisibleTextLength(wrapper.children, view);
 	const startsInside = span.start > wrapperStart && span.start < wrapperEnd;
@@ -612,15 +667,10 @@ function splitHyperlinkAcrossSpan(
 		}
 	}
 
-	if (startsInside) {
-		// Replacement inherits the link: append it inside the pre-half.
-		const innerRuns = replacementRuns(runProperties, replacement, formatting);
-		if (tracked) {
-			preInner.push(<Ins meta={mintMeta(tracked)}>{innerRuns}</Ins>);
-		} else {
-			preInner.push(...innerRuns);
-		}
-		markReplacementPlaced();
+	// Replacement inherits the link when the span starts inside it: append it
+	// inside the pre-half (tracked, in the editor's own <w:ins>).
+	if (startsInside && !across.placed) {
+		preInner.push(...placedReplacement(across, true));
 	}
 
 	if (preInner.length > 0) {
@@ -629,7 +679,7 @@ function splitHyperlinkAcrossSpan(
 		out.push(preWrapper);
 	}
 
-	if (!startsInside) placeReplacement();
+	placeReplacement();
 
 	if (postInner.length > 0) {
 		const postWrapper = new XmlNode("w:hyperlink", { ...wrapper.attributes });
