@@ -15,3 +15,5 @@ docs/
 *.docx
 *.png
 *.wasm
+# …except the plugin icon/logo that .codex-plugin/plugin.json points at.
+!assets/*.png

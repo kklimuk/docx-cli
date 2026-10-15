@@ -125,6 +125,21 @@ describe("docx info skill", () => {
 		).json()) as { version: string };
 		expect(codexPlugin.version).toBe(packageJson.version);
 	});
+
+	test("codex plugin interface assets exist", async () => {
+		// interface.composerIcon / logo are paths Codex resolves from the plugin root;
+		// a missing file shows a blank icon in the plugin picker with no error.
+		const root = join(import.meta.dir, "../..");
+		const codexPlugin = (await Bun.file(
+			join(root, ".codex-plugin/plugin.json"),
+		).json()) as { interface: { composerIcon: string; logo: string } };
+		for (const asset of [
+			codexPlugin.interface.composerIcon,
+			codexPlugin.interface.logo,
+		]) {
+			expect(await Bun.file(join(root, asset)).exists()).toBe(true);
+		}
+	});
 });
 
 describe("docx info dispatcher", () => {

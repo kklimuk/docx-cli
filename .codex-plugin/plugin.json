@@ -2,5 +2,41 @@
 	"name": "docx-cli",
 	"version": "0.27.0",
 	"description": "Let AI agents edit Word documents without breaking them: fill in forms, update tables, restyle, write reports, and redline with tracked changes and comments.",
-	"skills": "./skills/"
+	"author": {
+		"name": "Kirill Klimuk",
+		"url": "https://github.com/kklimuk"
+	},
+	"homepage": "https://github.com/kklimuk/docx-cli",
+	"repository": "https://github.com/kklimuk/docx-cli",
+	"license": "MIT",
+	"keywords": [
+		"docx",
+		"word",
+		"microsoft-word",
+		"tracked-changes",
+		"redline",
+		"comments",
+		"documents"
+	],
+	"skills": "./skills/",
+	"interface": {
+		"displayName": "docx-cli",
+		"shortDescription": "Edit Word documents without breaking their formatting",
+		"longDescription": "Lets Codex do real work in Word .docx files: read them as Markdown, fill in contracts and forms, update tables, restyle headings, fonts and margins, set headers, footers and page numbers, build new documents from Markdown, and review with real Word tracked changes and comments. Edits happen in place, so the file still looks like yours in Word. Runs locally with no telemetry.",
+		"developerName": "Kirill Klimuk",
+		"category": "Productivity",
+		"capabilities": ["Read", "Write"],
+		"websiteURL": "https://github.com/kklimuk/docx-cli",
+		"privacyPolicyURL": "https://github.com/kklimuk/docx-cli/blob/main/SECURITY.md#scope-and-data-handling",
+		"termsOfServiceURL": "https://github.com/kklimuk/docx-cli/blob/main/LICENSE",
+		"defaultPrompt": [
+			"Fill in this NDA for Acme, Inc. with today's date",
+			"Redline contract.docx and comment on one-sided terms",
+			"Make my résumé's headings consistent, keep it to 1 page"
+		],
+		"brandColor": "#1E3A5F",
+		"composerIcon": "./assets/icon.png",
+		"logo": "./assets/icon.png",
+		"screenshots": ["./assets/social-preview.png"]
+	}
 }

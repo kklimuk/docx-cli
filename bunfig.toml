@@ -1,0 +1,3 @@
+[test]
+# tmp/ holds scratch clones of other repos (gitignored); never run their tests.
+pathIgnorePatterns = ["tmp/**", "dist/**"]

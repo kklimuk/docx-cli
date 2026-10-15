@@ -77,6 +77,7 @@ skills/docx-cli/              # the published Agent Skill — SKILL.md (generate
 install.sh                    # byte-identical deprecation shim for bootstraps <= v0.22.0 (see CLAUDE.md)
 .claude-plugin/               # Claude Code: marketplace.json + plugin.json (skills/ auto-discovered)
 .codex-plugin/                # Codex: plugin.json skill-only manifest ("skills": "./skills/")
+assets/                       # icon.svg (source) → icon.png (Codex composerIcon/logo); social-preview.png (GitHub link card)
 ```
 
 See [CLAUDE.md](CLAUDE.md) and the nested `CLAUDE.md` files under `src/` for conventions, architectural invariants, and per-subsystem playbooks.
