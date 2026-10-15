@@ -1,0 +1,30 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 8 cover-page placeholders filled with exact task values; no [ ... ] placeholders remain (only the [ x ] / [    ] checkboxes, which are original template text)",
+    "Zero <w:highlight> elements in word/document.xml; `find --highlight any` returns no matches",
+    "Filled cover-page runs keep the placeholder's exact rPr (Arial, 8pt, text1 color, single underline) minus highlight",
+    "Signature table t2: all 10 values in c1/c3 of r2..r6, each a single p0; c0 labels, c2 spacer, r1 signature row untouched; both Date cells filled",
+    "Signature values inherit the empty cell's own paragraph-mark rPr (Arial 9pt), so they match the label size",
+    "styles.xml / numbering.xml / settings.xml / theme unchanged in content; Georgia title, bold labels, gray sub-labels and page 2 render identically",
+    "Fresh `docx read` matches the output read view byte-for-byte (write-read loop holds)"
+  ],
+  "defects": [
+    {
+      "what": "Tool: span edit with --text plus clear:highlight dropped the placeholder run's single underline; the agent had to restore it with a second `underline: true` batch",
+      "severity": "minor",
+      "evidence": "Agent deadEnds/frictions; final output has <w:u w:val=\"single\"/> restored, so no defect remains in the document — this is a tool UX/fidelity bug, not an output defect"
+    },
+    {
+      "what": "UX: `find \"Effective Date\"` returns 5 matches with no highlight context, forcing manual disambiguation; spans for inserted text must be re-found for a follow-up batch",
+      "severity": "minor",
+      "evidence": "Agent deadEnds and frictions"
+    }
+  ],
+  "notes": "Baseline vs output diff of read views shows only the intended t1 value cells and t2 c1/c3 cells changed. Visual renders identical except filled values and removed yellow. Underline on filled cover-page values matches the original placeholder formatting.",
+  "weakAgentStruggle": "Moderate: correct result, but needed an extra pass to restore underline lost by the span --text + clear:highlight edit, plus manual span disambiguation for 'Effective Date'."
+}

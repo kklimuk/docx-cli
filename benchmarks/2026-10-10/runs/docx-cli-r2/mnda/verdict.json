@@ -1,0 +1,29 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 8 cover-page placeholders in t1 filled with the exact task values; brackets dropped (only the original '[ x ]'/'[    ]' checkbox markers remain, which are not placeholders)",
+    "Zero <w:highlight> elements left in word/document.xml; `find --highlight any` returns no matches",
+    "Signature table t2 filled in c1 (Party 1) and c3 (Party 2) for r2-r6; each cell has exactly one p0; c0, c2 and signature row r1 untouched",
+    "Baseline-vs-output read.md diff touches only the filled values; page 2 renders identically; Georgia title, bold labels, gray 7pt sub-labels, Arial body all unchanged",
+    "Filled values keep the placeholder's run look (Arial 8pt, black, underline) on the cover page; signature values are Arial 9pt matching the row labels",
+    "Live `docx read` output is byte-identical to the rendered output read view; `docx validate` passes (11 parts)"
+  ],
+  "defects": [
+    {
+      "what": "Span replacement (edit --at pN:S-E --text) took formatting from the first run of the span (the un-underlined '[' bracket), silently dropping the underline on the value; the agent had to run a second batch to re-apply underline",
+      "severity": "minor",
+      "evidence": "Agent deadEnds; the final output is correct (<w:u w:val=\"single\"/> on the filled runs), so this is a tool UX issue rather than an output defect"
+    },
+    {
+      "what": "No single-step way to fill a bracketed span with a value while keeping the value-bearing run's formatting and clearing the highlight; discovered only by trial and AST inspection",
+      "severity": "minor",
+      "evidence": "Agent frictions 1 and 4"
+    }
+  ],
+  "notes": "The output meets every pass condition in the rubric. The task text says the signature blanks are yellow-highlighted, but the source has no highlight there. The agent noticed this and filled them anyway. Its claim that the 'PARTY 1/2' headers drifted in the read view is not borne out: the baseline and output read.md files do not differ on those lines.",
+  "weakAgentStruggle": "Moderate. The output is correct, but the cover-page span fills needed two batch passes because span replacement inherited the '[' bracket's run formatting and dropped the underline. The agent then needed `find` to get exact offsets for the re-underline pass."
+}

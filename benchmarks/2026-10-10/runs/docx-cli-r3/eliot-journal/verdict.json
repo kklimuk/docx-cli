@@ -1,0 +1,37 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 12 rubric conditions verified: s1 has columns:2 nextPage; s0 and s2 single-column; whole document landscape (15840x12240)",
+    "Four poems each under a Heading 2 (Preludes (I), The Hollow Men, Prufrock, The Waste Land); title is Heading 1, centered",
+    "Verse line breaks intact: each verse line is a hard line break (<w:br/>), rendered one per line in Word and shown one per line in read",
+    "Frontispiece SVG embedded (img0, 4x3.11in, centered) with a centered Caption-style 'Frontispiece' paragraph beneath it",
+    "Three footnotes with real content, anchored in the verse (I, Michelangelo, cruellest month), numbered 1-3 in document order in the render",
+    "link0 'public domain' -> https://www.gutenberg.org/ebooks/1321 in the colophon",
+    "Header 'A T. S. Eliot Reader' and centered footer 'Page {page} of {pages}' on every page (rendered 'Page N of 3')",
+    "docx:base font=Garamond; render shows Garamond in body AND headings (set-default-font moved the theme fonts too)",
+    "docx validate clean; Word rendered 3 pages with no errors; two-column flow is balanced across page 2"
+  ],
+  "defects": [
+    {
+      "what": "Colophon sits alone on an otherwise empty page 3 (the s2 break starts a new page). Reasonable for a colophon, but it leaves a sparse final page.",
+      "severity": "minor",
+      "evidence": "page-003.png shows only the header, the one colophon line, and the footer"
+    },
+    {
+      "what": "Verse lines are line breaks inside one paragraph per stanza, not separate paragraphs. The rubric's 'confirmed by read showing separate lines' is satisfied, but this deviates from its literal 'own paragraph' wording.",
+      "severity": "minor",
+      "evidence": "AST p15 runs: text, break(line), text, ... ; read.md prints each line on its own line"
+    },
+    {
+      "what": "The header and footer were written as three per-section copies (hdr0-2/ftr0-2) instead of one linked part. The rendered output is correct.",
+      "severity": "minor",
+      "evidence": "headers list and footers list each return 3 entries, sectionId s0/s1/s2"
+    }
+  ],
+  "notes": "This is a strong authoring result that meets every rubric condition. The agent's frictions point to real tool UX gaps: the trailing-backslash hard-break syntax is hard to discover for verse, create --from turned an inline [^n] into its own paragraph, and the caption did not inherit the image's --alignment. In the read view the footnote ids are in creation order (fn1, fn3, fn2), while Word numbers them 1-3, which is a small cosmetic mismatch.",
+  "weakAgentStruggle": "Moderate. The agent reached a correct result but hit three dead ends. Verse newlines reflowed into prose until it found the trailing-backslash break by trial and error. An inline [^1] footnote became its own paragraph, so it fell back to footnotes add --anchor. The images add --caption paragraph needed a separate edit --alignment center. It also needed an extra edit to clear a placeholder paragraph before inserting the image."
+}

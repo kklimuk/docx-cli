@@ -1,0 +1,31 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "n/a",
+  "survivedReadLoop": true,
+  "merits": [
+    "Three sections, all landscape (s0 single-column title, s1 cols=2 nextPage, s2 single-column colophon); the Word render shows the verse flowing in two columns with a separator line",
+    "Each poem title is a Heading 2 rendered in serif Garamond, and the docx:base note reports font=Garamond as the document default",
+    "Every verse line is its own paragraph. Stanza breaks (blank lines before 'And then the lighting of the lamps.' and 'In the room the women come and go') match the source",
+    "Four non-empty footnotes, rendered at the column foot; superscript markers sit on relevant phrases",
+    "The 'public domain' hyperlink goes to https://www.gutenberg.org/ebooks/1321 (link0)",
+    "Frontispiece SVG rasterized to PNG and embedded (img0, 3.75x2.92in, with alt text), with an italic 'Frontispiece' caption beneath",
+    "A header 'A T. S. Eliot Reader' and a centered footer 'Page X of Y' (PAGE/NUMPAGES fields) appear on every page; Word renders Page 1 of 3 through Page 3 of 3",
+    "All four poems are included, Waste Land opening too, and nothing is left blank or as a placeholder"
+  ],
+  "defects": [
+    {
+      "what": "The colophon sits alone on page 3, almost all of it blank, because of a nextPage section break. This is a design choice that the single-column requirement allows (a continuous break would have kept it with the body), so it is not a defect a reader would call broken",
+      "severity": "minor",
+      "evidence": "page-003.png shows only one line, 'Compiled June 2026. All poems in the public domain.'"
+    },
+    {
+      "what": "The running header also appears on the title page (no different first page). The task asked for a header on every page, so this is acceptable",
+      "severity": "minor",
+      "evidence": "page-001.png has the italic header 'A T. S. Eliot Reader'"
+    }
+  ],
+  "weakAgentStruggle": "Moderate. docx-js was not resolvable from the scenario cwd (MODULE_NOT_FOUND); the agent had to require the skill's absolute node_modules path. The SVG frontispiece had to be rasterized with rsvg-convert because ImageRun rejects SVG and SKILL.md doesn't mention it. The agent inferred the APIs for columns, footnotes, and hyperlinks from memory because SKILL.md has no recipes for them. It also had one soffice path mistake that it caused itself. Still, the result came out correct and complete.",
+  "notes": "This is a strong pass on every rubric item. One tool-side finding for docx-cli, not counted against the competitor: docx-cli's headers/footers reader returns 'Page  of' for the docx-js footer. docx-js puts w:fldChar/w:instrText inside the same w:r as the w:t text, and the reader drops the PAGE/NUMPAGES fields instead of tokenizing them as {page}/{pages}. Word renders 'Page 1 of 3' correctly. The AST jq path in criteria.md (.sections[].sectPr) returned nothing; columns and orientation were confirmed from the read-view docx:section/docx:page notes and the render."
+}

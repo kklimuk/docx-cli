@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "degraded",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled correctly; mailto hyperlink target updated to match",
+    "Experience moved to Heading1; Heading1 style definition restyled once (13pt, 1F3864, bold, 12pt before) — all three headings render identical navy",
+    "Removed direct spacing override on Leadership heading so the style edit applies uniformly",
+    "[Note] helpers and Skills & Interests section fully removed",
+    "[drawing] VML and multi-section structure preserved",
+    "Margins 720 twips on all four sides in every section; one page",
+    "space-after 120 on contact and all org/title/role lines"
+  ],
+  "defects": [
+    {"what": "Date/location column ragged: right tab stops at inconsistent positions short of the margin", "severity": "minor", "evidence": "AST tabStops right@9489/9432/9360/8621/8622 vs 10800 text width; render shows dates ending at ~x=973-1057 and locations at ~1063-1117, none at the right margin"},
+    {"what": "Software Engineering Intern line indented 174 twips vs 119/120 on other entry lines", "severity": "minor", "evidence": "p20 indent.left=174; visible offset in render"},
+    {"what": "Leftover empty paragraphs leave a large gap in Education between Harvard and Lincoln HS", "severity": "minor", "evidence": "p11/p12 empty; visible whitespace in render"}
+  ],
+  "notes": "All rubric pass conditions verified via docx styles --at Heading1, read --ast and the Word render. Tab stops were converted left to right (the task assumed they were already right), but at uneven positions.",
+  "weakAgentStruggle": "Raw XML editing across document.xml, styles.xml and rels with multiple render-fix iterations. There was no style verb, and the left-vs-right tab confusion and direct-pPr overrides had to be discovered by hand."
+}

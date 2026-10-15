@@ -1,6 +1,6 @@
 # Word task comparison
 
-The latest comparison covers docx-cli 0.27.0, the Anthropic docx skill, and OfficeCLI 1.0.156, with three runs per tool. See the [October 10 results and limitations](results/2026-10-10.md) and [per-attempt data](results/2026-10-10.json). The [October 8 comparison](results/2026-10-08.md) and [earlier Anthropic-skill experiments](../../guides/benchmarks.md) remain separate historical records.
+The latest comparison covers docx-cli 0.27.0, the Anthropic docx skill, and OfficeCLI 1.0.156, with three runs per tool. See the [October 10 results and limitations](results/2026-10-10.md) and [per-attempt data](results/2026-10-10.json). The [October 8 comparison](results/2026-10-08.md) remains a separate historical record. The published write-up is [benchmarks/2026-10-10](../2026-10-10/).
 
 ## What this measures
 

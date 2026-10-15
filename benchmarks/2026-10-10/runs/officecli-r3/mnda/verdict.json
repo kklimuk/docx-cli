@@ -1,0 +1,25 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 7 cover-page placeholders filled with the exact values from task.md, brackets removed, including '[choose 1: ...]' resolved to just 'Effective Date'",
+    "MNDA Term (2 year(s)) and Term of Confidentiality (3 year(s)) got different values; the agent avoided the global '1 year(s)' double-match",
+    "All 10 signature cells (t2 r2-r6, c1 and c3) filled, each a single p0, with c0, c2 and r1 untouched; both Date cells filled",
+    "Zero yellow highlight: the XML has no highlight other than 31 w:highlight w:val=\"none\" entries, and the render shows no yellow",
+    "Font fidelity holds: the baseline vs output read diff shows only the filled cells. The Georgia title, 9pt bold labels, 7pt gray #8C8D8E sub-labels and Arial body are unchanged, and signature values are Arial 9pt, matching the cell paragraph marks",
+    "Word rendered both pages, and page 2 (Standard Terms) is identical to the baseline",
+    "A fresh docx read of the output is byte-identical to the output read view"
+  ],
+  "defects": [
+    {
+      "what": "The highlight was cleared by stamping <w:highlight w:val=\"none\"/> on every run and paragraph mark of the edited paragraphs (31 instances) rather than removing the element",
+      "severity": "minor",
+      "evidence": "In document.xml the Governing Law runs 'The laws of the State of ' and '.' carry highlight=none. It is visually equivalent and harmless, but it is XML noise on runs that never had highlight."
+    }
+  ],
+  "notes": "Clean pass on every rubric check. Filled cover values keep the blank's underline, which is consistent with 'change only values and highlight'.",
+  "weakAgentStruggle": "Moderate. A cross-run find/replace silently merged runs and dropped the underline (the agent detected this and reworked it with smaller finds). The resident-mode file got stale after a cp. Clearing highlight needed a separate paragraph-wide set. Empty signature cells needed 'add --type run' with explicit font and size props. Table 'get --depth' output was about 30KB. The result is correct, but the path was a slog."
+}

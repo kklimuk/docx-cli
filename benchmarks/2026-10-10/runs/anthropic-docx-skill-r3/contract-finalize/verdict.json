@@ -1,0 +1,29 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All five tracked-change decisions are correct: Net 30 and one (1) year accepted as clean text, the $100 cap restored, §11 Personal Guarantee restored with correct renumbering (12-15), and the indemnification 1.5 line spacing accepted as live formatting",
+    "docx track-changes list reports no tracked changes",
+    "Four Company replies (c4-c7) are threaded to parents c0-c3, each with a non-empty anchor, and appear in the read view with ↳ markers",
+    "The auto-renewal and arbitration-fees threads are resolved (greyed in Word); the IP and indemnification threads are open",
+    "Header, footer, table, numbering style and signature block are unchanged against the baseline; still 3 pages",
+    "The agent flagged the untracked payment-table 'Net 90' inconsistency instead of silently editing it"
+  ],
+  "defects": [
+    {
+      "what": "Reply <w:comment> XML is pretty-printed, with whitespace between elements, so docx-cli comments list shows reply text padded with newlines and spaces (Word renders it cleanly)",
+      "severity": "minor",
+      "evidence": "comments list c4.text = \"\\n  \\n    ...Declined — automatic renewal is a standard term...\\n  \\n\"; comments.xml c4 contains indented child elements"
+    },
+    {
+      "what": "Payment table cell still reads 'Net 90 after final acceptance', which conflicts with the accepted Net 30 clause (out of scope and reported by the agent; not graded)",
+      "severity": "minor",
+      "evidence": "Output page 1, table row 1, Payment Timing column"
+    }
+  ],
+  "notes": "All 13 rubric checks pass. The UX was a slog: no selective accept/reject helper, no comment-resolve helper, the validator falsely flagged correct rejections, comment.py broke under python3 -I, and reply anchors had to be nested by hand.",
+  "weakAgentStruggle": "Heavy manual XML surgery. The agent used regex on w:ins/w:del/pPrChange (accept_changes.py is accept-all only), hand-wrote w15:commentEx done flags (no resolve in comment.py), and nested reply anchors by hand. validate.py --author reported the correct rejections as text mismatches. The agent persevered and got everything right."
+}

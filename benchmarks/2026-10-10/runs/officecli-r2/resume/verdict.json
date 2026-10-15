@@ -1,0 +1,36 @@
+{
+  "taskSuccess": "partial",
+  "rendersCorrectly": true,
+  "layoutSound": false,
+  "formattingPreserved": "degraded",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled correctly: name, contact line (hyperlink text and mailto updated to praman@college.harvard.edu), Harvard and Lincoln HS education lines, Northwind Robotics and Harvard SEAS entries with bullets, Harvard Robotics Club leadership entry",
+    "No [Note: ...] helper text, no template prompt text, Skills & Interests section fully removed",
+    "Experience heading converted to Heading1; all three section headings (p8, p16, p28) are Heading1 and render identically navy/bold",
+    "Heading1 style definition shows size 13pt, color 1F3864, bold, space-before 12pt (one style-level change)",
+    "space-after 120 twips on contact line (p6) and all org/title/date lines (p19, p20, p24, p25, p29, p30)",
+    "All four sections carry pgMar 720/720/720/720 (0.5in); read shows margins=\"0.5in\"",
+    "The w:pict [drawing] element (rule under name) survives; tab stops and bullet numbering kept; docx validate passes",
+    "Agent also cleaned stray direct spacing/indent on headings so the three really match"
+  ],
+  "defects": [
+    {
+      "what": "Right-side locations and dates wrap mid-line/mid-word in the Word render: 'Cambridge,' / 'MA', 'Graduating' / 'May 2027', 'Portland' / ', OR', 'Graduated' / 'June 2023', 'San' / 'Francisco, CA', 'Cambrid' / 'ge, MA', 'Cambridg' / 'e, MA'. The task's 'dates still right-align' and 'clean one-page résumé' outcome is not met.",
+      "severity": "major",
+      "evidence": "output/page-001.png; output read.md docx:layout warns 10 wrapping lines (p9 p10 p13 p14 p19 p20 p24 p25 p29 p30) with left tabs ~0.55in from the margin after right margin went 0.42in->0.5in and longer real content landed. Baseline rendered all on one line."
+    },
+    {
+      "what": "Harvard Robotics Club org line renders centered (template's direct align=center on p29 now visible because the tab content wraps), unlike the left-aligned Experience org lines",
+      "severity": "minor",
+      "evidence": "output/page-001.png: 'Harvard Robotics Club' centered under the Leadership heading, 'e, MA' centered on next line"
+    },
+    {
+      "what": "Uneven vertical gaps in Education (large blank gap between Harvard degree line and Lincoln High School, and between 'Lincoln High School' and its wrapped location)",
+      "severity": "minor",
+      "evidence": "output/page-001.png"
+    }
+  ],
+  "notes": "Every rubric check (data, notes removed, Skills removed, drawing kept, tab stops present, Heading1 on all three headings with restyled definition, 6pt after on entry lines, 0.5in margins) passes in the XML/read view. But the Word render shows ~10 tab-aligned right-column fields wrapping and splitting words, so the result does not look like a clean professional résumé. Agent explicitly could not render (OfficeCLI has no docx PDF exporter) and so never saw this.",
+  "weakAgentStruggle": "Moderate slog: hyperlink-boundary find/replace failure needed a workaround; no verb to clear direct paragraph props (raw XPath remove); index-based run removal for a trailing break; no page-count/render capability, so the wrapping layout defect went unseen."
+}

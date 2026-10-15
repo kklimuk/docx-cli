@@ -1,0 +1,40 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four must-change clauses redlined as real tracked revisions: §3 Net 90 -> Net 30 from receipt of a correct invoice (body p7 AND the payment-timing table cell t0:r1c2), §6 non-compete cut to 12 months/field-limited/no liquidated damages, §8 indemnity carves out the Company's own negligence, §9 cap made mutual and the $100 cap struck. track-changes list shows 26 logical changes; Word renders them as visible insertions/deletions.",
+    "Nine anchored comments (c0-c8), each anchored to the full body text of the relevant clause: all five flag-only items (§4 IP, §7 counsel waiver, §11 personal guarantee, §12 arbitration, §13 URL amendment) plus explanatory notes on the four redlined clauses. Clear, persuasive objection text.",
+    "§9 line spacing set to 1.5 (spacing.line=360 auto on p24 body and p23 heading), recorded as tracked format changes; visibly roomier in the Word render.",
+    "IP sub-points p11-p14 switched to lower-roman via a lvlOverride on numId 2 level 1; Word renders (i)-(iv); top-level 1-15 numbering untouched.",
+    "Everything outside the targeted clauses is unchanged (baseline vs output read.md diff limited to p7, t0:r1c2, p18, p22, p24 plus hint lines); header/footer/table/signature block intact; validate reports clean.",
+    "Re-read of the saved file is byte-identical to the rendered read view; all changes survive the write-read loop.",
+    "Batched workflow: one edit --batch for the redlines and one comments --batch for nine notes."
+  ],
+  "defects": [
+    {
+      "what": "Markdown read view does not surface the lower-roman change: the IP sub-points still render as '1.' with only a `docx:list pN continues` hint and no format=\"lower-roman\"; only --ast shows it. Weak agents cannot verify the house-style fix from the default view.",
+      "severity": "major",
+      "evidence": "read.md line: `  1. all work product created under the Agreement; <!-- docx:list p11 continues -->`; AST p11 list.format = lower-roman; numbering.xml lvlOverride ilvl=1 numFmt=lowerRoman."
+    },
+    {
+      "what": "After lists set, p2's read hint switched from `docx:p p2 space-before=\"10pt\" space-after=\"3pt\"` to `docx:list p2 format=\"decimal\"`, dropping the spacing hint from the read view (AST still has before=200/after=60, render unchanged). Read-view information loss, not a document change.",
+      "severity": "minor",
+      "evidence": "baseline read.md line 12 vs output read.md line 12 diff."
+    },
+    {
+      "what": "Word-level markdown redline of p18/p24 emits whitespace-only <w:del>/<w:ins> fragments (a single space). track-changes list renders those as '¶' (e.g. `rev6 replace p18 ¶ -> \"directly\"`), which misleadingly suggests paragraph-mark changes, and Word shows empty 'Deleted:' balloons. Redline is choppy for the counterparty.",
+      "severity": "minor",
+      "evidence": "document.xml p18 contains `<w:delText xml:space=\"preserve\"> </w:delText>` and `<w:t xml:space=\"preserve\"> </w:t>` inserts; output page-002.png shows blank 'Deleted:' balloons."
+    },
+    {
+      "what": "§8 redline left 'This obligation is uncapped and survives indefinitely' unchanged (agent flagged it in a comment instead); acceptable per task, noted only.",
+      "severity": "minor",
+      "evidence": "output read.md p22 still ends 'This obligation is uncapped and survives indefinitely.'; comment c2 raises it."
+    }
+  ],
+  "notes": "All five rubric conditions pass: (1) tracked changes present, toggle on; (2) 4/4 egregious clauses redlined as tracked ins/del; (3) §9 p24 spacing.line 360 auto (tracked format tc49, hint line-spacing=\"1.5\"); (4) 9 anchored comments covering 5/5 flag items; (5) p11-p14 list.format lower-roman. Output page 4 is Word's comment-balloon overflow page in markup view, not a document layout defect.",
+  "weakAgentStruggle": "Smooth path with no dead ends: batched edits + batched comments. Main friction was verification: the default read view hides the lower-roman change and the agent had to fall back to --ast; also had to map section numbers to pN by hand and found the word-level redline list fragmented."
+}

@@ -1,0 +1,33 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four must-change clauses redlined as real tracked revisions (22 revisions / 12 logical): §3 Net 90 -> Net 30 from receipt of a correct invoice (plus the matching schedule cell t0:r1c2), §6 non-compete cut to one year / US / same services / $1,000, §8 Company-negligence carve-out, §9 cap made mutual with mutual indirect-damages waiver",
+    "Nine comments by 'Mercer Design Studio', each anchored to the relevant clause text; all five flag-only clauses (§4 IP, §7 counsel waiver, §11 guarantee, §12 arbitration, §13 amendment-by-URL) are covered with substantive, specific objections",
+    "§9 body paragraph (p24) line spacing set to 1.5 (read shows line-spacing=\"1.5\"); visibly roomier in the Word render",
+    "IP sub-points render (i)-(iv) in Word: numbering.xml abstractNum 2 ilvl 1 is lowerRoman with lvlText '(%2)'; top-level 1-15 numbering untouched",
+    "Word opened and rendered the file; header, footer, table styling, signature block and pagination match the baseline; no silent wording changes (read.md diff only touches p7, t0:r1c2, p18, p22, p24, all tracked)"
+  ],
+  "defects": [
+    {
+      "what": "IP numeral change made by editing the shared numbering level definition (untracked, applies to all ilvl-1 items of numId 2). Acceptable per task ('do them however is cleanest'), and only the four IP sub-points use that level, so no collateral change.",
+      "severity": "minor",
+      "evidence": "numbering.xml: <w:lvl w:ilvl=\"1\"> numFmt lowerRoman, lvlText (%2); AST list entries: 4 at level 1 numId 2"
+    },
+    {
+      "what": "Revised §9 cap is mutual but still pegged to one month's fees for both sides; fair in both directions as requested, though thin protection for the Contractor. Substantive drafting choice, not a rubric failure.",
+      "severity": "minor",
+      "evidence": "p24 accepted text: 'Each party's total liability to the other ... limited to the fees actually paid to the Contractor in the calendar month preceding the claim.'"
+    },
+    {
+      "what": "Agent summary claims the §9 heading also got 1.5 spacing; only the body paragraph p24 carries it (harmless overstatement).",
+      "severity": "minor",
+      "evidence": "read: p23 heading has no line-spacing hint; p24 has line-spacing=\"1.5\""
+    }
+  ],
+  "notes": "All five rubric conditions pass. Checks: docx track-changes list shows 12 logical revisions on p7, t0:r1c2, p18, p22, p24 (>=3 required). docx comments list shows 9 anchored comments, including §4/§7/§11/§12/§13 (>=4 required). §9 p24 line-spacing=1.5. IP lower-roman verified in numbering.xml and in the Word render; docx-cli's --ast list object carries no 'format' field for this list, so the rubric's grep for format=lower-roman cannot fire. That is a docx-cli reader gap, not an OfficeCLI failure. Render 'close exited 1' message is benign: the file was already on disk.",
+  "weakAgentStruggle": "Moderate slog. The OfficeCLI batch reported success:true/exit 0 on four set --find entries that matched nothing (auto-numbered '(a)'-'(d)' labels); the agent only caught this from the revision list. Off-by-one numbering-level selector (get prints lvl[2], set needs level[1]) cost retries. `view issues` crashed on the pre-existing duplicate Heading1 styleId. The agent's own `head -60` truncated batch output. It still recovered to a fully correct result."
+}

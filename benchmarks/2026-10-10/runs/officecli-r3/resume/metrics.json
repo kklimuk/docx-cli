@@ -1,0 +1,16 @@
+{
+  "model": "claude-haiku-5-5",
+  "scenario": "resume",
+  "taskSuccess": "partial",
+  "inputTokens": 50,
+  "cacheReadTokens": 1728800,
+  "cacheWriteTokens": 100424,
+  "outputTokens": 8084,
+  "effectiveInputTokens": 298460,
+  "durationSec": 293.5,
+  "docxToolCalls": 21,
+  "otherToolCalls": 6,
+  "totalToolCalls": 27,
+  "isolationBreaches": [],
+  "relayedLaunchMessage": null
+}

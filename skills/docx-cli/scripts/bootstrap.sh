@@ -17,6 +17,12 @@
 #   - offline / can't resolve latest -> keep the working binary and exit 0 (every verb
 #     except `render` works offline anyway)
 #
+# Admin controls (set them in the agent's environment, e.g. managed settings):
+#   DOCX_CLI_VERSION=v0.27.0  pin: install exactly this release when docx is missing,
+#                             and never update a binary that is already present
+#   DOCX_CLI_NO_UPDATE=1      never update a binary that is already present (a missing
+#                             one still installs, from the latest release)
+#
 # It passes REQUIRE_CHECKSUM=1, so a box with no sha256sum/shasum/openssl gets a refusal
 # rather than an unverified binary — an agent cannot weigh that trade-off, so it does not
 # get install.sh's lenient default.
@@ -40,6 +46,17 @@ case "$0" in
 esac
 
 npm_hint() { echo "  Install from the npm registry instead:  bun add -g bun-docx" >&2; }
+
+# The pin is interpolated into a release URL, so accept only a release-tag shape — the
+# same rule `docx upgrade --to` enforces (no "/", so it can't walk to another repo).
+PIN="${DOCX_CLI_VERSION:-}"
+if [ -n "$PIN" ]; then
+  if ! printf '%s\n' "$PIN" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+    echo "docx-cli bootstrap: DOCX_CLI_VERSION=\"$PIN\" is not a release tag (e.g. v0.27.0)." >&2
+    exit 2
+  fi
+  PIN="v${PIN#v}"
+fi
 
 # ─── Pick a downloader, and with it how to resolve the latest tag ───
 if command -v curl >/dev/null 2>&1; then
@@ -140,6 +157,12 @@ ensure_reachable() {
 # ─── Not installed: install the latest release, then confirm it is reachable ───
 if ! command -v docx >/dev/null 2>&1; then
   echo "docx not found on PATH."
+  if [ -n "$PIN" ]; then
+    echo "Installing the pinned release ${PIN} (DOCX_CLI_VERSION)."
+    ensure_release_staged "$PIN" || exit 1
+    ensure_reachable "$PIN" || exit 1
+    exit 0
+  fi
   tag="$(resolve_latest_tag)"
   if [ -z "$tag" ]; then
     # Couldn't learn the tag — but the ASSET host resolves `latest` server-side and is
@@ -166,6 +189,14 @@ echo "docx-cli present: ${installed:-unknown}"
 # Couldn't read a version? Don't enter a reinstall loop — leave the present binary.
 if [ -z "$installed" ]; then
   echo "Could not read the installed version — leaving the present binary in place."
+  exit 0
+fi
+
+# An admin pin (or an explicit opt-out) means a present binary is never moved: updates
+# then happen only through whatever process the admin controls.
+if [ -n "$PIN" ] || [ "${DOCX_CLI_NO_UPDATE:-}" = "1" ]; then
+  if [ -n "$PIN" ]; then reason="DOCX_CLI_VERSION=$PIN"; else reason="DOCX_CLI_NO_UPDATE=1"; fi
+  echo "Updates disabled (${reason}) — keeping ${installed}."
   exit 0
 fi
 

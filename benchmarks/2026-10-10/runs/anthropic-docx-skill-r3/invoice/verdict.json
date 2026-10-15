@@ -1,0 +1,31 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "Every placeholder family was replaced with the brief's values: company, phone, email, address, invoice #/dates, Bill To/Ship To, the four line items, the totals and the Notes text. No Item N, Description N, Customer name, Your Company Name, Your City or template $0.00 is left (only the intended Shipping and Other $0.00).",
+    "The leftover placeholder lines were removed, not blanked. The 'Your City, State Zip' line is gone, and the Description 1/2/3 sub-lines are gone from every item cell.",
+    "The fourth row (Calibration kit / 2 / $300.00 / $600.00) was inserted as a new row above the totals. The table has 4 data rows plus all 6 totals rows intact, with merged cells (gridSpan) and borders preserved.",
+    "Column widths were rebalanced consistently (tblGrid 4547/1000/1800/2300/1575 plus tcW). Description is the widest column, and $10,100.00 and $10,440.00 render on one line, as does the 'Tax total (8.75%)' label.",
+    "The header row repeats on a new page (tblHeader, which read shows as repeat-header=\"r0\"). The F2F2F2 header fill and right-aligned Price/Amount are present (they were already in the template, and the agent checked them).",
+    "The stamp text box was kept. Its wording is 'Thank you for your business!' in BOTH the mc:Choice and the mc:Fallback copy (2 occurrences, 0 TEMPLATE/DO NOT SEND). Bold, red C00000, centered text, the fill, the border and the position are unchanged in the render.",
+    "The logo was replaced with assets/logo.svg, embedded byte-identical as an svgBlip with a 512px PNG fallback, at the same size and position. The footer PayPal mark (image2.png) is byte-identical to the baseline and its relationship is intact.",
+    "The output passes docx validate. docx read shows every change, including the text box story."
+  ],
+  "defects": [
+    {
+      "what": "The package has 3 media files (image1.png fallback, image2.png footer, image3.svg) where the task says 'two embedded images'. Only two pictures are drawn, and the SVG-plus-PNG-fallback pair is how Word itself embeds an SVG, so this is a counting ambiguity, not a real defect.",
+      "severity": "minor",
+      "evidence": "word/media lists image1.png, image2.png, image3.svg. document.xml.rels has rId6 -> image1.png and rId10 -> image3.svg, both used by one drawing. The footer rels still point at image2.png."
+    },
+    {
+      "what": "docProps/core.xml still carries the template author and lastModifiedBy. This was not requested, and the agent flagged it itself.",
+      "severity": "minor",
+      "evidence": "Agent friction note: creator 'Schumacher, Kristen', lastModifiedBy 'Wong, Alice'."
+    }
+  ],
+  "notes": "The output render matches the rubric on every check. Before vs after, only the intended content changed. The header, footer, INVOICE title, both upper tables and the stamp box's look are unchanged. Quantity column widths were narrowed to make room, with no wrapping. docx-cli 'images list' shows only the body logo (img0), the same as it does for the baseline, because footer images are not in its listing. The rubric's docx-cli-specific paths (tables insert-row, tables format) do not apply to this competitor run, so the outcome was judged.",
+  "weakAgentStruggle": "Moderate slog. The Anthropic docx skill gave no help with table rows, column widths, tblHeader, mc:AlternateContent text boxes or SVG embedding, so it all became hand-written regex XML surgery. The agent found the Fallback copy only by reading the XML. merge_runs.py merged the 'Phone: ' runs and broke an exact-match replace. The soffice render failed silently and left a stale PDF. The agent also first mis-mapped the totals labels to the Quantity column. It recovered from all of these, and the result is correct."
+}

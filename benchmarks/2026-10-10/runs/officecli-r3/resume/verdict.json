@@ -1,0 +1,42 @@
+{
+  "taskSuccess": "partial",
+  "rendersCorrectly": true,
+  "layoutSound": false,
+  "formattingPreserved": "degraded",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled correctly: name, contact line (email hyperlink text and mailto target both updated), Harvard/Lincoln education, Northwind + Harvard SEAS experience with bullets, Harvard Robotics Club leadership entry; no template placeholder text remains",
+    "All [Note: ...] helpers removed; Skills & Interests heading and all four prompt lines removed; Study Abroad/Thesis/Coursework template lines dropped",
+    "Experience heading converted to Heading1; all three headings (p8, p15, p27) carry style Heading1",
+    "Heading1 style definition restyled in one call: docx styles --at Heading1 shows color 1F3864, 13pt, bold, space-before 12pt; render shows three matching navy headings",
+    "Agent also removed the Leadership heading's direct spacing and Experience heading's direct indent so the three headings truly match",
+    "spacing after=120 on contact line (p6) and all six org/title/date lines (p18, p19, p23, p24, p28, p29)",
+    "pgMar top/right/bottom/left = 720 on all four sectPr",
+    "[drawing] (horizontal rule under name) survives; one w:drawing in document.xml; tab stops and bullet numbering preserved; no tracked changes; docx validate passes",
+    "All changes survive the docx-cli write->read loop"
+  ],
+  "defects": [
+    {
+      "what": "Right-aligned locations/dates wrap badly in the Word render after the margin change; the resume no longer reads cleanly",
+      "severity": "major",
+      "evidence": "Output page-001.png: 'Cambridge,' / 'MA', 'Graduating' / 'May 2027', 'Portland' / ', OR', 'San' / 'Francisco, CA', 'Cambrid' / 'ge, MA' (twice) wrap onto separate lines. Widening margins from 0.42in L/R to 0.5in shrank text width 7.66in -> 7.5in, leaving only ~0.55in after the LEFT tabs at 6.948in. read flags docx:layout wrap='10 lines' on p9-p29. Baseline render had no such wrap. The agent made no tab adjustment and evidently did not render to check, despite the task asking that dates still right-align and the page read as clean"
+    },
+    {
+      "what": "Harvard Robotics Club org line now renders centered with its location wrapped below it, unlike the other entries",
+      "severity": "minor",
+      "evidence": "p28 keeps the template's align=center; once the tab content wrapped, 'Harvard Robotics Club' renders centered with 'Cambridg' / 'e, MA' beneath it in the render"
+    },
+    {
+      "what": "Inconsistent bolding of dates across entries",
+      "severity": "minor",
+      "evidence": "'Jun 2025 – Aug 2025' and '2024 – present' are bold, while 'Sep 2024 – May 2025' is regular (render + read.md p19/p29 vs p24)"
+    },
+    {
+      "what": "Leftover empty paragraphs leave extra whitespace",
+      "severity": "minor",
+      "evidence": "Empty p31-p34 at the end and an empty p11/p14 gap in Education; large gap between Harvard and Lincoln entries in the render"
+    }
+  ],
+  "notes": "Every rubric check passes on inspection: Heading1 on all three headings, a single style-definition restyle (1F3864/13pt/bold/12pt before), 6pt spacing after on the contact line and entry lines, 720-twip margins, drawing kept, notes and Skills removed. However, the final page is visibly broken. The margin change squeezes the left-tab-aligned locations and dates, so they wrap mid-phrase and even mid-word ('Cambrid/ge'). That breaks the task's 'dates still right-align' and 'clean, well-spaced one-page resume' outcome, so the grade is partial rather than success.",
+  "weakAgentStruggle": "Moderate. find/replace refused any match that crossed the email hyperlink, so the agent had to split the replacements into pieces. It had to drop to raw-set to clear the direct spacing/indent overrides on the headings. Margins read back in cm. The outline view hid the restyled Experience heading. The agent never rendered or checked the layout after changing the margins, so it missed the wrapping."
+}

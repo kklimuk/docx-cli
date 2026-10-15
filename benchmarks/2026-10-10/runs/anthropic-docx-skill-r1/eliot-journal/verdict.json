@@ -1,0 +1,30 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "n/a",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 12 rubric items met in the Word render: 3 landscape sections (1-col title, 2-col verse with separator, 1-col colophon)",
+    "All four poems as Heading 2 with verse verbatim, one paragraph per line, stanza gaps preserved",
+    "SVG frontispiece embedded with PNG fallback + alt text, italic 'Frontispiece' caption beneath",
+    "3 substantive footnotes rendered at column foot",
+    "'public domain' hyperlink to https://www.gutenberg.org/ebooks/1321",
+    "Header 'A T. S. Eliot Reader' on every page; centered footer 'Page X of Y' from real PAGE/NUMPAGES fields renders 1/3, 2/3, 3/3",
+    "Garamond set as document default (docx:base font=Garamond) and on headings"
+  ],
+  "defects": [
+    {
+      "what": "docx-cli reader (not the competitor) shows the footer as 'Page  of', dropping PAGE/NUMPAGES complex fields that have an empty cached result, instead of {page}/{pages} tokens",
+      "severity": "minor",
+      "evidence": "footers list -> text 'Page  of'; footer1.xml has fldChar begin/instrText PAGE/separate/end with no result run; Word render shows 'Page 2 of 3'"
+    },
+    {
+      "what": "Agent had to go beyond the skill for SVG fallback (rsvg-convert), sections/columns, footnotes, links, and fields (a UX gap in the skill, not an output defect)",
+      "severity": "minor",
+      "evidence": "agent deadEnds/frictions"
+    }
+  ],
+  "notes": "Clean, complete result. The only rubric wrinkle (footer tokens) is a docx-cli reader gap; the Word render shows correct page fields.",
+  "weakAgentStruggle": "Moderate: the skill omits SVG, multi-section/column, footnote, hyperlink and field guidance; the agent relied on prior docx-js knowledge and an external rasterizer, but succeeded on its build."
+}

@@ -46,7 +46,11 @@ function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
 }
 
 export function authorInitials(author: string): string {
-	const parts = author.trim().split(/\s+/).filter(Boolean);
+	// Initials come from the person's NAME: a parenthetical or a comma-separated
+	// affiliation ("Jane Doe (Acme Legal)", "Jane Doe, Acme Legal") would otherwise
+	// make the last word "Legal" and print "JL" in Word's balloon instead of "JD".
+	const name = author.replace(/\([^)]*\)|\[[^\]]*\]/g, " ").split(",")[0] ?? "";
+	const parts = name.trim().split(/\s+/).filter(Boolean);
 	if (parts.length === 0) return "?";
 	const first = parts[0]?.charAt(0) ?? "";
 	const last =

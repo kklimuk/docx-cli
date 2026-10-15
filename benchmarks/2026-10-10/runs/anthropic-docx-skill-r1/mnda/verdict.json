@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All seven cover-page placeholders filled with the correct values (Purpose, June 8, 2026, 2 year(s), 3 year(s) from Effective Date, Delaware, New Castle County, Delaware, None.) with brackets removed and the 'choose 1' collapsed to 'Effective Date'",
+    "Zero w:highlight elements remain in document.xml; no <mark> in the read view",
+    "Signature table t2 filled in exactly the intended cells (c1/c3 for r2-r6), each as a single p0, spacer c2, label c0, and signature row r1 untouched; both dates filled",
+    "Before/after markdown diff shows only the intended value changes; Georgia title, bold labels, gray 7pt sub-labels, Arial body, header/footer and page 2 are visually identical",
+    "Filled cover values kept the placeholder's underline styling, consistent with the template's look; signature values use 9pt matching the cell's paragraph mark"
+  ],
+  "defects": [
+    {
+      "what": "Agent hand-rolled regex XML surgery with several dead ends (substring '<w:r' matching '<w:rPr>', multi-paragraph label cell mismatch, macOS sed quoting) because the skill has no form-fill/highlight guidance",
+      "severity": "minor",
+      "evidence": "Agent deadEnds list; friction 'SKILL.md has no guidance for form-filling or highlight removal'. UX only; output correct."
+    }
+  ],
+  "notes": "Only remaining '[' characters are the [ x ]/[   ] checkbox markers, which were never placeholders. docx read succeeded.",
+  "weakAgentStruggle": "Moderate: correct result, but via manual XML/regex scripting with three recoverable dead ends; no form-fill helper in the skill."
+}

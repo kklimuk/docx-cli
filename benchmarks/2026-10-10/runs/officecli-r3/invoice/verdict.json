@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All placeholders filled with correct values; no Item/Description/Customer name/Your Company/Your City strings remain in any part",
+    "Extra address line and per-item Description sub-lines removed, with no empty paragraphs left in cells",
+    "4 data rows; the totals rows are intact with the correct values ($10,100.00 / -$500.00 / $0.00 / $840.00 / $0.00 / $10,440.00)",
+    "Description is the widest column (5200 twips); tcW resynced; dollar values don't wrap in the Word render; gridSpan merges preserved",
+    "Header row shaded F2F2F2, tblHeader set (repeat-header=r0), Price/Amount right-aligned throughout",
+    "Logo replaced with an SVG (svgBlip + PNG fallback) at ~original size, top-left, with alt text; footer PayPal mark untouched; 2 images total",
+    "Stamp text box kept, reading 'Thank you for your business!' in both the Choice and Fallback copies, with formatting preserved; no TEMPLATE/DO NOT SEND left",
+    "docx validate passes; a fresh read matches the output read view"
+  ],
+  "defects": [
+    {"what": "Logo drawing re-created instead of swapped in place: original wrap polygon regenerated and position offset slightly shifted", "severity": "minor", "evidence": "The render shows the logo about 15px further right/lower than the baseline; the drawing has a new docPr id=8 and posOffset 72000"},
+    {"what": "New media parts placed at the package root (/media/image.svg, /media/image3.png) instead of word/media", "severity": "minor", "evidence": "document.xml.rels Target=\"/media/image.svg\" and \"/media/image3.png\""}
+  ],
+  "weakAgentStruggle": "Moderate slog. The row clone ignored --after/--before (the agent recovered via move); there is no image replace verb, so the agent removed and re-added the picture with all anchor props and lost the wrap polygon; colWidths did not resync tcW (the agent fixed it by hand); `help docx row` is unknown (the element is table-row). These are tool gaps the agent worked around; the output is correct.",
+  "notes": "Strong result: every rubric check passes on independent OOXML inspection and the Word render."
+}

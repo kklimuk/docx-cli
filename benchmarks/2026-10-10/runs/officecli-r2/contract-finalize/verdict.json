@@ -1,0 +1,28 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 10 revisions handled correctly: Net 30 and one (1) year are clean text, the liability cap is back to 'one hundred dollars ($100)', and §11 Personal Guarantee is restored (sections renumber 11-15 as in the original). `docx track-changes list` reports 'No tracked changes'; document.xml has 0 w:ins/w:del/pPrChange/rPrChange.",
+    "Indemnification spacing accepted as live formatting: p22 has w:spacing line=360 (1.5x), shown as line-spacing=\"1.5\" in read; renders with wide spacing and no change bar.",
+    "Four threaded replies (c4-c7) with correct parentId (c0-c3); each reply has its own commentRangeStart/End/Reference wrapping the parent's range, so anchor.startBlockId is non-empty (p3/p12/p22/p30), and each shows in `docx read --comments` as [^cN] with '↳ cN'.",
+    "Resolution correct in OOXML: commentsExtended.xml has w15:done=\"true\" on the auto-renewal (97CB30E2, c0) and arbitration (EC14166F, c3) roots; IP (c1) and indemnification (c2) roots are done=\"false\".",
+    "Baseline-vs-output diff shows only the intended changes (liability cap, §11 restore and the renumbering that follows); the header, footer, payment table, signature block and layout are unchanged."
+  ],
+  "defects": [
+    {
+      "what": "The auto-renewal reply says 'Agreed — revised.' but the renewal clause text was not changed (and the arbitration reply says the same with no text change). The wording is lifted from the task's example, so it is acceptable, but the substance is slightly inaccurate.",
+      "severity": "minor",
+      "evidence": "c4 text 'Agreed — revised.' on p3, whose text is identical to the baseline; the agent's own summary acknowledges this."
+    },
+    {
+      "what": "docx-cli reader gap (not an OfficeCLI defect): `docx comments list` shows no 'resolved: true' on c0/c3, and `--open` still returns all 8 comments, even though commentsExtended.xml marks them done. The likely cause is that OfficeCLI wrote the commentsExtended relationship with an absolute Target ('/word/commentsExtended.xml'), which is valid OPC but which docx-cli apparently does not resolve.",
+      "severity": "minor",
+      "evidence": "document.xml.rels: Target=\"/word/commentsExtended.xml\" Id=\"R560341e293d74cad\"; commentsExtended.xml has w15:done=\"true\" for paraIds 97CB30E2 and EC14166F."
+    }
+  ],
+  "notes": "Every rubric condition passes when checked against the OOXML. Rubric items 10 and 11 (resolved) cannot be confirmed through docx-cli's comments list because of a reader gap, but commentsExtended.xml shows them resolved correctly. The Word render shows each reply threaded beside its parent and no redline left.",
+  "weakAgentStruggle": "A moderate slog: 11 sequential per-id revision accept/reject calls because there is no batch or paired del+ins action, accepting the deletion did not accept its paired insertion, replies needed `add --type comment --prop parentId=N` with no dedicated reply verb, and `view text` hides pending revisions. The agent still reached a correct result with no destructive dead ends."
+}

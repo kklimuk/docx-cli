@@ -5,8 +5,8 @@ const HELP = `docx track-changes — manage tracked-changes
 Usage:
   docx track-changes on|off FILE [options]
   docx track-changes list FILE [options]
-  docx track-changes accept FILE (--at tcN | --all) [options]
-  docx track-changes reject FILE (--at tcN | --all) [options]
+  docx track-changes accept FILE (--at revN|tcN | --all) [options]
+  docx track-changes reject FILE (--at revN|tcN | --all) [options]
   docx track-changes apply  FILE (--accept H ... | --reject H ...) [options]
 
 Verbs:
@@ -22,7 +22,8 @@ Verbs:
             review, since separate accept/reject calls renumber ids between
             them
 
-Exact-change addressing is always --at tcN (repeatable); --all targets every
+Address a change by the handle "list" prints: revN for a whole replace (every
+part of it in one go), tcN for anything else (repeatable); --all targets every
 change; \`apply\` takes --accept/--reject handle lists. Discover ids with
 "docx track-changes list FILE"; see them in context with "docx read --current".
 
@@ -35,7 +36,7 @@ A REVIEW IS A FEW BATCHED CALLS, from ONE read (ids never shift mid-batch):
   Marking up:  docx track-changes on FILE
                docx edit FILE --batch redlines.jsonl     # every clause rewrite, tracked
                docx comments add FILE --batch notes.jsonl
-  Finalizing:  docx track-changes apply FILE --accept tc0 tc2 --reject tc1
+  Finalizing:  docx track-changes apply FILE --accept rev0 tc2 --reject rev1
                docx comments reply FILE --batch replies.jsonl   # "resolve":true closes a thread
 Each JSONL line is one change:
   redlines.jsonl  {"at":"p7","markdown":"…"}               (the paragraph's new text)

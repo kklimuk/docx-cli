@@ -29,6 +29,20 @@ describe("docx mutators — confirm by default", () => {
 		expect(result.stdout.trim().startsWith("{")).toBe(false);
 	});
 
+	test("replace --batch confirms the total occurrences, not the entry count", async () => {
+		const workspace = tempWorkspace("quiet-replace-batch");
+		const docPath = join(workspace, "out.docx");
+		await rawCli("create", docPath, "--text", "one two one two one");
+		const batchPath = join(workspace, "subs.jsonl");
+		await Bun.write(
+			batchPath,
+			'{"pattern":"one","replacement":"1","all":true}\n{"pattern":"two","replacement":"2"}\n',
+		);
+		const result = await rawCli("replace", docPath, "--batch", batchPath);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toBe("replace 4 occurrences replaced");
+	});
+
 	test("create with --verbose prints the JSON ack", async () => {
 		const workspace = tempWorkspace("verbose-create");
 		const docPath = join(workspace, "out.docx");

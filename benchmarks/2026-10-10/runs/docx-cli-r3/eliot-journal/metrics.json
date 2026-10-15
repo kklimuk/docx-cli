@@ -1,0 +1,16 @@
+{
+  "model": "claude-haiku-5-5",
+  "scenario": "eliot-journal",
+  "taskSuccess": "success",
+  "inputTokens": 38,
+  "cacheReadTokens": 902618,
+  "cacheWriteTokens": 66932,
+  "outputTokens": 5952,
+  "effectiveInputTokens": 173965,
+  "durationSec": 157.6,
+  "docxToolCalls": 19,
+  "otherToolCalls": 6,
+  "totalToolCalls": 25,
+  "isolationBreaches": [],
+  "relayedLaunchMessage": null
+}

@@ -1,0 +1,30 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All cover-page placeholders are filled with the correct values and no brackets: Purpose, June 8, 2026, 2 year(s), 3 year(s) from Effective Date, Delaware, New Castle County, Delaware, None.",
+    "The blank underline is kept on every filled value that was underlined in the baseline.",
+    "The signature table is filled in exactly t2 r2-r6 c1/c3, one paragraph per cell. Spacer c2, labels c0 and row r1 are untouched, and both Date cells are filled.",
+    "All 26 yellow-highlight runs are cleared, and no yellow remains anywhere.",
+    "Untouched runs keep identical rPr. styles, theme, numbering and settings are semantically identical to the baseline. Page 2 is visually unchanged.",
+    "New signature text is Arial 9pt, matching the neighboring labels."
+  ],
+  "defects": [
+    {
+      "what": "The cleared highlight is stored as <w:highlight w:val=\"none\"/> instead of being removed.",
+      "severity": "minor",
+      "evidence": "8 runs (Purpose, June 8 2026, 2 year(s), 3 year(s), Effective Date, Delaware, New Castle County, None.) carry highlight val=none. It renders without highlight."
+    },
+    {
+      "what": "The paragraph marks of the filled signature cells gained rFonts Arial / sz 18.",
+      "severity": "minor",
+      "evidence": "Reported by the agent and visible in the cell XML. No visual effect."
+    }
+  ],
+  "survivedReadLoopNote": "A fresh docx read is byte-identical to renders/output/read.md.",
+  "weakAgentStruggle": "Moderate. Cross-run find/replace took the first matched run's formatting and dropped the underline, so the agent used multi-step workarounds (replace the inner text, then remove the brackets). A resident-mode save exceeded the 120s timeout. The brief mentioned highlighted signature blanks that were really empty, unhighlighted cells.",
+  "notes": "Correct and clean output. The demerits are only internal XML representation choices with no visible effect."
+}

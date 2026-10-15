@@ -1,0 +1,44 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled correctly (name, contact line with mailto hyperlink retargeted, Harvard/Lincoln education, Northwind + Harvard SEAS experience with bullets, Harvard Robotics Club leadership); no template placeholders remain",
+    "All [Note: ...] helper text removed, plus the empty Study Abroad block, Thesis and Relevant Coursework placeholder lines",
+    "Skills & Interests heading and all four prompt lines removed",
+    "Experience heading converted to Heading1; all three section headings share Heading1 (AST p8/p15/p27 style=Heading1)",
+    "Heading1 style definition restyled once: color 1F3864, 13pt, bold, space-before 12pt (docx styles --at Heading1 confirms); render shows three identical navy bold headings",
+    "space-after 120 twips on the contact line and every Experience/Leadership org and title line",
+    "pgMar 720/720/720/720 on all four sectPrs; docx:page reports margins=0.5in",
+    "[drawing] VML rule under the name survives (p4, visible in render)",
+    "Dates right-align: agent converted the template's left tabs (which would overflow at 0.5in margins) to a right tab at 10800; render shows clean right-aligned locations/dates on one page",
+    "Bullet lists preserved (ListParagraph numbering intact); 3-column/continuous section structure untouched",
+    "docx-cli reads the file cleanly; every change is visible in read and read --ast"
+  ],
+  "defects": [
+    {
+      "what": "Trailing periods copied from the brief into the date column ('Graduating May 2027.', 'Graduated June 2023.') and degree line ('GPA 3.8.')",
+      "severity": "minor",
+      "evidence": "Output render and read.md p10/p13 show 'Graduating May 2027.' and 'Graduated June 2023.' right-aligned with stray periods"
+    },
+    {
+      "what": "Harvard Robotics Club org line sits slightly left of the other entry lines (template's center alignment dropped with no matching left indent)",
+      "severity": "minor",
+      "evidence": "Render: 'Harvard Robotics Club' starts ~0.08in left of 'Project Lead' and the Experience org lines; read.md p28 has no indent-left while p29 has 0.083in"
+    },
+    {
+      "what": "'Software Engineering Intern' line keeps the template's larger 0.121in left indent, so it is visibly offset from neighbouring entry lines (template leftover the agent noticed but left)",
+      "severity": "minor",
+      "evidence": "read.md p19 indent-left=0.121in vs 0.083in elsewhere; visible ~2px offset in render"
+    },
+    {
+      "what": "Tab stops changed from left@~6.5-6.9in to a single right tab at 10800 twips, departing from the literal 'keep the tab stops exactly as they are'",
+      "severity": "minor",
+      "evidence": "document.xml <w:tab w:val=\"right\" w:pos=\"10800\"/> on entry lines; justified since template tabs were left-aligned and would wrap at the new margins, and the intent (right-aligned dates) is met"
+    }
+  ],
+  "notes": "Strong result: every rubric check passes on the render and in the AST. The remaining defects are cosmetic. The agent edited XML by hand with lxml and needed several manual steps (hand-editing styles.xml in schema order, finding all four sectPrs, curing overflowing left tabs) that the skill does not help with.",
+  "weakAgentStruggle": "Moderate. No dedicated verbs exist for style-definition edits, paragraph spacing, or document-wide margins, so the agent hand-edited styles.xml and document.xml with lxml and worked out schema child order itself. It had to find all four sectPrs on its own. It spotted the overflowing left tabs only after rendering and cured them manually. The tooling also misled it: soffice.py returned exit 1 after producing the PDF, and validate.py failed under python3 -I. It still reached a correct result."
+}

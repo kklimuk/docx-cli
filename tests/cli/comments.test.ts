@@ -568,6 +568,27 @@ describe("docx comments add --anchor", () => {
 		expect(payload.locator).toBe("p1:0-4");
 	});
 
+	test("initials come from the name, not a trailing affiliation", async () => {
+		const { docPath } = await freshCopy("anchor-initials");
+		for (const author of ["Jane Doe (Acme Legal)", "Jane Doe, Acme Legal"]) {
+			const added = await runCli(
+				"comments",
+				"add",
+				docPath,
+				"--anchor",
+				"Beta",
+				"--text",
+				"check this",
+				"--author",
+				author,
+			);
+			expect(added.exitCode).toBe(0);
+		}
+		const listed = await runCli("comments", "list", docPath);
+		const comments = listed.parsed as { initials: string }[];
+		expect(comments.map((comment) => comment.initials)).toEqual(["JD", "JD"]);
+	});
+
 	test("errors when the anchor matches multiple times without --occurrence", async () => {
 		const { docPath } = await freshCopy("anchor-ambiguous");
 		const result = await runCli(

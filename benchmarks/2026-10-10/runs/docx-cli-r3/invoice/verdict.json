@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All header, bill-to/ship-to, invoice meta, line-item, totals and notes values correct; find sweep for Item/Description/Customer/Your/0001/Jan, 1/TEMPLATE/DO NOT SEND returns no matches; $0.00 only in Shipping/Other as specified",
+    "Leftover 'Your City, State Zip' line and all three 'Description N' sub-lines removed, no empty paragraphs left in cells",
+    "Fourth row (Calibration kit 2/$300.00/$600.00) inserted as t2:r4 above intact Subtotal..Total rows, with matching borders/gridSpan/halign",
+    "Grid widths 3.611,0.278,0.833,1.389,1.682in: Description widest, $10,100.00/$10,440.00 render on one line",
+    "repeat-header=r0 added; header F2F2F2 shading and right-aligned Price/Amount preserved",
+    "img0 now the SVG from assets/logo.svg (sanitized), old PNG logo gone, footer PayPal image2.png untouched: two images total",
+    "Stamp text box tbx0 rewritten in place to 'Thank you for your business!' with red bold centered formatting kept; Fallback synced",
+    "docx validate clean; live read identical to rendered read.md"
+  ],
+  "defects": [
+    {"what": "'Tax total' label not updated to include '(8.75%)'; value $840.00 correct", "severity": "minor", "evidence": "t2:r8c2:p0 reads 'Tax total'"},
+    {"what": "Tool: images list omits footer image, so it reports 1 entry where the rubric expects 2", "severity": "minor", "evidence": "images list returns only img0; word/media has image1.svg + image2.png, footer rels rId2 -> media/image2.png"}
+  ],
+  "notes": "All rubric checks pass. Shading/halign were satisfied by the template already; the agent added only the repeat-header flag, which was correct.",
+  "weakAgentStruggle": "Mild: the agent worked around the comma split in insert-row --cells, shell-quoting of $ values, images list missing the footer image (fell back to raw get ftr0), and the noisy 'layout changed' hint on --repeat-header."
+}

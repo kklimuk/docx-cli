@@ -1,0 +1,31 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 12 rubric checks pass: three sections (s0 single column, s1 cols=2 space 567, s2 single column), all landscape A4 (pgSz 16838x11906 orient=landscape)",
+    "Four poems with Heading 1 titles, verse verbatim against assets/eliot-poems.md, lines kept by w:br inside stanza paragraphs, stanza breaks kept as separate paragraphs; read shows one line per verse line and the render does too",
+    "Frontispiece embedded (img0, 9cm wide, alt text) and centered, with an italic 'Frontispiece' caption below it on the title page",
+    "Three footnotes with real editorial glosses (fn1 Preludes, fn2 Prufrock, fn3 Waste Land/Chaucer)",
+    "Colophon hyperlink link0 'public domain' -> https://www.gutenberg.org/ebooks/1321",
+    "Header 'A T. S. Eliot Reader' and centered 'Page X of Y' footer (live PAGE/NUMPAGES fields, 9pt) on every section; the render shows Page 1/2/3 of 3",
+    "Garamond in docDefaults (docx:base font=Garamond). Heading1/Title rFonts were rewritten without theme attributes, so the headings render in Garamond too",
+    "Word rendered three clean pages: the title page, a balanced two-column verse page with footnotes, and the colophon"
+  ],
+  "defects": [
+    {
+      "what": "Footnote reference marks in the body are not superscript: runs use rStyle FootnoteReference, but styles.xml defines only Normal, Title and Heading1, so the marks print at full size glued to the verse",
+      "severity": "minor",
+      "evidence": "page-002.png shows 'steams and stamps.1', 'make our visit.2', 'dried tubers.3' at baseline; grep shows no w:styleId=\"FootnoteReference\" in word/styles.xml"
+    },
+    {
+      "what": "Heading 1 keeps Word's default blue (2F5496), which suits a word processor more than the printed anthology requested",
+      "severity": "minor",
+      "evidence": "Heading1 style rPr has w:color 2F5496; the poem titles render blue on page-002.png"
+    }
+  ],
+  "notes": "docx-cli reader gap (not an OfficeCLI defect): `footers list` and read show the cached field result 'Page 1 of 1' instead of {page}/{pages} tokens, although footer1.xml has complex PAGE/NUMPAGES fields and Word renders 'Page N of 3'. docx validate reports only w14:paraId/textId attribute errors, which are mc:Ignorable noise.",
+  "weakAgentStruggle": "The agent reached a correct result but hit several traps. `set --prop font=Garamond` on Heading1/Title left theme font attributes in place (the readback said Garamond while Word would use the theme font), so it raw-replaced rFonts. A header/footer added to '/' covered only the last section, so it added one to each section. '\\n' in add paragraph made new paragraphs, and it had to find '\\v' (written '\\\\v' in JSON). The footer's size=9pt applied only to the first run. The --grid contact-sheet render was misleading. Section indexing was confusing. Each OfficeCLI behavior here was silent or misleading, but the agent caught every one."
+}

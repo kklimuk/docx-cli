@@ -1,0 +1,24 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 7 highlighted cover-page placeholders replaced with the correct values (Purpose, June 8, 2026, 2 year(s), 3 year(s) from Effective Date, Delaware, New Castle County, Delaware, None.) with brackets removed",
+    "Zero <w:highlight> elements remain in word/document.xml; no <mark> in the read view",
+    "Signature table t2 filled in exactly the intended cells (c1 and c3 of r2-r6) for both parties, each as a single p0; c0 labels, c2 spacer and signature row r1 untouched",
+    "Font fidelity intact: baseline vs output read-view diff shows changes only in the filled values; Georgia title, bold 9pt labels, gray 7pt sub-labels and the page-2 Standard Terms render identically",
+    "Filled values inherited the placeholder run's own rPr minus highlight (underline kept on cover values; 9pt Arial in signature cells matching labels)",
+    "Checkboxes [ x ]/[ ] untouched; both signature dates filled"
+  ],
+  "defects": [
+    {
+      "what": "Cover-page values retain the placeholder underline (e.g. 'Delaware', 'June 8, 2026' underlined). Defensible given the 'change only values and highlight' instruction, but a reader might expect plain text.",
+      "severity": "minor",
+      "evidence": "Output read.md: 'The laws of the State of <u>Delaware</u>.'; same underline present in baseline placeholder '<mark>[<u>fill in state</u>]</mark>'"
+    }
+  ],
+  "notes": "Clean result. Only text-level differences between baseline and output read views are the filled values and removed highlight. Agent had to hand-write a Python regex script to group split highlighted runs and to fill empty cells; SKILL.md lacks a recipe for either.",
+  "weakAgentStruggle": "Moderate. The output is correct, but the agent had to write a custom script to merge and replace highlighted runs split across several runs, and work out for itself how to fill empty table cells by copying the paragraph-mark rPr. Dead ends: merge_runs.py failed under python3 -I (sibling import), the `timeout` command is missing on macOS, and the task's statement that the signature blocks are highlighted was confusing."
+}

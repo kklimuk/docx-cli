@@ -4,7 +4,7 @@ Each command is a kebab-case folder. `index.ts(x)` is the public surface: `expor
 
 ## Adding a CLI command
 
-Add a folder here, register it in the COMMANDS map in [index.ts](index.ts), add tests under `tests/cli/`, document in README and the root CLAUDE.md. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
+Add a folder here, register it in the COMMANDS map in [index.ts](index.ts), add tests under `tests/cli/`, document in REFERENCE.md and the root CLAUDE.md. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
 
 ## `raw` — the verbatim `--xml` channel
 

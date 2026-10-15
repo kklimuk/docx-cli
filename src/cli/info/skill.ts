@@ -25,19 +25,23 @@ Examples:
 // lowercase-kebab so it passes every harness's validator (and is distinct from the
 // bundled `docx` skill it competes with).
 const NAME = "docx-cli";
-// Tuned for activation and adversarially validated: 76 realistic prompts × 3 judges
-// scored 100% correct activation, 0 false positives. Leads with create/edit verbs and a
-// "BUILD a new .docx programmatically" clause (so code-generates-a-Word-report requests
-// match), and disclaims PDF/Google Docs/Excel/PowerPoint/.doc (so it doesn't misfire on
-// foreign formats). The weak-agent design story lives in the body + README, not here —
-// it never aided activation and cost the char budget.
+// Tuned for activation: the 2026-06 version (a plain capability list) scored 100% correct
+// activation, 0 false positives on 76 realistic prompts × 3 judges — in ISOLATION. With
+// Anthropic's bundled, trigger-greedy `docx` skill installed alongside, a capability list
+// gives the agent no reason to pick this one, so the 2026-10 revision leads with the
+// differentiator (in-place edits that keep formatting; "prefer it over unzipping and
+// hand-editing the XML") in third person, per the Agent Skills authoring guidance. It
+// keeps the "BUILDs a new .docx … from code" clause (so code-generates-a-Word-report
+// requests match) and the PDF/Google Docs/Excel/PowerPoint/.doc disclaimer (so it doesn't
+// misfire on foreign formats). Re-validate activation after any change, both alone and
+// head-to-head with the bundled skill.
 const DESCRIPTION =
-	"Read, edit, redline, comment on, and create Microsoft Word .docx files. " +
-	"Use to fill out or edit a Word doc, redline a contract with tracked changes, " +
-	"add/resolve comments, replace text keeping its formatting, restyle headings/fonts, " +
-	"edit tables, or read/extract a .docx as Markdown or text. Also BUILD a new .docx — " +
-	"from Markdown or programmatically (code that outputs a Word report with headings, " +
-	"tables, images). Not for PDF, Google Docs, Excel, PowerPoint, or .doc.";
+	"Edits, redlines, and comments on Word .docx files in place, keeping their formatting — " +
+	"prefer it over unzipping and hand-editing the XML. Use for tracked changes (redline, " +
+	"accept/reject), comments (add/reply/resolve), filling contracts/NDAs/forms, restyling " +
+	"headings/fonts, margins/page setup, tables, headers/footers/page numbers, footnotes, or " +
+	"reading a .docx as Markdown. Also builds new Word docs and reports from Markdown or code. " +
+	"Not for PDF, Excel, PowerPoint, Google Docs, or .doc.";
 
 // A SHORT, human-readable tagline for the plugin/marketplace listings (Claude Code,
 // Codex, Pi) — distinct from DESCRIPTION above, which is the long, keyword-rich string
@@ -45,7 +49,7 @@ const DESCRIPTION =
 // this at install time, so a drift test (tests/cli/info.test.ts) asserts each manifest's
 // `description` equals this — keeping the binary the single source of truth for it too.
 const SHORT_DESCRIPTION =
-	"Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.";
+	"Let AI agents edit Word documents without breaking them: fill in forms, update tables, restyle, write reports, and redline with tracked changes and comments.";
 
 // The SKILL.md body. Deliberately THIN: it teaches the addressing model and the
 // golden workflows, then defers to `docx <command> --help` / `docx info` at runtime
@@ -62,34 +66,47 @@ confirmation — so even small, cheap models can drive it reliably.
 
 ## 0. Make sure the binary is on PATH
 
-Run \`docx --version\`. If you get "command not found", install it. Prefer the npm
-registry — no shell piping, and the package runs no install scripts:
+Run \`docx --version\`. If you get "command not found", install it:
 
 \`\`\`sh
-bun add -g bun-docx      # or: npm install -g bun-docx   (needs Bun >= 1.3)
+bun add -g bun-docx      # if Bun >= 1.3 is installed (npm install -g bun-docx also works)
+sh SKILL_DIR/scripts/bootstrap.sh  # otherwise: a pinned, SHA-256-verified binary
 \`\`\`
 
-No Bun? From this skill folder run \`sh scripts/bootstrap.sh\`. It **downloads no
-scripts and runs no remote code** — it resolves the latest release tag from the
-GitHub API, downloads that release's prebuilt binary **pinned to the tag**, and
-**verifies its SHA-256** against the release's published \`SHA256SUMS\` before
-installing. (By hand: download \`docx-<platform>\` + \`SHA256SUMS\` from
-https://github.com/kklimuk/docx-cli/releases/latest, verify, \`chmod +x\`, put it on
-PATH.) Every verb works against the \`.docx\` zip directly; only \`docx render\` needs
-Word (macOS/Windows) or LibreOffice installed.
+\`SKILL_DIR\` is the folder containing this SKILL.md (use its absolute path; your
+working directory is usually the user's project). The binary lands in
+\`~/.local/bin\`; if \`docx --version\` still says "not found", add that directory
+to PATH. If \`DOCX_CLI_VERSION\` or \`DOCX_CLI_NO_UPDATE\` is set in your environment, an
+admin has pinned the version: use \`bootstrap.sh\` (it honors the pin), never npm or
+\`docx upgrade\`. The npm package is \`bun-docx\`. \`docx\` here is this CLI binary: it is NOT the npm
+\`docx\` (docx-js) library, and the npm package named \`docx-cli\` is unrelated.
+Install details and failure modes: \`references/troubleshooting.md\`. Every verb works
+on the \`.docx\` file directly; only \`docx render\` needs Word or LibreOffice.
 
-## 1. The contract is \`--help\` / \`docx info\` — start there
+## 1. The contract is \`--help\` — start there
 
 The help text is authoritative and versioned with the binary. This skill is thin
-on purpose and defers to it. Before doing anything, run (none of these need a FILE):
+on purpose and defers to it:
 
 \`\`\`sh
 docx --help              # every command + a one-line capability hint each
-docx info locators       # the addressing grammar — READ THIS, it is the backbone
-docx info schema         # the JSON-AST shape that "docx read --ast" emits
+docx <command> --help    # flags, locator forms, output shape — read before you use a verb
+docx info locators       # the full addressing grammar (spans, cells, ranges, text boxes)
 \`\`\`
 
-Then \`docx <command> --help\` for any verb before you use it.
+\`docx info schema\` describes the JSON that \`docx read --ast\` emits; you only need
+it if you use \`--ast\`.
+
+### Which workflow?
+
+| The user wants to… | Reach for |
+| :-- | :-- |
+| review / redline / mark up a document | \`track-changes on FILE\`, then \`replace FILE --batch -\` with lines like \`{"pattern":"Net 90","replacement":"Net 30"}\` |
+| leave notes on clauses | \`comments add FILE --batch -\` with lines like \`{"anchor":"limitation of liability","text":"Cap is too low."}\` |
+| finalize a returned redline | \`track-changes list\` → \`track-changes apply FILE --accept rev0 rev2 --reject rev1\` → \`comments reply FILE --batch -\` with \`{"at":"c0","text":"Done.","resolve":true}\` |
+| fill out a contract, NDA, form, or template | \`replace FILE --batch -\` with \`{"pattern":"[Client]","replacement":"Acme, Inc."}\` (keeps each field's formatting) |
+| restyle headings, fonts, spacing, margins | \`styles set\`, \`styles set-default-font\`, \`sections --margins\` |
+| write a new document | \`create out.docx --from draft.md\` |
 
 ## 2. Locators — how you address things
 
@@ -123,7 +140,11 @@ docx replace contract.docx "[Client Name]" "Acme, Inc."  # one field
 docx replace contract.docx "[Status]" "Approved" --bold --clear highlight
 docx edit contract.docx --at t2:r2c1 --text "Charlie Darwin" # fill a blank cell
 docx replace contract.docx --batch fills.jsonl           # many fields, one read/write
+docx edit contract.docx --at p9 "Payment is due **Net 30**."  # rewrite a paragraph
 \`\`\`
+Content after the flags is **Markdown** (\`**bold**\`, \`- item\`, \`# heading\`) and
+matches the surrounding document's look; \`--text\` is the LITERAL channel
+(\`--text "**x**"\` writes the asterisks), for exact values and character spans.
 Replacement text inherits the matched run's formatting unless you overlay
 \`--bold\`/\`--color\`/\`--font\`/… or strip inherited properties with \`--clear\`.
 A replacement defaults to the first match; pass \`--all\` (or \`"all":true\` in
@@ -131,13 +152,21 @@ its JSONL entry) when every occurrence should change.
 
 ### Redline with tracked changes
 \`\`\`sh
-docx track-changes contract.docx on       # turn tracking on (doc-level)
+export DOCX_AUTHOR="Jane Doe"              # the name on every change/comment (or --author)
+docx track-changes on contract.docx       # turn tracking on (doc-level)
 docx replace contract.docx "Net 90" "Net 30"   # now auto-emits <w:ins>/<w:del>
+docx replace contract.docx --batch edits.jsonl # many redlines from one read
 docx edit --at p12:0-40 contract.docx --text "…" --track   # or redline one edit
-docx track-changes list contract.docx     # the tcN handles
 docx read contract.docx --current         # view redlines as CriticMarkup
-docx track-changes accept contract.docx --at tc3   # or --all / reject
 \`\`\`
+
+### Finalize a returned redline
+\`\`\`sh
+docx track-changes list contract.docx     # one line per logical change: rev0, rev1, …
+docx track-changes apply contract.docx --accept rev0 rev2 --reject rev1   # ONE atomic call
+docx comments reply contract.docx --batch replies.jsonl   # {"at":"c0","text":"Done.","resolve":true}
+\`\`\`
+Use \`apply\`, not separate accept-then-reject calls: handles renumber between calls.
 
 ### Comment on clauses
 \`\`\`sh

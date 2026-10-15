@@ -1,0 +1,21 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All five revision decisions are correct, with both halves of each paired text revision handled. track-changes list is empty, and document.xml has 0 ins/del/pPrChange elements.",
+    "The rejected changes restore the original wording: liability cap reads 'one hundred dollars ($100)', and §11 Personal Guarantee is back with the sections after it renumbered.",
+    "The indemnification 1.5-line spacing (w:line=360) is live with no pPrChange, and it shows in the Word render.",
+    "Four threaded replies (c4 to c7) have parentId set, each with its own anchored range on the parent's paragraph. They show as [^cN] with ↳ markers in read --comments.",
+    "commentsExtended has done=true only for auto-renewal (c0) and arbitration (c3). IP and indemnification are left open. The part is correctly wired by a relationship and a content-type override.",
+    "No collateral changes: the baseline-to-output read.md diff shows only p24 and the restored §11."
+  ],
+  "defects": [
+    {"what": "docx comments list does not report resolved:true for c0/c3, although w15:done=true is set correctly in commentsExtended.xml. This is a docx-cli reader gap (possibly the absolute rel Target '/word/commentsExtended.xml'), not an OfficeCLI defect.", "severity": "minor", "evidence": "comments list JSON has no 'resolved' field; commentsExtended.xml has paraId 97CB30E2 and EC14166F with w15:done=\"true\""},
+    {"what": "The auto-renewal reply says 'Declined' while the thread is marked resolved. This is a slightly odd legal posture, but the task allows it.", "severity": "minor", "evidence": "c4 text: 'Declined - the certified-mail notice term is a standard protection for the Company.'"}
+  ],
+  "notes": "Every rubric item passes, checked in the render and in the OOXML. Resolved state was verified in commentsExtended.xml because the docx-cli reader does not surface it.",
+  "weakAgentStruggle": "Moderate. In OfficeCLI, accepting or rejecting one half of a paired ins/del leaves the other half pending with no error; the agent caught this only by re-querying. Comment reply via add --type comment --prop parentId was hard to discover. The add acknowledgement lacks a commentId, the revision help is long, and validate has no baseline mode, so the original file's errors look new. The agent also had to dump the raw document XML to verify."
+}

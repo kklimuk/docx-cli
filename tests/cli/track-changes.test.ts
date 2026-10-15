@@ -1485,6 +1485,54 @@ describe("docx track-changes revision groups (revN)", () => {
 		expect(result.stdout).toContain("--at <handle>");
 	});
 
+	test("a replace spanning differently formatted runs is ONE revN, and rejecting it restores everything", async () => {
+		// "[Fill in: today's date]" is three runs (highlighted "[", an underlined
+		// placeholder, "]"), so the tracked replace emits three <w:del>s around one
+		// <w:ins>. Grouping only the first del+ins left the other deletions behind
+		// when an agent rejected "rev0".
+		const docPath = await copyFixture(
+			"rev-multirun",
+			"tests/fixtures/mnda.docx",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli(
+			"replace",
+			docPath,
+			"[Fill in: today's date]",
+			"October 12, 2026",
+		);
+		const changes = await list(docPath);
+		expect(changes.length).toBeGreaterThan(2);
+		expect(new Set(changes.map((change) => change.group))).toEqual(
+			new Set(["rev0"]),
+		);
+
+		const rejected = await runCli(
+			"track-changes",
+			"reject",
+			docPath,
+			"--at",
+			"rev0",
+		);
+		expect(rejected.exitCode).toBe(0);
+		expect(await list(docPath)).toHaveLength(0);
+		const read = (await runCli("read", docPath, "--from", "t1", "--to", "t1"))
+			.stdout;
+		expect(read).toContain("Fill in: today’s date");
+		expect(read).not.toContain("October 12, 2026");
+	});
+
+	test("two separate replaces in one paragraph stay two revN handles", async () => {
+		const workspace = tempWorkspace("rev-separate");
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "Pay Net 90 within five days.");
+		await runCli("track-changes", docPath, "on");
+		await runCli("replace", docPath, "90", "30");
+		await runCli("replace", docPath, "five", "ten");
+		const groups = (await list(docPath)).map((change) => change.group);
+		expect(new Set(groups)).toEqual(new Set(["rev0", "rev1"]));
+	});
+
 	test("the text-first default shows the moved text for moveFrom/moveTo rows", async () => {
 		// moveFrom/moveTo carry the moved run text (like ins/del); the table must
 		// not render them blank. Regression: describeSolo originally only quoted

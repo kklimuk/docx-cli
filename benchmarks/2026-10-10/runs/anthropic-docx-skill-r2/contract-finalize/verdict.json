@@ -1,0 +1,28 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "Accept/reject is correct for all five revisions. Net 30 and one (1) year are clean text, $100 is restored, §11 Personal Guarantee is restored (deleted paragraph mark un-deleted) and later sections renumber, and the indemnification 1.5 spacing is live with 0 pPrChange left.",
+    "docx track-changes list reports no tracked changes, and document.xml has 0 w:ins, w:del, pPrChange or rPrChange elements.",
+    "Four replies (c4-c7) are threaded through commentsExtended paraIdParent and anchored on the parent blocks. Word renders them as threaded replies, and read --comments shows each with a ↳ cN marker.",
+    "Only the auto-renewal (c0) and arbitration (c3) threads are resolved; the IP (c1) and indemnification (c2) threads stay open.",
+    "Nothing else changed between baseline and output: header, footer, table, signature block, numbering and the 3-page count are all intact."
+  ],
+  "defects": [
+    {
+      "what": "All four replies are the same boilerplate, 'Declined — standard term.' This includes the two threads the task calls fully addressed and that the agent resolved, which reads as an incoherent position.",
+      "severity": "minor",
+      "evidence": "comments list: c4-c7 all have the text 'Declined — standard term.'; c4 and c7 are resolved:true"
+    },
+    {
+      "what": "comment.py re-serialized comments.xml through minidom, so the new w:comment elements contain pretty-printed whitespace. Word ignores it, but docx-cli's comments list shows it as stray newlines in the reply text.",
+      "severity": "minor",
+      "evidence": "word/comments.xml w:comment w:id=4..7 contain indented newlines; comments list text is '\\n  \\n ... Declined — standard term.\\n ...'"
+    }
+  ],
+  "notes": "Passes all 13 rubric conditions. The render confirms clean text, a restored §11, 1.5 spacing on indemnification, and resolved replies greyed out (NF2, NF8).",
+  "weakAgentStruggle": "Heavy. The skill has no per-revision accept/reject (accept_changes.py is all-or-nothing), no way to resolve a comment, and comment.py --parent needs the reply's range markers nested by hand. The agent hand-edited document.xml revisions and commentsExtended done flags. validate.py --author reported rejected revisions as mismatches, and python3 -I broke the script imports. The output is correct, but the path was a fragile slog."
+}

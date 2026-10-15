@@ -1,0 +1,25 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "Heading1 style definition restyled once: styles --at Heading1 shows size 13pt, color 1F3864, bold true, space-before 12pt",
+    "All three section headings (p8 Education, p15 Experience, p27 Leadership & Activities) carry style Heading1; Experience converted from BodyText bold-centered",
+    "Agent removed the direct pPr overrides on the Experience/Leadership headings so the style change shows on all three; the render shows three identical navy headings",
+    "All candidate data filled: name, contact line (hyperlink target also updated to the new mailto), Harvard, Lincoln High, Northwind Robotics, Harvard SEAS, Harvard Robotics Club, all bullets",
+    "No [Note: ...] text remains; Skills & Interests section and empty Thesis/Coursework/Study Abroad blocks removed",
+    "[drawing] (rule under the name) preserved at p4",
+    "space-after 120 twips on the contact line (p6) and the org/title lines p18, p19, p23, p24, p28, p29",
+    "All four sectPr blocks set to 720 twips on every side; docx:page shows margins=0.5in",
+    "Render is one clean page; dates and locations right-align with no wrapping; bullet lists intact"
+  ],
+  "defects": [
+    {"what": "Education date lines were shortened to 'May 2027.' / 'June 2023.', dropping the 'Graduating'/'Graduated' wording, and keep a stray trailing period", "severity": "minor", "evidence": "read.md p10 'A.B. in Computer Science, GPA 3.8.\tMay 2027.' and p13 'National Merit Finalist.\tJune 2023.'; render shows 'May 2027.'"},
+    {"what": "The org/location lines' tab stops were changed from left to right at 10800, although the task said to keep the tab stops as they were. This was a reasonable fix for the wrapping that the narrower margins caused, and the date lines kept their original left tabs", "severity": "minor", "evidence": "Agent deadEnds; render shows the locations flush right at the margin and the dates slightly inset (Jun 2025 – Aug 2025 ends ~0.35in before the margin)"},
+    {"what": "The Harvard Robotics Club line sits slightly left of its sibling entry lines because the template is missing an indent there (inherited, not fixed)", "severity": "minor", "evidence": "Render: 'Harvard Robotics Club' starts left of 'Project Lead'; read.md p28 align=center with no indent-left"}
+  ],
+  "notes": "All rubric pass conditions are met: the Heading1 style definition, the three headings on Heading1, entry spacing, 0.5in margins on all sections, the drawing survives, and the helper and Skills text is gone. Only minor cosmetic deviations remain. docx read's layout hint flags possible tab wraps, but the Word render shows none.",
+  "weakAgentStruggle": "This was a slog. The skill gives no guidance on editing styles.xml, on per-section margins (there are four sectPr blocks), on paragraph text replacement, or on hyperlink rels. merge_runs.py failed under python -I. The agent also had to find and strip direct-formatting overrides and repair left-tab wrapping by hand with lxml. It got there, but through extensive manual XML work."
+}

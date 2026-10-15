@@ -1,0 +1,33 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All five revision operations are correct (Net 30 and the one-year non-compete accepted, the $100 cap restored, the Section 11 Personal Guarantee restored, the 1.5-line indemnification spacing kept as live formatting); document.xml has 0 ins/del/pPrChange elements and docx track-changes list prints 'No tracked changes'",
+    "Rejecting the Section 11 deletion restored the heading and body, and numbering re-flowed correctly to sections 11 through 15",
+    "Each of the four comments has a threaded reply with w15:paraIdParent set and its own range markers around the parent's anchor; docx read --comments shows each reply as [^cN] with a ↳ marker",
+    "The resolved flags are correct in the file: w15:done='true' on the auto-renewal (c0) and arbitration-fees (c3) threads, and 'false' on the IP and indemnification threads",
+    "The baseline and output diffs show only the intended changes; the header, footer, table and signature block are untouched"
+  ],
+  "defects": [
+    {
+      "what": "commentsExtended.xml keeps an orphan commentEx entry (paraId 00100090, parent 97CB30E2) left by the reply the agent deleted and re-added",
+      "severity": "minor",
+      "evidence": "<w15:commentEx w15:paraId=\"00100090\" w15:paraIdParent=\"97CB30E2\" .../> in commentsExtended.xml, but no comment has paraId 00100090"
+    },
+    {
+      "what": "Comment id gap (c4 missing) after the delete and re-add of a reply; cosmetic only",
+      "severity": "minor",
+      "evidence": "comments list ids: c0-c3, c5-c8"
+    },
+    {
+      "what": "docx-cli reader bug (not charged to OfficeCLI): w15:done='true' is not recognized as resolved, so comments list does not show resolved:true for c0 and c3",
+      "severity": "minor",
+      "evidence": "#readExtended in src/core/ast/document/comments.tsx accepts only '1' or '0'; the file has w15:done=\"true\""
+    }
+  ],
+  "weakAgentStruggle": "Moderate. Revision accept/reject by id was smooth. Editing a reply's text with `set --prop text` silently dropped its parentId, so the agent had to delete and re-add the reply with parentId=0, which left an orphan commentsExtended entry. Reply anchoring is undocumented.",
+  "notes": "The resolved state was verified directly in commentsExtended.xml because docx-cli's reader ignores w15:done='true'. The Word render shows all four replies threaded and no redline markup."
+}

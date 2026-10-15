@@ -1,0 +1,22 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four unacceptable terms were redlined as tracked replacements (92 tracked / 46 logical): §3 Net 30, §6 12-month non-solicit, §8 mutual fault-based indemnity, §9 mutual cap. The doc-level tracking toggle is on.",
+    "The schedule table cells were updated to match the new payment terms, as tracked edits.",
+    "9 anchored comments, attributed to Mercer Design Studio, cover all 5 flagged clauses (IP, §7, §11, §12, §13) plus 4 objection notes on the redlines.",
+    "§9 body (p24) is set to 1.5 line spacing, visible in the render and as a line-spacing=\"1.5\" read hint.",
+    "IP sub-points p11-p14 are lower-roman in the AST and render as (i)-(iv). The top-level decimal numbering and the heading spacing are untouched.",
+    "Document validates (10 parts) and renders in Word. Header, footer, table and signature block are preserved."
+  ],
+  "defects": [
+    {"what": "Markdown read view gives no format hint for level-1 list items: the lower-roman IP sub-points still print as 1-4, so the change is visible only via --ast", "severity": "minor", "evidence": "read.md lines 40-46 print '1. all work product…' with no format note, while the AST has list.format=lower-roman"},
+    {"what": "track-changes list labels pure insertions and deletions with a '¶' placeholder, which looks like a paragraph-mark change; word-level fragmentation splits 10 edits into 46 revisions", "severity": "minor", "evidence": "rev1 replace p7 ¶ → \"payable\"; rev44 \"not\" → ¶"},
+    {"what": "p2 read hint changed from docx:p spacing hint to docx:list format=decimal after the list format change, although the AST spacing is unchanged (read-view hint artifact)", "severity": "minor", "evidence": "baseline read.md line 12 vs output read.md line 12; AST p2 spacing before=200 after=60 in the output"}
+  ],
+  "notes": "All 5 rubric conditions pass. Page 4 of the output render is Word's markup-balloon overflow page, not a layout defect. The agent wrongly believed the original IP sub-points rendered as decimal (the baseline render shows (a)-(d)) because the markdown view prints ordered lists as decimal.",
+  "weakAgentStruggle": "Mild. The agent ran a scratch-copy test because the lists set --format help says 'whole list' and is ambiguous about levels. The markdown view hid the lower-roman result and misled the agent about the original numbering. Otherwise it used batched edits and comments cleanly."
+}

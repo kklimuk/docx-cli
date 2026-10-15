@@ -1,0 +1,30 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "survivedReadLoop": true,
+  "formattingPreserved": "preserved",
+  "merits": [
+    "All five tracked-change decisions correct in one `track-changes apply` call: Net 30 and one (1) year accepted as clean text, $100 cap restored, §11 Personal Guarantee restored (list renumbers 11-15 correctly), indemnification 1.5 line spacing live with no pending marker",
+    "`track-changes list` reports 'No tracked changes'; `validate` reports valid (10 parts)",
+    "Four replies (c4-c7), each with parentId pointing at c0-c3 and non-empty anchor.startBlockId matching the parent's paragraph",
+    "`read --comments` shows every reply as its own [^cN] footnote with a '↳ cN' thread marker",
+    "c0 (auto-renewal) and c3 (arbitration fees) resolved:true; c1 (IP) and c2 (indemnification) resolved:false",
+    "Word render shows replies threaded under parents in the margin; header, footer, table, signature block unchanged versus baseline",
+    "Agent caught its own unsupported reply wording and corrected it with comments delete + re-reply"
+  ],
+  "defects": [
+    {
+      "what": "Reply positions are agent-authored, and every reply says 'Declined', including the two comments it resolved. The task gave 'Agreed — revised.' / 'Declined — standard term.' only as examples, so this is acceptable, but a 'Declined' reply on a resolved thread reads slightly oddly.",
+      "severity": "minor",
+      "evidence": "comments list: c4 'Declined — auto-renewal stays as drafted; standard term.' (parent c0, resolved); c7 'Declined — arbitration-fee allocation stays as drafted.' (parent c3, resolved)"
+    },
+    {
+      "what": "The Milestone table still says 'Net 90 after final acceptance', which no longer matches the accepted Net 30 body text. This was in the original document, was outside the task and rubric, and the agent flagged it rather than changing it.",
+      "severity": "minor",
+      "evidence": "read: t0:r1c2:p0 'Net 90 after final acceptance'"
+    }
+  ],
+  "weakAgentStruggle": "The tool path was mostly smooth: one batched apply call settled every tracked change, and replies went through comments reply --batch with resolve. The only thrash came from the agent's own reply wording, which it fixed by deleting c4-c7 and re-posting. The handle mix of rev and tc forms in track-changes list (tc8 is a bare paragraph-mark delete belonging with the §11 deletion) needed some inference.",
+  "notes": "Passes all 13 rubric checks. The read.md diff from baseline to output contains only the intended changes ($100 cap restored, §11 back, renumbering). Net 30, one (1) year and the 1.5 spacing already appear in the baseline's accepted-view read, and the output now holds them as clean text."
+}

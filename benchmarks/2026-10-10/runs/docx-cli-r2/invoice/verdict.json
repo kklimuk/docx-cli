@@ -1,0 +1,25 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All header, Bill To/Ship To, totals and Notes values match the brief exactly",
+    "Placeholder sweep is clean: find for Item/Description 1/Customer name/Your/Jan, 1/TEMPLATE/DO NOT SEND returns no matches",
+    "Extra address line and Description N sub-lines removed; each item cell is a single paragraph",
+    "Fourth row inserted via insert-row (r4 Calibration kit), all six totals rows intact (r5-r10), gridSpan preserved",
+    "Widths 3,0.5,1.5,1.6,1.2in: Description widest (3in vs 2/1.6/1.2); no dollar value wraps in the render",
+    "repeat-header=r0 added; header shading F2F2F2 and right-aligned Price/Amount present",
+    "img0 replaced with SVG from assets/logo.svg at the same size and position; exactly two media parts; footer PayPal mark and rels intact",
+    "Stamp text box rewritten in place (tbx0:p0) with red bold centered formatting kept; Choice and Fallback in sync",
+    "Fresh docx read is byte-identical to the output read.md"
+  ],
+  "defects": [
+    {"what": "Empty spacer paragraphs under the company name and under the Bill To/Ship To headings were deleted along with the placeholder lines, so those blocks sit tighter than the template", "severity": "minor", "evidence": "Baseline t0:r0c0:p1 and t1:r0cX:p1 are blank paragraphs; output has none; in the render, Phone: sits directly under Northwind Robotics, Inc."},
+    {"what": "Totals label edited from 'Tax total' to 'Tax total (8.75%)' (follows the brief's wording)", "severity": "minor", "evidence": "t2:r8c2:p0 reads 'Tax total (8.75%)'"},
+    {"what": "Tool gap: images list omits the footer image, so the 'two images' check can't be confirmed from the CLI", "severity": "minor", "evidence": "images list returns only img0; the package has word/media/image2.png referenced by footer1.xml.rels"}
+  ],
+  "weakAgentStruggle": "Moderate. Text edits were batched efficiently (one edit batch of 31 changes and one delete batch). The main friction: set-widths works on grid columns, the totals labels sit in the Price grid column because of gridSpan, so widening Description wrapped 'Tax total (8.75%)' with no warning. Finding it took a render and a second width pass, three renders in all. Also: shell $-expansion of '$300.00' needed single quotes, the Markdown read hides body-level empty paragraphs, and no 'no change' ack appeared when re-applying formatting the template already had.",
+  "notes": "Word render succeeded. All rubric checks pass. The shading and right alignment were already in the template; the agent re-applied them, and they are present in the output."
+}

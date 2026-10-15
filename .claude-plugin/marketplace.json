@@ -4,12 +4,12 @@
 		"name": "Kirill Klimuk",
 		"email": "kklimuk@gmail.com"
 	},
-	"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
+	"description": "Let AI agents edit Word documents without breaking them: fill in forms, update tables, restyle, write reports, and redline with tracked changes and comments.",
 	"plugins": [
 		{
 			"name": "docx-cli",
 			"source": "./",
-			"description": "Read, edit, redline, and comment on Microsoft Word .docx files from the command line — built for AI agents.",
+			"description": "Let AI agents edit Word documents without breaking them: fill in forms, update tables, restyle, write reports, and redline with tracked changes and comments.",
 			"homepage": "https://github.com/kklimuk/docx-cli",
 			"license": "MIT"
 		}

@@ -1,0 +1,22 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 12 rubric checks pass: s1 is 2 columns, s0 and s2 are single-column, all sections are landscape 15840x12240, there are 3 footnotes, link0 'public domain' goes to gutenberg 1321, img0 has a Caption-style caption, the header is in hdr0-2 and the 'Page {page} of {pages}' footer in ftr0-2",
+    "docx:base font=Garamond; the render shows a Garamond serif in the body, the headings, the header, the footer and the footnotes (set-default-font --all)",
+    "Verse is verbatim from the source, one visual line per verse line, with stanza breaks kept; poem titles are Heading2",
+    "The title page has a centered title, subtitle, frontispiece and caption",
+    "validate is clean; a fresh read matches the render-time read.md exactly"
+  ],
+  "defects": [
+    {"what": "The last two Waste Land lines spill alone onto page 3, which is otherwise blank, and the nextPage colophon then sits alone on page 4: two mostly empty pages", "severity": "minor", "evidence": "page-003.png shows only 'Earth in forgetful snow, feeding / A little life with dried tubers.'; page-004.png shows only the colophon; s2 has no sectionType (nextPage)"},
+    {"what": "Headings keep the default Word blue (#2E74B5), which reads as a word-processor default rather than a printed anthology", "severity": "minor", "evidence": "page-001/002 PNGs: the title and poem headings are rendered in blue"},
+    {"what": "Verse lines are soft line breaks inside one paragraph per stanza, not separate paragraphs as the rubric literally states; the visual outcome is correct", "severity": "minor", "evidence": "AST p7 has 23 runs (Preludes stanza 1 as one paragraph); the read view shows the lines separately"},
+    {"what": "Tool: the read view lists footnote ids out of display order (fn3 first)", "severity": "minor", "evidence": "read.md: 'straw[^fn3]' appears before 'Michelangelo[^fn1]'; Word renders them as 1, 2, 3"}
+  ],
+  "notes": "Strong authoring run. Every structural requirement is met and verified through the AST, the list verbs, validate and the Word render. Only polish issues remain: the page-3 orphan plus the colophon on its own page, and the default blue headings. The agent skipped a final render.",
+  "weakAgentStruggle": "Low. Core verbs worked on the first attempt. Frictions: caption not centered by images add --alignment, inline <br> silently dropped by create --from, sections ack echoes the pre-shift range, heading color not discoverable. One unexplained exit 1 on create --help and a self-inflicted zsh mishap."
+}

@@ -1,0 +1,25 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled (name, contact with mailto link, both education entries, both experience entries + 3 bullets, leadership entry + bullet); no placeholder text remains",
+    "[Note: ...] helpers and the full Skills & Interests section (heading + 4 prompt lines) removed",
+    "[drawing] element preserved at p4",
+    "Education, Experience, Leadership & Activities all style Heading1 in AST; Experience fixed from BodyText",
+    "Heading1 style definition: 13pt, color 1F3864, bold, space-before 12pt (docx styles --at Heading1); render shows three matching navy headings",
+    "spacing.after=120 on contact line p6 and entry lines p19/p20/p24/p25/p29/p30",
+    "All four sections margins 720 twips (0.5in); read shows margins=\"0.5in\"",
+    "Date tab stops right-aligned at 10800 on every entry line; dates flush right in render; prior layout overflow warnings cleared",
+    "docx validate passes; read output identical to harness read view; fits one page"
+  ],
+  "defects": [
+    {"what": "Agent reports batch edit entry combining style+clear acked 'edit 30 changes' but silently dropped the --style (paragraph stayed BodyText); recovered via standalone edit", "severity": "major", "evidence": "Agent deadEnds: {\"at\":\"p19\",\"style\":\"Heading1\",\"clear\":\"bold\"} reported success but style not applied; final AST shows p16 Heading1 after standalone fix"},
+    {"what": "Pre-existing template indent quirks remain: Harvard Robotics Club slightly outdented, Software Engineering Intern slightly indented", "severity": "minor", "evidence": "p29 align=center no indent; p20 indent-left=0.121in, same as baseline p37/p23"},
+    {"what": "sections --margins silently converted 10 left tab stops to right tabs with only an ack line of notice (result is correct/desired)", "severity": "minor", "evidence": "AST tabStops align=right pos=10800 vs baseline left@5.987-6.948in"}
+  ],
+  "notes": "Output fully satisfies criteria.md. Render: one page, three uniform navy Heading1 headings, right-aligned dates, 0.5in margins, drawing/rule intact.",
+  "weakAgentStruggle": "Mostly smooth; one significant dead end where a batch entry with style+clear silently dropped the style while acking success. The agent caught it by re-verifying and fixed it with a standalone edit. It skipped the render page-fit check."
+}

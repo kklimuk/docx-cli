@@ -1,0 +1,43 @@
+{
+  "taskSuccess": "partial",
+  "rendersCorrectly": true,
+  "layoutSound": false,
+  "formattingPreserved": "degraded",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled correctly; no template placeholder text remains",
+    "Email hyperlink retargeted to mailto:praman@college.harvard.edu (link0 intact, not flattened)",
+    "All [Note: ...] helper text removed (0 occurrences in document.xml)",
+    "Skills & Interests heading and all four prompt lines removed",
+    "VML [drawing] rule (w:pict/v:line) preserved in p4 and visible in render",
+    "All three section headings use Heading1; Experience converted from BodyText",
+    "Heading1 style definition: 13pt, color 1F3864, bold, space-before 12pt; headings render identical navy bold",
+    "space-after 6pt (120 twips) on contact line and all org/title/date lines in Experience and Leadership",
+    "All four sections' pgMar = 720/720/720/720 (0.5in)",
+    "Tab stop definitions and bullet numbering preserved; file validates and Word opens it"
+  ],
+  "defects": [
+    {
+      "what": "Location/date tab content wraps onto next lines, some mid-word, after the 0.5in margin change narrowed the text area against fixed LEFT tab stops with longer content",
+      "severity": "major",
+      "evidence": "Output render: 'Cambridge, / MA', 'Graduating / May 2027', 'Portland / , OR', 'San / Francisco, CA', 'Cambrid / ge, MA' (Harvard SEAS), 'Cambridg / e, MA' (Robotics Club); baseline rendered all on one line. Task's done-state requires dates to right-align on a clean one-page resume."
+    },
+    {
+      "what": "Inconsistent bold on date text inherited from template bold runs",
+      "severity": "minor",
+      "evidence": "'**Jun 2025** – Aug 2025' (partial bold), '**2024 – present**' (bold), 'Sep 2024 – May 2025' (not bold); template dates were not bold"
+    },
+    {
+      "what": "Stray trailing line break left in Harvard degree paragraph plus large blank gap in Education",
+      "severity": "minor",
+      "evidence": "p10 ends with <w:br/> left over from deleted Thesis line; render shows large gap between Harvard and Lincoln entries"
+    },
+    {
+      "what": "Leadership org line remains center-aligned, location wraps to a centered line",
+      "severity": "minor",
+      "evidence": "p29 jc=center (from template); render shows 'Harvard Robotics Club' centered with 'e, MA' centered below"
+    }
+  ],
+  "notes": "Structurally, nearly every rubric check passes (style-definition restyle, Heading1 on all three, spacing, margins, drawing, notes and Skills removed, tabs preserved). Downgraded to partial because the rendered page is visibly broken: every tab-aligned location/date wraps, several mid-word, which contradicts the task's 'dates still right-align, clean one-page resume'. The agent identified the left-tab problem but chose not to cure it and never rendered to check.",
+  "weakAgentStruggle": "Moderate slog: find/replace across hyperlink boundary failed with internal_error (worked around via hyperlink url/text set), set --find zero matches silently exits 0, margins required per-section calls, VML drawing invisible in text view. Agent correctly diagnosed the left-tab premise but had no obvious tab-alignment verb or render-wrap warning, and skipped rendering."
+}

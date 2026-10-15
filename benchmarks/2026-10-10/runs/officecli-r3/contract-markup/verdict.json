@@ -1,0 +1,21 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four egregious terms (§3 Net 90->Net 30 incl. schedule cell, §6 non-compete narrowed + $50k LD struck, §8 negligence carve-out, §9 mutual cap/waiver) are real tracked w:ins/w:del revisions; track-changes list shows 18 changes (10 logical)",
+    "10 anchored comments covering §3, §6, §8, §9, IP (b)/(c), §7, §11, §12, §13",
+    "§9 body spacing set to line=360 auto (1.5) — visibly opened in render",
+    "IP sub-points switched to lowerRoman (i)-(iv) at ilvl 1; top-level decimal untouched",
+    "Baseline vs output text diff touches only the redlined paragraphs; header/footer/table/signature block preserved; Word renders cleanly"
+  ],
+  "defects": [
+    {"what": "Comments anchored to whole paragraphs rather than specific phrases", "severity": "minor", "evidence": "comments list anchors span offset 0 to paragraph end for every comment"},
+    {"what": "1.5 line spacing also applied to §9 heading paragraph (unrequested, harmless)", "severity": "minor", "evidence": "numbering heading p23 spacing w:line=360 in document.xml"},
+    {"what": "OfficeCLI 'view issues' crashes on pre-existing duplicate Heading1 styleId (tool UX bug, not output defect)", "severity": "minor", "evidence": "agent deadEnds: 'An item with the same key has already been added. Key: Heading1'"}
+  ],
+  "notes": "All 5 rubric conditions pass. docx-cli read --ast does not expose list.format for this list (docx-cli reader gap); lower-roman verified via numbering.xml (abstractNum 2 ilvl 1 numFmt lowerRoman, lvlText (%2)) and the Word render. Page 4 of the output render is Word's comment-overflow page, not a layout defect.",
+  "weakAgentStruggle": "Mild: view issues crash, undocumented 0-based numbering level index, leading-space detail on tracked deletions, per-call author. Core redline/comment path worked first try."
+}

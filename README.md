@@ -1,118 +1,187 @@
 # docx-cli
 
-**Let your AI agent edit Word documents—with tracked changes you can review.**
+**Let your AI agent do real work in your Word documents.** Fill in contracts and forms, update tables and figures, restyle a résumé, write a report from scratch, or review a draft with tracked changes and comments. When you open the file in Word, it still looks like yours.
 
-Fill templates, revise contracts, and leave comments in existing `.docx` files. Open the result in Word to accept or reject the edits. docx-cli edits the document’s XML in place to preserve surrounding formatting and content.
-
-## Why choose docx-cli for Word?
-
-In our October 10, 2026 Word-task benchmark, **docx-cli scored 18/18 successful attempts (100%) versus OfficeCLI’s 14/18 (77.8%), with 41% fewer tool calls**. The Anthropic docx skill also scored 18/18; docx-cli matched that result with **21% fewer tool calls**.
-
-| docx-cli 0.27.0 reductions | vs. Anthropic docx skill | vs. OfficeCLI 1.0.156 |
-| --- | ---: | ---: |
-| Tool calls | **21% fewer** | **41% fewer** |
-| Effective input tokens¹ | **22% fewer** | **53% fewer** |
-| Output tokens² | **41% fewer** | **49% fewer** |
-| Cumulative task time³ | **27% less** | **50% less** |
-
-We used the same Haiku 5.5 model for six tasks, each repeated three times per tool: fill an NDA, edit an invoice, restyle a résumé, redline a contract, finalize a review, and author a journal. Reductions are calculated from unrounded averages per six-task run, then rounded to whole percentages.
-
-¹ Cache-weighted input proxy, not dollar cost. ² Includes estimates where final token usage is unavailable. ³ Sum of task durations, not elapsed batch time.
-
-All 54 outputs opened in Microsoft Word. All 18 docx-cli outputs received sound-layout and preserved-formatting judgments. This is our development corpus, and model judges knew which tool produced each output; success does not mean every output was defect-free. Results apply to the exact tested builds.
-
-[Absolute measurements, ranges, per-task outcomes, and limitations](benchmarks/officecli/results/2026-10-10.md) · [Comparison protocol](benchmarks/officecli/README.md) · [Earlier benchmarks](guides/benchmarks.md)
+[![Release](https://img.shields.io/github/v/release/kklimuk/docx-cli)](https://github.com/kklimuk/docx-cli/releases/latest)
+[![CI](https://github.com/kklimuk/docx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/kklimuk/docx-cli/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/bun-docx)](https://www.npmjs.com/package/bun-docx)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [![Watch: Claude filling out and redlining an NDA](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
 
-## Try it with your agent
+- **One tool for the whole document.** Your agent can:
+  - read a .docx as Markdown;
+  - rewrite or insert text;
+  - fill templates;
+  - edit tables;
+  - restyle headings, fonts, spacing and margins;
+  - set headers, footers and page numbers;
+  - add footnotes, images, links, lists and equations;
+  - build a new document from Markdown.
+- **Nothing gets lost.** The agent edits the document in place instead of regenerating it, so custom styles, numbering, theme colors, text boxes and embedded objects survive, and new text matches the formatting around it.
+- **Review like a colleague.** When you want a say, the agent's edits arrive as real Word tracked changes signed with the name you choose, with margin comments anchored to the exact clause. It can also finalize a returned redline: accept some changes, reject others, reply to comments, and resolve them.
+- **Local and private.** Everything runs on your machine. No document content is sent anywhere, and there is no telemetry.
+- **Any agent, MIT-licensed.** Works with Claude Code, Codex, Pi, and anything else that reads the open [Agent Skills](https://agentskills.io) format, or call it as a plain command from your own code.
 
-Install the skill into your agent using [skills.sh](https://skills.sh):
+**Who it's for:** people whose AI agent can work with files on their computer: Claude Code, Codex, Pi, and similar tools. In the Claude desktop app, that means Claude Code (the Code tab), not a regular chat. If you only chat with Claude, on claude.ai or in the app, use Claude's built-in Word support (Anthropic's docx skill) instead; docx-cli can't run there.
+
+## Set it up: paste one message into your agent
+
+You don't run these steps yourself. Your agent reads them and does them, including checking that the download is genuine.
+
+```text
+Set up docx-cli (https://github.com/kklimuk/docx-cli) so you can edit Word documents for me.
+1. Install the skill for the agent you are:
+   - Claude Code: claude plugin marketplace add kklimuk/docx-cli && claude plugin install docx-cli@docx-cli
+   - Codex: codex plugin marketplace add kklimuk/docx-cli   (the skill loads automatically; nothing else to install)
+   - Any other agent: npx skills add kklimuk/docx-cli -g -y
+2. Install the `docx` program:
+   - If Bun is installed: bun add -g bun-docx
+   - Otherwise, from an empty temporary directory:
+       curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/install.sh
+       curl -fsSLO https://github.com/kklimuk/docx-cli/releases/latest/download/SHA256SUMS
+       shasum -a 256 -c SHA256SUMS --ignore-missing   (or: sha256sum -c SHA256SUMS --ignore-missing)
+     Only if that prints "install.sh: OK", run: REQUIRE_CHECKSUM=1 sh install.sh
+   - Windows: download docx-windows-x64.exe from https://github.com/kklimuk/docx-cli/releases/latest,
+     compare `Get-FileHash docx-windows-x64.exe` with its line in SHA256SUMS, rename it to docx.exe,
+     and put it on PATH.
+3. Run `docx --version`. If it isn't found, add ~/.local/bin to PATH and try again.
+4. Tell me it's ready. (In Claude Code, the skill is available from the next session.)
+Note: the npm package is `bun-docx`. The npm packages named `docx` and `docx-cli` are unrelated.
+```
+
+Then ask for real work, for example:
+
+- _"Fill in this NDA for Acme, Inc. with today's date and California law."_
+- _"Update the Q3 table in report.docx with these numbers and add a footnote citing the source."_
+- _"Make my résumé's headings consistent, tighten the margins, and keep it to one page."_
+- _"Review contract.docx as Acme's counsel: redline the payment terms to Net 30 and comment on anything one-sided."_
+
+<details>
+<summary><b>Or install the skill yourself</b></summary>
+
+**Any agent ([skills.sh](https://skills.sh)):**
 
 ```sh
 npx skills add kklimuk/docx-cli
 ```
 
-Choose your agent in the installer. The skill includes a bootstrap script that installs the standalone `docx` binary on first use. You need Node/npm for this skill-install command; the standalone binary does not require Bun. [Other installation options](guides/installation.md).
+**Claude Code:**
 
-Download the [sample NDA](https://raw.githubusercontent.com/kklimuk/docx-cli/main/tests/fixtures/mnda.docx) into your working folder, then give your agent this prompt:
-
-> Use the docx-cli skill to edit mnda.docx. Save a copy as mnda-reviewed.docx and keep the original unchanged. Turn on tracked changes. Replace “having a reasonable need to know” with “with a documented need to know”. Add a comment on the new wording: “Please confirm this narrower access requirement.” Keep the rest of the document unchanged and leave the revisions pending for review.
-
-Open **mnda-reviewed.docx** in Word and choose **Review → All Markup**. You should see the wording change and an anchored comment, ready for review.
-
-[Full walkthrough and troubleshooting](guides/first-use.md).
-
-## Use it from the terminal
-
-**Bun package (npm registry)** — the simplest path with Bun >= 1.3:
-
-```sh
-bun add -g bun-docx
-# or run without installing:
-bunx bun-docx read doc.docx
+```
+/plugin marketplace add kklimuk/docx-cli
+/plugin install docx-cli@docx-cli
 ```
 
-**Standalone binary** (macOS/Linux, no Bun required). Every release publishes prebuilt binaries, the installer, and a `SHA256SUMS` manifest covering all of them. Download and verify the installer before running it, using the same release tag throughout:
+**Codex** (the plugin's skills auto-discover):
 
-```sh
-DOCX_VERSION=v0.27.0
-curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/install.sh" &&
-curl -fsSLO "https://github.com/kklimuk/docx-cli/releases/download/$DOCX_VERSION/SHA256SUMS" &&
-shasum -a 256 -c SHA256SUMS --ignore-missing &&
-VERSION="$DOCX_VERSION" REQUIRE_CHECKSUM=1 sh install.sh
+```
+codex plugin marketplace add kklimuk/docx-cli
 ```
 
-Use `sha256sum -c SHA256SUMS --ignore-missing` if your system has `sha256sum` instead of `shasum`. Continue only when verification reports `install.sh: OK`; the `&&` chain stops on a failed download or checksum. The installer then downloads the prebuilt binary and **verifies its SHA-256 before installing**. `REQUIRE_CHECKSUM=1` makes it refuse installation if no checksum tool is available.
+**Pi** (the `pi` manifest in `package.json` pulls in the skill), then invoke `/skill:docx-cli`:
 
-The default destination is `$HOME/.local/bin`; set `PREFIX` to choose another directory. Add the destination to your `PATH`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-docx --version
+```
+pi install git:github.com/kklimuk/docx-cli      # global; add -l for a project (team-shared) install
 ```
 
-To install manually, download the binary for your platform and `SHA256SUMS` from [Releases](https://github.com/kklimuk/docx-cli/releases/latest), verify the checksum, and put the binary on `PATH`. On macOS/Linux, rename it to `docx` and run `chmod +x docx`; on Windows, use `docx-windows-x64.exe` (rename it to `docx.exe` for the commands below). macOS binaries are ad-hoc signed and signature-verified before checksumming; they are not Developer ID-signed or notarized.
+**Manual:** copy [`skills/docx-cli/`](skills/docx-cli) into your agent's skills directory (e.g. `~/.claude/skills/` or the cross-tool `~/.agents/skills/`). If `docx` isn't installed, the skill tells the agent to run [`scripts/bootstrap.sh`](skills/docx-cli/scripts/bootstrap.sh), which installs a pinned, checksum-verified binary (and, run again later, updates one that's behind).
 
-On macOS/Linux, **`docx upgrade`** updates a standalone binary in place using the installer embedded at build time, with release-tag pinning and SHA-256 verification. Use `--dry-run` to preview or `--to v0.27.0` to select a release. Update a Bun/npm install through its package manager.
+The skill is thin on purpose: it teaches the workflows, then defers to `docx <command> --help`, which ships with the program, so it can't go stale. `docx info skill` prints the canonical `SKILL.md` for the installed version.
 
-The project is **docx-cli**, its npm package is **bun-docx**, and its command is **docx**. See [installation and updates](guides/installation.md) and [install integrity](SECURITY.md#install-integrity) for details.
+</details>
 
-Try the same review yourself (macOS/Linux shell):
+## How it benchmarks
+
+**In short:** on our six-task benchmark, docx-cli got the same results as Anthropic's docx skill (the skill Claude uses for Word files) in 27% less time, with 22% fewer input tokens and 41% fewer output tokens. Compared to OfficeCLI, it was roughly 2x faster at half of the tokens, while finishing every task that OfficeCLI got wrong.
+
+|                               | **docx-cli 0.27.0** | Anthropic docx skill | OfficeCLI 1.0.156 |
+| :---------------------------- | ------------------: | -------------------: | ----------------: |
+| Tasks solved (of 6)           |             **6.0** |                  6.0 |               4.7 |
+| Every run solved (all 3)      |             **6/6** |                  6/6 |               4/6 |
+| Input tokens (cache-weighted) |            **902k** |         1.15M (+27%) |     1.92M (+113%) |
+| Output tokens                 |             **32k** |           54k (+70%) |        63k (+97%) |
+| Wall-clock, all 6 tasks       |           **914 s** |       1,254 s (+37%) |   1,834 s (+101%) |
+| Tool calls                    |              **98** |           124 (+26%) |        165 (+69%) |
+
+- **Editing existing documents is where docx-cli saves.** On the five editing tasks it used about 30% fewer input tokens and 35% less time than Anthropic's skill.
+- **On the two contract tasks, all three tools passed every run.** There the difference is cost and speed, not correctness.
+- **OfficeCLI's four misses** were the résumé every time (after the margin change, every date line wrapped, some mid-word, e.g. "Cambrid / ge, MA") and one invoice (the old notes line was left in place). That résumé wrap is a trap docx-cli specifically repairs, so read "fewer misses" with that in mind.
+- **Every output from every tool opened in Word.**
+
+**What to know about this benchmark.** We wrote docx-cli, the six tasks, and the grading rubrics, and these tasks are also the regression suite docx-cli is developed against. It's three runs per tool on one model. The judge knew which tool produced each result; competitor runs carried an instruction to grade the rendered pages and not penalize a different internal approach. Competitors were pinned (Anthropic skill at `anthropics/skills@dbd4588`, OfficeCLI 1.0.156 by SHA-256). On older models the correctness gap was large (Haiku 4.5, July 2026: 5.0/6 vs 0.7/6 for the default skill); on current models it has closed. Per-task numbers, every caveat, and how to reproduce: [benchmarks/2026-10-10](benchmarks/2026-10-10/).
+
+## Why docx-cli instead of something else?
+
+On our benchmark docx-cli solved every task and was the cheapest and fastest of the three tools [above](#how-it-benchmarks). Here's how it compares with each alternative.
+
+- **Anthropic's docx skill: same accuracy, less spend.** docx-cli took 27% less time, 22% fewer input tokens, 41% fewer output tokens, and 98 tool calls against 124. On finalizing a redline it used about half: 94k tokens and 86 s against 179k and 159 s. The skill has the agent hand-edit Word's XML with helper scripts; docx-cli gives it commands such as `track-changes apply --accept rev1 --reject rev0`. It's one program instead of Python, Node, pandoc, and LibreOffice, and it's MIT-licensed, while the skill's [license](https://github.com/anthropics/skills/blob/main/skills/docx/LICENSE.txt) limits it to Anthropic's services; docx-cli runs under Codex or any other agent. The skill was cheaper on our one from-scratch document, so if you mostly write new documents with Claude, it's a reasonable choice.
+- **OfficeCLI: more tasks solved, at half the cost.** On our Word tasks docx-cli solved 6 of 6 against 4.7, with about half the tokens and time (most of OfficeCLI's misses were a résumé layout trap docx-cli was built to repair). OfficeCLI is the pick if you also need Excel or PowerPoint, an MCP server, or page previews without Office installed.
+- **Claude for Word and Copilot: no Word window needed.** In-Word assistants work on one open document while a person drives. docx-cli lets the agent work on the files directly: a folder of contracts, a scheduled job, an agent like Claude Code or Codex. If you'd rather sit in Word and steer, [Claude for Word](https://claude.com/claude-for-word) does tracked changes too.
+- **python-docx, Open XML SDK, or generate-and-compare: no throwaway code.** With a library the agent writes new code for every document, handles text Word splits across runs, and, with python-docx, gets no API for tracked changes. Generating a new copy and running Word's Compare gives a redline shaped by the diff, and the regenerated copy's formatting can drift. docx-cli tracks each change as it's made, scoped to the phrase. A library is still the right tool for one fixed template filled thousands of times from your own code.
+- **pandoc: edits instead of regenerating.** pandoc is excellent at Markdown to Word (docx-cli's `create --from draft.md` does that too), but editing an existing file means regenerating it from Markdown, which drops what Markdown can't hold. On our test fixtures (`tests/fixtures/text-boxes.docx` and `sections.docx`), `pandoc in.docx -o in.md && pandoc in.md --reference-doc=in.docx -o out.docx` lost a text box along with its text and merged eight sections, with their columns, into one.
+
+**What docx-cli doesn't do:** Excel, PowerPoint, or MCP. `docx diff` lists changes as text, not as a Word compare, and `docx render` needs Word or LibreOffice. It sends no document content anywhere; it goes online only to install or upgrade, or to fetch an image you give it by URL. Your agent still sends what it reads to its model. It's pre-1.0 and MIT-licensed, so you can fork it; see [SECURITY.md](SECURITY.md#deploying-in-an-organization) before rolling it out.
+
+## Is it safe to use on real documents?
+
+- **Your document stays on your machine.** No command sends content anywhere. The only network access is installing or upgrading the program, plus `images add` when you give it a web address. See [SECURITY.md](SECURITY.md).
+- **Every edit can be reviewed.** With tracking on, each change is a Word tracked change you can reject one by one.
+- **Edits are surgical.** docx-cli changes only what it was asked to change; everything else in the file, including parts of Word's format it doesn't understand, passes through untouched. It never deletes something the document still points to.
+- **Work on a copy.** docx-cli saves changes into the file it's given, so ask the agent to save to a new file (`-o`) or keep the original. `--dry-run` previews a change without saving it, and `docx diff FILE --against ORIGINAL.docx` lists what changed as text (it isn't a Word compare).
+
+## For developers
+
+### Install the program yourself
+
+**npm.** The package is `bun-docx`, and it runs under [Bun](https://bun.sh) ≥ 1.3 even when installed with npm. If you're embedding docx-cli in a Node or Python service, use the standalone binary instead.
 
 ```sh
-curl -fL https://raw.githubusercontent.com/kklimuk/docx-cli/main/tests/fixtures/mnda.docx -o mnda.docx
-cp mnda.docx mnda-reviewed.docx
-docx track-changes on mnda-reviewed.docx
-docx replace mnda-reviewed.docx \
-  "having a reasonable need to know" "with a documented need to know"
-docx comments add mnda-reviewed.docx \
-  --anchor "with a documented need to know" \
-  --text "Please confirm this narrower access requirement."
-docx read mnda-reviewed.docx --current --comments
+bun add -g bun-docx        # or: npm install -g bun-docx
+bunx bun-docx read doc.docx   # run without installing
 ```
 
-Commands edit files in place unless you use `-o/--output`; keep an original copy. Reading and editing work without Microsoft Office. Optional page rendering requires Microsoft Word or LibreOffice.
+Every command works directly on the `.docx` file. Only `docx render` (page images, for checking layout) needs Word (macOS/Windows) or LibreOffice installed.
 
-## What you can do
+**Upgrading:** `docx upgrade` replaces a standalone binary in place, using the installer embedded in the binary at build time (never fetched), pinned to a release tag and SHA-256-verified. `docx upgrade --to v0.27.0` pins a version; `--dry-run` reports what would change. It won't touch an npm install (use your package manager), a renamed binary, or Windows, where a running `.exe` can't be replaced (download the new one by hand).
 
-| Task | Result |
-| --- | --- |
-| Review a contract | Tracked insertions/deletions and comments that can be reviewed in Word |
-| Fill an existing template | Updated text and table cells using the document’s existing layout |
-| Finalize a review | Accept/reject revisions, reply to comments, and resolve threads |
-| Restyle a document | Changes to fonts, styles, paragraphs, tables, headers, and footers |
-| Read or automate | Annotated Markdown, structured JSON, text search, diffs, and schema validation |
-| Create a document | Word output from Markdown, including tables, equations, and images |
+### Use it from your own code
 
-Agents discover commands through `docx --help` and address document content with locators from `docx read`. Locators can shift after structural edits; re-read before the next edit.
+docx-cli is a command-line program with a machine-friendly contract, so any language can call it as a subprocess:
 
-## Documentation
+- **The exit code is the success signal:** `0` ok, `1` general failure, `2` usage error, `3` not found. A `replace` or `comments add --anchor` that matches nothing exits `3` instead of reporting success. `replace` changes the first match unless you pass `--all`; any further matches are reported, not treated as an error.
+- **Errors are JSON on stdout:** `{"code":"MATCH_NOT_FOUND","error":"…","hint":"…"}`, so capture stdout on failure too (in Python, `json.loads(error.stdout)["code"]` on a `CalledProcessError` with `capture_output=True`).
+- **Structured output:** `docx read FILE` prints annotated Markdown with locator comments; `--ast` prints the lossless JSON tree; most `list` verbs print JSON (`track-changes list` prints a table unless you add `--json`); `--verbose` gives a JSON acknowledgement on every change.
+- **Stable addresses:** paragraphs, tables, cells, comments, and tracked changes all have locators (`p3`, `p3:5-20`, `t0:r1c2`, `c0`, `rev1`). `docx find FILE "phrase"` returns the exact span.
+- **Batches:** `edit`, `insert`, `replace`, `delete`, and the `comments` verbs take `--batch FILE.jsonl` (`-` for stdin). Every locator in a batch addresses the document as you read it.
+- **No MCP server.** Agents call `docx` through their shell tool with the bundled skill, which is the setup benchmarked above.
+- **Pre-1.0.** Flags can still change between minor versions. Pin a version in production.
 
-- [First document: sample, prompt, terminal steps, and troubleshooting](guides/first-use.md)
-- [Installation, updates, and agent integrations](guides/installation.md)
-- [Commands, locators, output formats, and architecture](guides/reference.md)
-- [Agent skill](skills/docx-cli/SKILL.md)
-- [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+```python
+import json, os, subprocess
+env = {**os.environ, "DOCX_AUTHOR": "Acme Legal"}   # the name on every tracked change
+subprocess.run(["docx", "track-changes", "on", "contract.docx"], check=True, env=env)
+subprocess.run(["docx", "replace", "contract.docx", "Net 90", "Net 30", "--all"], check=True, env=env)
+changes = json.loads(subprocess.run(
+    ["docx", "track-changes", "list", "contract.docx", "--json"],
+    check=True, capture_output=True, text=True).stdout)
+```
 
-For exact flags and output, run `docx <command> --help`.
+Tested on every commit: about 1,900 unit tests, a LibreOffice round-trip of every fixture, and schema checks against the ECMA-376 XSDs (`docx validate` runs the same check on any file).
+
+## For IT administrators
+
+- **Data:** fully local, no telemetry. Network access happens only when someone installs or upgrades the program, or passes a web address to `images add`.
+- **Nothing updates in the background.** The binary changes only when someone runs `docx upgrade`, the installer, or the skill's `bootstrap.sh` (which installs `docx` when it's missing and updates one that's behind). Pin a fleet with `DOCX_CLI_VERSION=v0.27.0` in the agent's environment, plus `VERSION=` / `docx upgrade --to` for the install itself.
+- **Air-gapped installs, the network endpoints to allow, Windows and macOS signing, and maintainer risk:** see [SECURITY.md → Deploying in an organization](SECURITY.md#deploying-in-an-organization).
+
+## Learn more
+
+- **`docx --help`** and **`docx <command> --help`:** the authoritative, versioned contract. Agents should start here.
+- **[REFERENCE.md](REFERENCE.md):** every command, the output contract, the locator grammar, common workflows, and how it works under the hood.
+- **[SECURITY.md](SECURITY.md):** install integrity, data handling, deployment, and reporting vulnerabilities.
+- **[CONTRIBUTING.md](CONTRIBUTING.md):** development setup, architecture, the stack, and CI.
+
+## License
+
+MIT. The standalone binaries statically link libheif (LGPL-3.0) for HEIC image support; see [NOTICES](NOTICES) for the attributions and your rights under the LGPL.

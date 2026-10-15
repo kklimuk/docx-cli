@@ -1,0 +1,21 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four must-change terms (§3 Net 90→Net 30, §6 non-compete cut + $50k LD deleted, §8 own-negligence carve-out, §9 mutual cap/waiver) redlined as clean tracked del/ins pairs authored Mercer Design Studio (13 tracked changes, 7 logical)",
+    "10 comments covering every flagged item (IP b/c, §7, §11, §12, §13) plus rationale on each redlined clause",
+    "IP sub-points switched correctly at the numbering definition (abstractNum 2 ilvl 1 lowerLetter→lowerRoman); Word renders (i)-(iv), top-level numbering untouched",
+    "§9 spacing set to line=360 auto (1.5), untracked, visibly opened in render",
+    "No collateral damage: header/footer/table/signature block/pagination preserved; read diff shows only p7/p18/p22/p24 changed"
+  ],
+  "defects": [
+    {"what": "Comments anchor whole clause paragraphs rather than the offending phrase", "severity": "minor", "evidence": "comments list anchors span offset 0 to paragraph end (e.g. c8 p28 0-300)"},
+    {"what": "§3 payment table still reads 'Net 90 after final acceptance', inconsistent with redlined Net 30 (not explicitly requested)", "severity": "minor", "evidence": "t0:r1c2 unchanged in output read.md and page-001.png"},
+    {"what": "Pre-existing duplicate Heading1 styleId (also in baseline) crashes OfficeCLI 'view issues'; not introduced by agent", "severity": "minor", "evidence": "styles.xml has 2x w:styleId=\"Heading1\" in both baseline and output"}
+  ],
+  "notes": "All 5 rubric conditions pass. docx-cli read --ast does not surface list.format for this list in baseline or output (docx-cli reader gap, not an OfficeCLI failure); lowerRoman verified in numbering.xml and Word render. Render 'error' was an OfficeCLI close no-op; Word rendered 3 pages.",
+  "weakAgentStruggle": "Moderate on numbering: OfficeCLI get listing shows abstractNum[N]/lvl[M] but set requires abstractNum[@id=N]/level[L] (0-based) with 'format' not 'numFmt'; listed path failed with misleading not-found. Agent also first tried treating (a)-(d) as literal text. Redlines and comments were smooth."
+}

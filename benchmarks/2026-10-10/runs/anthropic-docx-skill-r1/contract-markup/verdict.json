@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All four unacceptable terms (s.3 payment, s.6 non-compete, s.8 indemnity, s.9 liability) redlined with word-level tracked w:del/w:ins; 23 tracked changes (14 logical)",
+    "Payment schedule table cell also conformed (Net 90 -> Net 30) as a tracked change",
+    "s.9 line spacing set to 1.5 (line=360 auto) as a tracked pPrChange; visibly roomier in render",
+    "9 substantive, anchored comments by Mercer Design Studio covering all five flagged clauses (s.4, s.7, s.11, s.12, s.13) plus the four redlined clauses",
+    "IP sub-points render as (i)-(iv) via lowerRoman on abstractNum 2 level 1; top-level 1.-15. numbering untouched",
+    "Baseline vs output read-view diff shows changes only in the intended paragraphs; header/footer/table/signature block preserved"
+  ],
+  "defects": [
+    {"what": "Comments anchored to whole paragraphs rather than specific phrases", "severity": "minor", "evidence": "docx comments list: every anchor spans offset 0 to paragraph end (e.g. p18 0-674)"},
+    {"what": "Table cell trigger ('Net 30 after final acceptance') is inconsistent with s.3 body ('from the Company's receipt of a correct invoice')", "severity": "minor", "evidence": "output read.md line 28 vs line 22"},
+    {"what": "Comment runs reference rStyle CommentReference, which styles.xml does not define (dangling style ref)", "severity": "minor", "evidence": "grep of styles.xml for styleId Comment* returns nothing; comments.xml has <w:rStyle w:val=\"CommentReference\"/>"},
+    {"what": "comments.xml is pretty-printed with inter-element whitespace (Word tolerates it; docx-cli comments list shows whitespace in text)", "severity": "minor", "evidence": "docx comments list text fields begin with runs of newlines/spaces"}
+  ],
+  "notes": "All 5 rubric conditions pass. docx-cli --ast does not emit list.format for this list; lower-roman was verified from numbering.xml and the Word render instead (docx-cli reader gap, not a competitor failure). Page 4 of the output render is Word's comment-overflow page, not a layout defect.",
+  "weakAgentStruggle": "Heavy: no tracked-change helper in the skill, so the agent wrote its own run-splitting redline script; it misplaced commentRangeStart inside pPrChange and validate.py's error didn't locate it; merge_runs.py failed under python3 -I; two reruns (duplicate arg, wording slip caught on self-check). Correct result, slog path."
+}

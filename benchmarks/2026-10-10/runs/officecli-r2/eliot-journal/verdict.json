@@ -1,0 +1,31 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "Three sections, all landscape A4 (16838x11906, orient=landscape): s0 single-column title page (cols num=1), s1 two-column verse body (cols num=2, equalWidth), s2 single-column colophon; render shows poems flowing side by side on page 2",
+    "Title (Title style, centered), subtitle, italic editor's note, frontispiece image (img0, 3.54x2.76in, with alt text) and italic 'Frontispiece' caption all on page 1",
+    "All four poems present with Heading1 titles (Preludes (I), The Hollow Men, Prufrock excerpt, The Waste Land opening); verse lines preserved as real line breaks, stanza gaps kept",
+    "Two footnotes with substantive editor's annotations (fn1 on 'Michelangelo' in Prufrock, fn2 on The Waste Land's April), rendered at the foot of page 2",
+    "Colophon hyperlink link0 'public domain' -> https://www.gutenberg.org/ebooks/1321, rendered blue/underlined",
+    "Header 'A T. S. Eliot Reader' on every page; centered footer uses real PAGE/NUMPAGES fields and renders 'Page 1 of 3' / 'Page 2 of 3' / 'Page 3 of 3'",
+    "Garamond is the docDefaults face (read shows <!-- docx:base font=\"Garamond\" -->) and the render shows serif in body, Title, Subtitle and headings; theme bindings cleared so Word honors it",
+    "No blank pages, no leftover placeholder/probe paragraphs; everything survives docx read, footnotes/hyperlinks/headers/footers/images list"
+  ],
+  "defects": [
+    {
+      "what": "Footnote reference marks in the body render at baseline ('Michelangelo.1', 'tubers.2') instead of superscript: runs carry rStyle FootnoteReference but styles.xml defines only Normal/Title/Subtitle/Heading1, so the style is dangling",
+      "severity": "minor",
+      "evidence": "page-002.png shows 'Talking of Michelangelo.1' and 'dried tubers.2' at text baseline; grep of word/styles.xml finds no w:styleId=\"FootnoteReference\""
+    },
+    {
+      "what": "Each poem's verse is one paragraph with <w:br/> line breaks rather than one paragraph per verse line; the rubric wording prefers separate paragraphs, though the task's 'each line on its own line' is met visually and in read",
+      "severity": "minor",
+      "evidence": "read.md: whole Preludes stanza block is p7, Hollow Men is p9, etc."
+    }
+  ],
+  "notes": "docx-cli's footers list/read reports the footer as 'Page 1 of 1' (cached field results) rather than {page}/{pages} tokens; the XML holds proper PAGE and NUMPAGES complex fields and Word renders them correctly, so this is a docx-cli reader limitation, not an OfficeCLI defect. Section 1 (verse) has no own header/footer references and inherits from s0 correctly. Agent's self-reported 'partial' was overly cautious; output meets every rubric item.",
+  "weakAgentStruggle": "Moderate slog. The agent hit several silent traps: section breaks inserted via 'add --type section' gave the earlier section portrait size and no columns (needed separate set calls); header/footer 'add' attached only to the final sectPr (fixed with raw-set prepend on the first sectPr); setting style fonts left asciiTheme/hAnsiTheme overriding Garamond (fixed only by an undocumented empty-value set); batch JSON did not decode \\v like --prop (verse rewritten with a real \\u000b); 'Page X of Y' took four add calls; view issues false-flagged verse. It also created and later removed probe paragraphs. Each trap was silent and required OOXML knowledge to detect, which a weaker run could easily miss."
+}

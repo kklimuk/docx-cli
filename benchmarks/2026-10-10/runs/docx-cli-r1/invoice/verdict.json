@@ -1,0 +1,31 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "Every placeholder family replaced with correct values: header (Northwind Robotics, Inc., phone, email, one-line address), invoice #/dates, Bill To/Ship To, all totals ($10,100.00 / -$500.00 / $0.00 / $840.00 / $0.00 / $10,440.00); find for TEMPLATE, DO NOT SEND, 'Item ', 'Description 1', 'Customer name', 'Your ' all return no matches",
+    "Leftover placeholder lines removed: 'Your City, State Zip' line gone, all three 'Description N' sub-lines gone from item cells, no blank paragraphs left in item cells",
+    "Fourth row (Calibration kit / 2 / $300.00 / $600.00) inserted as t2:r4 above the totals block; all six totals rows intact with borders preserved",
+    "Description column widest (grid 3.6in vs 0.5/1.0/1.4/1.292); $10,100.00 and $10,440.00 render on one line",
+    "Header row shading F2F2F2 kept, Price/Amount cells halign=right, repeat-header=r0 now set (tblHeader added)",
+    "Stamp text box rewritten in place: tbx0:p0 reads 'Thank you for your business!', still bold red C00000 centered, box fill/border/position unchanged in render; Choice and Fallback both carry the new text",
+    "Logo swapped to the SVG (img0 now .svg hash); footer PayPal mark (footer rel -> media/image2.png) untouched; exactly two embedded images in use",
+    "Notes body replaced; docx validate passes; read output identical to the harness read view (write-read loop holds)"
+  ],
+  "defects": [
+    {
+      "what": "Logo embedded as an SVG-only blip with no PNG fallback (no asvg:svgBlip extension); Word 365 rendered it, but older Word versions may show a blank/red-X logo",
+      "severity": "minor",
+      "evidence": "word/media contains image1.svg referenced directly by rId6; grep for svgBlip in document.xml finds nothing. Agent itself flagged this friction."
+    },
+    {
+      "what": "Tax label changed from 'Tax total' to 'Tax total (8.75%)' — a defensible reading of the brief, not a template change requested verbatim",
+      "severity": "minor",
+      "evidence": "read.md t2:r8c2:p0 'Tax total (8.75%)' vs baseline 'Tax total'"
+    }
+  ],
+  "notes": "Output is a clean, complete invoice. Shading and right-alignment were already present in the template (no-op requirements, verified satisfied); repeat-header was newly applied. images list reports only body images (1 entry) — footer image verified via footer rels; this is a tool scope limitation, not an output defect.",
+  "weakAgentStruggle": "Mild. Agent finished in one edit batch plus table verbs. Frictions: tables set-widths doesn't accept inch units (hand-converted to twips), $ in insert-row --cells shell-expanded in double quotes, `docx tables --help` exits 1, images list omits header/footer images so the 'two images' check isn't possible from the images noun, and no warning on SVG-only embed."
+}

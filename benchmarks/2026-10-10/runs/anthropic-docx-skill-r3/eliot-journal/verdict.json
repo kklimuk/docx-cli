@@ -1,0 +1,32 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All three sections present: single-column title (s0), two-column body (s1 cols=2), single-column colophon (s2); render shows verse flowing in two columns on page 2",
+    "Landscape on every section (render pages are wide; read shows orientation=landscape)",
+    "Poem titles use Heading2 style (p5, p9, p11, p15) for Preludes (I), The Hollow Men, Prufrock, and the optional Waste Land opening",
+    "Verse line breaks preserved: each line renders on its own line, matching the source",
+    "Frontispiece embedded (img0, 3.75x2.92in, PNG fallback for the SVG, with alt text) and centered with an italic 'Frontispiece' caption",
+    "Three footnotes with non-empty editor's glosses (fn1-fn3), rendered at page foot",
+    "Colophon wording is exact and 'public domain' links to https://www.gutenberg.org/ebooks/1321 (link0)",
+    "Running header 'A T. S. Eliot Reader' on every page; centered footer renders 'Page 1 of 4' ... 'Page 4 of 4' using PAGE/NUMPAGES fields",
+    "Garamond is the document default (docx:base font=Garamond) and headings render in Garamond serif"
+  ],
+  "defects": [
+    {
+      "what": "Verse lines in each stanza are soft line breaks (w:br) inside one paragraph, not one paragraph per line as the rubric's check 4 literally specifies",
+      "severity": "minor",
+      "evidence": "read.md shows each stanza as one paragraph (e.g. p6 holds 12 Preludes lines, p10 holds 10 Hollow Men lines); the lines still render and read as separate lines, so the request's intent is met"
+    },
+    {
+      "what": "Body ends with a mostly empty page 3 (two Waste Land lines plus a note), then the colophon on its own page",
+      "severity": "minor",
+      "evidence": "page-003.png has only about 4 lines of content; this follows from the nextPage colophon section and is natural flow, not a stacked break"
+    }
+  ],
+  "notes": "This is a competitor arm (Anthropic docx skill, docx-js). The docx-cli reader shows the footer as 'Page  of' because docx-js writes fldChar/instrText in the same run as the literal text and docx-cli does not turn that shape into {page}/{pages} tokens. That is a docx-cli reader gap. Word renders 'Page X of Y' correctly, so it does not count against the competitor. The --ast .sections jq path returned nothing, so section structure was taken from the read view's docx:section notes and the render.",
+  "weakAgentStruggle": "Moderate. The agent got there, but SKILL.md gave no recipe for SVG images (it had to find rsvg-convert itself and add a PNG fallback), multi-column sections, footnotes, hyperlinks or PAGE fields, so it wrote them from memory of the docx-js API. validate.py failed under python3 -I ('No module named helpers'). Its first build dropped 'in the' from the colophon, which only a render caught. The output is correct, but the path depended on the agent's own knowledge of the API, not the skill's guidance."
+}

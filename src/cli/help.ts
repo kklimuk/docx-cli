@@ -12,6 +12,15 @@ const TOP_HELP = `docx ${VERSION} — read, edit, and comment on .docx files
 Usage:
   docx <command> [options]
 
+Common tasks (one read, then one batched write — see <command> --help for the JSONL keys):
+  fill a template   replace FILE --batch fills.jsonl       {"pattern":"[Client]","replacement":"Acme"}
+  redline           track-changes on FILE, then replace FILE --batch r.jsonl   (name on changes: $DOCX_AUTHOR)
+  comment           comments add FILE --batch notes.jsonl  {"anchor":"phrase","text":"…"}
+  finalize          track-changes apply FILE --accept rev0 --reject rev1, then
+                    comments reply FILE --batch replies.jsonl  {"at":"c0","text":"Done.","resolve":true}
+  restyle           styles set FILE --at Heading1 --size 14 --bold; sections FILE --margins 0.75
+  new document      create out.docx --from draft.md
+
 Commands (each one-liner names capabilities you'd otherwise miss; see <command> --help):
   create    FILE  Create a new .docx (--from PATH.md | --from - builds from Markdown; --text-file for literal text; --force to overwrite)
   read      FILE  Render as Markdown with pN locators; --from/--to to slice; --comments for comment bodies; --current shows tracked changes inline; --ast for lossless JSON.

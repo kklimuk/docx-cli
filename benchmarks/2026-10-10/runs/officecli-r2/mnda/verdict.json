@@ -1,0 +1,29 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All 7 cover-page placeholders filled with the exact task values, brackets removed (Purpose, Effective Date, MNDA Term 2 year(s), Confidentiality 3 year(s) from Effective Date, Delaware, New Castle County, Delaware, None.)",
+    "Filled cover values kept the original placeholder run formatting (Arial, black, sz 16, single underline); only the highlight changed",
+    "Signature table t2 filled in exactly c1/c3 of r2-r6 for both parties, one paragraph (p0) per cell; label column c0, spacer c2, and signature row r1 untouched; both Date cells filled",
+    "No yellow highlight remains (only w:highlight val=none in document.xml)",
+    "Baseline vs output render identical except the filled values; page 2 (Standard Terms) unchanged; Georgia title, bold labels, gray sub-labels intact",
+    "docx read output matches the render-time read view exactly; docx validate passes"
+  ],
+  "defects": [
+    {
+      "what": "Paragraph-level highlight clear stamped an explicit <w:highlight w:val=\"none\"/> on ~30 runs, including runs that never had highlight (checkbox runs)",
+      "severity": "minor",
+      "evidence": "document.xml contains 30 occurrences of <w:highlight w:val=\"none\"/>; no visual effect in the render"
+    },
+    {
+      "what": "Changes to Standard Terms value 'None.' is not underlined, unlike the other filled values; matches the original placeholder which was also not underlined, so this is fidelity, not drift",
+      "severity": "minor",
+      "evidence": "Baseline read: <mark>[Fill in, if any.]</mark> (no <u>); output: None."
+    }
+  ],
+  "notes": "Strong result. Form-fill complete, highlight removed, fonts preserved. Agent hit an OfficeCLI trap where find/replace across runs adopts the first matched run's rPr (silently dropping underline), and worked around it with regex lookaheads; signature cells needed add --type run.",
+  "weakAgentStruggle": "Moderate. Agent hit the cross-run find/replace formatting-adoption trap (underline loss) and recovered with regex lookahead bracket removal; needed raw XML grep to enumerate highlighted runs because query run[highlight=yellow] was incomplete; get --depth 5 output was ~37 KB of noise; empty signature cells required discovering add --type run. Path was a workable but nontrivial slog."
+}

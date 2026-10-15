@@ -19,8 +19,9 @@ export type TrackedChangeRecord = Omit<TrackedChange, "within"> & {
 	text: string;
 	prior?: SectionProperties | ParagraphPropsSummary;
 	current?: SectionProperties | ParagraphPropsSummary;
-	/** `revN` when this change is one half of a del+ins replace pair; absent for
-	 *  solo changes. `accept/reject --at revN` acts on both halves at once. */
+	/** `revN` when this change is part of a logical replace (a del+ins pair, or
+	 *  every del/ins of a replace spanning several runs); absent for solo changes.
+	 *  `accept/reject --at revN` acts on every member at once. */
 	group?: string;
 };
 
@@ -61,7 +62,8 @@ export function collectTrackedChangeRecords(
 	// edits — comes from the single tracked-change inventory the reader built
 	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
 	// author, date and revisionId are already resolved on each record.
-	for (const change of new TrackChanges(document).list()) {
+	const inventory = new TrackChanges(document).list();
+	for (const change of inventory) {
 		if (byId.has(change.id)) continue;
 		const record: TrackedChangeRecord = {
 			id: change.id,
@@ -101,10 +103,11 @@ export function collectTrackedChangeRecords(
 		(a, b) => trackedChangeIndex(a.id) - trackedChangeIndex(b.id),
 	);
 
-	// Tag the two halves of each del+ins replace with a shared `revN` so an agent
-	// can accept/reject the logical change in ONE call (`accept --at revN`) instead
-	// of the id-renumbering ping-pong of accepting each half separately.
-	const { revOf } = revisionGroups(sorted);
+	// Tag every member of each logical replace with a shared `revN` so an agent can
+	// accept/reject it in ONE call (`accept --at revN`) instead of the
+	// id-renumbering ping-pong of accepting each part separately. Grouped from the
+	// inventory (not these records) because contiguity needs the XML nodes.
+	const { revOf } = revisionGroups(inventory);
 	for (const record of sorted) {
 		const group = revOf.get(record.id);
 		if (group) record.group = group;
@@ -137,13 +140,16 @@ export function renderTrackedChangeTable(
 			if (consumed.has(record.group)) continue;
 			consumed.add(record.group);
 			const members = byGroup.get(record.group) ?? [record];
-			const del = members.find((member) => member.kind === "del");
-			const ins = members.find((member) => member.kind === "ins");
+			const textOf = (kind: string) =>
+				members
+					.filter((member) => member.kind === kind)
+					.map((member) => member.text)
+					.join("");
 			rows.push({
 				handle: record.group,
 				verb: "replace",
 				block: record.blockId,
-				desc: `${quote(del?.text ?? "")} → ${quote(ins?.text ?? "")}`,
+				desc: `${quote(textOf("del"))} → ${quote(textOf("ins"))}`,
 			});
 			continue;
 		}
@@ -170,8 +176,10 @@ export function renderTrackedChangeTable(
 		rows.length === total ? "" : ` (${rows.length} logical)`
 	}:`;
 	const footer =
-		"Address by the leftmost handle: accept/reject --at <handle> (repeatable).\n" +
-		"A revN handle resolves both halves of a replace in one call; --json for full detail.";
+		"Finalize in ONE call (ids renumber between separate calls):\n" +
+		"  docx track-changes apply FILE --accept <handles> --reject <handles>\n" +
+		"Or one decision at a time: accept/reject --at <handle> (repeatable).\n" +
+		"Handles are the leftmost column; a revN covers every part of a replace. --json for full detail.";
 	return `${header}\n\n${body}\n\n${footer}\n`;
 }
 

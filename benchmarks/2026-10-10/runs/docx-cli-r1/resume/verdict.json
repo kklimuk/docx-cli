@@ -1,0 +1,23 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All candidate data filled; no template placeholders, [Note:] text, or Skills & Interests lines remain (find 'Note' -> no matches)",
+    "Experience converted to Heading1; Heading1 style definition restyled once: 13pt, 1F3864, bold, space-before 12pt (styles --at Heading1)",
+    "[drawing] preserved at p4; rule still visible in render",
+    "spacing.after=120 on contact line and all experience/leadership org/title lines",
+    "All four sections have 720-twip margins; single clean page; docx validate passes",
+    "Dates on right tabs at 10800 after a tab run; right-aligned cleanly in render"
+  ],
+  "defects": [
+    {"what": "Leadership heading p28 carries direct space-before=240 rather than inheriting from the style", "severity": "minor", "evidence": "AST p28 spacing {before:240}; read view space-before=\"12pt\" on p28"},
+    {"what": "Harvard Robotics Club line (p29) remains centre-aligned and p20 has a larger left indent (template quirks), so entries are slightly misaligned", "severity": "minor", "evidence": "read.md p29 align=\"center\"; render shows Harvard Robotics Club starting left of other org lines"},
+    {"what": "Leftover blank spacer paragraphs after deletions create uneven vertical gaps", "severity": "minor", "evidence": "AST empty p11/p12/p23/p27/p32-p34; large gap after the Harvard degree line in render"},
+    {"what": "Tab stops changed from left to right by the sections --margins auto-reflow (the intent is satisfied, but the original tab definitions were altered)", "severity": "minor", "evidence": "baseline docx:layout tab=\"left@6.59in\"; output tabStops [{align:right,pos:10800}]"}
+  ],
+  "notes": "Meets every rubric pass condition. The Word render shows three matching navy headings, right-aligned dates, 0.5in margins and the drawing intact on one page.",
+  "weakAgentStruggle": "Mostly smooth: one batched edit and one styles set. The one dead end was that edit --clear rejects space-before, so the agent applied a direct override instead. The agent was surprised that --margins silently reflowed the tabs."
+}

@@ -293,10 +293,14 @@ export async function runReplaceBatch(
 		);
 	}
 
+	// `replaced` is the TOTAL across entries, so the one-line confirmation reports
+	// occurrences ("27 occurrences replaced"), not the number of JSONL entries — an
+	// `"all":true` entry that changed 27 places used to confirm as "1 change".
 	await respondAck({
 		ok: true,
 		operation: "replace",
 		path: outputPath ?? filePath,
+		replaced: results.reduce((total, entry) => total + entry.replaced, 0),
 		batch: results,
 	});
 	return EXIT.OK;

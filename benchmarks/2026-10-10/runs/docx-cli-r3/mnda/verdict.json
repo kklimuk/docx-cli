@@ -1,0 +1,24 @@
+{
+  "taskSuccess": "success",
+  "rendersCorrectly": true,
+  "layoutSound": true,
+  "formattingPreserved": "preserved",
+  "survivedReadLoop": true,
+  "merits": [
+    "All eight cover-page placeholders filled with the exact task values (Purpose, June 8, 2026, 2 year(s), 3 year(s) from Effective Date, Delaware, New Castle County, Delaware, None.); no bracket placeholders remain (only the original [ x ]/[    ] checkboxes)",
+    "Highlight fully removed: `find --highlight any` returns no matches and word/document.xml contains zero <w:highlight> elements",
+    "All ten signature cells (t2 r2-r6, c1 and c3) filled with correct party values, each a single p0; label column c0, spacer c2 and signature row r1 untouched",
+    "Font fidelity: filled cover runs keep Arial 8pt color 000000; Georgia title, bold 9pt labels, 7pt gray #8C8D8E sub-labels and page 2 unchanged; styles.xml differs only in XML declaration newline, theme1.xml byte-identical",
+    "Fresh `docx read` output is identical to the rendered read.md; `docx validate` reports valid (11 parts)",
+    "Agent used two batched `edit --batch` calls with --clear highlight plus bare-cell form-fill, dry-ran before applying, and self-verified with find/diff/validate"
+  ],
+  "defects": [
+    {
+      "what": "Placeholder underline dropped on the filled values (baseline placeholders were underlined + highlighted; filled values render plain). Task said only values and highlight should change, though the underline is arguably part of the blank styling.",
+      "severity": "minor",
+      "evidence": "Baseline read.md: <mark>[<u>1 year(s)</u>]</mark>; output read.md: '2 year(s)' with no <u>; visible in page-001 renders"
+    }
+  ],
+  "notes": "Signature fills render at 9pt Arial (matching the 9pt labels in the same rows) rather than the 8pt body base; the cells were empty so there is no untouched-text drift. Visually consistent with the row labels.",
+  "weakAgentStruggle": "Smooth: two batch edits, dry-run first, no failed commands beyond one wrong relative binary path. Reported frictions: silent underline loss on span replacement, no visibility into the font size a bare-cell fill inherits, and batch confirmations that don't list locators."
+}
