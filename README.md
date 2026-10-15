@@ -93,9 +93,9 @@ The skill is thin on purpose: it teaches the workflows, then defers to `docx <co
 
 ## How it benchmarks
 
-**In short:** on our six-task benchmark, docx-cli got the same results as Anthropic's docx skill (the skill Claude uses for Word files) in 27% less time, with 22% fewer input tokens and 41% fewer output tokens. Compared to OfficeCLI, it was roughly 2x faster at half of the tokens, while finishing every task that OfficeCLI got wrong.
+**In short:** on our six-task benchmark, docx-cli got the same results as Anthropic's docx skill (the skill Claude uses for Word files) in 27% less time, with 22% fewer input tokens and 41% fewer output tokens using Haiku 5.5. Compared to OfficeCLI, it was roughly 2x faster at half of the tokens, while finishing every task that OfficeCLI got wrong.
 
-|                               | **docx-cli 0.27.0** | Anthropic docx skill | OfficeCLI 1.0.156 |
+| Haiku 5.5                     | **docx-cli 0.27.0** | Anthropic docx skill | OfficeCLI 1.0.156 |
 | :---------------------------- | ------------------: | -------------------: | ----------------: |
 | Tasks solved (of 6)           |             **6.0** |                  6.0 |               4.7 |
 | Every run solved (all 3)      |             **6/6** |                  6/6 |               4/6 |
