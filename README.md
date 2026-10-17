@@ -9,25 +9,34 @@
 
 [![Watch: Claude filling out and redlining an NDA](https://cdn.loom.com/sessions/thumbnails/da70269a970f42caa138fb3389b4b9cc-f477402396d4154d-full-play.gif#t=0.1)](https://www.loom.com/share/da70269a970f42caa138fb3389b4b9cc)
 
-- **One tool for the whole document.** Your agent can:
-  - read a .docx as Markdown;
-  - rewrite or insert text;
-  - fill templates;
-  - edit tables;
-  - restyle headings, fonts, spacing and margins;
-  - set headers, footers and page numbers;
-  - add footnotes, images, links, lists and equations;
-  - build a new document from Markdown.
-- **Nothing gets lost.** The agent edits the document in place instead of regenerating it, so custom styles, numbering, theme colors, text boxes and embedded objects survive, and new text matches the formatting around it.
-- **Review like a colleague.** When you want a say, the agent's edits arrive as real Word tracked changes signed with the name you choose, with margin comments anchored to the exact clause. It can also finalize a returned redline: accept some changes, reject others, reply to comments, and resolve them.
-- **Local and private.** Everything runs on your machine. No document content is sent anywhere, and there is no telemetry.
-- **Any agent, MIT-licensed.** Works with Claude Code, Codex, Pi, and anything else that reads the open [Agent Skills](https://agentskills.io) format, or call it as a plain command from your own code.
+- **Let your agents cheaply work at a fraction of the cost and time of most skills.** Official skills force agents to unpack and self-manage OOXML that composes Word documents, which means that basic operations can be quite expensive on tokens and time. CLIs like OfficeCLi often force them to compose smaller operations with JSON they often struggle to understand in context. `docx-cli` makes the work familiar by standardizing most operations as creating, updating, deleting, or replacing Markdown.
+- **Use less-capable models.** docx-cli is tuned to work even if the model is weak (like Haiku, Luna, or even Qwen 3.5 9B). It decreases context use by using a Markdown that survives multiple rounds of insertions and updates instead of JSON. It also saves on context by avoiding reading images of the documents by including as much visual context as annotations. It self-documents by providing clear help text with examples, but also providing actionable hints when something goes wrong. 
+- **Built from the ground up for review workflows.** It's built to handle change tracking, accept/reject changes, and handle interactions from multiple reviewers.
+- **Works with any harness.** Works with Claude Code, Codex, Pi, and anything else that reads the open [Agent Skills](https://agentskills.io) format.
 
-**Who it's for:** people whose AI agent can work with files on their computer: Claude Code, Codex, Pi, and similar tools. In the Claude desktop app, that means Claude Code (the Code tab), not a regular chat. If you only chat with Claude, on claude.ai or in the app, use Claude's built-in Word support (Anthropic's docx skill) instead; docx-cli can't run there.
+## How it benchmarks
 
-## Set it up: paste one message into your agent
+**In short:** on our six-task benchmark, docx-cli got the same results as Anthropic's docx skill (the skill Claude uses for Word files) in 27% less time, with 22% fewer input tokens and 41% fewer output tokens using Haiku 5.5. Compared to OfficeCLI, it was roughly 2x faster at half of the tokens, while finishing every task that OfficeCLI got wrong.
 
-You don't run these steps yourself. Your agent reads them and does them, including checking that the download is genuine.
+| Haiku 5.5                     | **docx-cli 0.27.0** | Anthropic docx skill | OfficeCLI 1.0.156 |
+| :---------------------------- | ------------------: | -------------------: | ----------------: |
+| Tasks solved (of 6)           |             **6.0** |                  6.0 |               4.7 |
+| Every run solved (all 3)      |             **6/6** |                  6/6 |               4/6 |
+| Input tokens (cache-weighted) |            **902k** |         1.15M (+27%) |     1.92M (+113%) |
+| Output tokens                 |             **32k** |           54k (+70%) |        63k (+97%) |
+| Wall-clock, all 6 tasks       |           **914 s** |       1,254 s (+37%) |   1,834 s (+101%) |
+| Tool calls                    |              **98** |           124 (+26%) |        165 (+69%) |
+
+- **Editing existing documents is where docx-cli saves.** On the five editing tasks it used about 30% fewer input tokens and 35% less time than Anthropic's skill.
+- **On the two contract tasks, all three tools passed every run.** There the difference is cost and speed, not correctness.
+- **OfficeCLI's four misses** were the résumé every time (after the margin change, every date line wrapped, some mid-word, e.g. "Cambrid / ge, MA") and one invoice (the old notes line was left in place). That résumé wrap is a trap docx-cli specifically repairs, so read "fewer misses" with that in mind.
+- **Every output from every tool opened in Word.**
+
+**What to know about this benchmark.** We wrote docx-cli, the six tasks, and the grading rubrics, and these tasks are also the regression suite docx-cli is developed against. It's three runs per tool on one model. The judge knew which tool produced each result; competitor runs carried an instruction to grade the rendered pages and not penalize a different internal approach. Competitors were pinned (Anthropic skill at `anthropics/skills@dbd4588`, OfficeCLI 1.0.156 by SHA-256). On older models the correctness gap was large (Haiku 4.5, July 2026: 5.0/6 vs 0.7/6 for the default skill); on current models it has closed. Per-task numbers, every caveat, and how to reproduce: [benchmarks/2026-10-10](benchmarks/2026-10-10/).
+
+## Agent Setup
+
+Paste this messages into your agent of choice:
 
 ```text
 Set up docx-cli (https://github.com/kklimuk/docx-cli) so you can edit Word documents for me.
@@ -50,15 +59,8 @@ Set up docx-cli (https://github.com/kklimuk/docx-cli) so you can edit Word docum
 Note: the npm package is `bun-docx`. The npm packages named `docx` and `docx-cli` are unrelated.
 ```
 
-Then ask for real work, for example:
-
-- _"Fill in this NDA for Acme, Inc. with today's date and California law."_
-- _"Update the Q3 table in report.docx with these numbers and add a footnote citing the source."_
-- _"Make my résumé's headings consistent, tighten the margins, and keep it to one page."_
-- _"Review contract.docx as Acme's counsel: redline the payment terms to Net 30 and comment on anything one-sided."_
-
 <details>
-<summary><b>Or install the skill yourself</b></summary>
+<summary><h2>Or install the skill yourself</h2></summary>
 
 **Any agent ([skills.sh](https://skills.sh)):**
 
@@ -90,26 +92,6 @@ pi install git:github.com/kklimuk/docx-cli      # global; add -l for a project (
 The skill is thin on purpose: it teaches the workflows, then defers to `docx <command> --help`, which ships with the program, so it can't go stale. `docx info skill` prints the canonical `SKILL.md` for the installed version.
 
 </details>
-
-## How it benchmarks
-
-**In short:** on our six-task benchmark, docx-cli got the same results as Anthropic's docx skill (the skill Claude uses for Word files) in 27% less time, with 22% fewer input tokens and 41% fewer output tokens using Haiku 5.5. Compared to OfficeCLI, it was roughly 2x faster at half of the tokens, while finishing every task that OfficeCLI got wrong.
-
-| Haiku 5.5                     | **docx-cli 0.27.0** | Anthropic docx skill | OfficeCLI 1.0.156 |
-| :---------------------------- | ------------------: | -------------------: | ----------------: |
-| Tasks solved (of 6)           |             **6.0** |                  6.0 |               4.7 |
-| Every run solved (all 3)      |             **6/6** |                  6/6 |               4/6 |
-| Input tokens (cache-weighted) |            **902k** |         1.15M (+27%) |     1.92M (+113%) |
-| Output tokens                 |             **32k** |           54k (+70%) |        63k (+97%) |
-| Wall-clock, all 6 tasks       |           **914 s** |       1,254 s (+37%) |   1,834 s (+101%) |
-| Tool calls                    |              **98** |           124 (+26%) |        165 (+69%) |
-
-- **Editing existing documents is where docx-cli saves.** On the five editing tasks it used about 30% fewer input tokens and 35% less time than Anthropic's skill.
-- **On the two contract tasks, all three tools passed every run.** There the difference is cost and speed, not correctness.
-- **OfficeCLI's four misses** were the résumé every time (after the margin change, every date line wrapped, some mid-word, e.g. "Cambrid / ge, MA") and one invoice (the old notes line was left in place). That résumé wrap is a trap docx-cli specifically repairs, so read "fewer misses" with that in mind.
-- **Every output from every tool opened in Word.**
-
-**What to know about this benchmark.** We wrote docx-cli, the six tasks, and the grading rubrics, and these tasks are also the regression suite docx-cli is developed against. It's three runs per tool on one model. The judge knew which tool produced each result; competitor runs carried an instruction to grade the rendered pages and not penalize a different internal approach. Competitors were pinned (Anthropic skill at `anthropics/skills@dbd4588`, OfficeCLI 1.0.156 by SHA-256). On older models the correctness gap was large (Haiku 4.5, July 2026: 5.0/6 vs 0.7/6 for the default skill); on current models it has closed. Per-task numbers, every caveat, and how to reproduce: [benchmarks/2026-10-10](benchmarks/2026-10-10/).
 
 ## Why docx-cli instead of something else?
 
