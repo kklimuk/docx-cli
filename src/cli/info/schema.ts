@@ -321,6 +321,7 @@ const JSON_SCHEMA = {
 				borders: { type: "string" },
 				style: { type: "string" },
 				align: { enum: ["left", "center", "right"] },
+				cellMargins: { $ref: "#/$defs/CellMargins" },
 				rawXml: { const: true },
 				contentControl: { $ref: "#/$defs/ContentControl" },
 				rows: {
@@ -343,6 +344,7 @@ const JSON_SCHEMA = {
 										shading: { type: "string" },
 										vAlign: { enum: ["top", "center", "bottom"] },
 										borders: { type: "string" },
+										margins: { $ref: "#/$defs/CellMargins" },
 										trackedChange: {
 											$ref: "#/$defs/TableRevision",
 											description: "cellIns / cellDel (tracked column change)",
@@ -386,6 +388,16 @@ const JSON_SCHEMA = {
 			properties: {
 				value: { type: "number" },
 				unit: { enum: ["dxa", "pct", "auto", "nil"] },
+			},
+		},
+		CellMargins: {
+			type: "object",
+			description: "Cell padding per side in twips; an absent side inherits",
+			properties: {
+				top: { type: "number" },
+				right: { type: "number" },
+				bottom: { type: "number" },
+				left: { type: "number" },
 			},
 		},
 		ContentControl: {

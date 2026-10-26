@@ -296,7 +296,10 @@ docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
 docx tables format        FILE --at LOCATOR [--shade HEX|NAME] [--valign top|center|bottom]
                           [--halign left|center|right|justify] [--cell-borders SIDES]
+                          [--cell-margins M|T,R,B,L|none]
                           [--align left|center|right] [--style ID] [--row-height M] [--repeat-header]
+                          # --cell-margins with --at tN sets the TABLE default cell margins
+                          # (<w:tblCellMar>); a row/column/cell/range sets those cells' own.
 
 docx lists set            FILE --at pN [--start N] [--format FMT] [--restart] [--continue]
                           # renumber a NUMBERED list (--at = any item; applies to the whole list).

@@ -3,11 +3,12 @@
 `docx tables <verb>` reshapes or formats an existing table: `insert-row` /
 `delete-row` / `insert-column` / `delete-column` / `set-widths` / `merge` /
 `unmerge` / `borders` (restructure), plus `format` (cell/row/table-level
-formatting — shading, vertical/horizontal alignment, per-cell borders, row
-height, repeat-header, table alignment, table style). There is no `list` verb —
-`docx read --ast` already returns the full table structure (grid widths,
-`gridSpan`, `vMerge`, `vAlign`, `shading`, cell `borders`, row `height`/
-`repeatHeader`, table `align`/`style`, and tracked-change markers).
+formatting — shading, vertical/horizontal alignment, per-cell borders, cell
+margins, row height, repeat-header, table alignment, table style). There is no
+`list` verb — `docx read --ast` already returns the full table structure (grid
+widths, `gridSpan`, `vMerge`, `vAlign`, `shading`, cell `borders`/`margins`, row
+`height`/`repeatHeader`, table `align`/`style`/`cellMargins`, and tracked-change
+markers).
 
 ## `format` is locator-scoped, not flag-scoped
 
@@ -18,6 +19,13 @@ EVERY cell the locator covers — a cell, a `rRcC-rRcC` range, a `cC` column, a
 writes per-cell `<w:shd>` (table-level `<w:shd>` isn't read back; per-cell is, via
 `docx:cell shading`). `--align`/`--style` need `--at tN` (whole table);
 `--row-height`/`--repeat-header` need a row (`--at tN:rR`) or `--at tN` (all rows).
+`--cell-margins` is the one flag whose XML depends on the scope: `--at tN` writes
+the table DEFAULT `<w:tblPr><w:tblCellMar>` (Word's "Default cell margins" — rows
+`insert-row` adds later are covered, and it's the slot real templates use), while
+any narrower locator broadcasts a per-cell `<w:tcMar>` like the other cell props.
+So the table form is untracked + audit comment (like `--align`), the cell form a
+real `<w:tcPrChange>`. A table default does NOT clear cells' own `<w:tcMar>`
+(Word doesn't either).
 The cell set is the merge-aware grid's PHYSICAL cells, deduped by node — a
 `gridSpan` cell covered by a range/column is touched once. `--halign` is a
 PARAGRAPH property (`<w:pPr><w:jc>`), so it fans `Edit.paragraphProperties` over

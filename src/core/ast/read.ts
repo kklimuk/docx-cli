@@ -20,6 +20,7 @@ import { decodeSym } from "./sym";
 import type {
 	Block,
 	BreakRun,
+	CellMargins,
 	ChartRun,
 	CommentAnchor,
 	ContentControl,
@@ -1264,6 +1265,9 @@ function readTable(
 	const borders = readTableBorders(node);
 	const style = readTableStyle(node);
 	const align = readTableAlign(node);
+	const cellMargins = readCellMargins(
+		node.findChild("w:tblPr")?.findChild("w:tblCellMar"),
+	);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
 	// both before the rows), so tcN ids land in document order.
 	readTablePropertyRevision(document, node, id, state);
@@ -1312,7 +1316,36 @@ function readTable(
 	if (borders) table.borders = borders;
 	if (style) table.style = style;
 	if (align) table.align = align;
+	if (cellMargins) table.cellMargins = cellMargins;
 	return table;
+}
+
+/** Cell padding from a `<w:tblCellMar>`/`<w:tcMar>` element, in twips. Reads the
+ * transitional `left`/`right` and the strict `start`/`end` alike; `nil` is 0 and
+ * a percentage side (not meaningful for padding) is skipped. Undefined when the
+ * element is absent or declares no readable side. */
+function readCellMargins(node: XmlNode | undefined): CellMargins | undefined {
+	if (!node) return undefined;
+	const margins: CellMargins = {};
+	const sides = [
+		["top", "w:top"],
+		["left", "w:left"],
+		["left", "w:start"],
+		["bottom", "w:bottom"],
+		["right", "w:right"],
+		["right", "w:end"],
+	] as const;
+	for (const [side, tag] of sides) {
+		if (margins[side] !== undefined) continue;
+		const edge = node.findChild(tag);
+		if (!edge) continue;
+		const type = edge.getAttribute("w:type") ?? "dxa";
+		if (type === "nil") margins[side] = 0;
+		if (type !== "dxa") continue;
+		const value = Number(edge.getAttribute("w:w"));
+		if (Number.isFinite(value)) margins[side] = value;
+	}
+	return Object.keys(margins).length > 0 ? margins : undefined;
 }
 
 /** The table's on-page justification from `<w:tblPr><w:jc w:val="…"/>`
@@ -1610,6 +1643,8 @@ function readTableCell(
 	}
 	const cellBorders = readCellBorders(tcPr);
 	if (cellBorders) cell.borders = cellBorders;
+	const margins = readCellMargins(tcPr.findChild("w:tcMar"));
+	if (margins) cell.margins = margins;
 	return cell;
 }
 

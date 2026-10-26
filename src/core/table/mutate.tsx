@@ -1,4 +1,4 @@
-import type { TableWidth } from "../ast/types";
+import type { CellMargins, TableWidth } from "../ast/types";
 import { isInheritableRunProperty, Paragraph } from "../blocks";
 import { w } from "../jsx";
 import { XmlNode } from "../parser";
@@ -238,6 +238,52 @@ export type CellBorderSide =
 	| "right"
 	| "insideH"
 	| "insideV";
+
+/** Set or clear a cell's own padding via `<w:tcPr><w:tcMar>` (overrides the
+ * table default). `null` removes the element. */
+export function setCellMargins(
+	cell: XmlNode,
+	margins: CellMargins | null,
+): void {
+	const tcPr = ensureTcPr(cell);
+	setTcPrChild(
+		tcPr,
+		"w:tcMar",
+		margins ? marginsElement("w:tcMar", margins) : null,
+	);
+	pruneEmptyTcPr(cell, tcPr);
+}
+
+/** Set or clear the table's default cell padding via `<w:tblPr><w:tblCellMar>`
+ * (Word's Table Properties → Options → Default cell margins). `null` removes it. */
+export function setTableCellMargins(
+	table: XmlNode,
+	margins: CellMargins | null,
+): void {
+	setTablePropertiesChild(
+		table,
+		"w:tblCellMar",
+		margins ? marginsElement("w:tblCellMar", margins) : null,
+	);
+}
+
+/** `<w:tblCellMar>`/`<w:tcMar>` with the given sides in twips, in CT_TblCellMar /
+ * CT_TcMar order (top, left, bottom, right — the transitional `left`/`right`
+ * names Word itself writes, not the strict `start`/`end`). */
+function marginsElement(tag: string, margins: CellMargins): XmlNode {
+	const node = XmlNode.element(tag, {});
+	for (const side of ["top", "left", "bottom", "right"] as const) {
+		const twips = margins[side];
+		if (twips === undefined) continue;
+		node.children.push(
+			XmlNode.element(`w:${side}`, {
+				"w:w": String(twips),
+				"w:type": "dxa",
+			}),
+		);
+	}
+	return node;
+}
 
 /** Mark a whole row as a tracked insertion/deletion via `<w:trPr><w:ins/>` or
  * `<w:del/>` (ECMA-376 §17.13.5.18 / §17.13.5.13). */

@@ -1,6 +1,7 @@
 import {
 	type Block,
 	type Body,
+	type CellMargins,
 	type Comment,
 	type ContentControl,
 	type Footnote,
@@ -2041,6 +2042,8 @@ function formatTableNote(table: Table): string {
 	}
 	if (table.align && table.align !== "left") pairs.push(["align", table.align]);
 	if (table.style) pairs.push(["style", table.style]);
+	if (table.cellMargins)
+		pairs.push(["cell-margins", formatCellMargins(table.cellMargins)]);
 	// Rows have no GFM comment slot, so their formatting facts ride the table note,
 	// keyed by row index (`r0`) so an agent can re-target with `--at tN:rR`.
 	const repeatHeaderRows = table.rows
@@ -2059,6 +2062,19 @@ function formatTableNote(table: Table): string {
 	if (pairs.length === 0 && !table.rawXml) return "";
 	const bareTokens = table.rawXml ? [table.id, "raw"] : [table.id];
 	return formatNote("table", pairs, bareTokens);
+}
+
+/** Cell padding in points, shaped like the `--cell-margins` flag so an agent can
+ * re-apply it verbatim: one value when all four sides agree (`0.75pt`), else
+ * top,right,bottom,left (`0pt,5.4pt,0pt,5.4pt`). A side the XML omits inherits
+ * the default, shown as `-` (`-,5.4pt,-,5.4pt`). */
+function formatCellMargins(margins: CellMargins): string {
+	const sides = [margins.top, margins.right, margins.bottom, margins.left].map(
+		(twips) => (twips === undefined ? "-" : twipsToPoints(twips)),
+	);
+	return sides.every((side) => side === sides[0])
+		? (sides[0] as string)
+		: sides.join(",");
 }
 
 /** A row height as an inches measure for the `docx:table row-heights` hint,
@@ -2225,6 +2241,7 @@ function cellNote(cell: TableCell): string {
 	// vAlign/borders read deviation-only (top + no-borders suppressed at read).
 	if (cell.vAlign) pairs.push(["vAlign", cell.vAlign]);
 	if (cell.borders) pairs.push(["borders", cell.borders]);
+	if (cell.margins) pairs.push(["margins", formatCellMargins(cell.margins)]);
 	// Horizontal alignment is a paragraph property, but a GFM cell can't show it
 	// per-cell, so surface a UNIFORM non-default cell alignment here (the inverse
 	// of `tables format --halign`). Cell paragraphs otherwise carry only a bare

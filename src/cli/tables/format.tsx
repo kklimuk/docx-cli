@@ -1,4 +1,4 @@
-import { type Document, Edit, TrackChanges } from "@core";
+import { type CellMargins, type Document, Edit, TrackChanges } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
 import {
 	parseCellAt,
@@ -19,10 +19,12 @@ import {
 	type GridRow,
 	resolveTableNode,
 	setCellBorders,
+	setCellMargins,
 	setCellShading,
 	setCellVAlign,
 	setRepeatHeader,
 	setRowHeight,
+	setTableCellMargins,
 	setTableJustification,
 	setTableStyle,
 } from "@core/table";
@@ -53,6 +55,7 @@ Examples:
   docx tables format invoice.docx --at t0:r1c0-r3c2 --cell-borders bottom
   docx tables format invoice.docx --at t0 --align center --style LightGrid
   docx tables format invoice.docx --at t0:r0 --repeat-header --row-height 0.4in
+  docx tables format invoice.docx --at t0 --cell-margins 0,5.4pt,0,5.4pt
 
 The --at locator picks WHAT to format; its granularity picks which options apply.
   --at t0            whole table
@@ -70,6 +73,13 @@ Cell options (any locator — broadcast to every cell it covers):
   --border-style single|double|none   (default: single)
   --border-size EIGHTHS   Thickness in eighths of a point (default: 4 = 0.5pt)
   --border-color HEX|NAME (default: auto)
+  --cell-margins M|T,R,B,L|none
+                          Padding inside the cell, units required (2pt, 0.05in;
+                          0 is allowed): one value for every side or four for
+                          top,right,bottom,left. With --at tN this sets the
+                          TABLE's default cell margins (rows added later get it
+                          too); a row/column/cell/range sets those cells' own
+                          margins. none clears it back to the default.
 
 Row options (--at t0:rR, or --at t0 for every row):
   --row-height MEASURE    a unit is required: 0.4in or 28pt (a bare number is rejected)
@@ -86,9 +96,9 @@ Common:
   --track         Record as a tracked change even if the doc toggle is off
   -o, --output PATH / --dry-run / -v, --verbose / -h, --help
 
-Tracking: cell shading/valign/borders and --halign record as real tracked
-changes (Word can accept/reject them). Table align/style and row height/
-repeat-header can't be tracked, so under tracking they apply in place with a
+Tracking: cell shading/valign/borders/margins and --halign record as real
+tracked changes (Word can accept/reject them). Table align/style/default cell
+margins and row height/repeat-header can't be tracked, so under tracking they apply in place with a
 [docx-cli] audit comment (same policy as tables borders).
 
 Output:
@@ -109,6 +119,7 @@ export async function run(args: string[]): Promise<number> {
 			"border-style": { type: "string" },
 			"border-size": { type: "string" },
 			"border-color": { type: "string" },
+			"cell-margins": { type: "string" },
 			align: { type: "string" },
 			style: { type: "string" },
 			"row-height": { type: "string" },
@@ -142,12 +153,12 @@ export async function run(args: string[]): Promise<number> {
 		);
 	}
 
-	const plan = buildPlan(parsed.values);
+	const plan = buildPlan(parsed.values, scope.kind === "table");
 	if (typeof plan === "string") return fail("USAGE", plan);
 	if (planIsEmpty(plan)) {
 		return fail(
 			"USAGE",
-			"Nothing to format — pass at least one of --shade/--valign/--halign/--cell-borders/--align/--style/--row-height/--repeat-header",
+			"Nothing to format — pass at least one of --shade/--valign/--halign/--cell-borders/--cell-margins/--align/--style/--row-height/--repeat-header",
 		);
 	}
 
@@ -258,13 +269,18 @@ type FormatPlan = {
 		updates: { side: CellBorderSide; edge: BorderEdge | null }[];
 		clearAll: boolean;
 	};
+	cellMargins?: CellMargins | null;
 	align?: "left" | "center" | "right" | null;
 	style?: string | null;
+	tableCellMargins?: CellMargins | null;
 	rowHeight?: { value: number; rule: "atLeast" | "exact" | "auto" } | null;
 	repeatHeader?: boolean;
 };
 
-function buildPlan(values: Record<string, unknown>): FormatPlan | string {
+function buildPlan(
+	values: Record<string, unknown>,
+	wholeTable: boolean,
+): FormatPlan | string {
 	const plan: FormatPlan = {};
 
 	const shade = values.shade as string | undefined;
@@ -297,6 +313,16 @@ function buildPlan(values: Record<string, unknown>): FormatPlan | string {
 		plan.cellBorders = built;
 	}
 
+	const cellMargins = values["cell-margins"] as string | undefined;
+	if (cellMargins !== undefined) {
+		const margins = parseCellMargins(cellMargins);
+		if (typeof margins === "string") return margins;
+		// The whole table → its default (`<w:tblCellMar>`), which rows inserted
+		// later inherit; anything narrower → those cells' own `<w:tcMar>`.
+		if (wholeTable) plan.tableCellMargins = margins;
+		else plan.cellMargins = margins;
+	}
+
 	const align = values.align as string | undefined;
 	if (align !== undefined) {
 		if (!TABLE_ALIGNS.has(align))
@@ -317,7 +343,7 @@ function buildPlan(values: Record<string, unknown>): FormatPlan | string {
 		return "--height-rule has no effect without --row-height";
 	if (rowHeight !== undefined) {
 		const twips = parseMeasureToTwips(rowHeight);
-		if (twips === null)
+		if (twips === null || twips === 0)
 			return `--row-height must be a positive measure WITH a unit, e.g. 0.4in or 28pt (got ${rowHeight})`;
 		plan.rowHeight = {
 			value: twips,
@@ -426,7 +452,8 @@ function applyCellProps(
 	if (
 		plan.shade === undefined &&
 		plan.valign === undefined &&
-		plan.cellBorders === undefined
+		plan.cellBorders === undefined &&
+		plan.cellMargins === undefined
 	)
 		return;
 	for (const cell of cells) {
@@ -443,6 +470,8 @@ function applyCellProps(
 				plan.cellBorders.updates,
 				plan.cellBorders.clearAll,
 			);
+		if (plan.cellMargins !== undefined)
+			setCellMargins(cell.node, plan.cellMargins);
 		if (tracking)
 			appendTcPrChange(
 				cell.node,
@@ -477,6 +506,8 @@ function applyHalign(
 function applyTableProps(tableNode: XmlNode, plan: FormatPlan): void {
 	if (plan.align !== undefined) setTableJustification(tableNode, plan.align);
 	if (plan.style !== undefined) setTableStyle(tableNode, plan.style);
+	if (plan.tableCellMargins !== undefined)
+		setTableCellMargins(tableNode, plan.tableCellMargins);
 }
 
 function applyRowProps(rows: GridRow[], plan: FormatPlan): void {
@@ -509,7 +540,8 @@ function validateTargets(
 		plan.shade !== undefined ||
 		plan.valign !== undefined ||
 		plan.halign !== undefined ||
-		plan.cellBorders !== undefined;
+		plan.cellBorders !== undefined ||
+		plan.cellMargins !== undefined;
 	if (hasCellFlag && cells.length === 0)
 		return `No cells matched ${describeScope(scope)}`;
 	const hasRowFlag =
@@ -535,6 +567,8 @@ function appliedList(plan: FormatPlan): string[] {
 	if (plan.valign !== undefined) out.push("valign");
 	if (plan.halign !== undefined) out.push("halign");
 	if (plan.cellBorders !== undefined) out.push("cell-borders");
+	if (plan.cellMargins !== undefined || plan.tableCellMargins !== undefined)
+		out.push("cell-margins");
 	if (plan.align !== undefined) out.push("align");
 	if (plan.style !== undefined) out.push("style");
 	if (plan.rowHeight !== undefined) out.push("row-height");
@@ -551,6 +585,12 @@ function untrackedSummary(plan: FormatPlan): string {
 	if (plan.style !== undefined)
 		parts.push(
 			plan.style ? `table style ${plan.style}` : "table style cleared",
+		);
+	if (plan.tableCellMargins !== undefined)
+		parts.push(
+			plan.tableCellMargins
+				? "table default cell margins"
+				: "table default cell margins cleared",
 		);
 	if (plan.rowHeight !== undefined) parts.push("row height set");
 	if (plan.repeatHeader !== undefined)
@@ -585,14 +625,31 @@ function colorError(flag: string, value: string): string {
 		.join(", ")}, …) — got ${value}`;
 }
 
+/** Parse `--cell-margins`: `none`/`auto` clears (null); otherwise one measure
+ * for every side or four in CSS order (top,right,bottom,left), the shape the
+ * `docx:table cell-margins` / `docx:cell margins` read notes print. */
+function parseCellMargins(raw: string): CellMargins | null | string {
+	if (isClear(raw)) return null;
+	const twips = raw.split(",").map(parseMeasureToTwips);
+	if ((twips.length !== 1 && twips.length !== 4) || twips.includes(null))
+		return `--cell-margins must be one measure WITH a unit (e.g. 2pt or 0.05in) or four comma-separated top,right,bottom,left (e.g. 0,5.4pt,0,5.4pt), or none — got ${raw}`;
+	const [top, right, bottom, left] = (
+		twips.length === 1 ? [twips[0], twips[0], twips[0], twips[0]] : twips
+	) as number[];
+	return { top, right, bottom, left };
+}
+
 /** Parse `0.4in` / `28pt` to twips. The unit is REQUIRED — a bare number is
  * rejected rather than guessed, so `--row-height 28` can't silently become a
- * 28-INCH row (the footgun a defaulted unit invites). Positive only. */
+ * 28-INCH row (the footgun a defaulted unit invites). A bare `0` is the one
+ * exception (zero in any unit). Never negative; callers that need a positive
+ * size reject 0 themselves. */
 function parseMeasureToTwips(raw: string): number | null {
+	if (/^0*\.?0+$/.test(raw.trim())) return 0;
 	const match = raw.trim().match(/^(\d*\.?\d+)\s*(in|pt)$/i);
 	if (!match) return null;
 	const value = Number.parseFloat(match[1] as string);
-	if (!Number.isFinite(value) || value <= 0) return null;
+	if (!Number.isFinite(value)) return null;
 	const unit = (match[2] as string).toLowerCase();
 	return Math.round(unit === "pt" ? value * 20 : value * 1440);
 }

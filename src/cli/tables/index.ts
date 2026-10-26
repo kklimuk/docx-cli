@@ -33,7 +33,8 @@ Verbs:
   borders         Set table borders (--at tN [--style] [--size] [--color])
   format          Shade/align/border/size cells, rows, or the table
                   (--at LOCATOR [--shade] [--valign] [--halign] [--cell-borders]
-                   [--align] [--style] [--row-height] [--repeat-header])
+                   [--cell-margins] [--align] [--style] [--row-height]
+                   [--repeat-header])
 
 "create" mints a fresh table; the other verbs restructure an existing one. The
 rest of the table lifecycle uses the standard verbs:

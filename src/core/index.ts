@@ -25,6 +25,7 @@ export { PkgError } from "./ast/document/package";
 export type {
 	Block,
 	BreakRun,
+	CellMargins,
 	ChartRun,
 	Comment,
 	CommentAnchor,

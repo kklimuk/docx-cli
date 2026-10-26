@@ -1286,6 +1286,130 @@ describe("docx tables format", () => {
 			comments.some((comment) => comment.text.includes("[docx-cli]")),
 		).toBe(true);
 	});
+
+	test("--cell-margins on the whole table sets the table default and round-trips", async () => {
+		const docPath = await newTableDoc("fmt-margins-table", 2, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"0.75pt",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain(
+			'<w:tblCellMar><w:top w:w="15" w:type="dxa"/><w:left w:w="15" w:type="dxa"/><w:bottom w:w="15" w:type="dxa"/><w:right w:w="15" w:type="dxa"/></w:tblCellMar>',
+		);
+		// A table default, not a per-cell broadcast.
+		expect(xml).not.toContain("<w:tcMar>");
+		expect(await readMarkdown(docPath)).toContain('cell-margins="0.75pt"');
+		const table = await tableFromDoc(docPath);
+		expect(
+			(table as unknown as { cellMargins: Record<string, number> }).cellMargins,
+		).toEqual({ top: 15, right: 15, bottom: 15, left: 15 });
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("--cell-margins on a cell takes top,right,bottom,left and 0", async () => {
+		const docPath = await newTableDoc("fmt-margins-cell", 2, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r1c1",
+			"--cell-margins",
+			"0,5.4pt,0,0.1in",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain(
+			'<w:tcMar><w:top w:w="0" w:type="dxa"/><w:left w:w="144" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar>',
+		);
+		expect(xml).not.toContain("<w:tblCellMar>");
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:cell t0:r1c1 margins="0pt,5.4pt,0pt,7.2pt"',
+		);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("--cell-margins none clears the table default", async () => {
+		const docPath = await newTableDoc("fmt-margins-clear", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"2pt",
+		);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"none",
+		);
+		expect(await readDocumentXml(docPath)).not.toContain("tblCellMar");
+		expect(await readMarkdown(docPath)).not.toContain("cell-margins=");
+	});
+
+	test("reads Word's left/right-only and strict start/end margins", async () => {
+		const docPath = await newTableDoc("fmt-margins-word", 1, 2);
+		await runCli(
+			"raw",
+			"edit",
+			docPath,
+			"--at",
+			"t0",
+			"--find",
+			"</w:tblPr>",
+			"--with",
+			'<w:tblCellMar><w:start w:w="108" w:type="dxa"/><w:end w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr>',
+		);
+		expect(await readMarkdown(docPath)).toContain(
+			'cell-margins="-,5.4pt,-,5.4pt"',
+		);
+	});
+
+	test("rejects a unit-less or two-value --cell-margins", async () => {
+		const docPath = await newTableDoc("fmt-margins-bad", 1, 2);
+		for (const value of ["5", "1pt,2pt", "-1pt"]) {
+			const result = await runCli(
+				"tables",
+				"format",
+				docPath,
+				"--at",
+				"t0",
+				"--cell-margins",
+				value,
+			);
+			expect(result.exitCode).toBe(2);
+		}
+		expect(await readDocumentXml(docPath)).not.toContain("tblCellMar");
+	});
+
+	test("cell --cell-margins tracks as a tcPrChange that reject restores", async () => {
+		const docPath = await newTableDoc("fmt-margins-track", 2, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--cell-margins",
+			"3pt",
+			"--track",
+		);
+		expect(await trackedKinds(docPath)).toContain("tcPrChange");
+		await runCli("track-changes", "reject", docPath, "--at", "tc0");
+		expect(await readDocumentXml(docPath)).not.toContain("<w:tcMar>");
+	});
 });
 
 describe("docx tables — tracked changes", () => {
