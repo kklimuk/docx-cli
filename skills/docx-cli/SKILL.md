@@ -5,11 +5,12 @@ description: "Edits, redlines, and comments on Word .docx files in place, keepin
 
 # docx-cli
 
-`docx` is a command-line tool for reading, editing, redlining, and commenting on
-Microsoft Word `.docx` files. It edits the underlying OOXML **in place** (it never
-rebuilds the document from a lossy view), addresses everything with **stable
-locators**, and signals success through an **exit code** plus a one-line
-confirmation — so even small, cheap models can drive it reliably.
+`docx` is a command-line tool for working on Microsoft Word `.docx` files: fill
+in forms and templates, update tables, restyle, build new documents from Markdown,
+and review with tracked changes and comments. It edits the underlying OOXML
+**in place** (it never rebuilds the document from a lossy view), addresses
+everything with **stable locators**, and signals success through an **exit code**
+plus a one-line confirmation — so even small, cheap models can drive it reliably.
 
 ## 0. Make sure the binary is on PATH
 
