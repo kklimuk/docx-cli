@@ -533,7 +533,9 @@ function parsePageSize(
 			impliedLandscape: false,
 		};
 	}
-	const sides = value.match(/^(.+?)\s*x\s*(.+)$/);
+	// The height side must start with a number, so the `x` in a `dxa` suffix
+	// (`12240dxax15840dxa`) isn't taken as the separator.
+	const sides = value.match(/^(.+?)\s*x\s*(\.?\d.*)$/);
 	const parsed = sides
 		? parseLengthList(`${sides[1]},${sides[2]}`, "size", PAGE_SIZE_LENGTH)
 		: null;
@@ -1094,11 +1096,11 @@ export function parseSpacingIndentFlags(
 	const spacing: NonNullable<ParagraphOptions["spacing"]> = {};
 	const indent: NonNullable<ParagraphOptions["indent"]> = {};
 
-	const before = readMeasure(values, "space-before", pointsToTwips);
+	const before = readMeasure(values, "space-before", SPACING_LENGTH);
 	if (isError(before)) return before;
 	if (before !== undefined) spacing.before = before;
 
-	const after = readMeasure(values, "space-after", pointsToTwips);
+	const after = readMeasure(values, "space-after", SPACING_LENGTH);
 	if (isError(after)) return after;
 	if (after !== undefined) spacing.after = after;
 
@@ -1110,11 +1112,11 @@ export function parseSpacingIndentFlags(
 		spacing.lineRule = parsed.lineRule;
 	}
 
-	const left = readMeasure(values, "indent-left", inchesToTwips);
+	const left = readMeasure(values, "indent-left", INDENT_LENGTH);
 	if (isError(left)) return left;
 	if (left !== undefined) indent.left = left;
 
-	const right = readMeasure(values, "indent-right", inchesToTwips);
+	const right = readMeasure(values, "indent-right", INDENT_LENGTH);
 	if (isError(right)) return right;
 	if (right !== undefined) indent.right = right;
 
@@ -1124,11 +1126,11 @@ export function parseSpacingIndentFlags(
 			hint: "They occupy the same indent slot (positive vs. negative first-line indent). Pass one.",
 		};
 	}
-	const firstLine = readMeasure(values, "first-line", inchesToTwips);
+	const firstLine = readMeasure(values, "first-line", INDENT_LENGTH);
 	if (isError(firstLine)) return firstLine;
 	if (firstLine !== undefined) indent.firstLine = firstLine;
 
-	const hanging = readMeasure(values, "hanging", unsignedInchesToTwips);
+	const hanging = readMeasure(values, "hanging", HANGING_LENGTH);
 	if (isError(hanging)) return hanging;
 	if (hanging !== undefined) indent.hanging = hanging;
 
@@ -1141,44 +1143,35 @@ function isError(value: unknown): value is FlagError {
 	return typeof value === "object" && value !== null && "error" in value;
 }
 
-/** Read one measure flag and convert it via `convert`, or undefined if absent. */
+/** Read one measure flag through the shared length grammar, or undefined if
+ *  absent. */
 function readMeasure(
 	values: Record<string, unknown>,
 	flag: string,
-	convert: (raw: string, flag: string) => number | FlagError,
+	options: LengthOptions,
 ): number | undefined | FlagError {
 	const raw = values[flag];
 	if (raw === undefined) return undefined;
-	return convert(String(raw), flag);
+	return parseLength(String(raw), flag, options);
 }
 
 /** Points by default (unsigned): `--space-before`/`--space-after`. */
-function pointsToTwips(raw: string, flag: string): number | FlagError {
-	return parseLength(raw, flag, { bare: "pt" });
-}
-
-/** Inches by default, signed: `--indent-left`/`--indent-right`/`--first-line`
- *  and page margins. `w:left`/`w:right`/`w:firstLine` are
- *  `ST_SignedTwipsMeasure` (a negative indent is a deliberate outdent into the
- *  margin, which Word produces and the reader surfaces, so the read→re-apply
- *  loop must accept it back). */
-function inchesToTwips(raw: string, flag: string): number | FlagError {
-	return parseLength(raw, flag, INDENT_LENGTH);
-}
-
-/** `--hanging` only — inches by default, unsigned (the hanging indent has no
- *  negative form; a negative first-line indent is `--first-line -N`). */
-function unsignedInchesToTwips(raw: string, flag: string): number | FlagError {
-	return parseLength(raw, flag, { ...INDENT_LENGTH, signed: false });
-}
+const SPACING_LENGTH: LengthOptions = { bare: "pt" };
 
 /** Indents and page margins: bare inches, signed, and a bare number above
- *  9 is the twips value `read --ast` reports. */
+ *  9 is the twips value `read --ast` reports. `w:left`/`w:right`/`w:firstLine`
+ *  are `ST_SignedTwipsMeasure` (a negative indent is a deliberate outdent into
+ *  the margin, which Word produces and the reader surfaces, so the
+ *  read→re-apply loop must accept it back). */
 const INDENT_LENGTH: LengthOptions = {
 	bare: "in",
 	signed: true,
 	largeBareIsTwips: true,
 };
+
+/** `--hanging` only — unsigned (the hanging indent has no negative form; a
+ *  negative first-line indent is `--first-line -N`). */
+const HANGING_LENGTH: LengthOptions = { ...INDENT_LENGTH, signed: false };
 
 type LineRule = NonNullable<ParagraphOptions["spacing"]>["lineRule"];
 

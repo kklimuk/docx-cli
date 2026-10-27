@@ -2695,6 +2695,11 @@ describe("table widths — shared length grammar", () => {
 			"3px,1in",
 			"2.5foo,1in",
 			"1in,-1in",
+			// Bare twips beside one suffixed entry: sharing `in` would make the
+			// first column 1440 INCHES — refused as an ambiguous mix.
+			"1440,1in",
+			// Rounds to a 0-twip column.
+			"0.0001in,1in",
 		]) {
 			const { docPath, result } = await createWithWidths(
 				"widths-bad",

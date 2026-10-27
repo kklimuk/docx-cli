@@ -21,7 +21,8 @@ twips. Per-flag `LengthOptions` keep the meaning a BARE number already had —
 value missing its suffix) instead of writing a 2-twip column. A list whose ONLY
 suffix is on its last entry shares it (`2.375,4.618in`) — the shape `read`
 prints, so its hints re-apply verbatim; keep new read hints in that shape or
-fully suffixed. A new size flag picks `LengthOptions`, names the units in its
+fully suffixed. A shared-unit entry past 22in (`1440,1in`) is refused as a
+mix, and `positive` is checked AFTER rounding (`0.01pt` is a 0-twip value). A new size flag picks `LengthOptions`, names the units in its
 `--help`, and goes in REFERENCE.md's "Lengths and units" table. Percentages
 (`--widths 25%,…`, `--table-width 50%`) are handled by the caller before the
 length parse. Font `--size` and `--border-size` are not lengths — leave them.

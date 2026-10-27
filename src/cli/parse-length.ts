@@ -29,26 +29,44 @@ export function parseLengthList(
 	options: LengthOptions,
 ): number[] | LengthError {
 	const parts = raw.split(",").map((part) => part.trim());
-	const sharedUnit = sharedTrailingUnit(parts);
+	const sharedUnit = sharedTrailingUnit(parts, options);
 	const twips: number[] = [];
 	for (const part of parts) {
 		const value = parseLengthToken(part, flag, options, sharedUnit);
 		if (typeof value !== "number") return value;
+		// A bare entry that only became huge by borrowing the trailing unit
+		// (`1440,2880,1in` → 1440 INCHES) meant the flag's own bare unit, not
+		// the shared one — refuse rather than write a 100-foot column/margin.
+		if (sharedUnit !== undefined && Math.abs(value) > MAX_SHARED_TWIPS)
+			return mixedListError(raw, flag, sharedUnit);
 		twips.push(value);
 	}
 	return twips;
 }
 
 /** The unit suffix of the last entry when it is the ONLY suffixed entry in a
- *  multi-entry list, else undefined (see `parseLengthList`). */
-function sharedTrailingUnit(parts: string[]): string | undefined {
+ *  multi-entry list and a unit this flag accepts, else undefined (see
+ *  `parseLengthList`) — an invalid trailing unit (`1,2,3em`) is left on its own
+ *  entry so the error names that entry, not the first bare one. */
+function sharedTrailingUnit(
+	parts: string[],
+	options: LengthOptions,
+): string | undefined {
 	if (parts.length < 2) return undefined;
 	const units = parts.map((part) => part.match(LENGTH_PATTERN)?.[2]);
-	const last = units[units.length - 1];
-	if (last === undefined) return undefined;
+	const last = units[units.length - 1]?.toLowerCase();
+	if (last === undefined || unitFactor(last, options) === undefined)
+		return undefined;
 	return units.slice(0, -1).every((unit) => unit === undefined)
-		? last.toLowerCase()
+		? last
 		: undefined;
+}
+
+function mixedListError(raw: string, flag: string, unit: string): LengthError {
+	return {
+		error: `Invalid --${flag}: ${raw}`,
+		hint: `A unit on only the last value applies to every value, so the bare values here are read as ${unit} — far larger than any page. Give each value its own unit (e.g. 1440tw,2880tw,1in) or use one unit throughout.`,
+	};
 }
 
 /** One entry → twips, or an error. `sharedUnit` stands in for a missing suffix. */
@@ -63,14 +81,23 @@ function parseLengthToken(
 	const number = Number.parseFloat(match[1] as string);
 	const unit = match[2]?.toLowerCase() ?? sharedUnit;
 	if (number < 0 && !options.signed) return lengthError(token, flag, options);
-	if (number === 0 && options.positive)
-		return lengthError(token, flag, options);
-	if (unit !== undefined) {
-		const factor = unitFactor(unit, options);
-		if (factor === undefined) return lengthError(token, flag, options);
-		return Math.round(number * factor);
-	}
-	return bareToTwips(number, token, flag, options);
+	const twips = toTwips(number, unit, token, flag, options);
+	// Checked AFTER rounding: `0.01pt` rounds to a 0-twip row/width/image.
+	if (twips === 0 && options.positive) return lengthError(token, flag, options);
+	return twips;
+}
+
+function toTwips(
+	number: number,
+	unit: string | undefined,
+	token: string,
+	flag: string,
+	options: LengthOptions,
+): number | LengthError {
+	if (unit === undefined) return bareToTwips(number, token, flag, options);
+	const factor = unitFactor(unit, options);
+	if (factor === undefined) return lengthError(token, flag, options);
+	return Math.round(number * factor);
 }
 
 /** Twips per `unit`, honoring the flag's `pixels` opt-in. Own-property lookup
@@ -183,6 +210,10 @@ const LENGTH_UNIT_TWIPS: Readonly<Record<string, number>> = {
  *  into an inch flag and got a 119-INCH indent that pushed three résumé entries
  *  off the page, exit 0. */
 const BARE_INCH_MAX = 9;
+
+/** 22in — Word's largest page side. A list entry that borrowed the trailing
+ *  unit and lands past it was a bare value in the flag's own unit. */
+const MAX_SHARED_TWIPS = 22 * TWIPS_PER_INCH;
 
 type BareUnit = "in" | "pt" | "tw" | undefined;
 

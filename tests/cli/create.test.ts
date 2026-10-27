@@ -364,6 +364,15 @@ describe("docx create — page setup", () => {
 				top: 1440,
 				left: 2160,
 			},
+			// The `x` inside a `dxa` suffix isn't the WxH separator.
+			{
+				size: "12240dxax15840dxa",
+				margins: "1in",
+				width: 12240,
+				height: 15840,
+				top: 1440,
+				left: 1440,
+			},
 			{
 				size: "8.5x11in",
 				margins: "0.75",

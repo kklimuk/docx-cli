@@ -27,7 +27,7 @@ Verbs:
   delete-row      Delete a row (--at tN:rR)
   insert-column   Insert a column (--at tN [--position INDEX] [--width LENGTH])
   delete-column   Delete a column (--at tN:cC)
-  set-widths      Set column widths (--at tN --widths "20,30,50" | twips | auto)
+  set-widths      Set column widths (--at tN --widths "20%,30%,50%" | lengths | auto)
   merge           Merge a cell region (--at tN:rR1cC1-rR2cC2)
   unmerge         Split a merge anchor (--at tN:rRcC)
   borders         Set table borders (--at tN [--style] [--size] [--color])

@@ -460,6 +460,8 @@ from before, so existing calls keep working:
 In a comma list (`--widths`, `--margins`), a unit on ONLY the last value applies
 to every value — the shape `read` prints (`docx:table widths="2.375,4.618in"`,
 `docx:page margins="1,1,1,1.5in"`), so a printed hint re-applies verbatim.
+A bare value that would land past 22in under the shared unit (`1440,1in`) is
+refused as an ambiguous mix — give each value its own unit.
 Anything else — an unknown unit (`3em`), trailing junk (`2.5foo`), `px` outside
 images — is a usage error (exit 2), never a silently truncated number. Font
 `--size` (points) and `--border-size` (eighths of a point) are different
