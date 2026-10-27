@@ -96,10 +96,12 @@ Formatting (applies to every paragraph the content produces):
   --style NAME       Paragraph style — refused next to --markdown (a \`# heading\`
                      or list item sets its own)
   --alignment ALIGN  left | center | right | justify
-  --space-before N / --space-after N   Points, or a unit suffix (6pt, 0.1in, 120tw)
+  --space-before N / --space-after N   Points, or a unit suffix — in, cm, mm,
+                     pt, tw (6pt, 0.1in, 2mm, 120tw)
   --line-spacing N   1, 1.5, 2, single, double, or 15pt
-  --indent-left N / --indent-right N   Inches, or a unit suffix (0.5in, 1.27cm,
-                     720tw); a bare number above 9 is read as twips
+  --indent-left N / --indent-right N   Inches, or a unit suffix — in, cm, mm,
+                     pt, tw (0.5in, 1.27cm, 720tw); a bare number above 9 is
+                     read as twips
   --first-line N / --hanging N         Same units
   --list KIND / --list-level N   Make a --text/--runs paragraph a bullet|ordered
                      item at nesting level 0-8 (in markdown, write "- item").

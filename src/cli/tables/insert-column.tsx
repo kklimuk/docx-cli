@@ -11,6 +11,7 @@ import {
 	markCellTracked,
 	resolveTableNode,
 } from "@core/table";
+import { type LengthError, parseLength } from "../parse-length";
 import {
 	EXIT,
 	fail,
@@ -34,6 +35,7 @@ Usage:
 Examples:
   docx tables insert-column doc.docx --at t0                       # append at right
   docx tables insert-column doc.docx --at t0 --position 1 --width 1440
+  docx tables insert-column doc.docx --at t0 --position 1 --width 1.25in
 
 Required:
   --at LOCATOR       Target table. Supports:
@@ -42,8 +44,9 @@ ${AT_FORMS}
 
 Optional:
   --position INDEX   0-based column index to insert at (default: append at end)
-  --width TWIPS      Width of the new column in twips (default: average of the
-                     existing columns)
+  --width LENGTH     Width of the new column: bare twips (1440 = 1in) or a unit
+                     suffix — in, cm, mm, pt, tw (1in, 2.5cm). Default: the
+                     average of the existing columns
   --author NAME      Author for tracked insertion (default: $DOCX_AUTHOR)
   -o, --output PATH  Write to PATH instead of overwriting FILE
   --dry-run          Print what would change; do not write
@@ -128,8 +131,7 @@ export async function run(args: string[]): Promise<number> {
 		.findChildren("w:gridCol")
 		.map((col) => Number(col.getAttribute("w:w") ?? "0"));
 	const width = resolveWidth(parsed.values.width, existingWidths);
-	if (width === null)
-		return fail("USAGE", "--width must be a positive integer");
+	if (typeof width !== "number") return fail("USAGE", width.error, width.hint);
 
 	const tracking = resolveTracked(document, parsed.values.track);
 	const outputPath = parsed.values.output as string | undefined;
@@ -197,7 +199,10 @@ function resolveColumnPosition(raw: unknown, colCount: number): number | null {
 	return value;
 }
 
-function resolveWidth(raw: unknown, existing: number[]): number | null {
+/** `--width` → twips, or a `{ error, hint }`. Bare whole twips as before, or a
+ *  unit suffix through the shared length grammar (`1in`, `2.5cm`). Unset →
+ *  the average of the existing columns. */
+function resolveWidth(raw: unknown, existing: number[]): number | LengthError {
 	if (raw === undefined) {
 		const positive = existing.filter((value) => value > 0);
 		if (positive.length === 0) return 1440;
@@ -205,9 +210,7 @@ function resolveWidth(raw: unknown, existing: number[]): number | null {
 			positive.reduce((sum, v) => sum + v, 0) / positive.length,
 		);
 	}
-	const value = Number(raw);
-	if (!Number.isInteger(value) || value <= 0) return null;
-	return value;
+	return parseLength(String(raw), "width", { bare: "tw", positive: true });
 }
 
 /** The first row whose cell strictly spans across the boundary at `position`

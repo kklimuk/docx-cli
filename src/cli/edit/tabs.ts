@@ -1,5 +1,6 @@
 import { type Document, getPageContentWidthEmu } from "@core";
 import type { TabStop } from "@core/blocks";
+import { parseLength } from "../parse-length";
 
 /** A parsed `--tabs` value, resolved to concrete tab stops once the document is
  *  open (the `right` cure needs the section's content width). `right-margin` is
@@ -17,7 +18,7 @@ export type TabsDirective =
 const TAB_ALIGNS = new Set(["left", "right", "center"]);
 
 const TABS_HINT =
-	"Use `right` (a right tab at the margin — cures the wrapping LEFT-tab `docx:layout` warning from `read`), `clear`, or explicit stops like `right@7.5in` / `left@1in,right@7.5in`.";
+	"Use `right` (a right tab at the margin — cures the wrapping LEFT-tab `docx:layout` warning from `read`), `clear`, or explicit stops like `right@7.5in` / `left@1in,right@19cm` (a unit is required: in, cm, mm, pt, tw).";
 
 /** Parse a `--tabs` value into a directive, or a `{ error, hint? }` the caller
  *  turns into its own failure (fail() single-shot, EntryError in --batch).
@@ -33,16 +34,17 @@ export function parseTabsValue(
 
 	const stops: TabStop[] = [];
 	for (const token of value.split(",")) {
-		const match = token.trim().match(/^(left|right|center)@([\d.]+)in$/i);
+		const match = token.trim().match(/^(left|right|center)@(.+)$/i);
 		const align = (match?.[1] ?? "").toLowerCase();
-		const inches = Number(match?.[2] ?? Number.NaN);
-		if (!match || !TAB_ALIGNS.has(align) || !Number.isFinite(inches)) {
+		// Unit required (`7.5in`, `19cm`): a bare `@7.5` has no unit to assume.
+		const pos = match ? parseLength(match[2] as string, "tabs", {}) : null;
+		if (!match || !TAB_ALIGNS.has(align) || typeof pos !== "number") {
 			return {
 				error: `Invalid --tabs value: "${token.trim()}"`,
 				hint: TABS_HINT,
 			};
 		}
-		stops.push({ align, pos: Math.round(inches * 1440) });
+		stops.push({ align, pos });
 	}
 	return { kind: "explicit", stops };
 }

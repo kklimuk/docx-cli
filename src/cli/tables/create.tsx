@@ -2,6 +2,11 @@ import type { TableBorders, TableLayout } from "@core/table";
 import { parseParagraphOptions, type RawValues } from "../insert/index";
 import { parseTargetPlacement, placeSpec } from "../insert/place";
 import {
+	type LengthOptions,
+	parseLength,
+	parseLengthList,
+} from "../parse-length";
+import {
 	EXIT,
 	fail,
 	RENDER_VERIFY_EXAMPLE,
@@ -20,6 +25,7 @@ Usage:
 
 Examples:
   docx tables create doc.docx --after p3 --rows 3 --cols 2
+  docx tables create doc.docx --after p3 --rows 2 --cols 3 --widths 1,2,3in
   docx tables create doc.docx --after p3 --rows 2 --cols 3 --widths 1440,2880,4320
   docx tables create doc.docx --after p3 --rows 2 --cols 2 --table-width 50%
   docx tables create doc.docx --at-end --rows 4 --cols 3 --borders double
@@ -37,8 +43,12 @@ Grid (required):
   --cols N          Number of columns (>= 1)
 
 Sizing (optional):
-  --widths "A,B,C"  Column widths in twips, comma-separated; length must equal --cols
-  --table-width V   Table total width, e.g. "100%" (default), "50%", or "4320" (twips)
+  --widths "A,B,C"  Column widths, comma-separated; count must equal --cols. Bare
+                    numbers are twips (1440 = 1in); or a unit suffix — in, cm,
+                    mm, pt, tw (2.5in,1in). A unit on only the last value
+                    applies to all (2.5,1in — the shape \`read\` prints).
+  --table-width V   Table total width: "100%" (default), "50%", or a length
+                    (bare twips like 4320, or 3in, 7.5cm, …)
   --borders S       single (default) | none | double
   --layout L        autofit (default; columns size to content) | fixed (honor
                     --widths exactly). Passing --widths implies fixed.
@@ -135,9 +145,9 @@ export async function run(args: string[]): Promise<number> {
 
 /** Resolve `--rows`/`--cols` (required, >= 1) plus the optional sizing flags
  *  (`--widths`/`--table-width`/`--borders`/`--layout`) into the fields of a
- *  `table` spec. `--widths` are twips whose count must equal `--cols`;
- *  `--table-width` is a percentage ("50%", stored as OOXML fiftieths-of-a-pct)
- *  or twips; `--layout` defaults to `fixed` when `--widths` is set so the custom
+ *  `table` spec. `--widths` are lengths (bare = twips, `TABLE_LENGTH`) whose
+ *  count must equal `--cols`; `--table-width` is a percentage ("50%", stored
+ *  as OOXML fiftieths-of-a-pct) or a length; `--layout` defaults to `fixed` when `--widths` is set so the custom
  *  widths actually take effect. Moved here from `insert` when tables became a
  *  noun-verb — this is the sole owner of the table content spec. */
 async function parseTableFlags(values: RawValues): Promise<
@@ -177,18 +187,9 @@ async function parseTableFlags(values: RawValues): Promise<
 	const layoutRaw = values.layout as string | undefined;
 	const widthsRaw = values.widths as string | undefined;
 	if (widthsRaw !== undefined) {
-		const widths = widthsRaw.split(",").map((part) => part.trim());
-		const numeric: number[] = [];
-		for (const part of widths) {
-			const value = Number.parseInt(part, 10);
-			if (!Number.isFinite(value) || value <= 0) {
-				return fail(
-					"USAGE",
-					`--widths entries must be positive integers (twips), got "${part}"`,
-				);
-			}
-			numeric.push(value);
-		}
+		const numeric = parseLengthList(widthsRaw, "widths", TABLE_LENGTH);
+		if (!Array.isArray(numeric))
+			return fail("USAGE", numeric.error, numeric.hint);
 		if (numeric.length !== cols) {
 			return fail(
 				"USAGE",
@@ -201,7 +202,7 @@ async function parseTableFlags(values: RawValues): Promise<
 	const tableWidthRaw = values["table-width"] as string | undefined;
 	if (tableWidthRaw !== undefined) {
 		if (tableWidthRaw.endsWith("%")) {
-			const pct = Number.parseFloat(tableWidthRaw.slice(0, -1));
+			const pct = Number(tableWidthRaw.slice(0, -1));
 			if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
 				return fail(
 					"USAGE",
@@ -211,13 +212,13 @@ async function parseTableFlags(values: RawValues): Promise<
 			// OOXML pct units are fiftieths of a percent (5000 = 100%).
 			out.tableWidth = { value: Math.round(pct * 50), unit: "pct" };
 		} else {
-			const twips = Number.parseInt(tableWidthRaw, 10);
-			if (!Number.isFinite(twips) || twips <= 0) {
+			const twips = parseLength(tableWidthRaw, "table-width", TABLE_LENGTH);
+			if (typeof twips !== "number")
 				return fail(
 					"USAGE",
-					`--table-width must be a positive integer (twips) or a percentage like "100%", got "${tableWidthRaw}"`,
+					twips.error,
+					`A percentage like "100%" or "50%", or a length. ${twips.hint}`,
 				);
-			}
 			out.tableWidth = { value: twips, unit: "dxa" };
 		}
 	}
@@ -254,3 +255,7 @@ async function parseTableFlags(values: RawValues): Promise<
 
 	return out;
 }
+
+/** Table widths: bare whole twips (the long-standing meaning) or any unit
+ *  suffix — `2.5in` used to `parseInt` to 2 TWIPS, exit 0. */
+const TABLE_LENGTH: LengthOptions = { bare: "tw", positive: true };

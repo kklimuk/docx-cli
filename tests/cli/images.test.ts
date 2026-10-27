@@ -1069,3 +1069,72 @@ describe("docx insert — --image redirects to `docx images add`", () => {
 		);
 	});
 });
+
+// `--width`/`--height` go through the shared length grammar (cli/parse-length.ts).
+// Before it, `Number.parseFloat` ignored any suffix: `--width 3cm` was a 3-INCH
+// image and `--width 100px` a 100-inch one, both exit 0.
+describe("docx images add — size units", () => {
+	async function addSized(label: string, ...size: string[]) {
+		const docPath = await newDoc(label);
+		const result = await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			...size,
+		);
+		return { docPath, result };
+	}
+
+	test("--width 3cm is three centimeters, not three inches", async () => {
+		const { docPath, result } = await addSized("img-cm", "--width", "3cm");
+		expect(result.exitCode).toBe(0);
+		const [image] = await imageRuns(docPath);
+		// 3cm = 1,080,000 EMU; the length grammar rounds to whole twips (635 EMU).
+		expect(Math.abs((image?.widthEmu ?? 0) - 1_080_000)).toBeLessThan(635);
+	});
+
+	test("px is 96 dpi — an image's native unit", async () => {
+		const { docPath } = await addSized("img-px", "--width", "192px");
+		const [image] = await imageRuns(docPath);
+		expect(image?.widthEmu).toBe(192 * EMU_PER_PIXEL);
+		// 96×64 scaled to 192 wide keeps the aspect → 128px tall.
+		expect(image?.heightEmu).toBe(128 * EMU_PER_PIXEL);
+	});
+
+	test("every unit suffix lands on the same inch", async () => {
+		for (const width of ["1in", '1"', "2.54cm", "25.4mm", "72pt", "1440tw"]) {
+			const { docPath, result } = await addSized("img-units", "--width", width);
+			expect(result.exitCode).toBe(0);
+			const [image] = await imageRuns(docPath);
+			expect(image?.widthEmu).toBe(EMU_PER_INCH);
+		}
+	});
+
+	test("a bare number is still inches (back-compat)", async () => {
+		const { docPath } = await addSized(
+			"img-bare",
+			"--width",
+			"2",
+			"--height",
+			"0.5in",
+		);
+		const [image] = await imageRuns(docPath);
+		expect(image?.widthEmu).toBe(2 * EMU_PER_INCH);
+		expect(image?.heightEmu).toBe(EMU_PER_INCH / 2);
+	});
+
+	test("an unknown unit or junk is a usage error and writes nothing", async () => {
+		for (const bad of ["2.5foo", "3em", "abc", "-1in", "0", "1e2"]) {
+			const { docPath, result } = await addSized("img-junk", "--width", bad);
+			expect(result.exitCode).toBe(2);
+			expect((result.parsed as { code: string }).code).toBe("USAGE");
+			expect(await imageRuns(docPath)).toHaveLength(0);
+		}
+		const height = await addSized("img-junk-h", "--height", "4ems");
+		expect(height.result.exitCode).toBe(2);
+	});
+});

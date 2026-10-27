@@ -128,12 +128,15 @@ Formatting (alone = restyle in place; with content = fill and format):
   --style NAME       Paragraph style (Heading1, …) — refused next to --markdown,
                      whose headings/lists set their own
   --alignment ALIGN  left | center | right | justify
-  --space-before N / --space-after N   Points, or a unit suffix (6pt, 0.1in, 120tw)
+  --space-before N / --space-after N   Points, or a unit suffix — in, cm, mm,
+                     pt, tw (6pt, 0.1in, 2mm, 120tw)
   --line-spacing N   1, 1.5, 2, single, double, or 15pt
-  --indent-left N / --indent-right N   Inches, or a unit suffix (0.5in, 1.27cm,
-                     720tw); a bare number above 9 is read as twips
+  --indent-left N / --indent-right N   Inches, or a unit suffix — in, cm, mm,
+                     pt, tw (0.5in, 1.27cm, 720tw); a bare number above 9 is
+                     read as twips
   --first-line N / --hanging N         Same units
   --tabs SPEC        right (one RIGHT tab at the margin) | clear | left@1in,right@7.5in
+                     (stop positions need a unit: in, cm, mm, pt, tw)
                      A range (--at pN-pM) fixes every wrapping line at once.
   --bold --italic --underline --strike --color HEX --font NAME --size PT …
                      Run formatting. Full list: \`docx edit --runs --help\`.

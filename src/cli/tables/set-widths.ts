@@ -16,6 +16,7 @@ import {
 	setCellWidth,
 	setTableLayout,
 } from "@core/table";
+import { type LengthOptions, parseLengthList } from "../parse-length";
 import { twipsToInches } from "../read/annotations";
 import {
 	EXIT,
@@ -42,6 +43,7 @@ Usage:
 Examples:
   docx tables set-widths doc.docx --at t0 --widths "25%,25%,50%"
   docx tables set-widths doc.docx --at t0 --widths "1440,1440,2880"
+  docx tables set-widths doc.docx --at t0 --widths "1.5,1.5,3.5in"   # the read-note shape
   docx tables set-widths doc.docx --at t0 --widths auto
   # AGENT VERIFICATION: widths don't show in \`docx read\` — look at the pages
 ${RENDER_VERIFY_EXAMPLE}
@@ -52,7 +54,11 @@ ${AT_FORMS}
                      See \`docx info locators\`.
   --widths SPEC      One of:
                        "20%,30%,50%"  percentages (must sum to ~100)
-                       "1440,2880"    per-column twips
+                       "1440,2880"    per-column lengths: bare numbers are
+                                      twips (1440 = 1in); or a unit suffix —
+                                      in, cm, mm, pt, tw ("2in,3.5cm"). A unit
+                                      on only the last value applies to all
+                                      ("2.375,4.618in", as \`read\` prints it)
                        "auto"         switch the table to autofit layout
 
 Optional:
@@ -62,7 +68,7 @@ Optional:
   -v, --verbose      Print the success ack JSON
   -h, --help         Show this help
 
-Percentages and twips set a fixed layout. Under track-changes the resize is
+Percentages and lengths set a fixed layout. Under track-changes the resize is
 recorded as a real revision, so Word can accept or reject it.
 
 Widths map one value per GRID column, not per visible column. On a table with
@@ -243,7 +249,7 @@ function resolveWidths(
 	const percentage = tokens.every((token) => token.endsWith("%"));
 	const anyPercent = tokens.some((token) => token.endsWith("%"));
 	if (anyPercent && !percentage) {
-		return "--widths must be all percentages or all twips, not mixed";
+		return "--widths must be all percentages or all lengths, not mixed";
 	}
 	if (percentage) {
 		const percents = tokens.map((token) => Number(token.slice(0, -1)));
@@ -257,12 +263,14 @@ function resolveWidths(
 		const total = currentTotal(cols);
 		return percents.map((value) => Math.round((value / 100) * total));
 	}
-	const values = tokens.map((token) => Number(token));
-	if (values.some((value) => !Number.isInteger(value) || value <= 0)) {
-		return "--widths twips must be positive integers";
-	}
-	return values;
+	const values = parseLengthList(spec, "widths", WIDTH_LENGTH);
+	return Array.isArray(values) ? values : `${values.error}. ${values.hint}`;
 }
+
+/** Column widths: bare whole twips (the long-standing meaning) or any unit
+ *  suffix, a unit on only the last value shared by all — so the
+ *  `docx:table widths="2.375,4.618in"` note `read` prints re-applies verbatim. */
+const WIDTH_LENGTH: LengthOptions = { bare: "tw", positive: true };
 
 function currentTotal(cols: XmlNode[]): number {
 	const sum = cols.reduce(

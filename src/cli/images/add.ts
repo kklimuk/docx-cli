@@ -1,6 +1,7 @@
 import { parseParagraphOptions, type RawValues } from "../insert/index";
 import { parseTargetPlacement, placeSpec } from "../insert/place";
 import { decodeInlineEscapes } from "../parse-helpers";
+import { type LengthOptions, parseLength } from "../parse-length";
 import {
 	EXIT,
 	fail,
@@ -35,8 +36,11 @@ Content (required):
                     http(s) URL (fetched with an SSRF guard; sized to fit the
                     page width by default).
   --alt TEXT        Alt text / description for the image
-  --width INCHES    Display width in inches (default: native pixel size at 96dpi)
-  --height INCHES   Display height in inches (default: scales to preserve aspect)
+  --width LENGTH    Display width: bare inches (2) or a unit suffix — in, cm,
+                    mm, pt, px (96dpi), tw (e.g. 2in, 5cm, 300px). Default:
+                    native pixel size at 96dpi.
+  --height LENGTH   Display height, same units (default: scales to preserve
+                    aspect)
   --caption TEXT    Add a caption paragraph below the figure in Word's built-in
                     "Caption" style (kept with the image; shows in a Table of
                     Figures). You supply the label, e.g. "Figure 1: Revenue".
@@ -125,10 +129,11 @@ export async function run(args: string[]): Promise<number> {
 }
 
 /** Resolve `--image SRC` (required) plus `--alt`/`--width`/`--height`/`--caption`
- *  into the fields of an `image` spec. `--width`/`--height` parse as positive
- *  inches. `--caption` is a body paragraph (rendered via <Paragraph>, which turns
- *  a `\n` into <w:br/>), so it decodes inline escapes like the sibling --text
- *  flag; --alt is single-line accessibility metadata where a newline is
+ *  into the fields of an `image` spec. `--width`/`--height` parse through the
+ *  shared length grammar (`IMAGE_LENGTH`): bare inches as before, or a unit
+ *  suffix — `3cm` used to be silently read as 3 INCHES. `--caption` is a body
+ *  paragraph (rendered via <Paragraph>, which turns a `\n` into <w:br/>), so it
+ *  decodes inline escapes like the sibling --text flag; --alt is single-line accessibility metadata where a newline is
  *  meaningless, so it stays literal. */
 async function parseImageFlags(values: RawValues): Promise<
 	| {
@@ -157,29 +162,27 @@ async function parseImageFlags(values: RawValues): Promise<
 	const caption = decodeInlineEscapes(values.caption as string | undefined);
 	if (caption !== undefined) out.caption = caption;
 
-	const widthRaw = values.width as string | undefined;
-	if (widthRaw !== undefined) {
-		const width = Number.parseFloat(widthRaw);
-		if (!Number.isFinite(width) || width <= 0) {
-			return fail(
-				"USAGE",
-				`--width must be a positive number of inches, got "${widthRaw}"`,
-			);
-		}
-		out.widthInches = width;
-	}
-
-	const heightRaw = values.height as string | undefined;
-	if (heightRaw !== undefined) {
-		const height = Number.parseFloat(heightRaw);
-		if (!Number.isFinite(height) || height <= 0) {
-			return fail(
-				"USAGE",
-				`--height must be a positive number of inches, got "${heightRaw}"`,
-			);
-		}
-		out.heightInches = height;
+	for (const flag of ["width", "height"] as const) {
+		const raw = values[flag] as string | undefined;
+		if (raw === undefined) continue;
+		const twips = parseLength(raw, flag, IMAGE_LENGTH);
+		if (typeof twips !== "number")
+			return fail("USAGE", twips.error, twips.hint);
+		out[flag === "width" ? "widthInches" : "heightInches"] =
+			twips / TWIPS_PER_INCH;
 	}
 
 	return out;
 }
+
+/** Image sizes: bare inches (the long-standing meaning), positive, and `px` at
+ *  96 dpi — an image is the one thing with a natural pixel size (the default
+ *  `--width` already IS its pixel size at 96 dpi), so `300px` is what an agent
+ *  holding pixel dimensions reaches for. */
+const IMAGE_LENGTH: LengthOptions = {
+	bare: "in",
+	positive: true,
+	pixels: true,
+};
+
+const TWIPS_PER_INCH = 1440;
