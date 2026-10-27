@@ -1,4 +1,5 @@
-import type { TableWidth } from "../ast/types";
+import { CELL_MARGIN_SIDES, CELL_MARGIN_TAGS } from "../ast/cell-margins";
+import type { CellMargins, TableWidth } from "../ast/types";
 import { isInheritableRunProperty, Paragraph } from "../blocks";
 import { w } from "../jsx";
 import { XmlNode } from "../parser";
@@ -97,25 +98,28 @@ export function setCellVAlign(
 	pruneEmptyTcPr(cell, tcPr);
 }
 
-/** Clone the reference (sibling-row) cell's `<w:tcBorders>` onto a freshly
- * built cell, so an inserted row keeps the table's rule lines — without this
- * the new row renders with no separators while every sibling row has them (the
- * invoice "Calibration kit" defect, flagged by two independent judge runs).
+/** Clone the reference (sibling-row) cell's `<w:tcBorders>` and `<w:tcMar>`
+ * onto a freshly built cell, so an inserted row keeps the table's rule lines and
+ * cell padding — without the borders the new row renders with no separators
+ * while every sibling row has them (the invoice "Calibration kit" defect,
+ * flagged by two independent judge runs); without the padding it renders at the
+ * table default while its siblings carry the template's own (mnda's 7.2pt rows).
  * Shading and vAlign are deliberately NOT inherited: banded/striped rows make
- * those unsafe to assume, and borders are uniform across data rows in
- * practice. No-op when the reference has no borders or the cell already has
- * its own. */
-export function inheritCellBorders(
+ * those unsafe to assume, while borders and padding are uniform across data rows
+ * in practice. Each part is a no-op when the reference lacks it or the cell
+ * already has its own. */
+export function inheritCellBordersAndMargins(
 	cell: XmlNode,
 	referenceCell: XmlNode,
 ): void {
-	const referenceBorders = referenceCell
-		.findChild("w:tcPr")
-		?.findChild("w:tcBorders");
-	if (!referenceBorders) return;
-	const tcPr = ensureTcPr(cell);
-	if (tcPr.findChild("w:tcBorders")) return;
-	setTcPrChild(tcPr, "w:tcBorders", referenceBorders.clone());
+	const referenceTcPr = referenceCell.findChild("w:tcPr");
+	for (const tag of ["w:tcBorders", "w:tcMar"]) {
+		const reference = referenceTcPr?.findChild(tag);
+		if (!reference) continue;
+		const tcPr = ensureTcPr(cell);
+		if (tcPr.findChild(tag)) continue;
+		setTcPrChild(tcPr, tag, reference.clone());
+	}
 }
 
 /** Build a cell paragraph that inherits the reference cell's look — the
@@ -128,7 +132,7 @@ export function inheritCellBorders(
  * only properties (no content), so cloning it wholesale is safe; `<Paragraph>`
  * with no options emits no `<w:pPr>`, so the clone becomes the paragraph's
  * sole (and correctly first) `<w:pPr>`. The borders half of the same policy is
- * `inheritCellBorders` above — a caller minting a full cell applies both. */
+ * `inheritCellBordersAndMargins` above — a caller minting a full cell applies both. */
 export function cellParagraphLike(
 	referenceCell: XmlNode | undefined,
 	text: string,
@@ -238,6 +242,81 @@ export type CellBorderSide =
 	| "right"
 	| "insideH"
 	| "insideV";
+
+/** Set or clear a cell's own padding via `<w:tcPr><w:tcMar>` (overrides the
+ * table default). Only the sides `margins` names change — an absent side keeps
+ * whatever the cell already had (so `-,4pt,-,4pt` touches left/right only).
+ * `null` removes the element. */
+export function setCellMargins(
+	cell: XmlNode,
+	margins: CellMargins | null,
+): void {
+	const tcPr = ensureTcPr(cell);
+	if (!margins) setTcPrChild(tcPr, "w:tcMar", null);
+	else {
+		const existing = tcPr.findChild("w:tcMar");
+		if (existing) mergeMarginSides(existing, margins);
+		else setTcPrChild(tcPr, "w:tcMar", marginsElement("w:tcMar", margins));
+	}
+	pruneEmptyTcPr(cell, tcPr);
+}
+
+/** Set or clear the table's default cell padding via `<w:tblPr><w:tblCellMar>`
+ * (Word's Table Properties → Options → Default cell margins). Like
+ * `setCellMargins`, only the named sides change; `null` removes it. */
+export function setTableCellMargins(
+	table: XmlNode,
+	margins: CellMargins | null,
+): void {
+	const existing = table.findChild("w:tblPr")?.findChild("w:tblCellMar");
+	if (margins && existing) {
+		mergeMarginSides(existing, margins);
+		return;
+	}
+	setTablePropertiesChild(
+		table,
+		"w:tblCellMar",
+		margins ? marginsElement("w:tblCellMar", margins) : null,
+	);
+}
+
+function marginsElement(tag: string, margins: CellMargins): XmlNode {
+	const node = XmlNode.element(tag, {});
+	mergeMarginSides(node, margins);
+	return node;
+}
+
+/** Write each side `margins` names onto a `<w:tblCellMar>`/`<w:tcMar>` in place:
+ * an existing child for that side (`left` OR the strict `start`, …) is updated
+ * under its own tag, a missing one is inserted in schema order as the
+ * transitional `left`/`right` Word itself writes. Sides `margins` omits are
+ * left untouched. */
+function mergeMarginSides(node: XmlNode, margins: CellMargins): void {
+	for (const side of CELL_MARGIN_SIDES) {
+		const twips = margins[side];
+		if (twips === undefined) continue;
+		const attributes = { "w:w": String(twips), "w:type": "dxa" };
+		const existing = CELL_MARGIN_TAGS.filter(([padded]) => padded === side)
+			.map(([, tag]) => node.findChild(tag))
+			.find((child) => child !== undefined);
+		if (existing) {
+			for (const [name, value] of Object.entries(attributes))
+				existing.setAttribute(name, value);
+			continue;
+		}
+		const tag = `w:${side}`;
+		const rank = schemaRank(tag);
+		const before = node.children.findIndex(
+			(child) => schemaRank(child.tag) > rank,
+		);
+		const element = XmlNode.element(tag, attributes);
+		if (before === -1) node.children.push(element);
+		else node.children.splice(before, 0, element);
+	}
+}
+
+const schemaRank = (tag: string): number =>
+	CELL_MARGIN_TAGS.findIndex(([, candidate]) => candidate === tag);
 
 /** Mark a whole row as a tracked insertion/deletion via `<w:trPr><w:ins/>` or
  * `<w:del/>` (ECMA-376 §17.13.5.18 / §17.13.5.13). */

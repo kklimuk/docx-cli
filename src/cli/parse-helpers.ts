@@ -1222,6 +1222,23 @@ function parseMeasure(
 	);
 }
 
+/** Parse an unsigned measure whose unit is REQUIRED (`0.4in`, `28pt`, `1cm`,
+ *  `5mm`, `108tw`) into twips, or null. A bare number is rejected rather than
+ *  read in a default unit — `--row-height 28` must not become a 28-INCH row,
+ *  and `--cell-margins 108` (the twips `read --ast` reports) must not become
+ *  108pt of padding. A bare `0` is the one exception: zero in any unit. Same
+ *  unit table as the spacing/indent flags (`MEASURE_UNIT_TWIPS`). */
+export function parseUnitMeasure(raw: string): number | null {
+	const trimmed = raw.trim();
+	if (/^0*\.?0+$/.test(trimmed)) return 0;
+	const match = trimmed.match(/^(\d*\.?\d+)\s*("|[a-z]+)$/i);
+	const unit = match?.[2]?.toLowerCase();
+	if (!match || unit === undefined || !Object.hasOwn(MEASURE_UNIT_TWIPS, unit))
+		return null;
+	const value = Number.parseFloat(match[1] as string);
+	return Math.round(value * (MEASURE_UNIT_TWIPS[unit] as number));
+}
+
 /** Twips per unit for an explicit suffix on a measure flag. `tw`/`twips`/`dxa`
  *  are the raw OOXML unit — what `read --ast` reports, so an agent can feed an
  *  AST value straight back with its unit named. */

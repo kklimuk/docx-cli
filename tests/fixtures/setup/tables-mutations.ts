@@ -10,10 +10,11 @@ import { $ } from "bun";
  * Table t0 (untracked structural edits + formatting): a 3×3 table that gets a
  * horizontal merge, a vertical merge, custom percentage widths, double borders,
  * and then `tables format` — header-row shading + vertical/horizontal centering
- * + repeat-header, a per-cell double bottom border, a taller last row, and the
- * whole table centered on the page. Dogfoods the format verb's <w:shd>/<w:vAlign>/
- * paragraph <w:jc>/<w:tcBorders>/<w:trHeight>/<w:tblHeader>/table-<w:jc> XML
- * through the LibreOffice round-trip.
+ * + repeat-header, a per-cell double bottom border, a taller last row, the
+ * whole table centered on the page, and table-default + per-cell padding.
+ * Dogfoods the format verb's <w:shd>/<w:vAlign>/paragraph <w:jc>/<w:tcBorders>/
+ * <w:trHeight>/<w:tblHeader>/table-<w:jc>/<w:tblCellMar>/<w:tcMar> XML through
+ * the LibreOffice round-trip.
  *
  * Table t1 (tracked edits, left UNACCEPTED): a 2×2 table edited with
  * track-changes ON so the saved file carries every table revision marker —
@@ -108,6 +109,18 @@ await cli(
 );
 await cli("tables", "format", out, "--at", "t0:r2", "--row-height", "0.4in");
 await cli("tables", "format", out, "--at", "t0", "--align", "center");
+// Cell padding: a table default (<w:tblCellMar>) plus one cell's own override
+// (<w:tcMar>), so the round-trip checks both slots' child order.
+await cli(
+	"tables",
+	"format",
+	out,
+	"--at",
+	"t0",
+	"--cell-margins",
+	"0,4pt,0,4pt",
+);
+await cli("tables", "format", out, "--at", "t0:r2c2", "--cell-margins", "2pt");
 
 // t1 — tracked edits, left unaccepted so the markers persist in the fixture.
 await cli(

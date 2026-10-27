@@ -9,7 +9,7 @@ import {
 	cellParagraphLike,
 	type Grid,
 	type GridRow,
-	inheritCellBorders,
+	inheritCellBordersAndMargins,
 	markRowTracked,
 	resolveTableNode,
 	TableCell,
@@ -59,8 +59,8 @@ Optional:
 
 The new row mirrors the neighbor row's structure AND look: it copies each cell's
 gridSpan pattern and inherits the neighbor cell's paragraph properties
-(alignment, spacing, indent), cell borders, and text font/size — so an inserted
-row lines up and matches the rows above. Cell shading is NOT copied (banded
+(alignment, spacing, indent), cell borders and padding, and text font/size — so
+an inserted row lines up and matches the rows above. Cell shading is NOT copied (banded
 tables); use \`tables format --shade\` if the new row needs it.
 
 A row inserted inside a vertical merge extends the merge through the new row
@@ -253,7 +253,7 @@ function buildRow(grid: Grid, position: number, cellTexts: string[]): XmlNode {
 				{cellParagraphLike(refCell?.node, cellTexts[logical] ?? "")}
 			</TableCell>
 		);
-		if (refCell) inheritCellBorders(cell, refCell.node);
+		if (refCell) inheritCellBordersAndMargins(cell, refCell.node);
 		cells.push(cell);
 		logical += 1;
 		col += refSpan;

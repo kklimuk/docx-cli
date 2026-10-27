@@ -17,6 +17,7 @@ export {
 	paragraphTextBaseline,
 	type TrackedChangeReference,
 } from "./ast";
+export { CELL_MARGIN_SIDES, readCellMargins } from "./ast/cell-margins";
 export {
 	FORMAT_TO_NUMFMT,
 	type ListFormat,
@@ -25,6 +26,7 @@ export { PkgError } from "./ast/document/package";
 export type {
 	Block,
 	BreakRun,
+	CellMargins,
 	ChartRun,
 	Comment,
 	CommentAnchor,

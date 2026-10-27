@@ -1,6 +1,12 @@
-import { type Block, baselineCatalog, iterateBlocks } from "@core";
+import {
+	type Block,
+	baselineCatalog,
+	iterateBlocks,
+	readCellMargins,
+} from "@core";
 import { alignmentFromJc } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
+import { formatCellMargins } from "../read/annotations";
 import {
 	EXIT,
 	fail,
@@ -130,6 +136,11 @@ type StyleDetail = StyleMeta & {
 	indentRightIn?: number;
 	firstLineIn?: number;
 	hangingIn?: number;
+	/** A table style's `<w:tblPr><w:tblCellMar>`, in the `--cell-margins` shape
+	 * (`0pt,5.4pt,0pt,5.4pt`). Read-only here — `read` hides a table's padding
+	 * that merely restates its style's, so this is where the inherited value is
+	 * visible; override it per table with `tables format --cell-margins`. */
+	cellMargins?: string;
 };
 
 function styleMeta(node: XmlNode): StyleMeta {
@@ -158,6 +169,10 @@ function describeStyle(node: XmlNode): StyleDetail {
 	if (rPr) describeRunProperties(rPr, detail);
 	const pPr = node.findChild("w:pPr");
 	if (pPr) describeParagraphProperties(pPr, detail);
+	const cellMargins = readCellMargins(
+		node.findChild("w:tblPr")?.findChild("w:tblCellMar"),
+	);
+	if (cellMargins) detail.cellMargins = formatCellMargins(cellMargins);
 	return detail;
 }
 
@@ -317,6 +332,7 @@ function formatDetail(detail: StyleDetail): string {
 		detail.spaceAfterPt !== undefined ? `${detail.spaceAfterPt}pt` : undefined,
 	);
 	add("line-spacing:", detail.lineSpacing);
+	add("cell-margins:", detail.cellMargins);
 	add(
 		"indent-left:",
 		detail.indentLeftIn !== undefined ? `${detail.indentLeftIn}in` : undefined,

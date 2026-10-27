@@ -128,6 +128,15 @@ export type Table = {
 	 * (`"center"` / `"right"`). Absent ⇒ the default `"left"`. Authorable via
 	 * `docx tables format --at tN --align`. */
 	align?: "left" | "center" | "right";
+	/** Default cell padding from `<w:tblPr><w:tblCellMar>` (Word's "Default cell
+	 * margins"). Present only when the table declares it. Authorable via
+	 * `docx tables format --at tN --cell-margins`. */
+	cellMargins?: CellMargins;
+	/** The padding the table's style chain supplies (`tblStyle` → `basedOn` →
+	 * …, else the default table style), which `cellMargins` and each cell's
+	 * `margins` override side by side. Present only when a style declares one.
+	 * `read` hides a table/cell margin that merely restates it. */
+	styleCellMargins?: CellMargins;
 	/** The block was authored by `docx raw insert`/`replace` — see
 	 * `Paragraph.rawXml`. Surfaces as a bare `raw` token on the `docx:table`
 	 * note. */
@@ -187,6 +196,18 @@ export type TableCell = {
 	 * the XML via in-place mutation. Authorable via `docx tables format --at …
 	 * --cell-borders`. Present only when the cell declares explicit borders. */
 	borders?: string;
+	/** The cell's own padding from `<w:tcPr><w:tcMar>`, overriding the table's
+	 * `cellMargins`. Authorable via `docx tables format --at … --cell-margins`. */
+	margins?: CellMargins;
+};
+
+/** Cell padding per side, in twips, from `<w:tblCellMar>`/`<w:tcMar>`. A side
+ * the element omits is absent (it inherits); `start`/`end` read as left/right. */
+export type CellMargins = {
+	top?: number;
+	right?: number;
+	bottom?: number;
+	left?: number;
 };
 
 export type TableWidth = {

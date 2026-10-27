@@ -1,3 +1,5 @@
+import { CELL_MARGIN_SIDES, type CellMargins } from "@core";
+
 /** Shared HTML-comment annotation convention for `read --markdown`.
  *
  * `read` surfaces structural document facts the GFM body can't show as HTML
@@ -86,6 +88,40 @@ export function twipsToInches(twips: number): string {
  * read the note and re-apply the value directly. */
 export function twipsToPoints(twips: number): string {
 	return `${Number.parseFloat((twips / 20).toFixed(2))}pt`;
+}
+
+/** Cell padding in points, shaped like the `--cell-margins` flag so an agent can
+ * re-apply it verbatim: one value when all four sides agree (`0.75pt`), else
+ * top,right,bottom,left (`0pt,5.4pt,0pt,5.4pt`), with `-` for a side that isn't
+ * set and so inherits (`-,5.4pt,-,5.4pt`). */
+export function formatCellMargins(margins: CellMargins): string {
+	const sides = CELL_MARGIN_SIDES.map((side) => {
+		const twips = margins[side];
+		return twips === undefined ? "-" : twipsToPoints(twips);
+	});
+	return sides.every((side) => side === sides[0])
+		? (sides[0] as string)
+		: sides.join(",");
+}
+
+/** The sides of `margins` that actually change the padding `inherited` already
+ * gives (the table style's for a table, the table's effective padding for a
+ * cell; an undeclared inherited side is 0, which is what Word renders), or
+ * undefined when none does. `read`'s margin hints are deviation-only through
+ * this: LibreOffice stamps `0,108,0,108` on every table and Word copies the
+ * table default onto cells, and restating the default is noise. */
+export function deviatingCellMargins(
+	margins: CellMargins | undefined,
+	inherited: CellMargins = {},
+): CellMargins | undefined {
+	if (!margins) return undefined;
+	const deviating: CellMargins = {};
+	for (const side of CELL_MARGIN_SIDES) {
+		const twips = margins[side];
+		if (twips !== undefined && twips !== (inherited[side] ?? 0))
+			deviating[side] = twips;
+	}
+	return Object.keys(deviating).length > 0 ? deviating : undefined;
 }
 
 /** Format an EMU count (914400 per inch) as inches, trimming trailing zeros.

@@ -85,9 +85,10 @@ it), emitted **deviation-only** (only what differs from the document default).
 Today: `docx:section` (rendered at the section's START, with an
 `applies-to="pX..pY (below)"` scope on deviating sections), `docx:page`,
 `docx:table` (`widths`/`borders` plus the formatting `tables format` authors —
-`align`/`style`, and the row-level `repeat-header`/`row-heights` that have no GFM
-row slot so they ride the table note keyed by `rR`), per-cell `docx:cell` hints
-(`gridSpan`/`vMerge`/`shading`/`vAlign`/`borders`, plus a `halign` derived from a
+`align`/`style`/`cell-margins`, and the row-level `repeat-header`/`row-heights` that have no GFM
+row slot so they ride the table note keyed by `rR`; a NESTED table's note leads
+inline inside its outer cell, keyed by the nested id `tN:rRcC:tM`), per-cell `docx:cell` hints
+(`gridSpan`/`vMerge`/`shading`/`vAlign`/`borders`/`margins`, plus a `halign` derived from a
 uniform non-default cell-paragraph alignment — cell text alignment is otherwise
 invisible in a GFM cell). A PLAIN EMPTY cell emits exactly one bare `<!-- tN:rRcC -->`
 handle so `edit --at CELL` / `insert --at CELL` can fill it; an empty cell WITH
