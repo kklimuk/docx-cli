@@ -6,6 +6,27 @@ Each command is a kebab-case folder. `index.ts(x)` is the public surface: `expor
 
 Add a folder here, register it in the COMMANDS map in [index.ts](index.ts), add tests under `tests/cli/`, document in REFERENCE.md and the root CLAUDE.md. If it emits OOXML, the file is `.tsx` and uses JSX components from `@core/jsx`.
 
+## Lengths — one parser, per-flag bare unit
+
+Every size/length flag parses through [parse-length.ts](parse-length.ts)
+(`parseLength` for one value, `parseLengthList` for a comma list) — never
+`Number.parseFloat`/`parseInt` on the raw string, which silently drops a suffix
+(`images add --width 3cm` was 3 INCHES; `tables create --widths 2.5in,1in` was 2
+and 1 TWIPS — both exit 0). One unit table (in/"/cm/mm/pt/tw/twip/twips/dxa;
+`px` at 96 dpi only behind `pixels: true`, which only image sizes set), returns
+twips. Per-flag `LengthOptions` keep the meaning a BARE number already had —
+`bare: "in" | "pt" | "tw"`, or omitted to require a unit (bare `0` still OK);
+`signed`; `positive`; `largeBareIsTwips` (inch flags: a bare >9 is the twips
+`read --ast` printed). `bare: "tw"` rejects a bare 1–9 or a fraction (an inch
+value missing its suffix) instead of writing a 2-twip column. A list whose ONLY
+suffix is on its last entry shares it (`2.375,4.618in`) — the shape `read`
+prints, so its hints re-apply verbatim; keep new read hints in that shape or
+fully suffixed. A shared-unit entry past 22in (`1440,1in`) is refused as a
+mix, and `positive` is checked AFTER rounding (`0.01pt` is a 0-twip value). A new size flag picks `LengthOptions`, names the units in its
+`--help`, and goes in REFERENCE.md's "Lengths and units" table. Percentages
+(`--widths 25%,…`, `--table-width 50%`) are handled by the caller before the
+length parse. Font `--size` and `--border-size` are not lengths — leave them.
+
 ## `raw` — the verbatim `--xml` channel
 
 `docx raw insert/replace` takes `--xml` VERBATIM — never route it through

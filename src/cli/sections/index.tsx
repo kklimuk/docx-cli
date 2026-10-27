@@ -98,10 +98,13 @@ Column / break options:
 
 Page-setup options (no --at = whole document; --at sN = that one section):
   --orientation O   portrait | landscape (landscape swaps the page dimensions)
-  --size SIZE       letter | legal | tabloid | a4 | a3 | a5, or WxH inches
-                    (e.g. 8.5x11in, 8.5x14). A W>H size implies landscape.
-  --margins M       One inch value (uniform, e.g. 1 or 1in) OR four comma-separated
-                    values in CSS order top,right,bottom,left (e.g. 1,1,1,1.5).
+  --size SIZE       letter | legal | tabloid | a4 | a3 | a5, or WxH — bare inches
+                    or a unit suffix: in, cm, mm, pt, tw (8.5x11in, 8.5x14,
+                    210x297mm). A W>H size implies landscape.
+  --margins M       One value (uniform: bare inches like 1, or 1in, 2.5cm, 72pt)
+                    OR four comma-separated values in CSS order
+                    top,right,bottom,left (e.g. 1,1,1,1.5). A unit on only the
+                    last value applies to all four (1,1,1,1.5in; 2,2,2,2.5cm).
                     Negative values are allowed (content into the margin).
                     Doc-wide margin/size changes (and single-section docs) also
                     auto-repair right-edge tab lines that would wrap at the new

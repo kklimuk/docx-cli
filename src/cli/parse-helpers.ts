@@ -12,6 +12,11 @@ import {
 	firstInvalidRunFormat,
 	type RunFormatEnums,
 } from "@core/run-formatting";
+import {
+	type LengthOptions,
+	parseLength,
+	parseLengthList,
+} from "./parse-length";
 import { EntryError, fail } from "./respond";
 
 /** Detect the signature of a currency amount whose leading digits were eaten by
@@ -509,14 +514,16 @@ const PAGE_SIZES: Record<string, { width: number; height: number }> = {
 	a5: { width: 8391, height: 11906 },
 };
 
-/** Parse `--size` — a named size (letter/legal/tabloid/a4/a3/a5) or `WxH` inches
- *  (`8.5x11`, `8.5x11in`). Returns portrait-normalized twips plus whether the
- *  literal `WxH` was landscape-shaped (width > height). */
+/** Parse `--size` — a named size (letter/legal/tabloid/a4/a3/a5) or `WxH` in
+ *  the shared length grammar: bare inches (`8.5x11`), a unit on the height
+ *  shared by both sides like the `docx:page size="8.5x11in"` read note prints
+ *  (`210x297mm`, `21x29.7cm`), or one unit per side (`8.5inx11in`). Returns
+ *  portrait-normalized twips plus whether the literal `WxH` was
+ *  landscape-shaped (width > height). No bare-twips guess: a page side over
+ *  9in (11, 14, 17) is ordinary. */
 function parsePageSize(
 	raw: string,
-):
-	| { width: number; height: number; impliedLandscape: boolean }
-	| SpacingIndentError {
+): { width: number; height: number; impliedLandscape: boolean } | FlagError {
 	const value = raw.trim().toLowerCase();
 	const named = PAGE_SIZES[value];
 	if (named) {
@@ -526,52 +533,43 @@ function parsePageSize(
 			impliedLandscape: false,
 		};
 	}
-	const match = value.match(
-		/^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in)?$/,
-	);
-	if (match) {
-		const a = Math.round(
-			Number.parseFloat(match[1] as string) * TWIPS_PER_INCH,
-		);
-		const b = Math.round(
-			Number.parseFloat(match[2] as string) * TWIPS_PER_INCH,
-		);
+	// The height side must start with a number, so the `x` in a `dxa` suffix
+	// (`12240dxax15840dxa`) isn't taken as the separator.
+	const sides = value.match(/^(.+?)\s*x\s*(\.?\d.*)$/);
+	const parsed = sides
+		? parseLengthList(`${sides[1]},${sides[2]}`, "size", PAGE_SIZE_LENGTH)
+		: null;
+	if (!parsed || isError(parsed) || parsed.length !== 2) {
 		return {
-			width: Math.min(a, b),
-			height: Math.max(a, b),
-			impliedLandscape: a > b,
+			error: `Invalid --size: ${raw}`,
+			hint: "Use a name (letter, legal, tabloid, a4, a3, a5) or WxH with bare inches or a unit suffix (in, cm, mm, pt, tw): e.g. 8.5x11, 8.5x11in, 210x297mm.",
 		};
 	}
+	const [first, second] = parsed as [number, number];
 	return {
-		error: `Invalid --size: ${raw}`,
-		hint: "Use a name (letter, legal, tabloid, a4, a3, a5) or WxH inches (e.g. 8.5x11in).",
+		width: Math.min(first, second),
+		height: Math.max(first, second),
+		impliedLandscape: first > second,
 	};
 }
 
-/** Parse `--margins` — one inch value (uniform) or four comma-separated values in
+const PAGE_SIZE_LENGTH: LengthOptions = { bare: "in", positive: true };
+
+/** Parse `--margins` — one value (uniform) or four comma-separated values in
  *  CSS order (top,right,bottom,left), matching the `docx:page margins=…` read
- *  note. Inches → twips; signed (a negative margin pulls content into the margin,
- *  which Word allows). A trailing `in` on any part is accepted. */
+ *  note. The shared length grammar with bare inches; signed (a negative margin
+ *  pulls content into the margin, which Word allows). A unit on only the last
+ *  value is shared by all four (`1,1,1,1.5in` is the read note's shape). */
 function parseMargins(
 	raw: string,
-):
-	| { top: number; right: number; bottom: number; left: number }
-	| SpacingIndentError {
-	const parts = raw
-		.trim()
-		.split(",")
-		.map((part) => part.trim());
-	if (parts.length !== 1 && parts.length !== 4) {
+): { top: number; right: number; bottom: number; left: number } | FlagError {
+	const twips = parseLengthList(raw.trim(), "margins", INDENT_LENGTH);
+	if (isError(twips)) return twips;
+	if (twips.length !== 1 && twips.length !== 4) {
 		return {
 			error: `Invalid --margins: ${raw}`,
-			hint: "Use one inch value (uniform, e.g. 1in) or four comma-separated top,right,bottom,left (e.g. 1,1,1,1.5).",
+			hint: "Use one value (uniform, e.g. 1in or 2.5cm) or four comma-separated top,right,bottom,left (e.g. 1,1,1,1.5in).",
 		};
-	}
-	const twips: number[] = [];
-	for (const part of parts) {
-		const value = inchesToTwips(part, "margins");
-		if (isError(value)) return value;
-		twips.push(value);
 	}
 	if (twips.length === 1) {
 		const [uniform] = twips as [number];
@@ -1080,11 +1078,10 @@ function batchString(
 }
 
 const TWIPS_PER_POINT = 20;
-const TWIPS_PER_INCH = 1440;
 /** `<w:spacing w:line>` units for `lineRule="auto"`: 240ths of a line. */
 const LINE_UNITS_PER_MULTIPLE = 240;
 
-type SpacingIndentError = { error: string; hint?: string };
+type FlagError = { error: string; hint?: string };
 
 /** Parse the paragraph spacing/indentation flags (shared by `insert` and `edit`,
  *  single-shot and batch) into a `ParagraphOptions` slice, or a `{ error }` the
@@ -1094,16 +1091,16 @@ type SpacingIndentError = { error: string; hint?: string };
  *  exclusive (same OOXML slot). Returns an empty object when no flag is set. */
 export function parseSpacingIndentFlags(
 	values: Record<string, unknown>,
-): Pick<ParagraphOptions, "spacing" | "indent"> | SpacingIndentError {
+): Pick<ParagraphOptions, "spacing" | "indent"> | FlagError {
 	const out: Pick<ParagraphOptions, "spacing" | "indent"> = {};
 	const spacing: NonNullable<ParagraphOptions["spacing"]> = {};
 	const indent: NonNullable<ParagraphOptions["indent"]> = {};
 
-	const before = readMeasure(values, "space-before", pointsToTwips);
+	const before = readMeasure(values, "space-before", SPACING_LENGTH);
 	if (isError(before)) return before;
 	if (before !== undefined) spacing.before = before;
 
-	const after = readMeasure(values, "space-after", pointsToTwips);
+	const after = readMeasure(values, "space-after", SPACING_LENGTH);
 	if (isError(after)) return after;
 	if (after !== undefined) spacing.after = after;
 
@@ -1115,11 +1112,11 @@ export function parseSpacingIndentFlags(
 		spacing.lineRule = parsed.lineRule;
 	}
 
-	const left = readMeasure(values, "indent-left", inchesToTwips);
+	const left = readMeasure(values, "indent-left", INDENT_LENGTH);
 	if (isError(left)) return left;
 	if (left !== undefined) indent.left = left;
 
-	const right = readMeasure(values, "indent-right", inchesToTwips);
+	const right = readMeasure(values, "indent-right", INDENT_LENGTH);
 	if (isError(right)) return right;
 	if (right !== undefined) indent.right = right;
 
@@ -1129,11 +1126,11 @@ export function parseSpacingIndentFlags(
 			hint: "They occupy the same indent slot (positive vs. negative first-line indent). Pass one.",
 		};
 	}
-	const firstLine = readMeasure(values, "first-line", inchesToTwips);
+	const firstLine = readMeasure(values, "first-line", INDENT_LENGTH);
 	if (isError(firstLine)) return firstLine;
 	if (firstLine !== undefined) indent.firstLine = firstLine;
 
-	const hanging = readMeasure(values, "hanging", unsignedInchesToTwips);
+	const hanging = readMeasure(values, "hanging", HANGING_LENGTH);
 	if (isError(hanging)) return hanging;
 	if (hanging !== undefined) indent.hanging = hanging;
 
@@ -1142,124 +1139,39 @@ export function parseSpacingIndentFlags(
 	return out;
 }
 
-function isError(value: unknown): value is SpacingIndentError {
+function isError(value: unknown): value is FlagError {
 	return typeof value === "object" && value !== null && "error" in value;
 }
 
-/** Read one measure flag and convert it via `convert`, or undefined if absent. */
+/** Read one measure flag through the shared length grammar, or undefined if
+ *  absent. */
 function readMeasure(
 	values: Record<string, unknown>,
 	flag: string,
-	convert: (raw: string, flag: string) => number | SpacingIndentError,
-): number | undefined | SpacingIndentError {
+	options: LengthOptions,
+): number | undefined | FlagError {
 	const raw = values[flag];
 	if (raw === undefined) return undefined;
-	return convert(String(raw), flag);
+	return parseLength(String(raw), flag, options);
 }
 
 /** Points by default (unsigned): `--space-before`/`--space-after`. */
-function pointsToTwips(raw: string, flag: string): number | SpacingIndentError {
-	return parseMeasure(raw, flag, "pt", false);
-}
+const SPACING_LENGTH: LengthOptions = { bare: "pt" };
 
-/** Inches by default, signed: `--indent-left`/`--indent-right`/`--first-line`
- *  and page margins. */
-function inchesToTwips(raw: string, flag: string): number | SpacingIndentError {
-	return parseMeasure(raw, flag, "in", true);
-}
-
-/** `--hanging` only — inches by default, unsigned (the hanging indent has no
- *  negative form; a negative first-line indent is `--first-line -N`). */
-function unsignedInchesToTwips(
-	raw: string,
-	flag: string,
-): number | SpacingIndentError {
-	return parseMeasure(raw, flag, "in", false);
-}
-
-/** Parse one measure flag into twips. Accepts a bare number in the flag's
- *  default unit, or a number with a unit suffix (`0.5in`, `1.27cm`, `6pt`,
- *  `720tw`). For inch-default flags a bare number above `BARE_INCH_MAX` is
- *  twips. `signed` admits a leading `-`: `w:left`/`w:right`/`w:firstLine` are
- *  `ST_SignedTwipsMeasure` (a negative indent is a deliberate outdent into the
- *  margin, which Word produces and the reader surfaces, so the read→re-apply
- *  loop must accept it back); `w:hanging`/`w:before`/`w:after` are unsigned. */
-function parseMeasure(
-	raw: string,
-	flag: string,
-	defaultUnit: "in" | "pt",
-	signed: boolean,
-): number | SpacingIndentError {
-	const match = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*("|[a-z]+)?$/i);
-	const unit = match?.[2]?.toLowerCase();
-	// Own-property lookup only: a plain-object index would resolve `constructor`
-	// through the prototype and write `w:left="NaN"`.
-	const factor =
-		unit !== undefined && Object.hasOwn(MEASURE_UNIT_TWIPS, unit)
-			? MEASURE_UNIT_TWIPS[unit]
-			: undefined;
-	const number = match ? Number.parseFloat(match[1] as string) : Number.NaN;
-	if (
-		!match ||
-		(unit !== undefined && factor === undefined) ||
-		(!signed && number < 0)
-	) {
-		const example =
-			defaultUnit === "in"
-				? `--${flag} 0.5 (or 0.5in, 1.27cm, 720tw)`
-				: `--${flag} 6 (or 6pt, 0.1in, 120tw)`;
-		return {
-			error: `Invalid --${flag}: ${raw}`,
-			hint: `Use ${defaultUnit === "in" ? "inches" : "points"} by default, or a unit suffix (in, cm, mm, pt, tw): e.g. ${example}.`,
-		};
-	}
-	if (factor !== undefined) return Math.round(number * factor);
-	if (defaultUnit === "in" && Math.abs(number) > BARE_INCH_MAX) {
-		return Math.round(number);
-	}
-	return Math.round(
-		number * (defaultUnit === "in" ? TWIPS_PER_INCH : TWIPS_PER_POINT),
-	);
-}
-
-/** Parse an unsigned measure whose unit is REQUIRED (`0.4in`, `28pt`, `1cm`,
- *  `5mm`, `108tw`) into twips, or null. A bare number is rejected rather than
- *  read in a default unit — `--row-height 28` must not become a 28-INCH row,
- *  and `--cell-margins 108` (the twips `read --ast` reports) must not become
- *  108pt of padding. A bare `0` is the one exception: zero in any unit. Same
- *  unit table as the spacing/indent flags (`MEASURE_UNIT_TWIPS`). */
-export function parseUnitMeasure(raw: string): number | null {
-	const trimmed = raw.trim();
-	if (/^0*\.?0+$/.test(trimmed)) return 0;
-	const match = trimmed.match(/^(\d*\.?\d+)\s*("|[a-z]+)$/i);
-	const unit = match?.[2]?.toLowerCase();
-	if (!match || unit === undefined || !Object.hasOwn(MEASURE_UNIT_TWIPS, unit))
-		return null;
-	const value = Number.parseFloat(match[1] as string);
-	return Math.round(value * (MEASURE_UNIT_TWIPS[unit] as number));
-}
-
-/** Twips per unit for an explicit suffix on a measure flag. `tw`/`twips`/`dxa`
- *  are the raw OOXML unit — what `read --ast` reports, so an agent can feed an
- *  AST value straight back with its unit named. */
-const MEASURE_UNIT_TWIPS: Readonly<Record<string, number>> = {
-	in: TWIPS_PER_INCH,
-	'"': TWIPS_PER_INCH,
-	cm: TWIPS_PER_INCH / 2.54,
-	mm: TWIPS_PER_INCH / 25.4,
-	pt: TWIPS_PER_POINT,
-	tw: 1,
-	twip: 1,
-	twips: 1,
-	dxa: 1,
+/** Indents and page margins: bare inches, signed, and a bare number above
+ *  9 is the twips value `read --ast` reports. `w:left`/`w:right`/`w:firstLine`
+ *  are `ST_SignedTwipsMeasure` (a negative indent is a deliberate outdent into
+ *  the margin, which Word produces and the reader surfaces, so the
+ *  read→re-apply loop must accept it back). */
+const INDENT_LENGTH: LengthOptions = {
+	bare: "in",
+	signed: true,
+	largeBareIsTwips: true,
 };
 
-/** A bare inch value above this is read as TWIPS. No paragraph indent or page
- *  margin is 10+ inches on any real page, but 119 / 720 / 1440 are exactly the
- *  twips values `read --ast` reports — a weak agent copies one into an inch flag
- *  and (before this) got a 119-INCH indent that pushed three résumé entries off
- *  the page, exit 0. */
-const BARE_INCH_MAX = 9;
+/** `--hanging` only — unsigned (the hanging indent has no negative form; a
+ *  negative first-line indent is `--first-line -N`). */
+const HANGING_LENGTH: LengthOptions = { ...INDENT_LENGTH, signed: false };
 
 type LineRule = NonNullable<ParagraphOptions["spacing"]>["lineRule"];
 
@@ -1273,7 +1185,7 @@ type LineRule = NonNullable<ParagraphOptions["spacing"]>["lineRule"];
  *  (`line-spacing="18pt exact"`) couldn't be fed back through `--line-spacing`. */
 function parseLineSpacing(
 	raw: string,
-): { line: number; lineRule: LineRule } | SpacingIndentError {
+): { line: number; lineRule: LineRule } | FlagError {
 	const value = raw.trim().toLowerCase();
 	const ptMatch = value.match(/^(\d+(?:\.\d+)?)\s*pt(?:\s+(exact|atleast))?$/);
 	if (ptMatch) {
@@ -1294,7 +1206,7 @@ function parseLineSpacing(
 	};
 }
 
-function invalidLineSpacing(raw: string): SpacingIndentError {
+function invalidLineSpacing(raw: string): FlagError {
 	return {
 		error: `Invalid --line-spacing: ${raw}`,
 		hint: "Use a multiple (1, 1.5, 2), a name (single, double), or an exact point value (e.g. 15pt, or '15pt atLeast').",

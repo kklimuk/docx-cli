@@ -2633,3 +2633,210 @@ describe("table visual structure surfaces as docx:table / docx:cell hints", () =
 		expect(table?.borders).toBe("double");
 	});
 });
+
+// Every table width flag parses through the shared length grammar
+// (cli/parse-length.ts): bare whole twips as before, or a unit suffix. Before it,
+// `tables create --widths 2.5in,1in` `parseInt`-ed to gridCols of 2 and 1 TWIPS
+// (exit 0), and `set-widths` couldn't take back the `widths="…in"` value `read`
+// prints.
+describe("table widths — shared length grammar", () => {
+	async function createWithWidths(label: string, ...flags: string[]) {
+		const docPath = join(tempWorkspace(label), "out.docx");
+		await runCli("create", docPath, "--text", "Before");
+		const result = await runCli(
+			"tables",
+			"create",
+			docPath,
+			"--after",
+			"p0",
+			"--rows",
+			"1",
+			"--cols",
+			"2",
+			...flags,
+		);
+		return { docPath, result };
+	}
+
+	test("create --widths 2.5in,1in is inches, not 2 and 1 twips", async () => {
+		const { docPath, result } = await createWithWidths(
+			"widths-in",
+			"--widths",
+			"2.5in,1in",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([3600, 1440]);
+	});
+
+	test("create --widths: per-entry units, a shared trailing unit, bare twips", async () => {
+		const cases: Array<[string, number[]]> = [
+			["5cm,25.4mm", [2835, 1440]],
+			["2.5,1in", [3600, 1440]], // the shape `read` prints
+			["72pt,1440tw", [1440, 1440]],
+			["1440,2880", [1440, 2880]], // back-compat: bare = twips
+		];
+		for (const [widths, grid] of cases) {
+			const { docPath, result } = await createWithWidths(
+				"widths-mixed",
+				"--widths",
+				widths,
+			);
+			expect(result.exitCode).toBe(0);
+			expect((await table(docPath)).grid).toEqual(grid);
+		}
+	});
+
+	test("create --widths rejects junk and inch-looking bare values", async () => {
+		// `2,1` would be 2 and 1 TWIPS (0.001in) — refused rather than written;
+		// `2.375` is a fractional twip (an inch value missing its suffix).
+		for (const bad of [
+			"2,1",
+			"2.375,1440",
+			"3px,1in",
+			"2.5foo,1in",
+			"1in,-1in",
+			// Bare twips beside one suffixed entry: sharing `in` would make the
+			// first column 1440 INCHES — refused as an ambiguous mix.
+			"1440,1in",
+			// Rounds to a 0-twip column.
+			"0.0001in,1in",
+		]) {
+			const { docPath, result } = await createWithWidths(
+				"widths-bad",
+				"--widths",
+				bad,
+			);
+			expect(result.exitCode).toBe(2);
+			expect((result.parsed as { code: string }).code).toBe("USAGE");
+			expect(await readMarkdown(docPath)).not.toContain("t0");
+		}
+	});
+
+	test("create --table-width takes a length or a percentage", async () => {
+		const inches = await createWithWidths("tw-in", "--table-width", "5in");
+		expect(inches.result.exitCode).toBe(0);
+		expect((await table(inches.docPath)).width).toEqual({
+			value: 7200,
+			unit: "dxa",
+		});
+		const pct = await createWithWidths("tw-pct", "--table-width", "50%");
+		expect((await table(pct.docPath)).width).toEqual({
+			value: 2500,
+			unit: "pct",
+		});
+		const bad = await createWithWidths("tw-bad", "--table-width", "5in%");
+		expect(bad.result.exitCode).toBe(2);
+		const junk = await createWithWidths("tw-junk", "--table-width", "5");
+		expect(junk.result.exitCode).toBe(2);
+	});
+
+	test("the widths `read` prints re-apply verbatim through set-widths", async () => {
+		const docPath = await newTableDoc("widths-loop", 1, 2);
+		await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"3420,6649",
+		);
+		const printed = (await readMarkdown(docPath)).match(
+			/docx:table t0 widths="([^"]+)"/,
+		)?.[1];
+		expect(printed).toBe("2.375,4.617in");
+		// Scramble the widths, then feed the printed value straight back.
+		await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			"5000,5069",
+		);
+		const result = await runCli(
+			"tables",
+			"set-widths",
+			docPath,
+			"--at",
+			"t0",
+			"--widths",
+			printed as string,
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([3420, 6648]);
+		expect(await readMarkdown(docPath)).toContain(`widths="${printed}"`);
+	});
+
+	test("set-widths: units and percentages, mixed rejected", async () => {
+		const docPath = await newTableDoc("widths-set-units", 1, 2);
+		const set = (widths: string) =>
+			runCli("tables", "set-widths", docPath, "--at", "t0", "--widths", widths);
+		expect((await set("2in,3.5cm")).exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([2880, 1984]);
+		expect((await set("1440,2880")).exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([1440, 2880]);
+		expect((await set("50%,50%")).exitCode).toBe(0);
+		expect((await table(docPath)).grid).toEqual([2160, 2160]);
+		for (const bad of ["50%,2in", "2in,abc", "3px,1in", "2,3"]) {
+			expect((await set(bad)).exitCode).toBe(2);
+		}
+		expect((await table(docPath)).grid).toEqual([2160, 2160]);
+	});
+
+	test("insert-column --width takes a unit; bare twips still work", async () => {
+		const docPath = await newTableDoc("ins-col-units", 1, 2);
+		const insert = (width: string) =>
+			runCli(
+				"tables",
+				"insert-column",
+				docPath,
+				"--at",
+				"t0",
+				"--width",
+				width,
+			);
+		expect((await insert("1.25in")).exitCode).toBe(0);
+		expect((await table(docPath)).grid[2]).toBe(1800);
+		expect((await insert("1000")).exitCode).toBe(0);
+		expect((await table(docPath)).grid[3]).toBe(1000);
+		expect((await insert("1.25foo")).exitCode).toBe(2);
+		expect((await table(docPath)).grid).toHaveLength(4);
+	});
+
+	test("format --row-height / --cell-margins take the same units (incl. cm)", async () => {
+		const docPath = await newTableDoc("format-units", 1, 2);
+		expect(
+			(
+				await runCli(
+					"tables",
+					"format",
+					docPath,
+					"--at",
+					"t0",
+					"--row-height",
+					"1cm",
+					"--cell-margins",
+					"0,2mm,0,2mm",
+				)
+			).exitCode,
+		).toBe(0);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain('row-heights="r0:0.394in"');
+		// px isn't a table unit — only images have a pixel size.
+		expect(
+			(
+				await runCli(
+					"tables",
+					"format",
+					docPath,
+					"--at",
+					"t0",
+					"--row-height",
+					"20px",
+				)
+			).exitCode,
+		).toBe(2);
+	});
+});

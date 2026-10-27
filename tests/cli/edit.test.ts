@@ -2496,6 +2496,31 @@ describe("edit --tabs (tab-stop cure)", () => {
 		]);
 	});
 
+	test("explicit stop positions take the shared length units (unit required)", async () => {
+		const docPath = await tabbedDoc("tabs-units");
+		expect(
+			(
+				await runCli(
+					"edit",
+					docPath,
+					"--at",
+					"p1",
+					"--tabs",
+					"left@5cm,right@468pt",
+				)
+			).exitCode,
+		).toBe(0);
+		expect(await tabStops(docPath, "p1")).toEqual([
+			{ align: "left", pos: 2835 },
+			{ align: "right", pos: 9360 },
+		]);
+		// A bare position has no unit to assume; px isn't a paragraph unit.
+		for (const bad of ["left@2", "left@2px", "left@2foo"]) {
+			const result = await runCli("edit", docPath, "--at", "p1", "--tabs", bad);
+			expect(result.exitCode).toBe(2);
+		}
+	});
+
 	test("--tabs clear removes the paragraph's tab stops", async () => {
 		const docPath = await tabbedDoc("tabs-clear");
 		await runCli("edit", docPath, "--at", "p1", "--tabs", "left@2in");
@@ -4428,6 +4453,28 @@ describe("docx edit — measure units", () => {
 		);
 		expect(result.exitCode).toBe(2);
 		expect(JSON.parse(result.stdout).hint).toContain("in, cm, mm, pt, tw");
+		// px is an image-only unit; a trailing-junk number isn't truncated.
+		for (const bad of ["12px", "2.5foo", "1e2"]) {
+			const rejected = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				"--space-before",
+				bad,
+			);
+			expect(rejected.exitCode).toBe(2);
+		}
+	});
+
+	test("a bare spacing value is still points (back-compat)", async () => {
+		const docPath = join(tempWorkspace("measure-bare-pt"), "out.docx");
+		await runCli("create", docPath, "--text", "Spaced line.");
+		await runCli("edit", docPath, "--at", "p0", "--space-before", "6");
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: Array<{ spacing?: Record<string, number> }>;
+		};
+		expect(ast.blocks[0]?.spacing).toEqual({ before: 120 });
 	});
 });
 

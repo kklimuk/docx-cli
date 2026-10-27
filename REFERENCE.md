@@ -246,7 +246,7 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #       --hanging/--tabs) can't ride together — use separate calls/entries, or add --text to set both.
 #   --list bullet|ordered [--list-level N]   (insert; for a task-list CHECKBOX use `docx tasks add`)
 #   --rows N --cols N [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]   (docx tables create)
-#   --image SRC [--alt T] [--width IN] [--height IN] [--caption "Figure 1: …"]   (docx images add; SRC = path, data: URI, or http(s) URL; --caption adds a Word "Caption"-styled line under the figure)
+#   --image SRC [--alt T] [--width LENGTH] [--height LENGTH] [--caption "Figure 1: …"]   (docx images add; SRC = path, data: URI, or http(s) URL; --caption adds a Word "Caption"-styled line under the figure)
 #   --page-break | --column-break | --section [--columns N] [--type T]   (insert)
 
 docx comments add     FILE --at LOCATOR --text "..." [--author NAME] [--current | --baseline]
@@ -275,7 +275,7 @@ docx headers clear FILE [--at sN] [--type T | --first-page | --even | --odd]
 docx footers set   FILE …   # identical flags, kind=footer (e.g. --page-number --of-pages → "Page X of Y")
 docx footers clear FILE …
 
-docx images add     FILE (--after | --before) LOCATOR --image SRC [--alt T] [--width IN] [--height IN] [--caption "..."]
+docx images add     FILE (--after | --before) LOCATOR --image SRC [--alt T] [--width LENGTH] [--height LENGTH] [--caption "..."]   # bare = inches; 5cm, 300px, … (see "Lengths and units")
 docx images add     FILE (--at-start | --at-end) --image SRC [options]   # SRC = path, data: URI, or http(s) URL
 docx images extract FILE --to DIR [--at imgN]            # --to = output directory; --at picks one image
 docx images replace FILE --at imgN --with ./new.png
@@ -288,9 +288,9 @@ docx hyperlinks delete  FILE --at linkN
 docx tables create        FILE (--after|--before LOCATOR | --at-start|--at-end) --rows N --cols M [--widths "A,B,C"] [--table-width V] [--borders S] [--layout L]
 docx tables insert-row    FILE --at tN [--position INDEX] [--cells "a,b,c"]
 docx tables delete-row    FILE --at tN:rR
-docx tables insert-column FILE --at tN [--position INDEX] [--width TWIPS]
+docx tables insert-column FILE --at tN [--position INDEX] [--width LENGTH]
 docx tables delete-column FILE --at tN:cC
-docx tables set-widths    FILE --at tN --widths "25%,25%,50%" | "1440,..." | auto
+docx tables set-widths    FILE --at tN --widths "25%,25%,50%" | "1440,..." | "2.375,4.618in" | auto
 docx tables merge         FILE --at tN:rR1cC1-rR2cC2
 docx tables unmerge       FILE --at tN:rRcC
 docx tables borders       FILE --at tN [--style single|double|none] [--size N] [--color HEX]
@@ -439,6 +439,33 @@ cN  imgN  linkN  fnN  enN  tcN  eqN          entity ids (comment / image / hyper
 | `pN[:offset]` (point)                                                | `footnotes/endnotes add --at`                                                       |
 | `cN` / `fnN` / `enN` / `imgN` / `linkN` / `tcN` (entities)           | the matching noun's `--at` (the `c`/`fn`/`en`/`img`/`link`/`tc` prefix is optional) |
 | `tN`, `tN:rR`, `tN:cC`, `tN:rRcC`, `tN:rR1cC1-rR2cC2`                | the `tables` verbs                                                                  |
+
+## Lengths and units
+
+Every size/length flag parses the same grammar: a number with an optional unit
+suffix — `in` (or `"`), `cm`, `mm`, `pt`, `tw` (`twip`/`twips`/`dxa`: 1/1440in,
+the unit `read --ast` reports), and `px` (96 dpi) on image sizes only. A suffix
+always means what it says. What a BARE number means is per flag and unchanged
+from before, so existing calls keep working:
+
+| Flag(s)                                                                    | Bare number                     | Notes                                                                                        |
+| -------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `images add --width/--height`                                              | inches                          | also `px` (96 dpi): `--width 300px`, `--width 5cm`                                           |
+| `tables create --widths`, `--table-width`; `set-widths --widths`; `insert-column --width` | whole twips (1440 = 1in) | a bare 1–9 is refused (2 twips is 0.001in — write `2in` or `2tw`); `--table-width`/`set-widths` also take `%` |
+| `--space-before/--space-after`                                             | points                          |                                                                                              |
+| `--indent-*`/`--first-line`/`--hanging`, page `--margins`                  | inches                          | a bare value above 9 is twips (the `read --ast` number); indents/margins may be negative      |
+| `create`/`sections --size WxH`                                             | inches                          | `8.5x11`, `8.5x11in`, `210x297mm`, `21cmx29.7cm` (or a name: letter, a4, …)                  |
+| `tables format --row-height`, `--cell-margins`; `edit --tabs left@POS`     | (unit required; `0` allowed)    | `--row-height 1cm`, `--cell-margins 0,2mm,0,2mm`, `--tabs right@19cm`                        |
+
+In a comma list (`--widths`, `--margins`), a unit on ONLY the last value applies
+to every value — the shape `read` prints (`docx:table widths="2.375,4.618in"`,
+`docx:page margins="1,1,1,1.5in"`), so a printed hint re-applies verbatim.
+A bare value that would land past 22in under the shared unit (`1440,1in`) is
+refused as an ambiguous mix — give each value its own unit.
+Anything else — an unknown unit (`3em`), trailing junk (`2.5foo`), `px` outside
+images — is a usage error (exit 2), never a silently truncated number. Font
+`--size` (points) and `--border-size` (eighths of a point) are different
+quantities and keep their own forms.
 
 ## Common workflows
 

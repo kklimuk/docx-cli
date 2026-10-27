@@ -326,6 +326,100 @@ describe("docx create — page setup", () => {
 		expect(blocks.some((block) => block.style === "Heading1")).toBe(true);
 	});
 
+	// `--size`/`--margins` parse through the shared length grammar
+	// (cli/parse-length.ts) — bare inches as before, or a unit suffix; a unit on
+	// only the last value is shared by the list (the `docx:page` note's shape).
+	test("--size WxH and --margins accept unit suffixes", async () => {
+		const cases: Array<{
+			size: string;
+			margins: string;
+			width: number;
+			height: number;
+			top: number;
+			left: number;
+		}> = [
+			// Before: `210x297mm` was rejected (WxH was inches-only).
+			{
+				size: "210x297mm",
+				margins: "2.5cm",
+				width: 11906,
+				height: 16838,
+				top: 1417,
+				left: 1417,
+			},
+			{
+				size: "21cmx29.7cm",
+				margins: "2,2,2,2.5cm",
+				width: 11906,
+				height: 16838,
+				top: 1134,
+				left: 1417,
+			},
+			// Back-compat: bare inches, and the read note's own shapes.
+			{
+				size: "8.5x14",
+				margins: "1,1,1,1.5in",
+				width: 12240,
+				height: 20160,
+				top: 1440,
+				left: 2160,
+			},
+			// The `x` inside a `dxa` suffix isn't the WxH separator.
+			{
+				size: "12240dxax15840dxa",
+				margins: "1in",
+				width: 12240,
+				height: 15840,
+				top: 1440,
+				left: 1440,
+			},
+			{
+				size: "8.5x11in",
+				margins: "0.75",
+				width: 12240,
+				height: 15840,
+				top: 1080,
+				left: 1080,
+			},
+		];
+		for (const { size, margins, width, height, top, left } of cases) {
+			const docPath = join(tempWorkspace("create-units"), "out.docx");
+			const result = await runCli(
+				"create",
+				docPath,
+				"--text",
+				"Memo.",
+				"--size",
+				size,
+				"--margins",
+				margins,
+			);
+			expect(result.exitCode).toBe(0);
+			const s = await trailingSection(docPath);
+			expect([s.pageWidth, s.pageHeight, s.marginTop, s.marginLeft]).toEqual([
+				width,
+				height,
+				top,
+				left,
+			]);
+		}
+	});
+
+	test("--size / --margins junk is a usage error", async () => {
+		for (const flags of [
+			["--size", "210x297px"],
+			["--size", "8.5x"],
+			["--size", "0x11in"],
+			["--margins", "1foo"],
+			["--margins", "1,1,1"],
+		]) {
+			const docPath = join(tempWorkspace("create-units-bad"), "out.docx");
+			const result = await runCli("create", docPath, "--text", "x", ...flags);
+			expect(result.exitCode).toBe(2);
+			expect((result.parsed as { code: string }).code).toBe("USAGE");
+		}
+	});
+
 	test("a plain create (no page flags) stays default Letter — no page note", async () => {
 		const workspace = tempWorkspace("create-page-default");
 		const docPath = join(workspace, "out.docx");

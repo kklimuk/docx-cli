@@ -16,7 +16,9 @@ import { $ } from "bun";
  * <w:trHeight>/<w:tblHeader>/table-<w:jc>/<w:tblCellMar>/<w:tcMar> XML through
  * the LibreOffice round-trip.
  *
- * Table t1 (tracked edits, left UNACCEPTED): a 2×2 table edited with
+ * Table t1 (tracked edits, left UNACCEPTED): a 2×2 table created with
+ * unit-suffixed `--widths 2.5in,4cm` (the shared length grammar — `parseInt`
+ * used to make those 2 and 4 TWIPS) and edited with
  * track-changes ON so the saved file carries every table revision marker —
  * <w:trPr><w:ins> (rowIns), <w:trPr><w:del> (rowDel), <w:tcPr><w:cellIns>
  * (column insert) and its paired <w:tblGridChange>, and <w:tcPr><w:cellDel>
@@ -133,6 +135,8 @@ await cli(
 	"2",
 	"--cols",
 	"2",
+	"--widths",
+	"2.5in,4cm",
 );
 
 // t2 — clean, unmerged 2×3 autofit table (the equation-in-cell regression
@@ -167,7 +171,17 @@ await cli("insert", out, "--after", "t2:r1c2", "--text", "Cell end");
 
 await cli("track-changes", out, "on");
 await cli("tables", "insert-row", out, "--at", "t1", "--cells", "added,row"); // rowIns
-await cli("tables", "insert-column", out, "--at", "t1", "--position", "1"); // cellIns + tblGridChange
+await cli(
+	"tables",
+	"insert-column",
+	out,
+	"--at",
+	"t1",
+	"--position",
+	"1",
+	"--width",
+	"0.75in",
+); // cellIns + tblGridChange
 await cli("tables", "delete-row", out, "--at", "t1:r0"); // rowDel
 await cli("tables", "delete-column", out, "--at", "t1:c2"); // cellDel (per row)
 

@@ -53,9 +53,12 @@ Options:
                      track-changes, note bodies flatten to plain text.)
   --orientation O    Page orientation: portrait (default) | landscape
   --size SIZE        Page size: letter (default) | legal | tabloid | a4 | a3 | a5,
-                     or WxH inches (e.g. 8.5x14in). A W>H size implies landscape.
-  --margins M        Page margins: one inch value (uniform, e.g. 1in) OR four
-                     comma-separated top,right,bottom,left (e.g. 1,1,1,1.5).
+                     or WxH — bare inches or a unit suffix: in, cm, mm, pt, tw
+                     (8.5x14in, 210x297mm). A W>H size implies landscape.
+  --margins M        Page margins: one value (uniform: bare inches like 1, or
+                     1in, 2.5cm) OR four comma-separated top,right,bottom,left
+                     (e.g. 1,1,1,1.5). A unit on only the last value applies to
+                     all four.
   --header TEXT      Add a page header with this text (all pages)
   --footer TEXT      Add a page footer with this text (all pages)
   --page-numbers     Add centered page numbers in the footer (mutex with --footer).

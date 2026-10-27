@@ -28,7 +28,8 @@ import {
 	setTableJustification,
 	setTableStyle,
 } from "@core/table";
-import { normalizeHexColor, parseUnitMeasure } from "../parse-helpers";
+import { normalizeHexColor } from "../parse-helpers";
+import { parseLength } from "../parse-length";
 import {
 	EXIT,
 	fail,
@@ -74,8 +75,9 @@ Cell options (any locator — broadcast to every cell it covers):
   --border-size EIGHTHS   Thickness in eighths of a point (default: 4 = 0.5pt)
   --border-color HEX|NAME (default: auto)
   --cell-margins M|T,R,B,L|none
-                          Padding inside the cell, units required (2pt, 0.05in,
-                          1mm, 108tw; 0 is allowed): one value for every side or
+                          Padding inside the cell, units required (in, cm, mm,
+                          pt, tw — 2pt, 0.05in, 1mm, 108tw; 0 is allowed): one
+                          value for every side or
                           four for top,right,bottom,left, - to keep a side
                           as it is (-,4pt,-,4pt = left/right only). With --at tN
                           this sets the TABLE's default cell margins (rows added
@@ -84,7 +86,8 @@ Cell options (any locator — broadcast to every cell it covers):
                           own margins. none clears it back to the default.
 
 Row options (--at t0:rR, or --at t0 for every row):
-  --row-height MEASURE    a unit is required: 0.4in, 28pt, 1cm (a bare number is rejected)
+  --row-height MEASURE    a unit is required (in, cm, mm, pt, tw): 0.4in, 28pt,
+                          1cm (a bare number is rejected)
   --height-rule atLeast|exact|auto   (default: atLeast)
   --repeat-header / --no-repeat-header
                           Repeat the row as a header atop each page the table spans
@@ -350,9 +353,9 @@ function buildPlan(
 	if (heightRule !== undefined && rowHeight === undefined)
 		return "--height-rule has no effect without --row-height";
 	if (rowHeight !== undefined) {
-		const twips = parseUnitMeasure(rowHeight);
-		if (twips === null || twips === 0)
-			return `--row-height must be a positive measure WITH a unit, e.g. 0.4in or 28pt (got ${rowHeight})`;
+		const twips = parseLength(rowHeight, "row-height", { positive: true });
+		if (typeof twips !== "number")
+			return `--row-height must be a positive measure WITH a unit (in, cm, mm, pt, tw), e.g. 0.4in or 28pt (got ${rowHeight})`;
 		plan.rowHeight = {
 			value: twips,
 			rule: (heightRule ?? "atLeast") as "atLeast" | "exact" | "auto",
@@ -652,9 +655,12 @@ function parseCellMargins(raw: string): CellMargins | null | string {
 	if (isClear(raw)) return null;
 	const parts = raw.split(",").map((part) => part.trim());
 	const twips = parts.map((part) =>
-		part === "-" ? undefined : parseUnitMeasure(part),
+		part === "-" ? undefined : parseLength(part, "cell-margins", {}),
 	);
-	if ((twips.length !== 1 && twips.length !== 4) || twips.includes(null))
+	if (
+		(twips.length !== 1 && twips.length !== 4) ||
+		twips.some((side) => typeof side === "object")
+	)
 		return `--cell-margins must be one measure WITH a unit (e.g. 2pt, 0.05in, 1mm) or four comma-separated top,right,bottom,left with - for a side that inherits (e.g. 0,5.4pt,0,5.4pt or -,4pt,-,4pt), or none — got ${raw}`;
 	const [top, right, bottom, left] = (
 		twips.length === 1 ? [twips[0], twips[0], twips[0], twips[0]] : twips

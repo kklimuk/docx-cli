@@ -14,6 +14,11 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   1. PNG via local file path (native pixel size)
  *   2. JPEG via a data: URI (native pixel size)
  *   3. PNG via local file path, scaled to an explicit 1.5" width (aspect kept)
+ *   4. PNG sized with unit suffixes (`--width 4cm`, then `--height 96px` on a
+ *      fifth copy) — the shared length grammar, which used to read `4cm` as
+ *      4 INCHES.
+ * The page itself is A4 with 2cm margins via `create --size 210x297mm
+ * --margins 2cm` (WxH with a unit suffix — inches-only before).
  *
  * The raw images live under tests/fixtures/assets/ as committed bytes (real
  * encodings so LibreOffice renders them on round-trip); this script consumes
@@ -35,7 +40,17 @@ const pngPath = resolve(assets, "sample.png");
 const jpgBytes = await Bun.file(resolve(assets, "sample.jpg")).bytes();
 const jpgDataUri = `data:image/jpeg;base64,${Buffer.from(jpgBytes).toString("base64")}`;
 
-await cli("create", out, "--force", "--text", "Images fixture");
+await cli(
+	"create",
+	out,
+	"--force",
+	"--text",
+	"Images fixture",
+	"--size",
+	"210x297mm",
+	"--margins",
+	"2cm",
+);
 
 await cli("insert", out, "--after", "p0", "--text", "PNG from a file path");
 await cli(
@@ -76,6 +91,34 @@ await cli(
 	"Scaled PNG",
 	"--width",
 	"1.5",
+);
+
+await cli("insert", out, "--after", "p6", "--text", "PNG sized in cm and px");
+await cli(
+	"images",
+	"add",
+	out,
+	"--after",
+	"p7",
+	"--image",
+	pngPath,
+	"--alt",
+	"PNG at 4cm",
+	"--width",
+	"4cm",
+);
+await cli(
+	"images",
+	"add",
+	out,
+	"--after",
+	"p8",
+	"--image",
+	pngPath,
+	"--alt",
+	"PNG at 96px tall",
+	"--height",
+	"96px",
 );
 
 const bytes = (await Bun.file(out).bytes()).length;
