@@ -24,8 +24,23 @@ the table DEFAULT `<w:tblPr><w:tblCellMar>` (Word's "Default cell margins" — r
 `insert-row` adds later are covered, and it's the slot real templates use), while
 any narrower locator broadcasts a per-cell `<w:tcMar>` like the other cell props.
 So the table form is untracked + audit comment (like `--align`), the cell form a
-real `<w:tcPrChange>`. A table default does NOT clear cells' own `<w:tcMar>`
-(Word doesn't either).
+real `<w:tcPrChange>`. Unlike Word's "Default cell margins" dialog, the table
+form ALSO clears every cell's own `<w:tcMar>` (tracked per cell that had one):
+`--at tN` means every cell, and leaving overrides in place made it exit 0 with
+nothing visible. To keep an override, set the cell AFTER the table.
+The read hints are deviation-only against what the padding INHERITS, side by
+side (`deviatingCellMargins` in `cli/read/annotations.ts`): a table's against
+its style chain (`Table.styleCellMargins`, resolved by
+`StylesView.tableCellMargins` — tblStyle → basedOn → the default table style),
+a cell's against the table's effective padding. A restated side prints `-`,
+and an all-restated element prints nothing — LibreOffice stamps `0,108,0,108`
+on every table. When every cell's EFFECTIVE padding agrees (Word stamps a
+template's `<w:tcMar>` onto every cell — mnda's 42 cells), it folds into the
+one table-note `cell-margins` and no cell repeats it (`tableMarginHints` in
+`cli/read/markdown.ts`); re-applying that via `--at tN` reproduces the render,
+because of the clearing above. `-` is also a valid flag side (leave it unset),
+so every hint re-applies verbatim. The inherited value itself is visible on
+`docx styles FILE --at STYLE`.
 The cell set is the merge-aware grid's PHYSICAL cells, deduped by node — a
 `gridSpan` cell covered by a range/column is touched once. `--halign` is a
 PARAGRAPH property (`<w:pPr><w:jc>`), so it fans `Edit.paragraphProperties` over
@@ -64,15 +79,18 @@ through Word unchanged), and is why `insert-row` builds its row via `buildRow`
 (consulting the row now below) rather than a flat band of empty cells.
 
 `buildRow` also inherits each new cell's **look** from the reference (sibling)
-row's cell, in three slices — all via `@core/table`: the first `<w:p>`'s
+row's cell, in four slices — all via `@core/table`: the first `<w:p>`'s
 `<w:pPr>` (alignment/spacing/indent — pure properties, cloned wholesale) and the
 first run's `<w:rPr>` (font/size — without it new text falls back to docDefaults
 and renders visibly off-weight from its siblings) via `cellParagraphLike`, and
-`<w:tcBorders>` via `inheritCellBorders` (without it the new row has no rule
-lines while every sibling row does; both run-level gaps were flagged by
-independent judge runs on the invoice "Calibration kit" row). Cell
-`<w:shd>`/`<w:vAlign>` are deliberately NOT inherited — striped/alternating rows
-make shading unsafe to assume; borders are uniform across data rows in practice.
+`<w:tcBorders>` + `<w:tcMar>` via `inheritCellBordersAndMargins` (without the
+borders the new row has no rule lines while every sibling row does — both
+run-level gaps were flagged by independent judge runs on the invoice
+"Calibration kit" row; without the padding it renders at the table default
+beside siblings that carry their own, and breaks `read`'s folded
+`cell-margins`). Cell `<w:shd>`/`<w:vAlign>` are deliberately NOT inherited —
+striped/alternating rows make shading unsafe to assume; borders and padding are
+uniform across data rows in practice.
 
 ## Track-changes: native where a construct exists, audit comment otherwise
 

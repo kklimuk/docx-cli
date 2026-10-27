@@ -1,6 +1,7 @@
 import {
 	type Block,
 	type Body,
+	CELL_MARGIN_SIDES,
 	type CellMargins,
 	type Comment,
 	type ContentControl,
@@ -39,7 +40,9 @@ import {
 	type RevisionView,
 } from "@core/track-changes/revision-visibility";
 import {
+	deviatingCellMargins,
 	emuToInches,
+	formatCellMargins,
 	formatNote,
 	htmlAttr,
 	type NotePair,
@@ -1999,13 +2002,19 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 	const colCount = Math.max(...rows.map((row) => row.cells.length));
 	if (colCount === 0) return null;
 	const gridWidth = logicalColumnCount(rows, table.grid);
+	const margins = tableMarginHints(table);
 	const renderedRows = rows.map((row) => {
 		const cells: string[] = [];
 		for (let columnIndex = 0; columnIndex < colCount; columnIndex++) {
 			const cell = row.cells[columnIndex];
 			cells.push(
 				cell
-					? renderCell(cell, ctx, isBareCellTarget(row, cell, gridWidth))
+					? renderCell(
+							cell,
+							ctx,
+							isBareCellTarget(row, cell, gridWidth),
+							margins.cellBaseline,
+						)
 					: "",
 			);
 		}
@@ -2024,13 +2033,16 @@ function renderTable(table: Table, ctx: RenderContext): string | null {
 	// A leading own-line note carries the visual structure GFM can't: uneven
 	// column widths and table borders (deviation-only — even/borderless tables
 	// stay clean). A DROPPED read-time hint; the importer ignores it.
-	const note = formatTableNote(table);
+	const note = formatTableNote(table, margins.table);
 	return note ? `${note}\n\n${body}` : body;
 }
 
 /** The `<!-- docx:table tN widths="…" borders="…" -->` note, or "" when the
  * table has nothing non-default to declare (even columns, no explicit borders). */
-function formatTableNote(table: Table): string {
+function formatTableNote(
+	table: Table,
+	cellMargins: CellMargins | undefined,
+): string {
 	const pairs: NotePair[] = [];
 	const widths = unevenWidths(table.grid);
 	if (widths) pairs.push(["widths", widths]);
@@ -2042,8 +2054,7 @@ function formatTableNote(table: Table): string {
 	}
 	if (table.align && table.align !== "left") pairs.push(["align", table.align]);
 	if (table.style) pairs.push(["style", table.style]);
-	if (table.cellMargins)
-		pairs.push(["cell-margins", formatCellMargins(table.cellMargins)]);
+	if (cellMargins) pairs.push(["cell-margins", formatCellMargins(cellMargins)]);
 	// Rows have no GFM comment slot, so their formatting facts ride the table note,
 	// keyed by row index (`r0`) so an agent can re-target with `--at tN:rR`.
 	const repeatHeaderRows = table.rows
@@ -2062,19 +2073,6 @@ function formatTableNote(table: Table): string {
 	if (pairs.length === 0 && !table.rawXml) return "";
 	const bareTokens = table.rawXml ? [table.id, "raw"] : [table.id];
 	return formatNote("table", pairs, bareTokens);
-}
-
-/** Cell padding in points, shaped like the `--cell-margins` flag so an agent can
- * re-apply it verbatim: one value when all four sides agree (`0.75pt`), else
- * top,right,bottom,left (`0pt,5.4pt,0pt,5.4pt`). A side the XML omits inherits
- * the default, shown as `-` (`-,5.4pt,-,5.4pt`). */
-function formatCellMargins(margins: CellMargins): string {
-	const sides = [margins.top, margins.right, margins.bottom, margins.left].map(
-		(twips) => (twips === undefined ? "-" : twipsToPoints(twips)),
-	);
-	return sides.every((side) => side === sides[0])
-		? (sides[0] as string)
-		: sides.join(",");
 }
 
 /** A row height as an inches measure for the `docx:table row-heights` hint,
@@ -2150,6 +2148,7 @@ function renderCell(
 	cell: TableCell,
 	ctx: RenderContext,
 	bareTargetable: boolean,
+	marginBaseline: CellMargins | undefined,
 ): string {
 	const parts: string[] = [];
 	// A cell renders as ONE line, its paragraphs joined by `<br>`, so a pair can
@@ -2198,7 +2197,7 @@ function renderCell(
 	// The note TRAILS the cell, after the content and per-paragraph locators, so
 	// an agent reads the human-facing value first and then its cell-level metadata.
 	// It stays SEPARATE from those bare locators, not merged into one comment.
-	const note = cellNote(cell);
+	const note = cellNote(cell, marginBaseline);
 	if (body.length === 0) {
 		const soleBlock = cell.blocks[0];
 		const soleParagraph =
@@ -2232,7 +2231,10 @@ function renderCell(
 /** The `<!-- docx:cell t0:r0c0 gridSpan="2" vMerge="continue" shading="FFE699"
  * -->` annotation for a cell with merge/shading, or "" for a plain cell. Carries
  * the cell's address (the first paragraph's locator minus its `:pN`). */
-function cellNote(cell: TableCell): string {
+function cellNote(
+	cell: TableCell,
+	marginBaseline: CellMargins | undefined,
+): string {
 	const pairs: NotePair[] = [];
 	if (cell.gridSpan && cell.gridSpan > 1)
 		pairs.push(["gridSpan", cell.gridSpan]);
@@ -2241,7 +2243,11 @@ function cellNote(cell: TableCell): string {
 	// vAlign/borders read deviation-only (top + no-borders suppressed at read).
 	if (cell.vAlign) pairs.push(["vAlign", cell.vAlign]);
 	if (cell.borders) pairs.push(["borders", cell.borders]);
-	if (cell.margins) pairs.push(["margins", formatCellMargins(cell.margins)]);
+	// Deviation-only against the table's effective padding (`tableMarginHints`);
+	// no baseline = the padding folded onto the table note.
+	const margins =
+		marginBaseline && deviatingCellMargins(cell.margins, marginBaseline);
+	if (margins) pairs.push(["margins", formatCellMargins(margins)]);
 	// Horizontal alignment is a paragraph property, but a GFM cell can't show it
 	// per-cell, so surface a UNIFORM non-default cell alignment here (the inverse
 	// of `tables format --halign`). Cell paragraphs otherwise carry only a bare
@@ -2270,6 +2276,55 @@ function uniformCellAlignment(cell: TableCell): string | undefined {
 	return aligns.every((align) => align === first) ? first : undefined;
 }
 
+/** Where a table's padding reads. When every cell ends up with the SAME padding
+ * (style chain ← `<w:tblCellMar>` ← its own `<w:tcMar>`) — Word stamps a
+ * template's padding onto every cell — it folds into ONE `cell-margins` on the
+ * table note and the cells say nothing (`cellBaseline` undefined); re-applying
+ * it with `--at tN` reproduces that, since a whole-table set clears the cells'
+ * overrides. Otherwise the table note carries the table default and each cell
+ * only what differs from it. Both deviation-only against the style chain. */
+function tableMarginHints(table: Table): {
+	table: CellMargins | undefined;
+	cellBaseline: CellMargins | undefined;
+} {
+	const tableDefault = { ...table.styleCellMargins, ...table.cellMargins };
+	const effective = table.rows.flatMap((row) =>
+		row.cells.map((cell) => ({ ...tableDefault, ...cell.margins })),
+	);
+	const [first] = effective;
+	if (first && effective.every((margins) => sameCellMargins(margins, first)))
+		return { table: foldedTableMargins(table, first), cellBaseline: undefined };
+	return {
+		table: deviatingCellMargins(table.cellMargins, table.styleCellMargins),
+		cellBaseline: tableDefault,
+	};
+}
+
+/** The folded `cell-margins` value: every side that differs from the style,
+ * PLUS any side where the table's own `<w:tblCellMar>` disagrees with what the
+ * cells render (their overrides restate the style there). A `-` means "keep",
+ * so without the second rule re-applying via `--at tN` would keep that stale
+ * table side while clearing the cells, and render differently. */
+function foldedTableMargins(
+	table: Table,
+	effective: CellMargins,
+): CellMargins | undefined {
+	const folded = deviatingCellMargins(effective, table.styleCellMargins) ?? {};
+	for (const side of CELL_MARGIN_SIDES) {
+		const own = table.cellMargins?.[side];
+		if (own !== undefined && own !== (effective[side] ?? 0))
+			folded[side] = effective[side] ?? 0;
+	}
+	return Object.keys(folded).length > 0 ? folded : undefined;
+}
+
+/** Same rendered padding on every side (an undeclared side is 0). */
+function sameCellMargins(margins: CellMargins, other: CellMargins): boolean {
+	return CELL_MARGIN_SIDES.every(
+		(side) => (margins[side] ?? 0) === (other[side] ?? 0),
+	);
+}
+
 /** A cell's locator address (`t0:r0c0`), derived from a block locator inside it
  * by dropping the trailing positional segment. A cell's first block is a
  * paragraph (`t0:r0c0:p0` → `t0:r0c0`) or a nested table (`t0:r0c0:t0` →
@@ -2279,16 +2334,29 @@ function cellAddress(blockId: string): string {
 	return blockId.replace(/:(?:p|t)\d+$/, "");
 }
 
+/** A table inside a cell, flattened onto the cell's one GFM line (cells ` / `,
+ * rows ` // `). Its `docx:table` note leads INLINE — there's no own line to put
+ * it on inside a cell — so widths/borders/align/style/cell-margins/row facts
+ * stay visible and addressable by the nested id (`t0:r0c0:t0`) like a
+ * top-level table's. */
 function renderNestedTable(table: Table, ctx: RenderContext): string {
 	const gridWidth = logicalColumnCount(table.rows, table.grid);
+	const margins = tableMarginHints(table);
 	const rows = table.rows.map((row) =>
 		row.cells
 			.map((cell) =>
-				renderCell(cell, ctx, isBareCellTarget(row, cell, gridWidth)),
+				renderCell(
+					cell,
+					ctx,
+					isBareCellTarget(row, cell, gridWidth),
+					margins.cellBaseline,
+				),
 			)
 			.join(" / "),
 	);
-	return rows.join(" // ");
+	const body = rows.join(" // ");
+	const note = formatTableNote(table, margins.table);
+	return note ? `${note} ${body}` : body;
 }
 
 function escapeCell(text: string): string {

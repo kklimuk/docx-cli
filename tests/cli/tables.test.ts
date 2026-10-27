@@ -1330,7 +1330,8 @@ describe("docx tables format", () => {
 		);
 		expect(xml).not.toContain("<w:tblCellMar>");
 		expect(await readMarkdown(docPath)).toContain(
-			'docx:cell t0:r1c1 margins="0pt,5.4pt,0pt,7.2pt"',
+			// Top/bottom 0 restate the inherited 0, so they read as `-`.
+			'docx:cell t0:r1c1 margins="-,5.4pt,-,7.2pt"',
 		);
 		expect((await runCli("validate", docPath)).exitCode).toBe(0);
 	});
@@ -1375,6 +1376,255 @@ describe("docx tables format", () => {
 		expect(await readMarkdown(docPath)).toContain(
 			'cell-margins="-,5.4pt,-,5.4pt"',
 		);
+	});
+
+	test("--cell-margins re-applies read's `-` form, leaving those sides unset", async () => {
+		const docPath = await newTableDoc("fmt-margins-dash", 1, 2);
+		const result = await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"-,4pt,-,4pt",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain(
+			'<w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar>',
+		);
+		expect(await readMarkdown(docPath)).toContain('cell-margins="-,4pt,-,4pt"');
+	});
+
+	test("--cell-margins takes every measure unit (cm, mm, tw)", async () => {
+		const docPath = await newTableDoc("fmt-margins-units", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--cell-margins",
+			"1cm,5mm,108tw,0.1in",
+		);
+		expect(await readDocumentXml(docPath)).toContain(
+			'<w:tcMar><w:top w:w="567" w:type="dxa"/><w:left w:w="144" w:type="dxa"/><w:bottom w:w="108" w:type="dxa"/><w:right w:w="283" w:type="dxa"/></w:tcMar>',
+		);
+	});
+
+	test("read hides margins that restate the inherited default", async () => {
+		// mnda's Normal Table style declares Word's 0 / 5.4pt / 0 / 5.4pt.
+		const docPath = join(tempWorkspace("fmt-margins-default"), "out.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/mnda.docx"));
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t1",
+			"--cell-margins",
+			"0,5.4pt,0,5.4pt",
+		);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t1:r0c0",
+			"--cell-margins",
+			"0,5.4pt,0,9pt",
+		);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).not.toMatch(/docx:table t1 [^>]*cell-margins=/);
+		// Only the one cell's one deviating side surfaces.
+		expect(markdown).toContain(
+			'docx:cell t1:r0c0 vAlign="center" margins="-,-,-,9pt"',
+		);
+		expect(markdown).not.toMatch(/docx:cell t1:r0c1 [^>]*margins=/);
+		// The inherited value is visible on the style, and in the AST.
+		const style = await runCli("styles", docPath, "--at", "TableNormal");
+		expect(style.stdout).toContain("cell-margins: 0pt,5.4pt,0pt,5.4pt");
+		const table = await tableFromDoc(docPath);
+		expect(
+			(table as unknown as { styleCellMargins: Record<string, number> })
+				.styleCellMargins,
+		).toEqual({ top: 0, right: 108, bottom: 0, left: 108 });
+	});
+
+	test("a `-` side keeps the existing value; all `-` is a usage error", async () => {
+		const docPath = await newTableDoc("fmt-margins-keep", 1, 2);
+		const format = (value: string) =>
+			runCli(
+				"tables",
+				"format",
+				docPath,
+				"--at",
+				"t0:r0c0",
+				"--cell-margins",
+				value,
+			);
+		await format("6pt");
+		expect((await format("-,4pt,-,4pt")).exitCode).toBe(0);
+		expect(await readDocumentXml(docPath)).toContain(
+			'<w:tcMar><w:top w:w="120" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar>',
+		);
+		for (const value of ["-", "-,-,-,-"]) {
+			const result = await format(value);
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout + result.stderr).toContain("changes nothing");
+		}
+		expect(await readMarkdown(docPath)).toContain(
+			'docx:cell t0:r0c0 margins="6pt,4pt,6pt,4pt"',
+		);
+	});
+
+	test("a named table style not based on Normal Table doesn't inherit its padding", async () => {
+		const docPath = join(tempWorkspace("fmt-margins-custom"), "out.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/mnda.docx"));
+		await runCli(
+			"raw",
+			"part",
+			"edit",
+			docPath,
+			"--name",
+			"word/styles.xml",
+			"--find",
+			"</w:styles>",
+			"--with",
+			'<w:style w:type="table" w:styleId="Custom"><w:name w:val="Custom"/><w:tblPr/></w:style></w:styles>',
+		);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--style",
+			"Custom",
+		);
+		// Word renders a Custom-styled table flush (verified), so an explicit
+		// 0,5.4pt,0,5.4pt default is a real deviation, not a restated one.
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"0,5.4pt,0,5.4pt",
+		);
+		expect(await readMarkdown(docPath)).toMatch(
+			/docx:table t0 [^>]*cell-margins="-,5.4pt,-,5.4pt"/,
+		);
+	});
+
+	test("whole-table --cell-margins under tracking is one untracked change + audit comment", async () => {
+		const docPath = await newTableDoc("fmt-margins-track-table", 2, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0:r0c0",
+			"--cell-margins",
+			"2pt",
+		);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"6pt",
+			"--track",
+		);
+		// Clearing the cell's own 2pt rides the untracked table-default change, so
+		// reject can't restore the override while keeping the new default.
+		expect(await trackedKinds(docPath)).not.toContain("tcPrChange");
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("<w:tcMar>");
+		expect(xml).toContain("<w:tblCellMar>");
+		const comments = await runCli("comments", "list", docPath);
+		expect(JSON.stringify(comments.parsed)).toContain(
+			"table default cell margins set, cells' own cleared",
+		);
+	});
+
+	test("insert-row copies the neighbor cell's padding, so the fold survives", async () => {
+		const docPath = join(tempWorkspace("fmt-margins-insert-row"), "out.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/mnda.docx"));
+		await runCli("tables", "insert-row", docPath, "--at", "t1");
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain('cell-margins="7.2pt,5.75pt,7.2pt,5.75pt"');
+		expect(markdown).not.toMatch(/docx:cell t1:[^>]* margins=/);
+	});
+
+	test("a folded value re-applies even when the table's own default disagrees", async () => {
+		// Table default 1pt left; every cell restates the style's 0 left. The
+		// cells render 0, so the fold must SAY 0 — a `-` would keep the 1pt.
+		const docPath = await newTableDoc("fmt-margins-fold-stale", 1, 2);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"-,-,-,1pt",
+		);
+		for (const cell of ["t0:r0c0", "t0:r0c1"])
+			await runCli(
+				"tables",
+				"format",
+				docPath,
+				"--at",
+				cell,
+				"--cell-margins",
+				"-,-,-,0",
+			);
+		const before = await readMarkdown(docPath);
+		expect(before).toMatch(/docx:table t0 [^>]*cell-margins="-,-,-,0pt"/);
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t0",
+			"--cell-margins",
+			"-,-,-,0pt",
+		);
+		expect(await readMarkdown(docPath)).not.toContain("cell-margins=");
+	});
+
+	test("uniform per-cell padding folds onto the table note and re-applies there", async () => {
+		// mnda's t1 stamps 7.2pt/5.75pt on every one of its 14 cells.
+		const docPath = join(tempWorkspace("fmt-margins-fold"), "out.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/mnda.docx"));
+		const before = await readMarkdown(docPath);
+		expect(before).toContain('cell-margins="7.2pt,5.75pt,7.2pt,5.75pt"');
+		expect(before).not.toMatch(/docx:cell t1:[^>]* margins=/);
+		// A whole-table set clears the cells' overrides so it lands on every
+		// cell — it used to leave them winning (exit 0, nothing visible).
+		await runCli(
+			"tables",
+			"format",
+			docPath,
+			"--at",
+			"t1",
+			"--cell-margins",
+			"0",
+		);
+		const after = await readMarkdown(docPath);
+		expect(after).toMatch(/docx:table t1 [^>]*cell-margins="-,0pt,-,0pt"/);
+		const ast = (await runCli("read", docPath, "--ast")).parsed as {
+			blocks: { id: string; rows?: { cells: { margins?: unknown }[] }[] }[];
+		};
+		const table = ast.blocks.find((block) => block.id === "t1");
+		if (!table?.rows) throw new Error("t1 missing");
+		expect(
+			table.rows.flatMap((row) => row.cells).some((cell) => cell.margins),
+		).toBe(false);
 	});
 
 	test("rejects a unit-less or two-value --cell-margins", async () => {
@@ -2039,6 +2289,41 @@ describe("tables verbs with nested locators", () => {
 		const ack = result.parsed as { table: string; position: number };
 		expect(ack.table).toBe(NESTED_TABLE);
 		expect(ack.position).toBe(2);
+	});
+
+	test("a nested table's docx:table note rides inline in its cell", async () => {
+		const docPath = await makeDoc();
+		const before = await readMarkdown(docPath);
+		expect(before).not.toContain(`docx:table ${NESTED_TABLE}`);
+		for (const flags of [
+			["--align", "center", "--cell-margins", "-,4pt,-,4pt"],
+			["--row-height", "0.3in"],
+		]) {
+			const result = await runCli(
+				"tables",
+				"format",
+				docPath,
+				"--at",
+				NESTED_TABLE,
+				...flags,
+			);
+			expect(result.exitCode).toBe(0);
+		}
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain(
+			`<!-- docx:table ${NESTED_TABLE} align="center" cell-margins="-,4pt,-,4pt" row-heights="r0:0.3in" -->`,
+		);
+		// The note lives inside the outer cell, so the outer row keeps its shape.
+		const outerRow = markdown
+			.split("\n")
+			.find((line) => line.includes(`docx:table ${NESTED_TABLE}`));
+		expect(outerRow?.startsWith("| ")).toBe(true);
+		expect(outerRow?.match(/(?<!\\)\|/g)?.length).toBe(
+			before
+				.split("\n")
+				.find((line) => line.includes(`${NESTED_TABLE}:r0c0`))
+				?.match(/(?<!\\)\|/g)?.length,
+		);
 	});
 
 	test("set-widths rewrites a nested table's grid", async () => {

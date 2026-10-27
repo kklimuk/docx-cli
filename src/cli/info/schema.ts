@@ -322,6 +322,10 @@ const JSON_SCHEMA = {
 				style: { type: "string" },
 				align: { enum: ["left", "center", "right"] },
 				cellMargins: { $ref: "#/$defs/CellMargins" },
+				styleCellMargins: {
+					$ref: "#/$defs/CellMargins",
+					description: "Padding inherited from the table style chain",
+				},
 				rawXml: { const: true },
 				contentControl: { $ref: "#/$defs/ContentControl" },
 				rows: {

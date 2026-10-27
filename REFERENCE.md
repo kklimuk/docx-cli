@@ -299,7 +299,12 @@ docx tables format        FILE --at LOCATOR [--shade HEX|NAME] [--valign top|cen
                           [--cell-margins M|T,R,B,L|none]
                           [--align left|center|right] [--style ID] [--row-height M] [--repeat-header]
                           # --cell-margins with --at tN sets the TABLE default cell margins
-                          # (<w:tblCellMar>); a row/column/cell/range sets those cells' own.
+                          # (<w:tblCellMar>) and clears cells' own; a row/column/cell/range
+                          # sets those cells' own.
+                          # Units: in, cm, mm, pt, tw. `-` leaves a side inheriting
+                          # (-,4pt,-,4pt). read shows only padding that differs from
+                          # what's inherited; `docx styles FILE --at STYLE` shows a
+                          # table style's own cell margins.
 
 docx lists set            FILE --at pN [--start N] [--format FMT] [--restart] [--continue]
                           # renumber a NUMBERED list (--at = any item; applies to the whole list).

@@ -32,7 +32,7 @@ export {
 	emptyCell,
 	ensureTblPr,
 	gridColElement,
-	inheritCellBorders,
+	inheritCellBordersAndMargins,
 	markCellTracked,
 	markRowTracked,
 	setCellBorders,

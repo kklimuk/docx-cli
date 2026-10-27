@@ -13,6 +13,7 @@ import { XmlNode } from "../parser";
 import { RAW_MARKER_ATTRIBUTE } from "../raw/namespaces";
 import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
+import { readCellMargins } from "./cell-margins";
 import type { Document } from "./document";
 import { Body } from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
@@ -53,6 +54,10 @@ type WalkState = {
 	currentBlockId: string;
 	commentAnchors: Map<string, CommentAnchor>;
 	openComments: Map<string, { blockId: string; offset: number }>;
+	/** `StylesView.tableCellMargins` per table style id (`""` = no style) — it
+	 * walks the style chain, and a document's tables share a handful of styles.
+	 * Per walk, so a styles.xml edit between reads can never serve a stale value. */
+	styleCellMargins: Map<string, CellMargins | undefined>;
 };
 
 export function buildBody(document: Document, path: string): Body {
@@ -90,6 +95,7 @@ export function buildBody(document: Document, path: string): Body {
 		currentBlockId: "",
 		commentAnchors: new Map(),
 		openComments: new Map(),
+		styleCellMargins: new Map(),
 	};
 
 	doc.blocks = readBlocks(document, body, state);
@@ -1268,6 +1274,7 @@ function readTable(
 	const cellMargins = readCellMargins(
 		node.findChild("w:tblPr")?.findChild("w:tblCellMar"),
 	);
+	const styleCellMargins = resolveStyleCellMargins(document, style, state);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
 	// both before the rows), so tcN ids land in document order.
 	readTablePropertyRevision(document, node, id, state);
@@ -1317,35 +1324,19 @@ function readTable(
 	if (style) table.style = style;
 	if (align) table.align = align;
 	if (cellMargins) table.cellMargins = cellMargins;
+	if (styleCellMargins) table.styleCellMargins = styleCellMargins;
 	return table;
 }
 
-/** Cell padding from a `<w:tblCellMar>`/`<w:tcMar>` element, in twips. Reads the
- * transitional `left`/`right` and the strict `start`/`end` alike; `nil` is 0 and
- * a percentage side (not meaningful for padding) is skipped. Undefined when the
- * element is absent or declares no readable side. */
-function readCellMargins(node: XmlNode | undefined): CellMargins | undefined {
-	if (!node) return undefined;
-	const margins: CellMargins = {};
-	const sides = [
-		["top", "w:top"],
-		["left", "w:left"],
-		["left", "w:start"],
-		["bottom", "w:bottom"],
-		["right", "w:right"],
-		["right", "w:end"],
-	] as const;
-	for (const [side, tag] of sides) {
-		if (margins[side] !== undefined) continue;
-		const edge = node.findChild(tag);
-		if (!edge) continue;
-		const type = edge.getAttribute("w:type") ?? "dxa";
-		if (type === "nil") margins[side] = 0;
-		if (type !== "dxa") continue;
-		const value = Number(edge.getAttribute("w:w"));
-		if (Number.isFinite(value)) margins[side] = value;
-	}
-	return Object.keys(margins).length > 0 ? margins : undefined;
+function resolveStyleCellMargins(
+	document: Document,
+	style: string | undefined,
+	state: WalkState,
+): CellMargins | undefined {
+	const key = style ?? "";
+	if (!state.styleCellMargins.has(key))
+		state.styleCellMargins.set(key, document.styles?.tableCellMargins(style));
+	return state.styleCellMargins.get(key);
 }
 
 /** The table's on-page justification from `<w:tblPr><w:jc w:val="…"/>`

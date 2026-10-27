@@ -28,7 +28,7 @@ import {
 	setTableJustification,
 	setTableStyle,
 } from "@core/table";
-import { normalizeHexColor } from "../parse-helpers";
+import { normalizeHexColor, parseUnitMeasure } from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -74,15 +74,17 @@ Cell options (any locator — broadcast to every cell it covers):
   --border-size EIGHTHS   Thickness in eighths of a point (default: 4 = 0.5pt)
   --border-color HEX|NAME (default: auto)
   --cell-margins M|T,R,B,L|none
-                          Padding inside the cell, units required (2pt, 0.05in;
-                          0 is allowed): one value for every side or four for
-                          top,right,bottom,left. With --at tN this sets the
-                          TABLE's default cell margins (rows added later get it
-                          too); a row/column/cell/range sets those cells' own
-                          margins. none clears it back to the default.
+                          Padding inside the cell, units required (2pt, 0.05in,
+                          1mm, 108tw; 0 is allowed): one value for every side or
+                          four for top,right,bottom,left, - to keep a side
+                          as it is (-,4pt,-,4pt = left/right only). With --at tN
+                          this sets the TABLE's default cell margins (rows added
+                          later get it too) and clears any cell's own, so every
+                          cell gets it; a row/column/cell/range sets those cells'
+                          own margins. none clears it back to the default.
 
 Row options (--at t0:rR, or --at t0 for every row):
-  --row-height MEASURE    a unit is required: 0.4in or 28pt (a bare number is rejected)
+  --row-height MEASURE    a unit is required: 0.4in, 28pt, 1cm (a bare number is rejected)
   --height-rule atLeast|exact|auto   (default: atLeast)
   --repeat-header / --no-repeat-header
                           Repeat the row as a header atop each page the table spans
@@ -273,6 +275,8 @@ type FormatPlan = {
 	align?: "left" | "center" | "right" | null;
 	style?: string | null;
 	tableCellMargins?: CellMargins | null;
+	/** Set with `tableCellMargins`: drop each cell's own `<w:tcMar>` override. */
+	clearCellMargins?: boolean;
 	rowHeight?: { value: number; rule: "atLeast" | "exact" | "auto" } | null;
 	repeatHeader?: boolean;
 };
@@ -318,9 +322,13 @@ function buildPlan(
 		const margins = parseCellMargins(cellMargins);
 		if (typeof margins === "string") return margins;
 		// The whole table → its default (`<w:tblCellMar>`), which rows inserted
-		// later inherit; anything narrower → those cells' own `<w:tcMar>`.
-		if (wholeTable) plan.tableCellMargins = margins;
-		else plan.cellMargins = margins;
+		// later inherit, AND every cell's own `<w:tcMar>` cleared so the value
+		// actually lands everywhere (a cell override would otherwise win, exit 0,
+		// nothing visible). Anything narrower → those cells' own `<w:tcMar>`.
+		if (wholeTable) {
+			plan.tableCellMargins = margins;
+			plan.clearCellMargins = true;
+		} else plan.cellMargins = margins;
 	}
 
 	const align = values.align as string | undefined;
@@ -342,7 +350,7 @@ function buildPlan(
 	if (heightRule !== undefined && rowHeight === undefined)
 		return "--height-rule has no effect without --row-height";
 	if (rowHeight !== undefined) {
-		const twips = parseMeasureToTwips(rowHeight);
+		const twips = parseUnitMeasure(rowHeight);
 		if (twips === null || twips === 0)
 			return `--row-height must be a positive measure WITH a unit, e.g. 0.4in or 28pt (got ${rowHeight})`;
 		plan.rowHeight = {
@@ -439,9 +447,13 @@ function selectRows(grid: Grid, scope: Scope): GridRow[] {
 	return [];
 }
 
-/** Cell `<w:tcPr>` properties (shade/vAlign/borders) record natively: snapshot
- * the prior tcPr BEFORE mutating, apply, then one `<w:tcPrChange>` per cell —
- * mirroring `set-widths`'s tracked path (the revision Word's reject reverts). */
+/** Cell `<w:tcPr>` properties (shade/vAlign/borders/margins) record natively:
+ * snapshot the prior tcPr BEFORE mutating, apply, then one `<w:tcPrChange>` per
+ * cell — mirroring `set-widths`'s tracked path (the revision Word's reject
+ * reverts). Clearing cells' own margins for a whole-table `--cell-margins` is
+ * part of that UNTRACKED table-default change (audit comment, like `--align`),
+ * so it lands BEFORE the snapshot: otherwise reject would restore the cells'
+ * overrides but keep the new default — a state the user never had. */
 function applyCellProps(
 	document: Document,
 	cells: GridCell[],
@@ -449,14 +461,18 @@ function applyCellProps(
 	tracking: boolean,
 	author: string | undefined,
 ): void {
-	if (
-		plan.shade === undefined &&
-		plan.valign === undefined &&
-		plan.cellBorders === undefined &&
-		plan.cellMargins === undefined
-	)
-		return;
+	const setsCellProps =
+		plan.shade !== undefined ||
+		plan.valign !== undefined ||
+		plan.cellBorders !== undefined ||
+		plan.cellMargins !== undefined;
+	if (!setsCellProps && !plan.clearCellMargins) return;
 	for (const cell of cells) {
+		const clearsMargins =
+			plan.clearCellMargins === true &&
+			cell.node.findChild("w:tcPr")?.findChild("w:tcMar") !== undefined;
+		if (clearsMargins) setCellMargins(cell.node, null);
+		if (!setsCellProps) continue;
 		const prior = tracking
 			? (cell.node.findChild("w:tcPr")?.children ?? []).map((child) =>
 					child.clone(),
@@ -589,8 +605,8 @@ function untrackedSummary(plan: FormatPlan): string {
 	if (plan.tableCellMargins !== undefined)
 		parts.push(
 			plan.tableCellMargins
-				? "table default cell margins"
-				: "table default cell margins cleared",
+				? "table default cell margins set, cells' own cleared"
+				: "table default and cells' own cell margins cleared",
 		);
 	if (plan.rowHeight !== undefined) parts.push("row height set");
 	if (plan.repeatHeader !== undefined)
@@ -627,31 +643,30 @@ function colorError(flag: string, value: string): string {
 
 /** Parse `--cell-margins`: `none`/`auto` clears (null); otherwise one measure
  * for every side or four in CSS order (top,right,bottom,left), the shape the
- * `docx:table cell-margins` / `docx:cell margins` read notes print. */
+ * `docx:table cell-margins` / `docx:cell margins` read notes print. A `-` side
+ * is left exactly as it is — the shape `read` prints for a side that isn't
+ * overridden, so a note's value re-applies verbatim, and `-,4pt,-,4pt` can't
+ * wipe an existing top/bottom. A value that's ALL `-` would change nothing, so
+ * it's a usage error rather than a silent no-op (`none` is the reset). */
 function parseCellMargins(raw: string): CellMargins | null | string {
 	if (isClear(raw)) return null;
-	const twips = raw.split(",").map(parseMeasureToTwips);
+	const parts = raw.split(",").map((part) => part.trim());
+	const twips = parts.map((part) =>
+		part === "-" ? undefined : parseUnitMeasure(part),
+	);
 	if ((twips.length !== 1 && twips.length !== 4) || twips.includes(null))
-		return `--cell-margins must be one measure WITH a unit (e.g. 2pt or 0.05in) or four comma-separated top,right,bottom,left (e.g. 0,5.4pt,0,5.4pt), or none — got ${raw}`;
+		return `--cell-margins must be one measure WITH a unit (e.g. 2pt, 0.05in, 1mm) or four comma-separated top,right,bottom,left with - for a side that inherits (e.g. 0,5.4pt,0,5.4pt or -,4pt,-,4pt), or none — got ${raw}`;
 	const [top, right, bottom, left] = (
 		twips.length === 1 ? [twips[0], twips[0], twips[0], twips[0]] : twips
-	) as number[];
-	return { top, right, bottom, left };
-}
-
-/** Parse `0.4in` / `28pt` to twips. The unit is REQUIRED — a bare number is
- * rejected rather than guessed, so `--row-height 28` can't silently become a
- * 28-INCH row (the footgun a defaulted unit invites). A bare `0` is the one
- * exception (zero in any unit). Never negative; callers that need a positive
- * size reject 0 themselves. */
-function parseMeasureToTwips(raw: string): number | null {
-	if (/^0*\.?0+$/.test(raw.trim())) return 0;
-	const match = raw.trim().match(/^(\d*\.?\d+)\s*(in|pt)$/i);
-	if (!match) return null;
-	const value = Number.parseFloat(match[1] as string);
-	if (!Number.isFinite(value)) return null;
-	const unit = (match[2] as string).toLowerCase();
-	return Math.round(unit === "pt" ? value * 20 : value * 1440);
+	) as (number | undefined)[];
+	const margins: CellMargins = {};
+	if (top !== undefined) margins.top = top;
+	if (right !== undefined) margins.right = right;
+	if (bottom !== undefined) margins.bottom = bottom;
+	if (left !== undefined) margins.left = left;
+	if (Object.keys(margins).length === 0)
+		return `--cell-margins ${raw} changes nothing — every side is - (keep as is). Give at least one side a measure, or none to clear`;
+	return margins;
 }
 
 const VALIGNS = new Set(["top", "center", "bottom"]);

@@ -6,6 +6,8 @@ import {
 import { applyRunFormatToRpr, type RunFormat } from "../../edit/set-formatting";
 import { w } from "../../jsx";
 import { XmlNode } from "../../parser";
+import { CELL_MARGIN_SIDES, readCellMargins } from "../cell-margins";
+import type { CellMargins } from "../types";
 import type { ContentTypesView } from "./content-types";
 import type { Pkg } from "./package";
 import type { RelationshipsView } from "./relationships";
@@ -119,6 +121,50 @@ export class StylesView {
 		return root
 			.findChildren("w:style")
 			.find((child) => child.getAttribute("w:styleId") === styleId);
+	}
+
+	/** The cell padding a table inherits from its style chain: the referenced
+	 * table style and its `basedOn` ancestors — or, ONLY when the table names no
+	 * style (or one that doesn't exist), the document's default table style
+	 * (`w:default="1"`, usually "Normal Table"). Verified in Word: a named style
+	 * that isn't based on Normal Table does NOT pick up its padding. The nearest
+	 * `<w:tblPr><w:tblCellMar>` side wins. Undefined when no style declares any. */
+	tableCellMargins(styleId: string | undefined): CellMargins | undefined {
+		const margins: CellMargins = {};
+		const named = styleId ? this.getStyle(styleId) : undefined;
+		for (const style of this.basedOnChain(named ?? this.defaultTableStyle())) {
+			const own = readCellMargins(
+				style.findChild("w:tblPr")?.findChild("w:tblCellMar"),
+			);
+			for (const side of CELL_MARGIN_SIDES) {
+				if (margins[side] === undefined && own?.[side] !== undefined)
+					margins[side] = own[side];
+			}
+		}
+		return Object.keys(margins).length > 0 ? margins : undefined;
+	}
+
+	/** `style` and its `basedOn` ancestors, nearest first; stops on a cycle. */
+	private basedOnChain(style: XmlNode | undefined): XmlNode[] {
+		const chain: XmlNode[] = [];
+		let current = style;
+		while (current && !chain.includes(current)) {
+			chain.push(current);
+			const parent = current.findChild("w:basedOn")?.getAttribute("w:val");
+			current = parent ? this.getStyle(parent) : undefined;
+		}
+		return chain;
+	}
+
+	private defaultTableStyle(): XmlNode | undefined {
+		const root = XmlNode.findRoot(this.tree, "w:styles");
+		return root
+			?.findChildren("w:style")
+			.find(
+				(child) =>
+					child.getAttribute("w:type") === "table" &&
+					child.getAttribute("w:default") === "1",
+			);
 	}
 
 	/** Default run font size in half-points, from `<w:docDefaults><w:rPrDefault>`

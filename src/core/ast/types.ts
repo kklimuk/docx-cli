@@ -132,6 +132,11 @@ export type Table = {
 	 * margins"). Present only when the table declares it. Authorable via
 	 * `docx tables format --at tN --cell-margins`. */
 	cellMargins?: CellMargins;
+	/** The padding the table's style chain supplies (`tblStyle` → `basedOn` →
+	 * …, else the default table style), which `cellMargins` and each cell's
+	 * `margins` override side by side. Present only when a style declares one.
+	 * `read` hides a table/cell margin that merely restates it. */
+	styleCellMargins?: CellMargins;
 	/** The block was authored by `docx raw insert`/`replace` — see
 	 * `Paragraph.rawXml`. Surfaces as a bare `raw` token on the `docx:table`
 	 * note. */
