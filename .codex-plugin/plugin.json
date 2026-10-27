@@ -1,6 +1,6 @@
 {
 	"name": "docx-cli",
-	"version": "0.27.0",
+	"version": "0.28.0",
 	"description": "Let AI agents edit Word documents without breaking them: fill in forms, update tables, restyle, write reports, and redline with tracked changes and comments.",
 	"author": {
 		"name": "Kirill Klimuk",
