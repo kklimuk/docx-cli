@@ -1514,12 +1514,9 @@ function renderRuns(
 				ctx,
 			);
 			// Append any comment endings that close on this equation run
-			// (audit comments from tracked equation edits anchor here).
-			out += commentEndingsFor(
-				paragraphId,
-				[{ originalIndex: cursor }],
-				ctx.commentIndex,
-			);
+			// (audit comments from tracked equation edits anchor here). Slots are
+			// keyed by the run's index in the paragraph, not among visible runs.
+			out += commentEndingsFor(paragraphId, [entry], ctx.commentIndex);
 		} else if (run.type === "noteRef") {
 			if (run.kind === "footnote") ctx.referencedFootnoteIds.add(run.id);
 			else ctx.referencedEndnoteIds.add(run.id);

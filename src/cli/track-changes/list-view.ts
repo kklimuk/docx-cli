@@ -135,6 +135,8 @@ function recordText(run: Run): string {
 			return `[${run.kind} break]`;
 		case "tab":
 			return "[tab]";
+		case "textBox":
+			return `[text box ${run.id}]`;
 		default:
 			return "";
 	}

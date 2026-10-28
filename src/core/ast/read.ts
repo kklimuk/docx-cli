@@ -598,7 +598,13 @@ function walkRunContainer(
 			if (text.length > 0) {
 				const display = child.tag === "m:oMathPara";
 				const id = `eq${context.state.equationIndex++}`;
-				const latex = ommlToLatex(child);
+				const revisions = registerMathRevisions(context, child, trackedChange);
+				// A partly revised equation has no run-level revision to hide it by,
+				// so its LaTeX is the accepted view `read` defaults to — what
+				// `accept --all` leaves — not the deleted symbols beside the kept ones.
+				const latex = ommlToLatex(
+					revisions.partial ? withoutMathDeletions(child) : child,
+				);
 				const run: EquationRun = {
 					type: "equation",
 					id,
@@ -609,8 +615,7 @@ function walkRunContainer(
 				if (context.activeComments.size > 0) {
 					run.comments = [...context.activeComments];
 				}
-				const change =
-					registerMathRevisions(context, child, trackedChange) ?? trackedChange;
+				const change = revisions.whole ?? trackedChange;
 				if (change) run.trackedChange = change;
 				context.paragraph.runs.push(run);
 				context.document.body.equationReferences.set(id, {
@@ -713,16 +718,18 @@ function registerTrackedChange(
  *  in every math run it touched and in each structure's `<m:ctrlPr>` — six
  *  markers for one deleted `E=mc^2`. Register them as ONE revision per kind and
  *  author, so the equation lists, accepts and rejects as a unit (apply runs the
- *  ordinary per-marker operation on each — see `ChangeFound.markers`). Returns
- *  the revision when it covers the whole equation, so it rides the run the way
- *  an enclosing `<w:del>` does. */
+ *  ordinary per-marker operation on each — see `ChangeFound.markers`). `whole`
+ *  is the revision when it covers the whole equation, so it rides the run the
+ *  way an enclosing `<w:del>` does; `partial` says the equation holds revisions
+ *  that don't. */
 function registerMathRevisions(
 	context: WalkContext,
 	equation: XmlNode,
 	outer: TrackedChange | undefined,
-): TrackedChange | undefined {
+): { whole?: TrackedChange; partial: boolean } {
 	const groups = new Map<string, TrackedChangeMarker[]>();
 	collectMathRevisionMarkers(equation, groups);
+	if (groups.size === 0) return { partial: false };
 	const coversEquation = groups.size === 1 && !hasUnmarkedMathText(equation);
 	let whole: TrackedChange | undefined;
 	for (const markers of groups.values()) {
@@ -737,7 +744,7 @@ function registerMathRevisions(
 		);
 		if (coversEquation) whole = change;
 	}
-	return whole;
+	return coversEquation ? { whole, partial: false } : { partial: true };
 }
 
 function collectMathRevisionMarkers(
@@ -763,6 +770,20 @@ function hasUnmarkedMathText(node: XmlNode): boolean {
 		if (child.tag === "m:t") return child.collectText().length > 0;
 		return hasUnmarkedMathText(child);
 	});
+}
+
+/** A copy of `node` as it reads once its tracked deletions are accepted — a
+ *  copy, so the live tree keeps every marker for `accept`/`reject`. */
+function withoutMathDeletions(node: XmlNode): XmlNode {
+	const copy = new XmlNode(
+		node.tag,
+		node.attributes,
+		node.children
+			.filter((child) => child.tag !== "w:del")
+			.map(withoutMathDeletions),
+	);
+	if (node.text !== undefined) copy.text = node.text;
+	return copy;
 }
 
 const TRACKED_CHANGE_KIND_BY_TAG: Record<

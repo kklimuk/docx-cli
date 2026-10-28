@@ -938,10 +938,26 @@ describe("tracked equations — Word's per-run markers", () => {
 		// Not the whole equation, so the equation itself carries no deletion.
 		const current = await runCli("read", docPath, "--current");
 		expect(current.stdout).not.toContain("{--$$");
+		// The default read is what accept --all leaves — no deleted symbols.
+		expect((await runCli("read", docPath)).stdout).toContain("$$E={}^{}$$");
 		await runCli("track-changes", "accept", docPath, "--all");
 		const [equation] = await equationsOf(docPath);
 		// The emptied superscript stays behind as a skeleton, as it does in Word.
 		expect(equation?.latex).toBe("E={}^{}");
+	});
+
+	test("the schema's shape — a marker wrapping whole math elements — keeps its structure", async () => {
+		const mark = (inner: string, id: number): string =>
+			`<w:del w:id="${id}" w:author="Word User" w:date="2026-01-01T00:00:00Z">${inner}</w:del>`;
+		const docPath = await buildRawDoc(
+			`<w:p><m:oMath ${MATH_NS}>${mark("<m:r><m:t>E</m:t></m:r>", 1)}` +
+				`${mark("<m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>", 2)}` +
+				"</m:oMath></w:p>",
+			"eq-schema-shape",
+		);
+		expect((await runCli("read", docPath, "--current")).stdout).toContain(
+			"{--$Ec^2$--}[^tc0]",
+		);
 	});
 });
 

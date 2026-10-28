@@ -15,6 +15,11 @@ import { convertChildren } from "./read";
 export const ELEMENT_HANDLERS: Record<string, (node: XmlNode) => string> = {
 	"m:r": handleRun,
 	"m:e": handleE,
+	// A revision marker wrapping whole math elements — the schema's shape for a
+	// tracked edit inside an equation (`<w:del><m:sSup>…</m:sSup></w:del>`) — is
+	// transparent like `<m:e>`: its content is the equation's.
+	"w:ins": handleE,
+	"w:del": handleE,
 	"m:sSup": handleSSup,
 	"m:sSub": handleSSub,
 	"m:sSubSup": handleSSubSup,
@@ -53,11 +58,14 @@ export function collectPlainText(node: XmlNode): string {
 	return out;
 }
 
-/** The element holding a math run's `m:rPr`/`m:t`. Word records a tracked edit
- *  of an equation INSIDE each run it touched — `<m:r><w:del>…<m:t>E</m:t></w:del></m:r>`
- *  — so the run's content sits one level down, in the revision marker. */
-export function mathRunContent(run: XmlNode): XmlNode {
-	return run.children.find((child) => MATH_REVISION_TAGS.has(child.tag)) ?? run;
+/** A math run's children with every revision marker in it opened up. Word
+ *  records a tracked edit of an equation INSIDE each run it touched —
+ *  `<m:r><w:del>…<m:t>E</m:t></w:del></m:r>` — so a run's `m:rPr`/`m:t` can sit
+ *  one level down, beside (or instead of) its own, in one marker or several. */
+export function mathRunContent(run: XmlNode): XmlNode[] {
+	return run.children.flatMap((child) =>
+		MATH_REVISION_TAGS.has(child.tag) ? child.children : [child],
+	);
 }
 
 /** Revision markers Word nests inside an equation (in `<m:r>` and `<m:ctrlPr>`). */
@@ -76,8 +84,8 @@ export const MATH_REVISION_TAGS = new Set(["w:ins", "w:del"]);
  *      the upright typesetting on re-write; bare `pH` would render italic)
  *    - everything else → escaped + Unicode-mapped LaTeX */
 function handleRun(run: XmlNode): string {
-	const node = mathRunContent(run);
-	const rPr = node.findChild("m:rPr");
+	const children = mathRunContent(run);
+	const rPr = children.find((child) => child.tag === "m:rPr");
 	const isPlain = rPr?.findChild("m:sty")?.getAttribute("m:val") === "p";
 	// A run with no formatting and just a literal space is our SpaceRun shape
 	// (writer emits this for `<mspace>` with non-zero width — `\,`, `\quad`,
@@ -85,7 +93,7 @@ function handleRun(run: XmlNode): string {
 	// pass (temml drops literal whitespace in math mode), so emit `\,` to
 	// re-trigger the same mspace.
 	if (!rPr) {
-		const t = node.findChild("m:t");
+		const t = children.find((child) => child.tag === "m:t");
 		const text = t?.collectText() ?? "";
 		// A run with no formatting and only literal spaces is our SpaceRun
 		// shape (writer emits 1 space for `\,`, 4 for `\quad`, 8 for `\qquad`,
@@ -97,7 +105,7 @@ function handleRun(run: XmlNode): string {
 		}
 	}
 	let out = "";
-	for (const child of node.children) {
+	for (const child of children) {
 		if (child.tag !== "m:t" && child.tag !== "m:delText") continue;
 		const raw = child.collectText();
 		if (isPlain && KNOWN_OPERATORS.has(raw)) {

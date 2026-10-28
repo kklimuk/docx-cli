@@ -25,7 +25,7 @@ export function isRevisionVisible(
 }
 
 /** The revision a run sits in, whatever its type — text, image, equation,
- *  line break and tab runs can all be tracked; the rest never are. */
+ *  line break, tab and text-box runs can all be tracked; the rest never are. */
 export function runRevision(run: Run): TrackedChange | undefined {
 	return "trackedChange" in run ? run.trackedChange : undefined;
 }

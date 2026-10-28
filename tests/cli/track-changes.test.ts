@@ -2122,6 +2122,18 @@ describe("tracked non-text runs follow the same view rule as text", () => {
 		expect(list.map((entry) => entry.text)).toEqual(["[line break]"]);
 	});
 
+	test("a hidden run before a commented equation keeps the comment's marker", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>a</w:t></w:r><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:br/></w:r></w:del>' +
+				'<w:commentRangeStart w:id="0"/><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>y</m:t></m:r></m:oMath><w:commentRangeEnd w:id="0"/>' +
+				"<w:r><w:t>b</w:t></w:r></w:p>",
+			"tracked-break-comment",
+		);
+		expect((await runCli("read", docPath, "--comments")).stdout).toContain(
+			"a$y$[^c0]b",
+		);
+	});
+
 	test("a tracked image delete is hidden, marked, and listed as an image", async () => {
 		const docPath = await copyFixture(
 			"tracked-image-delete",

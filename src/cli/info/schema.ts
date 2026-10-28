@@ -273,6 +273,7 @@ const JSON_SCHEMA = {
 				floating: { type: "boolean" },
 				wrap: { type: "string" },
 				align: { type: "string" },
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
 				blocks: { type: "array", items: { $ref: "#/$defs/Block" } },
 			},
 		},
