@@ -1,4 +1,5 @@
-import { basename, dirname } from "node:path";
+import { rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 // Embedded at BUILD time, never fetched — see the installer invariant in the root
 // CLAUDE.md for why that distinction is load-bearing.
 import installScript from "../../../skills/docx-cli/scripts/install.sh" with {
@@ -15,6 +16,7 @@ import {
 	writeStderr,
 	writeStdout,
 } from "../respond";
+import { swapIn } from "./swap-in";
 
 const HELP = `docx upgrade — replace the installed docx binary with a newer release
 
@@ -29,7 +31,10 @@ Options:
 
 Only the STANDALONE binary upgrades itself, replacing it where it already lives
 (PREFIX is ignored). An npm/bun install is owned by the package manager, so
-upgrade reports that and exits nonzero rather than fighting it.
+upgrade reports that and exits nonzero rather than fighting it. On Windows,
+where a running .exe can be renamed but not overwritten, the verified new
+binary is swapped in and the old one is left as docx.exe.old; the next upgrade
+deletes it.
 
 It runs the same installer published as a release asset — embedded in this
 binary, not downloaded — so the new binary is pinned to a release tag and its
@@ -39,8 +44,8 @@ anything.
 Output:
   Success       one-line ack (--verbose → {ok, operation, from, to, path})
   --dry-run     {operation, dryRun, from, to, path}
-  Not upgraded  {code, error, hint} + nonzero exit (npm install, Windows, or a
-                failed install) — the binary is left untouched
+  Not upgraded  {code, error, hint} + nonzero exit (npm install, a renamed
+                binary, or a failed install) — the binary is left untouched
 `;
 
 /** A release tag, and nothing that can steer the URL somewhere else. `--to` is
@@ -109,26 +114,29 @@ export async function run(args: string[]): Promise<number> {
 	const binaryPath = process.execPath;
 	const prefix = dirname(binaryPath);
 
-	if (process.platform === "win32") {
-		// POSIX can rename over a running binary's inode; Windows cannot.
-		return fail(
-			"UPGRADE_FAILED",
-			`Windows cannot replace ${binaryPath} while it is running`,
-			"Download the new binary and swap it while docx is not running: https://github.com/kklimuk/docx-cli/releases/latest",
-		);
-	}
+	const windows = process.platform === "win32";
 
-	// install.sh always writes `${PREFIX}/docx` — it owns the platform→name rule. So a
+	// install.sh writes `${PREFIX}/docx` (`docx.exe` on Windows) — it owns the name. So a
 	// binary the user RENAMED cannot be self-replaced: the install would drop a second
 	// file beside it (clobbering any unrelated `docx` already there) and leave the
 	// command the user actually runs on the old version, while we reported success.
 	// Refuse instead of reporting a replacement that did not happen.
 	const binaryName = basename(binaryPath);
-	if (binaryName !== "docx") {
+	const installedName = windows ? "docx.exe" : "docx";
+	if (binaryName !== installedName) {
 		return fail(
 			"UPGRADE_FAILED",
-			`the installer places the binary as "docx", but this one is named "${binaryName}" — upgrading would leave ${binaryPath} on ${VERSION} and write a separate ${prefix}/docx`,
+			`the installer places the binary as "${installedName}", but this one is named "${binaryName}" — upgrading would leave ${binaryPath} on ${VERSION} and write a separate ${prefix}/${installedName}`,
 			`Replace it by hand: download docx-<platform> from https://github.com/kklimuk/docx-cli/releases/latest, verify it against SHA256SUMS, and move it over ${binaryPath}.`,
+		);
+	}
+
+	// Always there on POSIX; on Windows only under Git Bash/MSYS (or with it on PATH).
+	if (!Bun.which("sh")) {
+		return fail(
+			"UPGRADE_FAILED",
+			"upgrade runs its installer with sh, which is not on PATH",
+			"Run it from Git Bash, or replace the binary by hand: https://github.com/kklimuk/docx-cli/releases/latest",
 		);
 	}
 
@@ -143,6 +151,12 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
+	// install.sh's final rename lands over a running binary on POSIX. Windows refuses
+	// that, so there it installs into a staging folder and the verified binary is
+	// swapped in after: nothing moves until the download has passed its checksum,
+	// so a failure or a Ctrl+C mid-download leaves the old binary where it was.
+	const installPrefix = windows ? join(prefix, ".docx-upgrade") : prefix;
+
 	// Pipe the embedded script to `sh -s` rather than staging a temp file: install.sh
 	// reads no stdin and uses no $0, so this leaves nothing behind in a PATH directory,
 	// and it hands the PREFIX-writability decision back to install.sh, whose error for
@@ -153,7 +167,7 @@ export async function run(args: string[]): Promise<number> {
 		stderr: "pipe",
 		env: {
 			...process.env,
-			PREFIX: prefix,
+			PREFIX: installPrefix,
 			VERSION: target,
 			REQUIRE_CHECKSUM: "1",
 		},
@@ -167,7 +181,14 @@ export async function run(args: string[]): Promise<number> {
 		forward(proc.stderr, writeStderr),
 	]);
 
-	if ((await proc.exited) !== 0) {
+	const exitCode = await proc.exited;
+	if (windows) {
+		if (exitCode === 0) {
+			await swapIn(join(installPrefix, installedName), binaryPath);
+		}
+		await rm(installPrefix, { recursive: true, force: true });
+	}
+	if (exitCode !== 0) {
 		// install.sh has already narrated the specific cause on stderr; don't paper over
 		// it with a blanket "use npm instead" that misdirects on a bad tag or a blip.
 		// The one thing worth correcting: its unwritable-PREFIX hint says to re-run with

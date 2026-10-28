@@ -107,7 +107,7 @@ Nothing in docx-cli phones home after that.
 - `docx-windows-x64.exe` is not Authenticode-signed, so SmartScreen, WDAC, or AppLocker may block it. Allowlist it by hash.
 - Verify it with `Get-FileHash docx-windows-x64.exe -Algorithm SHA256` against `SHA256SUMS`.
 - `install.sh` also works under Git Bash/MSYS.
-- `docx upgrade` can't replace a running `.exe`, so it refuses on Windows. Install the new version the same way as the first.
+- `docx upgrade` works from Git Bash. A running `.exe` can't be overwritten, so the installer writes to a staging folder beside it, and only the verified binary is swapped in; the old one is left as `docx.exe.old` until the next upgrade.
 
 **macOS.** Release binaries are ad-hoc signed and signature-verified before checksumming, but not Developer ID-signed or notarized. Downloading with `curl` (as the installer does) doesn't set the quarantine flag. A browser download does, so Gatekeeper will ask.
 

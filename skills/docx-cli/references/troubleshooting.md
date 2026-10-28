@@ -50,6 +50,14 @@ The updated release workflow ad-hoc signs and verifies macOS binaries before
 generating `SHA256SUMS`; existing release assets are unchanged. Ad-hoc signing
 does not provide Developer ID identity or Apple notarization.
 
+## `docx upgrade` on Windows says `sh` is not on PATH
+
+Upgrade runs its embedded installer with `sh`, so on Windows run it from Git
+Bash. Windows won't overwrite a running `.exe`, so it installs into a staging
+folder and swaps the verified binary in, leaving the old one as `docx.exe.old`
+until the next upgrade. A failed or interrupted upgrade leaves `docx.exe` as it
+was.
+
 ## `docx render` fails or hangs
 
 `render` is the **only** command that needs an external app. Everything else

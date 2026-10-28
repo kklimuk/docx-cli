@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import installScript from "../../skills/docx-cli/scripts/install.sh" with {
 	type: "text",
 };
-import { runCli } from "./harness";
+import { swapIn } from "../../src/cli/upgrade/swap-in";
+import { runCli, tempWorkspace } from "./harness";
 
 describe("upgrade", () => {
 	// The whole point of the design: `upgrade` reuses the installer rather than
@@ -82,6 +84,26 @@ describe("upgrade", () => {
 	});
 });
 
+// Windows locks a running .exe against overwrite but not rename, so upgrade stages
+// the verified binary and swaps it in. Plain file moves, so this runs anywhere.
+describe("upgrade (Windows swap-in)", () => {
+	// The previous upgrade's `.old` could not delete itself while it ran; by now it
+	// isn't running, so the next upgrade clears it instead of failing on it.
+	test("puts the staged binary in place and keeps the old one beside it", async () => {
+		const workspace = tempWorkspace("swap-in");
+		const binary = `${workspace}/docx.exe`;
+		const staged = `${workspace}/.docx-upgrade/docx.exe`;
+		await Bun.write(binary, "current");
+		await Bun.write(`${binary}.old`, "previous");
+		await Bun.write(staged, "new");
+
+		await swapIn(staged, binary);
+		expect(await Bun.file(binary).text()).toBe("new");
+		expect(await Bun.file(`${binary}.old`).text()).toBe("current");
+		expect(await Bun.file(staged).exists()).toBe(false);
+	});
+});
+
 // isStandaloneBinary() keys on `/$bunfs/`, an UNDOCUMENTED Bun internal path that a
 // Bun upgrade could rename silently — and the failure is invisible from the source
 // tree, since every standalone `docx upgrade` would just degrade to the npm advisory
@@ -91,6 +113,8 @@ describe("upgrade (compiled binary)", () => {
 	test("a compiled binary detects itself as standalone", async () => {
 		const dir = `${import.meta.dir}/../../node_modules/.cache/upgrade-smoke`;
 		const binary = `${dir}/docx`;
+		// `bun build --compile` appends it on Windows, and install.sh names it the same.
+		const exe = process.platform === "win32" ? ".exe" : "";
 		const build = Bun.spawnSync([
 			"bun",
 			"build",
@@ -107,15 +131,17 @@ describe("upgrade (compiled binary)", () => {
 		const stdout = result.stdout.toString();
 		expect(stdout).toContain('"dryRun":true');
 		// It reports the binary it would replace — process.execPath, normalized.
-		expect(stdout).toContain("upgrade-smoke/docx");
+		expect(JSON.parse(stdout).path).toEndWith(
+			join("upgrade-smoke", `docx${exe}`),
+		);
 		// The npm advisory would mean detection broke.
 		expect(stdout).not.toContain("bun add -g bun-docx");
 
 		// install.sh always writes `${PREFIX}/docx`, so a RENAMED binary can't be
 		// self-replaced: the install would drop a second file beside it and leave the
 		// command the user runs stale, while upgrade reported success on the old path.
-		const renamed = `${dir}/mydocx`;
-		expect(Bun.spawnSync(["cp", binary, renamed]).exitCode).toBe(0);
+		const renamed = `${dir}/mydocx${exe}`;
+		expect(Bun.spawnSync(["cp", `${binary}${exe}`, renamed]).exitCode).toBe(0);
 		const refusal = Bun.spawnSync([renamed, "upgrade", "--dry-run"]);
 		expect(refusal.exitCode).not.toBe(0);
 		expect(refusal.stdout.toString()).toContain("mydocx");
