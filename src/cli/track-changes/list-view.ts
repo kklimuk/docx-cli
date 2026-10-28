@@ -59,9 +59,11 @@ export function collectTrackedChangeRecords(
 	// The AST loop above only sees text-bearing run-level changes. Everything
 	// else — empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
 	// table-property revisions, checkbox toggles, and standalone note-body
-	// edits — comes from the single tracked-change inventory the reader built
-	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
-	// author, date and revisionId are already resolved on each record.
+	// edits and header/footer revisions — comes from the single tracked-change
+	// inventory the reader built (TrackChanges.list reads
+	// document.trackedChangeReferences; no re-walk). kind, author, date and
+	// revisionId are already resolved on each record; a note or marginal
+	// wrapper's text is read off its own runs (`wrapperRunText`).
 	const inventory = new TrackChanges(document).list();
 	for (const change of inventory) {
 		if (byId.has(change.id)) continue;
@@ -72,7 +74,7 @@ export function collectTrackedChangeRecords(
 			date: change.date,
 			revisionId: change.revisionId,
 			blockId: change.blockId,
-			text: "",
+			text: wrapperRunText(change.node),
 		};
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the
@@ -113,6 +115,22 @@ export function collectTrackedChangeRecords(
 		if (group) record.group = group;
 	}
 	return sorted;
+}
+
+/** The text of a run wrapper's DIRECT runs (`<w:t>`/`<w:delText>`) — what a
+ *  note-body or header/footer revision inserted or deleted, since those parts
+ *  have no AST runs for the loop above to read. A paragraph-mark marker or a
+ *  wrapper holding only another wrapper has no direct runs, so it stays "". */
+function wrapperRunText(wrapper: XmlNode): string {
+	let text = "";
+	for (const run of wrapper.findChildren("w:r")) {
+		for (const child of run.children) {
+			if (child.tag === "w:t" || child.tag === "w:delText") {
+				text += child.collectText();
+			}
+		}
+	}
+	return text;
 }
 
 /** Text-first view: one LOGICAL change per line, keyed by the handle an agent

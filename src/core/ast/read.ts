@@ -1,6 +1,7 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
 
+import { marginalConfig } from "../marginals/config";
 import { enumerateMarginalRefs } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
 import {
@@ -100,6 +101,7 @@ export function buildBody(document: Document, path: string): Body {
 
 	doc.blocks = readBlocks(document, body, state);
 	readNoteTrackedChanges(document, state);
+	readMarginalTrackedChanges(document, state);
 	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
 	doc.footnotes = document.footnotes?.toNotes() ?? [];
 	doc.endnotes = document.endnotes?.toNotes() ?? [];
@@ -407,15 +409,37 @@ function registerNotePartChanges(
 	}
 }
 
+/** After the note parts, register tracked changes living in header/footer
+ * parts, continuing the shared tcN counter. A part referenced from several
+ * sections registers once, under its first reference's `hdrN`/`ftrN` — that id
+ * is the change's blockId, so `list` names the marginal it sits in. */
+function readMarginalTrackedChanges(
+	document: Document,
+	state: WalkState,
+): void {
+	const seen = new Set<XmlNode[]>();
+	for (const ref of enumerateMarginalRefs(document)) {
+		if (seen.has(ref.tree)) continue;
+		seen.add(ref.tree);
+		const root = XmlNode.findRoot(ref.tree, marginalConfig(ref.kind).rootTag);
+		if (!root) continue;
+		for (const paragraph of root.children) {
+			if (paragraph.tag !== "w:p") continue;
+			registerNoteRunChanges(document, paragraph, state, ref.id);
+		}
+	}
+}
+
 /** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
- * inside a standalone note paragraph (footnote/endnote edits). blockId is ""
- * — note bodies have no pN. Skips `<w:pPr>` (paragraph-mark trackings on a
+ * inside a standalone note or header/footer paragraph. blockId is "" for a
+ * note (note bodies have no pN) and the `hdrN`/`ftrN` for a marginal. Skips `<w:pPr>` (paragraph-mark trackings on a
  * standalone note don't occur — those only arise on paired deletes, which are
  * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. */
 function registerNoteRunChanges(
 	document: Document,
 	container: XmlNode,
 	state: WalkState,
+	blockId = "",
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
@@ -430,13 +454,13 @@ function registerNoteRunChanges(
 			document.trackedChangeReferences.set(id, {
 				node: child,
 				parent: container.children,
-				blockId: "",
+				blockId,
 			});
-			registerNoteRunChanges(document, child, state);
+			registerNoteRunChanges(document, child, state, blockId);
 			continue;
 		}
 		if (child.children.length > 0)
-			registerNoteRunChanges(document, child, state);
+			registerNoteRunChanges(document, child, state, blockId);
 	}
 }
 

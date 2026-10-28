@@ -415,6 +415,62 @@ describe("headers/footers — tracked changes", () => {
 			"<w:sectPrChange",
 		);
 	});
+
+	// A reviewer's edit INSIDE the header part (Word keeps it there): the
+	// header text reads in the accepted view, and the revisions are tcN ids
+	// `list`/`accept`/`reject` reach like body ones.
+	async function docWithHeaderRevisions(label: string): Promise<string> {
+		const path = await newDoc(label);
+		await runCli("headers", "set", path, "--text", "Header text");
+		const revision = 'w:author="Ann" w:date="2026-01-01T00:00:00Z"';
+		const result = await runCli(
+			"raw",
+			"part",
+			"edit",
+			path,
+			"--name",
+			"word/header1.xml",
+			"--find",
+			"Header text</w:t></w:r>",
+			"--with",
+			`Header text</w:t></w:r><w:ins w:id="901" ${revision}><w:r><w:t xml:space="preserve"> edited</w:t></w:r></w:ins><w:del w:id="902" ${revision}><w:r><w:delText xml:space="preserve"> old</w:delText></w:r></w:del>`,
+		);
+		expect(result.exitCode).toBe(0);
+		return path;
+	}
+
+	test("header text shows a tracked insertion and hides a tracked deletion", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-read");
+		expect((await list("headers", path))[0]?.text).toBe("Header text edited");
+		expect(await readMarkdown(path)).toContain(
+			'<!-- docx:header hdr0 text="Header text edited" -->',
+		);
+	});
+
+	test("track-changes list reports header revisions under the hdrN id", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-list");
+		const listed = (await runCli("track-changes", "list", path, "--json"))
+			.parsed as Array<{ kind: string; blockId: string; text: string }>;
+		expect(listed).toMatchObject([
+			{ kind: "ins", blockId: "hdr0", text: " edited" },
+			{ kind: "del", blockId: "hdr0", text: " old" },
+		]);
+	});
+
+	test("accept --all applies header revisions in the header part", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-accept");
+		await runCli("track-changes", "accept", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:ins");
+		expect(header).not.toContain("<w:del");
+		expect((await list("headers", path))[0]?.text).toBe("Header text edited");
+	});
+
+	test("reject --all restores the header's original text", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-reject");
+		await runCli("track-changes", "reject", path, "--all");
+		expect((await list("headers", path))[0]?.text).toBe("Header text old");
+	});
 });
 
 describe("headers/footers — validation", () => {
