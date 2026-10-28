@@ -153,40 +153,41 @@ const JSON_SCHEMA = {
 				sizeHalfPoints: { type: "number" },
 				runStyle: { type: "string" },
 				comments: { type: "array", items: { type: "string" } },
-				trackedChange: {
-					type: "object",
-					required: ["id", "kind", "author", "date", "revisionId"],
-					properties: {
-						id: { type: "string" },
-						// Only kinds that attach to a TextRun are listed here. Other
-						// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
-						// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
-						// surface via `track-changes list` from
-						// `document.trackedChangeReferences`, not via `Run.trackedChange`
-						// — keep this enum tight to what readers actually see here.
-						kind: {
-							enum: ["ins", "del", "moveFrom", "moveTo"],
-						},
-						author: { type: "string" },
-						date: { type: "string" },
-						revisionId: { type: "string" },
-						within: {
-							type: "array",
-							description:
-								"Enclosing revision wrappers, outermost first — present only when this wrapper is nested inside another; a run is visible in a view only when every entry is",
-							items: {
-								type: "object",
-								required: ["id", "kind", "author"],
-								properties: {
-									id: { type: "string" },
-									kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
-									author: { type: "string" },
-								},
-							},
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
+				hyperlink: { $ref: "#/$defs/Hyperlink" },
+			},
+		},
+		RunTrackedChange: {
+			type: "object",
+			required: ["id", "kind", "author", "date", "revisionId"],
+			properties: {
+				id: { type: "string" },
+				// Only kinds that attach to a run are listed here. Other
+				// `TrackedChangeKind` values (sectPrChange, rowIns/rowDel,
+				// cellIns/cellDel, tbl*Change, tcPrChange, checkboxToggle)
+				// surface via `track-changes list` from
+				// `document.trackedChangeReferences`, not via `Run.trackedChange`
+				// — keep this enum tight to what readers actually see here.
+				kind: {
+					enum: ["ins", "del", "moveFrom", "moveTo"],
+				},
+				author: { type: "string" },
+				date: { type: "string" },
+				revisionId: { type: "string" },
+				within: {
+					type: "array",
+					description:
+						"Enclosing revision wrappers, outermost first — present only when this wrapper is nested inside another; a run is visible in a view only when every entry is",
+					items: {
+						type: "object",
+						required: ["id", "kind", "author"],
+						properties: {
+							id: { type: "string" },
+							kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
+							author: { type: "string" },
 						},
 					},
 				},
-				hyperlink: { $ref: "#/$defs/Hyperlink" },
 			},
 		},
 		Hyperlink: {
@@ -213,29 +214,7 @@ const JSON_SCHEMA = {
 				floating: { type: "boolean" },
 				wrap: { type: "string" },
 				align: { type: "string" },
-				trackedChange: {
-					type: "object",
-					required: ["id", "kind", "author", "date", "revisionId"],
-					properties: {
-						id: { type: "string" },
-						kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
-						author: { type: "string" },
-						date: { type: "string" },
-						revisionId: { type: "string" },
-						within: {
-							type: "array",
-							items: {
-								type: "object",
-								required: ["id", "kind", "author"],
-								properties: {
-									id: { type: "string" },
-									kind: { enum: ["ins", "del", "moveFrom", "moveTo"] },
-									author: { type: "string" },
-								},
-							},
-						},
-					},
-				},
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
 			},
 		},
 		BreakRun: {
@@ -244,12 +223,16 @@ const JSON_SCHEMA = {
 			properties: {
 				type: { const: "break" },
 				kind: { enum: ["page", "line", "column"] },
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
 			},
 		},
 		TabRun: {
 			type: "object",
 			required: ["type"],
-			properties: { type: { const: "tab" } },
+			properties: {
+				type: { const: "tab" },
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
+			},
 		},
 		EquationRun: {
 			type: "object",
@@ -260,6 +243,8 @@ const JSON_SCHEMA = {
 				latex: { type: "string" },
 				text: { type: "string" },
 				display: { type: "boolean" },
+				comments: { type: "array", items: { type: "string" } },
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
 			},
 		},
 		FootnoteRefRun: {

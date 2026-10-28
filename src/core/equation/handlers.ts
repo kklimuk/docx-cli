@@ -53,6 +53,16 @@ export function collectPlainText(node: XmlNode): string {
 	return out;
 }
 
+/** The element holding a math run's `m:rPr`/`m:t`. Word records a tracked edit
+ *  of an equation INSIDE each run it touched — `<m:r><w:del>…<m:t>E</m:t></w:del></m:r>`
+ *  — so the run's content sits one level down, in the revision marker. */
+export function mathRunContent(run: XmlNode): XmlNode {
+	return run.children.find((child) => MATH_REVISION_TAGS.has(child.tag)) ?? run;
+}
+
+/** Revision markers Word nests inside an equation (in `<m:r>` and `<m:ctrlPr>`). */
+export const MATH_REVISION_TAGS = new Set(["w:ins", "w:del"]);
+
 // ---------------------------------------------------------------------------
 // Token / leaf handlers
 // ---------------------------------------------------------------------------
@@ -65,7 +75,8 @@ export function collectPlainText(node: XmlNode): string {
  *    - any other upright text containing letters → `\text{…}` (preserves
  *      the upright typesetting on re-write; bare `pH` would render italic)
  *    - everything else → escaped + Unicode-mapped LaTeX */
-function handleRun(node: XmlNode): string {
+function handleRun(run: XmlNode): string {
+	const node = mathRunContent(run);
 	const rPr = node.findChild("m:rPr");
 	const isPlain = rPr?.findChild("m:sty")?.getAttribute("m:val") === "p";
 	// A run with no formatting and just a literal space is our SpaceRun shape
