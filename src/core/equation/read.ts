@@ -20,10 +20,26 @@ import { stripCommandWrap } from "./latex";
  *  ignored; they carry no semantic structure. The list lives below as
  *  `PRESENTATION_TAGS` and matches what we cataloged in the empirical
  *  Word probe (see [tests/fixtures/equations-word.docx](
- *  ../../../tests/fixtures/equations-word.docx)). */
+ *  ../../../tests/fixtures/equations-word.docx)). An `<m:oMathPara>` holding
+ *  several `<m:oMath>` lines (Word's multi-line display block) reads as
+ *  `\begin{gathered}line\\line\end{gathered}`, the form `latexToOmml` splits
+ *  back into one `<m:oMath>` per line. */
 export function ommlToLatex(root: XmlNode): string {
-	const inner = root.tag === "m:oMathPara" ? root.findChild("m:oMath") : root;
-	if (!inner) return "";
+	if (root.tag !== "m:oMathPara") return oMathToLatex(root);
+	const lines = root.children
+		.filter((child) => child.tag === "m:oMath")
+		.map(oMathToLatex)
+		// A line opening with `[` or `*` would read as the `\\` break's own
+		// option (`\\[A,B]=0`, `\\*x`) and vanish on write-back; `{}` keeps it
+		// the line's content.
+		.map((line, index) =>
+			index > 0 && /^[[*]/.test(line) ? `{}${line}` : line,
+		);
+	if (lines.length < 2) return lines[0] ?? "";
+	return `\\begin{gathered}${lines.join("\\\\")}\\end{gathered}`;
+}
+
+function oMathToLatex(inner: XmlNode): string {
 	// Trim disambiguation spaces (added by `escapeAndMap` after every mapped
 	// command like `\alpha `) where the next character is unambiguously NOT
 	// a letter — at the end of the equation, before close-brackets, before

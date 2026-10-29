@@ -263,6 +263,11 @@ const ENTRIES: Array<[string, string, boolean?]> = [
 		true,
 	],
 	["Tagged equation (display)", "x = 1 \\tag{1}", true],
+	[
+		"Multi-line block (display)",
+		"\\begin{gathered} a + b = c \\\\ x^2 = 4 \\end{gathered}",
+		true,
+	],
 ];
 
 // `create` produces a single paragraph (the title). The first equation pair
