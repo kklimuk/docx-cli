@@ -1,4 +1,9 @@
-import { resolveAuthor, resolveDate, TrackChanges } from "@core";
+import {
+	type EquationRun,
+	resolveAuthor,
+	resolveDate,
+	TrackChanges,
+} from "@core";
 import {
 	type AcrossReplaceResult,
 	applyAcrossReplace,
@@ -8,6 +13,7 @@ import {
 	replacementExpander,
 	replaceSpanInParagraph,
 	selectMatches,
+	spanOverEquationsError,
 	type TrackedReplaceOptions,
 } from "@core/find";
 import {
@@ -157,6 +163,13 @@ export async function runReplaceBatch(
 						: String(matcherError);
 				return fail("USAGE", `entry ${index}: invalid pattern: ${message}`);
 			}
+			if (acrossResult.crossing?.equations) {
+				return failOverEquations(
+					index,
+					spanLocator(acrossResult.crossing),
+					acrossResult.crossing.equations,
+				);
+			}
 			results.push({
 				pattern: spec.pattern,
 				replacement: spec.replacement,
@@ -228,6 +241,16 @@ export async function runReplaceBatch(
 			}
 			return right.start - left.start;
 		});
+		// Refused before this entry applies; the batch fails before its save, so
+		// the entries before it aren't written either (like an invalid pattern).
+		const crossing = selected.find((match) => match.equations);
+		if (crossing?.equations) {
+			return failOverEquations(
+				index,
+				spanLocator(crossing),
+				crossing.equations,
+			);
+		}
 		const expand = replacementExpander(spec);
 		for (const match of reversed) {
 			const blockRef = document.body.resolveBlock(match.blockId);
@@ -304,6 +327,15 @@ export async function runReplaceBatch(
 		batch: results,
 	});
 	return EXIT.OK;
+}
+
+function failOverEquations(
+	index: number,
+	locator: string,
+	equations: EquationRun[],
+): Promise<number> {
+	const refusal = spanOverEquationsError(locator, equations);
+	return fail(refusal.code, `entry ${index}: ${refusal.message}`, refusal.hint);
 }
 
 type ReplaceSpec = {
