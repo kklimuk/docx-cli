@@ -5397,6 +5397,124 @@ describe("edit over an inline equation", () => {
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
+	test("the span refusal names the whole span", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:7-13",
+			"--text",
+			"XX",
+		);
+		expect((result.parsed as { error: string }).error).toStartWith(
+			"p0:7-13:",
+		);
+	});
+
+	test("a whole-paragraph --runs edit is refused instead of dropping the equation", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--runs",
+			'[{"text":"Plain"}]',
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("the hint sends the agent to its own read line, not a sample sentence", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"New words.",
+		);
+		const hint = (result.parsed as { hint: string }).hint;
+		expect(hint).toContain("docx read FILE");
+		expect(hint).not.toContain("here.");
+	});
+
+	test("--dry-run refuses what the real edit refuses, single and batch", async () => {
+		const docPath = await equationDoc();
+		const single = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"New words.",
+			"--dry-run",
+		);
+		expect(single.exitCode).toBe(1);
+		expect(single.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		const span = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:7-13",
+			"--text",
+			"XX",
+			"--dry-run",
+		);
+		expect(span.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		const script = join(docPath, "..", "entries.jsonl");
+		await Bun.write(script, '{"at":"p0","text":"New"}\n');
+		const batch = await runCli(
+			"edit",
+			docPath,
+			"--batch",
+			script,
+			"--dry-run",
+		);
+		expect(batch.exitCode).toBe(1);
+		expect(batch.parsed).toMatchObject({ code: "UNSUPPORTED" });
+	});
+
+	test("a batch --dry-run that would succeed writes nothing", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const script = join(docPath, "..", "entries.jsonl");
+		await Bun.write(script, '{"at":"p0:0-6","text":"Mass"}\n');
+		const batch = await runCli(
+			"edit",
+			docPath,
+			"--batch",
+			script,
+			"--dry-run",
+		);
+		expect(batch.exitCode).toBe(0);
+		expect(batch.parsed).toMatchObject({ dryRun: true });
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("an equation already in a pending deletion doesn't block --text", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Energy is </w:t></w:r>' +
+				'<w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath></w:del>' +
+				'<w:r><w:t xml:space="preserve"> here.</w:t></w:r></w:p>',
+			"edit-deleted-equation",
+		);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Rewritten.",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", docPath)).stdout).toContain("Rewritten.");
+	});
+
 	test("a markdown rewrite keeps the equation where it is written", async () => {
 		const docPath = await equationDoc();
 		const result = await runCli(

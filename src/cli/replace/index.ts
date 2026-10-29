@@ -325,7 +325,7 @@ export async function run(args: string[]): Promise<number> {
 	const crossing = selected.find((match) => match.equations);
 	if (crossing?.equations) {
 		const refusal = spanOverEquationsError(
-			crossing.blockId,
+			spanLocator(crossing),
 			crossing.equations,
 		);
 		return fail(refusal.code, refusal.message, refusal.hint);

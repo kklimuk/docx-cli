@@ -78,7 +78,7 @@ export async function runReplaceAcross(
 	}
 	if (result.crossing?.equations) {
 		const refusal = spanOverEquationsError(
-			result.crossing.startBlockId,
+			spanLocator(result.crossing),
 			result.crossing.equations,
 		);
 		return fail(refusal.code, refusal.message, refusal.hint);

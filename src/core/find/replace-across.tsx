@@ -75,11 +75,13 @@ export function replaceAcrossParagraphs(
 			startRef.node.children,
 			match.endOffset,
 			view,
+			"after",
 		);
 		const startSplit = splitChildrenAt(
 			endSplit.before,
 			match.startOffset,
 			view,
+			"before",
 		);
 		head = startSplit.before;
 		tail = endSplit.after;
@@ -89,11 +91,13 @@ export function replaceAcrossParagraphs(
 			startRef.node.children,
 			match.startOffset,
 			view,
+			"before",
 		);
 		const endSplit = splitChildrenAt(
 			endRef.node.children,
 			match.endOffset,
 			view,
+			"after",
 		);
 		head = startSplit.before;
 		tail = endSplit.after;
@@ -158,12 +162,15 @@ type ChildSplit = { before: XmlNode[]; after: XmlNode[] };
  *  same offset space as `collectRunSlots`/`findTextSpans` (runs via
  *  `runTextLength`, visible wrappers descended and split when the offset lands
  *  inside them). `<w:pPr>` always stays in `before` (it's the paragraph's own
- *  metadata); zero-width children (markers, view-invisible tracked wrappers)
- *  go by position. */
+ *  metadata); zero-width children (equations, markers, view-invisible tracked
+ *  wrappers) go by position, and one sitting exactly AT the offset goes to the
+ *  `edge` side — outside the cut, so an equation at the edge of a match stays
+ *  where it was (`equationsWithin` doesn't count it either). */
 function splitChildrenAt(
 	children: XmlNode[],
 	offset: number,
 	view: FindView,
+	edge: "before" | "after",
 ): ChildSplit {
 	const before: XmlNode[] = [];
 	const after: XmlNode[] = [];
@@ -200,6 +207,7 @@ function splitChildrenAt(
 					wrapperContent(child),
 					offset - cursor,
 					view,
+					edge,
 				);
 				before.push(...rewrapSplitHalf(child, inner.before));
 				after.push(...rewrapSplitHalf(child, inner.after));
@@ -207,8 +215,11 @@ function splitChildrenAt(
 			cursor += length;
 			continue;
 		}
-		// Zero-width: comment/bookmark markers, view-invisible tracked wrappers.
-		(cursor < offset ? before : after).push(child);
+		// Zero-width: equations, comment/bookmark markers, view-invisible tracked
+		// wrappers.
+		const inBefore =
+			cursor < offset || (cursor === offset && edge === "before");
+		(inBefore ? before : after).push(child);
 	}
 	return { before, after };
 }

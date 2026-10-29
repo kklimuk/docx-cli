@@ -1,6 +1,6 @@
 import type { Document } from "../ast/document";
 import type { BlockRangeReference, BlockReference } from "../ast/document/body";
-import type { Run, SectionType } from "../ast/types";
+import type { EquationRun, Run, SectionType } from "../ast/types";
 import {
 	applyParagraphOptionsInPlace,
 	applyParagraphOptionsToBlocks,
@@ -33,6 +33,7 @@ import {
 } from "../comments/markers";
 import { matchDocumentLook } from "../dominant-formatting";
 import {
+	describeEquations,
 	equationsWithin,
 	replaceSpanInParagraph,
 	spanOverEquationsError,
@@ -162,7 +163,9 @@ export class Edit {
 				"Block reference is stale (parent does not contain it)",
 			);
 		}
-		if (spec.kind === "text") this.refuseTextOverEquations(blockRef.node);
+		if (spec.kind === "text" || spec.kind === "runs") {
+			this.refuseLiteralOverEquations(blockRef.node, spec.kind);
+		}
 		// Snapshot BEFORE the rebuild: the single-author content rebuild resolves
 		// other authors' pending revisions without review (issue #17), so the
 		// caller can warn about whichever ones didn't survive.
@@ -370,7 +373,10 @@ export class Edit {
 				? equationsWithin(paragraph, span.start, span.end, "accepted")
 				: [];
 		if (paragraph && equations.length > 0) {
-			const refusal = spanOverEquationsError(paragraph.id, equations);
+			const refusal = spanOverEquationsError(
+				`${paragraph.id}:${span.start}-${span.end}`,
+				equations,
+			);
 			throw new EditError(refusal.code, refusal.message, refusal.hint);
 		}
 		const tracked: TrackedReplaceOptions | undefined =
@@ -392,23 +398,36 @@ export class Edit {
 		);
 	}
 
-	/** `--text` is the literal channel: it has no way to say where an equation
-	 *  goes, so rewriting a paragraph that holds one moved the equation to the
-	 *  front (the word diff keeps it as a non-run sibling) or dropped it (the
-	 *  rebuild), silently either way. Refuse; markdown carries it as `$…$`. */
-	private refuseTextOverEquations(node: XmlNode): void {
+	/** `--text` and `--runs` are literal channels: neither can say where an
+	 *  equation goes, so rewriting a paragraph that holds one moved the equation
+	 *  to the front (the word diff keeps it as a non-run sibling) or dropped it
+	 *  (the rebuild), silently either way. Refuse; markdown carries it as `$…$`.
+	 *  An equation already inside a pending deletion is not counted — it is
+	 *  gone in the accepted view, and refusing over it would block every later
+	 *  rewrite of the paragraph. */
+	private refuseLiteralOverEquations(
+		node: XmlNode,
+		kind: "text" | "runs",
+	): void {
 		const paragraph = this.document.body.findBlockByNode(node);
 		if (paragraph?.type !== "paragraph") return;
-		const equations = paragraph.runs.filter((run) => run.type === "equation");
+		const equations = paragraph.runs.filter(
+			(run): run is EquationRun =>
+				run.type === "equation" && !this.isDeletedEquation(node, run.id),
+		);
 		if (equations.length === 0) return;
-		const shown = equations
-			.map((equation) => `${equation.id} ($${equation.latex}$)`)
-			.join(", ");
 		throw new EditError(
 			"UNSUPPORTED",
-			`${paragraph.id} holds ${shown}, which --text can't carry: a literal-text rewrite would move or drop it. Nothing was changed.`,
-			`Rewrite it as markdown, keeping each equation as $…$ where it belongs (leave it out to delete it): \`docx edit FILE --at ${paragraph.id} "Energy is $E=mc^2$ here."\`. To change only some words, use a span edit: \`docx find FILE "phrase"\` → \`docx edit FILE --at pN:S-E --text "…"\`.`,
+			`${paragraph.id} holds ${describeEquations(equations)}, which --${kind} can't carry: a literal rewrite would move or drop it. Nothing was changed.`,
+			`Copy ${paragraph.id}'s line from \`docx read FILE\` and edit it as markdown — \`docx edit FILE --at ${paragraph.id} "…"\` — keeping each equation as $…$ where it belongs (leave one out to delete it). To change only some words, use a span edit: \`docx find FILE "phrase"\` → \`docx edit FILE --at pN:S-E --text "…"\`.`,
 		);
+	}
+
+	private isDeletedEquation(paragraph: XmlNode, equationId: string): boolean {
+		const reference = this.document.body.equationReferences.get(equationId);
+		return reference
+			? deletionAround(paragraph, reference.node, false) === true
+			: false;
 	}
 
 	/** Re-place the comment markers snapshotted before an edit so they bracket
@@ -685,6 +704,25 @@ function hasPendingRevisions(paragraph: XmlNode): boolean {
 		if (child.children.length > 0 && hasPendingRevisions(child)) return true;
 	}
 	return false;
+}
+
+/** Whether `target`, somewhere under `node`, sits inside a `<w:del>` or
+ *  `<w:moveFrom>` — `undefined` when it isn't under `node` at all. */
+function deletionAround(
+	node: XmlNode,
+	target: XmlNode,
+	deleted: boolean,
+): boolean | undefined {
+	for (const child of node.children) {
+		if (child === target) return deleted;
+		const found = deletionAround(
+			child,
+			target,
+			deleted || child.tag === "w:del" || child.tag === "w:moveFrom",
+		);
+		if (found !== undefined) return found;
+	}
+	return undefined;
 }
 
 /** The formatting-preservation path applies only to `--text` (not `--runs`,

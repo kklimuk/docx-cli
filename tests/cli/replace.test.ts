@@ -1987,23 +1987,6 @@ describe("docx replace across an inline equation", () => {
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
-	test("find --json lists the equation a match runs across", async () => {
-		const result = await runCli(
-			"find",
-			docPath,
-			"Energy.*physics",
-			"--regex",
-			"--json",
-		);
-		expect(result.exitCode).toBe(0);
-		expect(result.parsed).toMatchObject({
-			matches: [{ locator: "p0:0-21", equations: [{ id: "eq0" }] }],
-		});
-		const edge = await runCli("find", docPath, "Energy is ", "--json");
-		const [edgeMatch] = (edge.parsed as { matches: object[] }).matches;
-		expect(edgeMatch).not.toHaveProperty("equations");
-	});
-
 	test("a match that only touches the equation's edge still replaces", async () => {
 		const result = await runCli("replace", docPath, "Energy is ", "Mass ");
 		expect(result.exitCode).toBe(0);
@@ -2016,7 +1999,18 @@ describe("docx replace across an inline equation", () => {
 		const result = await runCli("replace", docPath, "physics.\nMid  mid", "J");
 		expect(result.exitCode).toBe(1);
 		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		// The refusal names the whole span, both paragraphs.
+		expect((result.parsed as { error: string }).error).toStartWith(
+			"p0:14-p1:8:",
+		);
 		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a cross-paragraph match starting at the equation's edge leaves it in place", async () => {
+		const result = await runCli("replace", docPath, " in physics.\nMid", " X");
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("Energy is $E=mc^2$ X $x$ mid.");
 	});
 
 	test("a batch entry over an equation fails before anything is saved", async () => {

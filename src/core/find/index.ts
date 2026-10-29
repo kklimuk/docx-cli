@@ -319,17 +319,22 @@ export function applyAcrossReplace(
  *  Cutting such a span removed the words around the equation and left the
  *  equation itself stranded in the new text, silently. */
 export function spanOverEquationsError(
-	blockId: string,
+	locator: string,
 	equations: EquationRun[],
 ): { code: "UNSUPPORTED"; message: string; hint: string } {
-	const shown = equations
-		.map((equation) => `${equation.id} ($${equation.latex}$)`)
-		.join(", ");
 	return {
 		code: "UNSUPPORTED",
-		message: `${blockId}: the text span covers ${shown}, which the matched text doesn't show. Nothing was changed.`,
+		message: `${locator}: the text span covers ${describeEquations(equations)}, which the matched text doesn't show. Nothing was changed.`,
 		hint: 'Equations take no characters in find/replace offsets. Match only the text on one side of the equation, change the equation with `docx equations edit FILE --at eqN`, or rewrite the paragraph as markdown with `docx edit FILE --at pN "…"` — keep the equation as $…$, or leave it out to delete it.',
 	};
+}
+
+/** `eq0 ($E=mc^2$), eq1 ($x$)` — how every equation refusal names what it
+ *  would have stranded. */
+export function describeEquations(equations: EquationRun[]): string {
+	return equations
+		.map((equation) => `${equation.id} ($${equation.latex}$)`)
+		.join(", ");
 }
 
 /** First/all/limit selection, shared by every replace surface: `limit` caps

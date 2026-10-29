@@ -166,7 +166,7 @@ export async function runReplaceBatch(
 			if (acrossResult.crossing?.equations) {
 				return failOverEquations(
 					index,
-					acrossResult.crossing.startBlockId,
+					spanLocator(acrossResult.crossing),
 					acrossResult.crossing.equations,
 				);
 			}
@@ -245,7 +245,11 @@ export async function runReplaceBatch(
 		// the entries before it aren't written either (like an invalid pattern).
 		const crossing = selected.find((match) => match.equations);
 		if (crossing?.equations) {
-			return failOverEquations(index, crossing.blockId, crossing.equations);
+			return failOverEquations(
+				index,
+				spanLocator(crossing),
+				crossing.equations,
+			);
 		}
 		const expand = replacementExpander(spec);
 		for (const match of reversed) {
@@ -327,10 +331,10 @@ export async function runReplaceBatch(
 
 function failOverEquations(
 	index: number,
-	blockId: string,
+	locator: string,
 	equations: EquationRun[],
 ): Promise<number> {
-	const refusal = spanOverEquationsError(blockId, equations);
+	const refusal = spanOverEquationsError(locator, equations);
 	return fail(refusal.code, `entry ${index}: ${refusal.message}`, refusal.hint);
 }
 

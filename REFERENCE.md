@@ -371,7 +371,7 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 
 **Errors** print `{code, error, hint?}` JSON to stdout with a nonzero exit — note there is **no `ok` field**; the exit code plus `code` are the unambiguous signal.
 
-**Text edits never strand an equation.** An inline equation takes no characters in `find`/`replace` offsets, so a match (or a `pN:S-E` span) can run across one unseen. `replace` (single, `--batch`, cross-paragraph) and `edit --at pN:S-E` refuse such a span with `UNSUPPORTED` and write nothing; a whole-paragraph `edit --text` on a paragraph holding an equation refuses the same way, since the literal channel can't say where the equation goes. Rewrite that paragraph as markdown instead — `docx edit FILE --at pN "Energy is $E=mc^2$ here."` keeps the equation as `$…$` (leave it out to delete it).
+**Text edits never strand an equation.** An inline equation takes no characters in `find`/`replace` offsets, so a match (or a `pN:S-E` span) can run across one unseen. `replace` (single, `--batch`, cross-paragraph) and `edit --at pN:S-E` refuse such a span with `UNSUPPORTED` and write nothing; a whole-paragraph `edit --text` or `--runs` on a paragraph holding an equation refuses the same way, since a literal channel can't say where the equation goes (an equation already in a pending deletion doesn't count). `--dry-run` refuses exactly what the real call would. Rewrite that paragraph as markdown instead — `docx edit FILE --at pN "Energy is $E=mc^2$ here."` keeps the equation as `$…$` (leave it out to delete it).
 
 **The `ok` field appears in exactly one place: the `--verbose` success ack** (`{ok:true, operation, path, …}`). Without `-v`, success output is shaped for the next command:
 
