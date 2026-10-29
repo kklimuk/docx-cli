@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 // Embedded at BUILD time, never fetched — see the installer invariant in the root
 // CLAUDE.md for why that distinction is load-bearing.
 import installScript from "../../../skills/docx-cli/scripts/install.sh" with {
@@ -161,6 +161,13 @@ export async function run(args: string[]): Promise<number> {
 	// swapped in after: nothing moves until the download has passed its checksum,
 	// so a failure or a Ctrl+C mid-download leaves the old binary where it was.
 	const installPrefix = windows ? join(prefix, ".docx-upgrade") : prefix;
+	// What install.sh sees as PREFIX. Git Bash accepts `C:/...`, and a backslash in
+	// the path must not reach it: GNU sha256sum escapes such a file name and prefixes
+	// its output line with a backslash, which install.sh's `awk '{print $1}'` keeps,
+	// so every Windows upgrade failed its checksum ("actual: \48a6…").
+	const shellPrefix = windows
+		? installPrefix.split(sep).join("/")
+		: installPrefix;
 
 	// Pipe the embedded script to `sh -s` rather than staging a temp file: install.sh
 	// reads no stdin and uses no $0, so this leaves nothing behind in a PATH directory,
@@ -172,7 +179,7 @@ export async function run(args: string[]): Promise<number> {
 		stderr: "pipe",
 		env: {
 			...process.env,
-			PREFIX: installPrefix,
+			PREFIX: shellPrefix,
 			VERSION: target,
 			REQUIRE_CHECKSUM: "1",
 		},
@@ -182,7 +189,7 @@ export async function run(args: string[]): Promise<number> {
 	// BEFORE the ~75 MB transfer precisely so the terminal isn't dead for a minute on a
 	// slow link. Routing through respond.ts's sinks keeps the one stdout chokepoint.
 	const stdout = windows
-		? withoutStagingPathHint(writeStdout, installPrefix)
+		? withoutStagingPathHint(writeStdout, shellPrefix)
 		: { write: writeStdout, flush: async () => {} };
 	await Promise.all([
 		forward(proc.stdout, stdout.write),
