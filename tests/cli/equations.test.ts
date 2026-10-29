@@ -845,3 +845,99 @@ describe("tracked equation edit (Tier 2)", () => {
 		expect(result.stdout).toContain("Equation not found");
 	});
 });
+
+describe("multi-line display equations (several m:oMath in one m:oMathPara)", () => {
+	/** Word's shape for a display block with a line break: one `<m:oMathPara>`
+	 *  holding one `<m:oMath>` per line. */
+	const MULTI_LINE =
+		"<w:p><m:oMathPara><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath><m:oMath><m:r><m:t>y=2</m:t></m:r></m:oMath></m:oMathPara></w:p>";
+
+	async function multiLineDoc(name: string): Promise<string> {
+		const docPath = join(tempWorkspace(name), "out.docx");
+		await runCli("create", docPath, "--text", "placeholder", "--force");
+		const result = await runCli(
+			"raw",
+			"replace",
+			docPath,
+			"--at",
+			"p0",
+			"--xml",
+			MULTI_LINE,
+		);
+		expect(result.exitCode).toBe(0);
+		return docPath;
+	}
+
+	/** The LaTeX `read` gives a multi-line block: one `gathered` line per `m:oMath`. */
+	const gathered = (...lines: string[]) =>
+		String.raw`\begin{gathered}` +
+		lines.join(String.raw`\\`) +
+		String.raw`\end{gathered}`;
+
+	test("read shows every line, as one gathered display equation", async () => {
+		const docPath = await multiLineDoc("eq-multiline-read");
+		const eqs = await equationsOf(docPath);
+		expect(eqs).toHaveLength(1);
+		expect(eqs[0]?.latex).toBe(gathered("x=1", "y=2"));
+		expect(eqs[0]?.display).toBe(true);
+		const markdown = await runCli("read", docPath);
+		expect(markdown.stdout).toContain(`$$${gathered("x=1", "y=2")}$$`);
+	});
+
+	test("edit with the read LaTeX writes the lines back as separate m:oMath", async () => {
+		const docPath = await multiLineDoc("eq-multiline-roundtrip");
+		const result = await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			gathered("x=1", "y=3"),
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<m:oMath>/g)).toHaveLength(2);
+		const [eq] = await equationsOf(docPath);
+		expect(eq?.latex).toBe(gathered("x=1", "y=3"));
+	});
+
+	test("tracked edit deletes only the lines read showed, and keeps the untouched ones", async () => {
+		const docPath = await multiLineDoc("eq-multiline-tracked");
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			gathered("x=3", "y=2"),
+			"--track",
+		);
+		const accepted = await runCli("read", docPath, "--accepted");
+		expect(accepted.stdout).toContain(`$$${gathered("x=3", "y=2")}$$`);
+		const baseline = await runCli("read", docPath, "--baseline");
+		expect(baseline.stdout).toContain(`$$${gathered("x=1", "y=2")}$$`);
+	});
+
+	test("a matrix row break inside a line is not a line break", async () => {
+		const docPath = await multiLineDoc("eq-multiline-matrix");
+		const latex = gathered(
+			String.raw`A=\begin{pmatrix}1 & 0 \\ 0 & 1\end{pmatrix}`,
+			"b=0",
+		);
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			latex,
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<m:oMath>/g)).toHaveLength(2);
+		const [eq] = await equationsOf(docPath);
+		expect(eq?.latex).toBe(latex);
+	});
+});

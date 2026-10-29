@@ -114,10 +114,67 @@ export class Equations {
  *  MathML → OMML step we control the schema subset we encounter and own
  *  the adapter outright.
  *
+ *  A display `\begin{gathered}a\\b\end{gathered}` — what the reader gives a
+ *  multi-line `<m:oMathPara>` — becomes one `<m:oMath>` per line again, so a
+ *  read → edit loop keeps Word's line structure.
+ *
  *  Throws `EquationParseError` for malformed LaTeX (temml's error messages
  *  are descriptive). Caller is responsible for catching and producing a
  *  user-friendly CLI error. */
 export function latexToOmml(latex: string, display = false): XmlNode {
+	const lines = display ? gatheredLines(latex) : undefined;
+	if (lines) {
+		return (
+			<m.oMathPara>
+				{lines.map((line) => (
+					<m.oMath>{lineToOmml(line, true)}</m.oMath>
+				))}
+			</m.oMathPara>
+		);
+	}
+	const oMath = <m.oMath>{lineToOmml(latex, display)}</m.oMath>;
+	return display ? <m.oMathPara>{oMath}</m.oMathPara> : oMath;
+}
+
+/** The top-level lines of a `\begin{gathered}…\end{gathered}` equation, or
+ *  undefined when `latex` isn't one environment holding at least two lines.
+ *  A `\\` nested in braces or an inner environment (a matrix row) doesn't
+ *  split. */
+function gatheredLines(latex: string): string[] | undefined {
+	const match = /^\s*\\begin\{gathered\}([\s\S]*)\\end\{gathered\}\s*$/.exec(
+		latex,
+	);
+	if (!match) return undefined;
+	const [, body = ""] = match;
+	const lines: string[] = [];
+	let depth = 0;
+	let start = 0;
+	let index = 0;
+	while (index < body.length) {
+		const char = body[index];
+		if (char === "{") depth++;
+		if (char === "}") depth--;
+		if (char !== "\\") {
+			index++;
+			continue;
+		}
+		if (body.startsWith("\\begin", index)) depth++;
+		if (body.startsWith("\\end", index)) depth--;
+		// The outer `\end{gathered}` closed early: not one environment.
+		if (depth < 0) return undefined;
+		if (body[index + 1] === "\\" && depth === 0) {
+			lines.push(body.slice(start, index));
+			start = index + 2;
+		}
+		// Step over the escaped character too, so `\{` / `\\` never count twice.
+		index += 2;
+	}
+	lines.push(body.slice(start));
+	if (lines.length < 2) return undefined;
+	return lines;
+}
+
+function lineToOmml(latex: string, display: boolean): XmlNode[] {
 	const mathml = renderMathml(latex, display);
 	const parsed = XmlNode.parse(mathml);
 	const mathRoot = XmlNode.findRoot(parsed, "math");
@@ -127,9 +184,7 @@ export function latexToOmml(latex: string, display = false): XmlNode {
 			latex,
 		);
 	}
-	const children = mathmlToOmml(mathRoot);
-	const oMath = <m.oMath>{children}</m.oMath>;
-	return display ? <m.oMathPara>{oMath}</m.oMathPara> : oMath;
+	return mathmlToOmml(mathRoot);
 }
 
 /** JSX component form for callers building paragraphs via the emitter

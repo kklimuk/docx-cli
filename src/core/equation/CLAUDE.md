@@ -64,7 +64,12 @@ The walker has three key behaviors:
 The AST's `EquationRun` carries `id` (`eqN`, document order, parallels
 imgN/linkN/tcN), `latex` (the new reconstructed form), `text` (legacy
 plaintext fallback), and `display` (inline `<m:oMath>` vs block
-`<m:oMathPara>`). The original `<m:oMath>` XmlNode lives in
+`<m:oMathPara>`). A multi-line display block — Word's `<m:oMathPara>`
+holding several `<m:oMath>` lines — stays ONE `eqN` whose `latex` is
+`\begin{gathered}line\\line\end{gathered}`; `latexToOmml` splits that form
+(top-level `\\` only, not a matrix row) back into one `<m:oMath>` per line.
+Reading only the first line hid the rest, and `equations edit` then deleted
+lines the agent never saw. The original `<m:oMath>` XmlNode lives in
 `document.body.equationReferences` for emit-back paths — same pattern as
 `document.body.imageById` / `document.body.hyperlinkById` (body-scoped
 maps on `Body`) and `document.trackedChangeReferences` (cross-part map
