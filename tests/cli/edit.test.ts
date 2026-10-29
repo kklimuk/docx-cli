@@ -5407,9 +5407,7 @@ describe("edit over an inline equation", () => {
 			"--text",
 			"XX",
 		);
-		expect((result.parsed as { error: string }).error).toStartWith(
-			"p0:7-13:",
-		);
+		expect((result.parsed as { error: string }).error).toStartWith("p0:7-13:");
 	});
 
 	test("a whole-paragraph --runs edit is refused instead of dropping the equation", async () => {
@@ -5468,13 +5466,7 @@ describe("edit over an inline equation", () => {
 		expect(span.parsed).toMatchObject({ code: "UNSUPPORTED" });
 		const script = join(docPath, "..", "entries.jsonl");
 		await Bun.write(script, '{"at":"p0","text":"New"}\n');
-		const batch = await runCli(
-			"edit",
-			docPath,
-			"--batch",
-			script,
-			"--dry-run",
-		);
+		const batch = await runCli("edit", docPath, "--batch", script, "--dry-run");
 		expect(batch.exitCode).toBe(1);
 		expect(batch.parsed).toMatchObject({ code: "UNSUPPORTED" });
 	});
@@ -5484,13 +5476,7 @@ describe("edit over an inline equation", () => {
 		const before = await readDocumentXml(docPath);
 		const script = join(docPath, "..", "entries.jsonl");
 		await Bun.write(script, '{"at":"p0:0-6","text":"Mass"}\n');
-		const batch = await runCli(
-			"edit",
-			docPath,
-			"--batch",
-			script,
-			"--dry-run",
-		);
+		const batch = await runCli("edit", docPath, "--batch", script, "--dry-run");
 		expect(batch.exitCode).toBe(0);
 		expect(batch.parsed).toMatchObject({ dryRun: true });
 		expect(await readDocumentXml(docPath)).toBe(before);
