@@ -3,6 +3,7 @@ import { join } from "node:path";
 import installScript from "../../skills/docx-cli/scripts/install.sh" with {
 	type: "text",
 };
+import { withoutStagingPathHint } from "../../src/cli/upgrade/staging-path-hint";
 import { swapIn } from "../../src/cli/upgrade/swap-in";
 import { runCli, tempWorkspace } from "./harness";
 
@@ -101,6 +102,51 @@ describe("upgrade (Windows swap-in)", () => {
 		expect(await Bun.file(binary).text()).toBe("new");
 		expect(await Bun.file(`${binary}.old`).text()).toBe("current");
 		expect(await Bun.file(staged).exists()).toBe(false);
+	});
+
+	// Antivirus can hold a freshly written .exe open for a moment, so the second
+	// rename can fail after the first moved the running binary aside. The user
+	// must not be left with only docx.exe.old.
+	test("puts the running binary back when the staged one can't be moved in", async () => {
+		const workspace = tempWorkspace("swap-in-fail");
+		const binary = `${workspace}/docx.exe`;
+		await Bun.write(binary, "current");
+
+		await expect(
+			swapIn(`${workspace}/.docx-upgrade/docx.exe`, binary),
+		).rejects.toThrow();
+		expect(await Bun.file(binary).text()).toBe("current");
+	});
+
+	// install.sh's PATH note names its PREFIX, which on Windows is the staging
+	// folder upgrade deletes right after — so the note is dropped, nothing else.
+	test("drops install.sh's PATH note about the staging folder, keeps the rest", async () => {
+		const staging = "C:\\bin\\.docx-upgrade";
+		const lines = [
+			"→ Downloading docx-windows-x64.exe from https://example/v1",
+			"✓ Verified SHA-256 (docx-windows-x64.exe)",
+			`✓ Installed: ${staging}/docx.exe`,
+			"",
+			`  Note: ${staging} is not on your PATH.`,
+			"  Add this to your shell profile (~/.zshrc, ~/.bashrc, etc):",
+			`    export PATH="${staging}:$PATH"`,
+			"",
+			"docx 0.29.0",
+		];
+		let out = "";
+		const filter = withoutStagingPathHint(async (text) => {
+			out += text;
+		}, staging);
+		// Chunk boundaries fall mid-line, as they do on a real pipe.
+		const text = `${lines.join("\n")}\n`;
+		for (let start = 0; start < text.length; start += 7) {
+			await filter.write(text.slice(start, start + 7));
+		}
+		await filter.flush();
+		expect(out).not.toContain("not on your PATH");
+		expect(out).not.toContain("export PATH");
+		expect(out).toContain("✓ Verified SHA-256");
+		expect(out).toContain("docx 0.29.0\n");
 	});
 });
 

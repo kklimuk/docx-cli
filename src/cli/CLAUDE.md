@@ -79,8 +79,13 @@ against overwrite but not rename, so there install.sh gets `PREFIX=<dir>/.docx-u
 and, only once it exits 0 (downloaded AND checksum-verified), `swapIn`
 ([upgrade/swap-in.ts](upgrade/swap-in.ts)) renames the running binary to `docx.exe.old`
 (sweeping the previous one, which couldn't delete itself while running) and the staged
-one into its place; the staging folder is removed either way. Nothing moves before the
-install succeeds, so there is nothing to restore — don't "simplify" this into stepping
+one into its place; the staging folder is removed either way. If that second rename
+fails (antivirus often holds a fresh `.exe` open), `swapIn` renames the running binary
+back before rethrowing, and `upgrade` reports `UPGRADE_FAILED` as `{code,error,hint}`.
+install.sh's closing PATH note names its PREFIX — the staging folder — so on Windows
+`withoutStagingPathHint` ([upgrade/staging-path-hint.ts](upgrade/staging-path-hint.ts))
+drops those lines from the forwarded stdout; install.sh itself stays untouched. Nothing
+moves before the install succeeds — don't "simplify" this into stepping
 aside first: a Ctrl+C mid-download would strand the user without `docx`, and Ctrl+C
 can't be trapped reliably on Windows (MSYS `sh` on piped stdio ignores it). `sh` must
 be on PATH (Git Bash), checked up front. A standalone binary the user RENAMED is

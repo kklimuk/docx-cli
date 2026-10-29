@@ -16,6 +16,7 @@ import {
 	writeStderr,
 	writeStdout,
 } from "../respond";
+import { withoutStagingPathHint } from "./staging-path-hint";
 import { swapIn } from "./swap-in";
 
 const HELP = `docx upgrade — replace the installed docx binary with a newer release
@@ -123,7 +124,11 @@ export async function run(args: string[]): Promise<number> {
 	// Refuse instead of reporting a replacement that did not happen.
 	const binaryName = basename(binaryPath);
 	const installedName = windows ? "docx.exe" : "docx";
-	if (binaryName !== installedName) {
+	// Windows filenames are case-insensitive: `Docx.exe` IS the installed binary.
+	const sameName = windows
+		? binaryName.toLowerCase() === installedName
+		: binaryName === installedName;
+	if (!sameName) {
 		return fail(
 			"UPGRADE_FAILED",
 			`the installer places the binary as "${installedName}", but this one is named "${binaryName}" — upgrading would leave ${binaryPath} on ${VERSION} and write a separate ${prefix}/${installedName}`,
@@ -176,17 +181,32 @@ export async function run(args: string[]): Promise<number> {
 	// Forward as it arrives, not after it finishes: install.sh prints "→ Downloading …"
 	// BEFORE the ~75 MB transfer precisely so the terminal isn't dead for a minute on a
 	// slow link. Routing through respond.ts's sinks keeps the one stdout chokepoint.
+	const stdout = windows
+		? withoutStagingPathHint(writeStdout, installPrefix)
+		: { write: writeStdout, flush: async () => {} };
 	await Promise.all([
-		forward(proc.stdout, writeStdout),
+		forward(proc.stdout, stdout.write),
 		forward(proc.stderr, writeStderr),
 	]);
+	await stdout.flush();
 
 	const exitCode = await proc.exited;
 	if (windows) {
-		if (exitCode === 0) {
-			await swapIn(join(installPrefix, installedName), binaryPath);
+		try {
+			if (exitCode === 0) {
+				await swapIn(join(installPrefix, installedName), binaryPath);
+			}
+		} catch {
+			// swapIn put the running binary back; say so as {code,error,hint}
+			// rather than letting a stack trace escape to the catch-all.
+			return fail(
+				"UPGRADE_FAILED",
+				`could not swap the new binary into ${binaryPath} — it is unchanged`,
+				"Something (often antivirus scanning the new file) held it open. Wait a moment and run docx upgrade again.",
+			);
+		} finally {
+			await rm(installPrefix, { recursive: true, force: true });
 		}
-		await rm(installPrefix, { recursive: true, force: true });
 	}
 	if (exitCode !== 0) {
 		// install.sh has already narrated the specific cause on stderr; don't paper over
