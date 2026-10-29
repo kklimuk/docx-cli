@@ -3,6 +3,7 @@ import {
 	applyAcrossReplace,
 	type FindView,
 	type ReplacementFormatting,
+	spanOverEquationsError,
 } from "@core/find";
 import { spanLocator } from "../parse-helpers";
 import {
@@ -74,6 +75,13 @@ export async function runReplaceAcross(
 				? matcherError.message
 				: String(matcherError);
 		return fail("USAGE", `Invalid pattern: ${message}`);
+	}
+	if (result.crossing?.equations) {
+		const refusal = spanOverEquationsError(
+			result.crossing.startBlockId,
+			result.crossing.equations,
+		);
+		return fail(refusal.code, refusal.message, refusal.hint);
 	}
 
 	const matchesPayload = result.replaced.map((match) => ({

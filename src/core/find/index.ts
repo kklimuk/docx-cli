@@ -1,5 +1,10 @@
 import { type Body, iterateBlocks } from "../ast/document/body";
-import type { Block, Paragraph, TrackedChange } from "../ast/types";
+import type {
+	Block,
+	EquationRun,
+	Paragraph,
+	TrackedChange,
+} from "../ast/types";
 import {
 	isRevisionVisible,
 	type RevisionView,
@@ -21,6 +26,9 @@ export type TextMatch = {
 	end: number;
 	text: string;
 	trackedChanges?: TrackedChange[];
+	/** Equations strictly inside the match. An equation takes no characters in
+	 *  the matched text, so this is the only place a match shows one. */
+	equations?: EquationRun[];
 };
 
 export type FindView = RevisionView;
@@ -95,6 +103,8 @@ export type ParagraphSpanMatch = {
 	endBlockId: string;
 	endOffset: number;
 	text: string;
+	/** Equations strictly inside the match, as on `TextMatch`. */
+	equations?: EquationRun[];
 };
 
 /** What `findAcrossParagraphs` returns: the spanning matches plus the same
@@ -151,13 +161,29 @@ export function findAcrossParagraphs(
 			const start = mapFlatOffset(span.start, entries, entryCursor);
 			const end = mapFlatOffset(span.end, entries, start.entryIndex);
 			entryCursor = end.entryIndex;
-			out.push({
+			const match: ParagraphSpanMatch = {
 				startBlockId: start.blockId,
 				startOffset: start.local,
 				endBlockId: end.blockId,
 				endOffset: end.local,
 				text: span.text,
-			});
+			};
+			// Each paragraph's share of the match: from the start offset in the
+			// first, all of a middle one, up to the end offset in the last.
+			const equations = group
+				.slice(start.entryIndex, end.entryIndex + 1)
+				.flatMap((paragraph, index) =>
+					equationsWithin(
+						paragraph,
+						index === 0 ? start.local : -1,
+						index === end.entryIndex - start.entryIndex
+							? end.local
+							: Number.POSITIVE_INFINITY,
+						view,
+					),
+				);
+			if (equations.length > 0) match.equations = equations;
+			out.push(match);
 		}
 	}
 	return { matches: out, ...normalization };
@@ -242,6 +268,9 @@ export type AcrossReplaceResult = {
 	/** The matches actually replaced (or that WOULD be, under dryRun), in
 	 *  document order. */
 	replaced: ParagraphSpanMatch[];
+	/** The first match with an equation inside it. When set, nothing was
+	 *  applied: the caller refuses with `spanOverEquationsError`. */
+	crossing?: ParagraphSpanMatch | undefined;
 	normalizedQuery?: string;
 	normalizationApplied?: NormalizationKind[];
 };
@@ -269,7 +298,8 @@ export function applyAcrossReplace(
 		},
 	);
 	const replaced = selectMatches(matches, spec);
-	if (!dryRun) {
+	const crossing = replaced.find((match) => match.equations);
+	if (!dryRun && !crossing) {
 		const expand = replacementExpander(spec);
 		for (const match of [...replaced].reverse()) {
 			replaceAcrossParagraphs(
@@ -281,7 +311,25 @@ export function applyAcrossReplace(
 			);
 		}
 	}
-	return { totalMatches: matches.length, replaced, ...normalization };
+	return { totalMatches: matches.length, replaced, crossing, ...normalization };
+}
+
+/** The refusal for a text span with an equation inside it — shared by every
+ *  replace surface and `edit --at pN:S-E`, so all of them say the same thing.
+ *  Cutting such a span removed the words around the equation and left the
+ *  equation itself stranded in the new text, silently. */
+export function spanOverEquationsError(
+	blockId: string,
+	equations: EquationRun[],
+): { code: "UNSUPPORTED"; message: string; hint: string } {
+	const shown = equations
+		.map((equation) => `${equation.id} ($${equation.latex}$)`)
+		.join(", ");
+	return {
+		code: "UNSUPPORTED",
+		message: `${blockId}: the text span covers ${shown}, which the matched text doesn't show. Nothing was changed.`,
+		hint: 'Equations take no characters in find/replace offsets. Match only the text on one side of the equation, change the equation with `docx equations edit FILE --at eqN`, or rewrite the paragraph as markdown with `docx edit FILE --at pN "…"` — keep the equation as $…$, or leave it out to delete it.',
+	};
 }
 
 /** First/all/limit selection, shared by every replace surface: `limit` caps
@@ -469,6 +517,8 @@ function collectMatches(
 				view,
 			);
 			if (overlaps.length > 0) match.trackedChanges = overlaps;
+			const equations = equationsWithin(block, span.start, span.end, view);
+			if (equations.length > 0) match.equations = equations;
 			out.push(match);
 		}
 	}
@@ -616,6 +666,26 @@ function trackedChangesOverlapping(
 		if (seen.has(change.id)) continue;
 		seen.add(change.id);
 		out.push(change);
+	}
+	return out;
+}
+
+/** The equations strictly between `start` and `end` — the zero-width twin of
+ *  `trackedChangesOverlapping`, on the same `runViewText` offsets. An equation
+ *  at either edge sits outside the cut and stays put, so it isn't counted. */
+export function equationsWithin(
+	paragraph: Paragraph,
+	start: number,
+	end: number,
+	view: FindView,
+): EquationRun[] {
+	const out: EquationRun[] = [];
+	let offset = 0;
+	for (const run of paragraph.runs) {
+		if (run.type === "equation" && offset > start && offset < end) {
+			out.push(run);
+		}
+		offset += runViewText(run, view).length;
 	}
 	return out;
 }

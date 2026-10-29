@@ -5,6 +5,7 @@ import {
 	replacementExpander,
 	replaceSpanInParagraph,
 	selectMatches,
+	spanOverEquationsError,
 	type TrackedReplaceOptions,
 } from "@core/find";
 import {
@@ -130,6 +131,11 @@ Output:
   occurrences exits nonzero (MATCH_NOT_FOUND). Unsure it matches? Probe with
   \`docx find FILE PATTERN\` or --dry-run and READ the reported count — both
   exit 0 whether or not it matches; only the real replace exits nonzero on 0.
+  An equation takes no characters in the matched text, so a match can run
+  across one unseen (\`find --json\` lists it under "equations"); such a match
+  is refused (UNSUPPORTED, nothing written) rather than leave the equation
+  stranded — rewrite that paragraph as markdown with
+  \`docx edit FILE --at pN "… $…$ …"\` instead.
   --batch: if ANY entry matches nothing, the exit is nonzero — but the entries
   that DID match are already applied and SAVED. Nonzero means "some entries
   missed," not "nothing changed" (the error names the misses).
@@ -313,6 +319,17 @@ export async function run(args: string[]): Promise<number> {
 	}));
 
 	const outputPath = parsed.values.output as string | undefined;
+
+	// Checked before --dry-run, so the preview refuses exactly what the real
+	// replace would, and a refused --all leaves the file untouched.
+	const crossing = selected.find((match) => match.equations);
+	if (crossing?.equations) {
+		const refusal = spanOverEquationsError(
+			crossing.blockId,
+			crossing.equations,
+		);
+		return fail(refusal.code, refusal.message, refusal.hint);
+	}
 
 	if (parsed.values["dry-run"]) {
 		await respond({

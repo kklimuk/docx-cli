@@ -1948,3 +1948,87 @@ describe("docx replace across a wrapper nested in another author's insertion (#1
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 });
+
+// An equation is zero-width in find/replace offsets, so a match can run across
+// one unseen. Cutting the text around it used to leave the equation stranded
+// inside the new text, exit 0, no hint — now the span is refused, nothing written.
+describe("docx replace across an inline equation", () => {
+	let workspace: string;
+	let docPath: string;
+
+	beforeEach(async () => {
+		workspace = tempWorkspace("replace-equation");
+		docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(
+			source,
+			"Energy is $E=mc^2$ in physics.\n\nMid $x$ mid.\n\nEnd two.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+	});
+
+	test("a match spanning the equation is refused and the file is untouched", async () => {
+		const before = await readDocumentXml(docPath);
+		for (const extra of [[], ["--track"], ["--dry-run"]]) {
+			const result = await runCli(
+				"replace",
+				docPath,
+				"Energy.*physics",
+				"Gone",
+				"--regex",
+				...extra,
+			);
+			expect(result.exitCode).toBe(1);
+			expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+			expect((result.parsed as { error: string }).error).toContain(
+				"eq0 ($E=mc^2$)",
+			);
+		}
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("find --json lists the equation a match runs across", async () => {
+		const result = await runCli(
+			"find",
+			docPath,
+			"Energy.*physics",
+			"--regex",
+			"--json",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			matches: [{ locator: "p0:0-21", equations: [{ id: "eq0" }] }],
+		});
+		const edge = await runCli("find", docPath, "Energy is ", "--json");
+		const [edgeMatch] = (edge.parsed as { matches: object[] }).matches;
+		expect(edgeMatch).not.toHaveProperty("equations");
+	});
+
+	test("a match that only touches the equation's edge still replaces", async () => {
+		const result = await runCli("replace", docPath, "Energy is ", "Mass ");
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("Mass $E=mc^2$ in physics.");
+	});
+
+	test("a cross-paragraph match over an equation is refused", async () => {
+		const before = await readDocumentXml(docPath);
+		const result = await runCli("replace", docPath, "physics.\nMid  mid", "J");
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a batch entry over an equation fails before anything is saved", async () => {
+		const before = await readDocumentXml(docPath);
+		const script = join(workspace, "subs.jsonl");
+		await Bun.write(
+			script,
+			'{"pattern":"End","replacement":"Finish"}\n{"pattern":"Mid  mid","replacement":"K"}\n',
+		);
+		const result = await runCli("replace", docPath, "--batch", script);
+		expect(result.exitCode).toBe(1);
+		expect((result.parsed as { error: string }).error).toContain("entry 1:");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+});

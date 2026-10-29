@@ -5351,3 +5351,63 @@ describe("edit with markdown that changes only words is a word-level edit", () =
 		expect(markdown).not.toContain("example.com");
 	});
 });
+
+// `--text` can't say where an equation goes, and a span edit can't remove one:
+// both used to move or strand it silently. Both refuse now; markdown with $…$
+// is the way to rewrite such a paragraph.
+describe("edit over an inline equation", () => {
+	async function equationDoc(): Promise<string> {
+		const workspace = tempWorkspace("edit-equation");
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		return docPath;
+	}
+
+	test("a span edit across the equation is refused", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0:7-13",
+			"--text",
+			"XX",
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a whole-paragraph --text edit is refused instead of moving the equation", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"New words.",
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a markdown rewrite keeps the equation where it is written", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"Energy is $E=mc^2$ in modern physics.",
+		);
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("Energy is $E=mc^2$ in modern physics.");
+	});
+});

@@ -32,7 +32,12 @@ import {
 	reanchorCommentMarkers,
 } from "../comments/markers";
 import { matchDocumentLook } from "../dominant-formatting";
-import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
+import {
+	equationsWithin,
+	replaceSpanInParagraph,
+	spanOverEquationsError,
+	type TrackedReplaceOptions,
+} from "../find";
 import { continueList } from "../lists/continue-list";
 import { hasTextBox } from "../mc";
 import {
@@ -157,6 +162,7 @@ export class Edit {
 				"Block reference is stale (parent does not contain it)",
 			);
 		}
+		if (spec.kind === "text") this.refuseTextOverEquations(blockRef.node);
 		// Snapshot BEFORE the rebuild: the single-author content rebuild resolves
 		// other authors' pending revisions without review (issue #17), so the
 		// caller can warn about whichever ones didn't survive.
@@ -358,6 +364,15 @@ export class Edit {
 				'Run `docx find FILE "phrase"` to get an exact span locator.',
 			);
 		}
+		const paragraph = this.document.body.findBlockByNode(blockRef.node);
+		const equations =
+			paragraph?.type === "paragraph"
+				? equationsWithin(paragraph, span.start, span.end, "accepted")
+				: [];
+		if (paragraph && equations.length > 0) {
+			const refusal = spanOverEquationsError(paragraph.id, equations);
+			throw new EditError(refusal.code, refusal.message, refusal.hint);
+		}
 		const tracked: TrackedReplaceOptions | undefined =
 			(opts.track ?? this.document.isTrackChangesEnabled())
 				? {
@@ -374,6 +389,25 @@ export class Edit {
 			replacement,
 			tracked,
 			"accepted",
+		);
+	}
+
+	/** `--text` is the literal channel: it has no way to say where an equation
+	 *  goes, so rewriting a paragraph that holds one moved the equation to the
+	 *  front (the word diff keeps it as a non-run sibling) or dropped it (the
+	 *  rebuild), silently either way. Refuse; markdown carries it as `$…$`. */
+	private refuseTextOverEquations(node: XmlNode): void {
+		const paragraph = this.document.body.findBlockByNode(node);
+		if (paragraph?.type !== "paragraph") return;
+		const equations = paragraph.runs.filter((run) => run.type === "equation");
+		if (equations.length === 0) return;
+		const shown = equations
+			.map((equation) => `${equation.id} ($${equation.latex}$)`)
+			.join(", ");
+		throw new EditError(
+			"UNSUPPORTED",
+			`${paragraph.id} holds ${shown}, which --text can't carry: a literal-text rewrite would move or drop it. Nothing was changed.`,
+			`Rewrite it as markdown, keeping each equation as $…$ where it belongs (leave it out to delete it): \`docx edit FILE --at ${paragraph.id} "Energy is $E=mc^2$ here."\`. To change only some words, use a span edit: \`docx find FILE "phrase"\` → \`docx edit FILE --at pN:S-E --text "…"\`.`,
 		);
 	}
 
@@ -599,7 +633,8 @@ export type EditErrorCode =
 	| "USAGE"
 	| "INVALID_LOCATOR"
 	| "BLOCK_NOT_FOUND"
-	| "TRACKED_CHANGE_CONFLICT";
+	| "TRACKED_CHANGE_CONFLICT"
+	| "UNSUPPORTED";
 
 export class EditError extends Error {
 	constructor(
