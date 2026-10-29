@@ -218,8 +218,13 @@ NEW, reject restores OLD).
 **Word's own tracked equation edits look different** (captured from Word 365):
 the marker goes INSIDE the equation, one per math run it touched plus one per
 structure's `<m:ctrlPr>` — `<m:r><w:del …><m:rPr/><m:t>E</m:t></w:del></m:r>`.
-So `mathRunContent` ([handlers.ts](handlers.ts)) reads a run's `m:rPr`/`m:t`
-through that marker (without it a deleted `E=mc^2` read as `{}^{}`), and the
+So `mathRunContent` ([handlers.ts](handlers.ts)) returns a run's children with
+every marker in it opened up, so `m:rPr`/`m:t` are found whether they sit beside
+or inside a marker, in one marker or several (without it a deleted `E=mc^2` read
+as `{}^{}`). A marker wrapping whole math elements (the schema's shape) is
+transparent to the LaTeX walker like `<m:e>`. A PARTLY revised equation's LaTeX
+is built from a copy with its `w:del` markers removed, so `read` shows the
+accepted view (what `accept --all` leaves), and the
 reader registers all of an equation's markers as ONE `tcN` per kind and author
 (`registerMathRevisions` in [ast/read.ts](../ast/read.ts)); when it covers the
 whole equation it becomes the `EquationRun.trackedChange`, exactly like an
