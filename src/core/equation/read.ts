@@ -28,7 +28,13 @@ export function ommlToLatex(root: XmlNode): string {
 	if (root.tag !== "m:oMathPara") return oMathToLatex(root);
 	const lines = root.children
 		.filter((child) => child.tag === "m:oMath")
-		.map(oMathToLatex);
+		.map(oMathToLatex)
+		// A line opening with `[` or `*` would read as the `\\` break's own
+		// option (`\\[A,B]=0`, `\\*x`) and vanish on write-back; `{}` keeps it
+		// the line's content.
+		.map((line, index) =>
+			index > 0 && /^[[*]/.test(line) ? `{}${line}` : line,
+		);
 	if (lines.length < 2) return lines[0] ?? "";
 	return `\\begin{gathered}${lines.join("\\\\")}\\end{gathered}`;
 }

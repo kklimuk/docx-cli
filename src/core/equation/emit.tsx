@@ -9,6 +9,7 @@ import {
 	type TrackedMeta,
 } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
+import { findMatchingBracket } from "./latex";
 import { mathmlToOmml } from "./mathml-to-omml";
 
 /** Cross-cutting lens over the document's equations. Constructed at call
@@ -164,7 +165,17 @@ function gatheredLines(latex: string): string[] | undefined {
 		if (depth < 0) return undefined;
 		if (body[index + 1] === "\\" && depth === 0) {
 			lines.push(body.slice(start, index));
-			start = index + 2;
+			// The break's own `*` and `[4pt]` spacing option belong to the `\\`,
+			// not to the next line — OMML has no per-line spacing, so drop them.
+			let next = index + 2;
+			if (body[next] === "*") next++;
+			if (body[next] === "[") {
+				const close = findMatchingBracket(body, next);
+				if (close !== -1) next = close;
+			}
+			start = next;
+			index = next;
+			continue;
 		}
 		// Step over the escaped character too, so `\{` / `\\` never count twice.
 		index += 2;

@@ -67,7 +67,11 @@ plaintext fallback), and `display` (inline `<m:oMath>` vs block
 `<m:oMathPara>`). A multi-line display block — Word's `<m:oMathPara>`
 holding several `<m:oMath>` lines — stays ONE `eqN` whose `latex` is
 `\begin{gathered}line\\line\end{gathered}`; `latexToOmml` splits that form
-(top-level `\\` only, not a matrix row) back into one `<m:oMath>` per line.
+(top-level `\\` only, not a matrix row) back into one `<m:oMath>` per line,
+dropping a break's own `*` / `[4pt]` option (OMML has no per-line spacing).
+So a line that itself opens with `[` or `*` reads with a leading `{}`
+(`x=1\\{}[A,B]=0`) — without it the write-back would take `[A,B]` for the
+break's option.
 Reading only the first line hid the rest, and `equations edit` then deleted
 lines the agent never saw. The original `<m:oMath>` XmlNode lives in
 `document.body.equationReferences` for emit-back paths — same pattern as

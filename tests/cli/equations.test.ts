@@ -902,7 +902,7 @@ describe("multi-line display equations (several m:oMath in one m:oMathPara)", ()
 		expect(eq?.latex).toBe(gathered("x=1", "y=3"));
 	});
 
-	test("tracked edit deletes only the lines read showed, and keeps the untouched ones", async () => {
+	test("tracked edit replaces the whole block: every old line deleted, every new line inserted", async () => {
 		const docPath = await multiLineDoc("eq-multiline-tracked");
 		await runCli(
 			"equations",
@@ -914,10 +914,65 @@ describe("multi-line display equations (several m:oMath in one m:oMathPara)", ()
 			gathered("x=3", "y=2"),
 			"--track",
 		);
-		const accepted = await runCli("read", docPath, "--accepted");
-		expect(accepted.stdout).toContain(`$$${gathered("x=3", "y=2")}$$`);
-		const baseline = await runCli("read", docPath, "--baseline");
-		expect(baseline.stdout).toContain(`$$${gathered("x=1", "y=2")}$$`);
+		// `read --accepted`/`--baseline` don't filter tracked equations yet (both
+		// show old and new), so check the markers themselves.
+		const xml = await readDocumentXml(docPath);
+		const deleted = /<w:del\b[^>]*>([\s\S]*?)<\/w:del>/.exec(xml)?.[1] ?? "";
+		const inserted = /<w:ins\b[^>]*>([\s\S]*?)<\/w:ins>/.exec(xml)?.[1] ?? "";
+		const lineTexts = (fragment: string) =>
+			[...fragment.matchAll(/<m:oMath>([\s\S]*?)<\/m:oMath>/g)].map((line) =>
+				[...(line[1] ?? "").matchAll(/<m:t[^>]*>([^<]*)<\/m:t>/g)]
+					.map((text) => text[1])
+					.join(""),
+			);
+		expect(lineTexts(deleted)).toEqual(["x=1", "y=2"]);
+		expect(lineTexts(inserted)).toEqual(["x=3", "y=2"]);
+	});
+
+	test("a line break's own [4pt] / * option is dropped, not written as text", async () => {
+		for (const option of ["[4pt]", "*", "*[2ex]"]) {
+			const docPath = await multiLineDoc("eq-multiline-break-option");
+			await runCli(
+				"equations",
+				"edit",
+				docPath,
+				"--at",
+				"eq0",
+				"--equation",
+				String.raw`\begin{gathered}a=1\\${option}b=2\end{gathered}`,
+			);
+			const [eq] = await equationsOf(docPath);
+			expect(eq?.latex).toBe(gathered("a=1", "b=2"));
+		}
+	});
+
+	test("a line that starts with [ survives read → edit", async () => {
+		const docPath = join(tempWorkspace("eq-multiline-bracket"), "out.docx");
+		await runCli("create", docPath, "--text", "placeholder", "--force");
+		await runCli(
+			"raw",
+			"replace",
+			docPath,
+			"--at",
+			"p0",
+			"--xml",
+			"<w:p><m:oMathPara><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath><m:oMath><m:r><m:t>[A,B]=0</m:t></m:r></m:oMath></m:oMathPara></w:p>",
+		);
+		const [read] = await equationsOf(docPath);
+		expect(read?.latex).toBe(gathered("x=1", "{}[A,B]=0"));
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq0",
+			"--equation",
+			read?.latex ?? "",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<m:oMath>/g)).toHaveLength(2);
+		const [eq] = await equationsOf(docPath);
+		expect(eq?.latex).toBe(read?.latex);
 	});
 
 	test("a matrix row break inside a line is not a line break", async () => {
