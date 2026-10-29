@@ -1,7 +1,7 @@
 import type { SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
-import type { XmlNode } from "@core/parser";
+import { wrapperRunText, type XmlNode } from "@core/parser";
 import { TrackChanges } from "@core/track-changes";
 import { revisionGroups } from "./groups";
 
@@ -115,22 +115,6 @@ export function collectTrackedChangeRecords(
 		if (group) record.group = group;
 	}
 	return sorted;
-}
-
-/** The text of a run wrapper's DIRECT runs (`<w:t>`/`<w:delText>`) — what a
- *  note-body or header/footer revision inserted or deleted, since those parts
- *  have no AST runs for the loop above to read. A paragraph-mark marker or a
- *  wrapper holding only another wrapper has no direct runs, so it stays "". */
-function wrapperRunText(wrapper: XmlNode): string {
-	let text = "";
-	for (const run of wrapper.findChildren("w:r")) {
-		for (const child of run.children) {
-			if (child.tag === "w:t" || child.tag === "w:delText") {
-				text += child.collectText();
-			}
-		}
-	}
-	return text;
 }
 
 /** Text-first view: one LOGICAL change per line, keyed by the handle an agent

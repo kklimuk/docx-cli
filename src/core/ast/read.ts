@@ -2,7 +2,7 @@ import { alignmentFromJc, normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
 
 import { marginalConfig } from "../marginals/config";
-import { enumerateMarginalRefs } from "../marginals/resolve";
+import { enumerateMarginalRefs, type MarginalRef } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
 import {
 	alternateContentBranch,
@@ -101,11 +101,13 @@ export function buildBody(document: Document, path: string): Body {
 
 	doc.blocks = readBlocks(document, body, state);
 	readNoteTrackedChanges(document, state);
-	readMarginalTrackedChanges(document, state);
+	// Resolved once: both the revision walk and the Marginal[] projection need it.
+	const marginalRefs = enumerateMarginalRefs(document);
+	readMarginalTrackedChanges(document, marginalRefs, state);
 	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
 	doc.footnotes = document.footnotes?.toNotes() ?? [];
 	doc.endnotes = document.endnotes?.toNotes() ?? [];
-	const marginals = readMarginals(document);
+	const marginals = readMarginals(marginalRefs);
 	doc.headers = marginals.headers;
 	doc.footers = marginals.footers;
 
@@ -119,13 +121,13 @@ export function buildBody(document: Document, path: string): Body {
  *  and reads the part text with fields as tokens. One entry per reference, so a
  *  document-wide marginal (one part, referenced from each section) appears once
  *  per section. Locators `hdr0`/`ftr0` are positional in document order. */
-function readMarginals(document: Document): {
+function readMarginals(refs: MarginalRef[]): {
 	headers: Marginal[];
 	footers: Marginal[];
 } {
 	const headers: Marginal[] = [];
 	const footers: Marginal[] = [];
-	for (const ref of enumerateMarginalRefs(document)) {
+	for (const ref of refs) {
 		const marginal: Marginal = {
 			id: ref.id,
 			kind: ref.kind,
@@ -404,7 +406,7 @@ function registerNotePartChanges(
 		if (noteId && paired.has(`${kind}:${noteId}`)) continue;
 		for (const paragraph of note.children) {
 			if (paragraph.tag !== "w:p") continue;
-			registerNoteRunChanges(document, paragraph, state);
+			registerStandaloneRunChanges(document, paragraph, state);
 		}
 	}
 }
@@ -415,27 +417,64 @@ function registerNotePartChanges(
  * is the change's blockId, so `list` names the marginal it sits in. */
 function readMarginalTrackedChanges(
 	document: Document,
+	refs: MarginalRef[],
 	state: WalkState,
 ): void {
 	const seen = new Set<XmlNode[]>();
-	for (const ref of enumerateMarginalRefs(document)) {
+	for (const ref of refs) {
 		if (seen.has(ref.tree)) continue;
 		seen.add(ref.tree);
 		const root = XmlNode.findRoot(ref.tree, marginalConfig(ref.kind).rootTag);
-		if (!root) continue;
-		for (const paragraph of root.children) {
-			if (paragraph.tag !== "w:p") continue;
-			registerNoteRunChanges(document, paragraph, state, ref.id);
+		if (root) registerMarginalBlockChanges(document, root, state, ref.id);
+	}
+}
+
+/** Walk a header/footer part's blocks down to its paragraphs. Unlike a note
+ *  body, a marginal holds more than bare paragraphs: Word's page-number gallery
+ *  wraps the footer paragraph in a block-level `<w:sdt>`, letterheads use
+ *  tables, and a block may sit in an `<mc:AlternateContent>` (its chosen branch
+ *  only, so a Choice/Fallback twin isn't registered twice). */
+function registerMarginalBlockChanges(
+	document: Document,
+	container: XmlNode,
+	state: WalkState,
+	blockId: string,
+): void {
+	for (const child of container.children) {
+		if (child.tag === "w:p") {
+			registerStandaloneRunChanges(document, child, state, blockId);
+			continue;
+		}
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch)
+				registerMarginalBlockChanges(document, branch, state, blockId);
+			continue;
+		}
+		if (MARGINAL_BLOCK_CONTAINERS.has(child.tag)) {
+			registerMarginalBlockChanges(document, child, state, blockId);
 		}
 	}
 }
+
+const MARGINAL_BLOCK_CONTAINERS = new Set([
+	"w:tbl",
+	"w:tr",
+	"w:tc",
+	"w:sdt",
+	"w:sdtContent",
+]);
 
 /** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
  * inside a standalone note or header/footer paragraph. blockId is "" for a
  * note (note bodies have no pN) and the `hdrN`/`ftrN` for a marginal. Skips `<w:pPr>` (paragraph-mark trackings on a
  * standalone note don't occur — those only arise on paired deletes, which are
- * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. */
-function registerNoteRunChanges(
+ * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. An
+ * `<mc:AlternateContent>` (a text box's shape) descends into its chosen branch
+ * only: Choice and Fallback carry the same story, so walking both listed every
+ * revision in it twice, and the save-time Choice→Fallback mirror would undo a
+ * decision made on the Fallback copy. */
+function registerStandaloneRunChanges(
 	document: Document,
 	container: XmlNode,
 	state: WalkState,
@@ -456,11 +495,17 @@ function registerNoteRunChanges(
 				parent: container.children,
 				blockId,
 			});
-			registerNoteRunChanges(document, child, state, blockId);
+			registerStandaloneRunChanges(document, child, state, blockId);
+			continue;
+		}
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch)
+				registerStandaloneRunChanges(document, branch, state, blockId);
 			continue;
 		}
 		if (child.children.length > 0)
-			registerNoteRunChanges(document, child, state, blockId);
+			registerStandaloneRunChanges(document, child, state, blockId);
 	}
 }
 

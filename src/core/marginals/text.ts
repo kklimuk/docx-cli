@@ -4,7 +4,7 @@ import {
 	collectTextBoxContents,
 	isAlternateContent,
 } from "../mc";
-import { XmlNode } from "../parser";
+import { wrapperContent, XmlNode } from "../parser";
 
 /** Extract a header/footer part's text for the AST `Marginal.text`, with
  *  `<w:fldSimple>` fields rendered as readable tokens (`{page}`, `{date}`,
@@ -62,7 +62,7 @@ function nodeText(node: XmlNode): string {
 	// those the accepted view shows; a tracked deletion contributes nothing.
 	if (isWrapperVisibleInView(node.tag, "accepted")) {
 		let out = "";
-		for (const child of node.children) out += nodeText(child);
+		for (const child of wrapperContent(node)) out += nodeText(child);
 		return out;
 	}
 	return "";
