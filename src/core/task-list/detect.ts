@@ -1,7 +1,7 @@
 import type { Document } from "../ast/document";
 import type { Paragraph } from "../ast/types";
 
-import type { XmlNode } from "../parser";
+import { wrapperRunText, type XmlNode } from "../parser";
 
 /** Recognize a GFM task-list paragraph. Two shapes in the wild:
  *
@@ -110,8 +110,8 @@ export function findCheckboxToggle(sdt: XmlNode): {
 	const ins = sdtContent.findChild("w:ins");
 	const del = sdtContent.findChild("w:del");
 	if (!ins || !del) return null;
-	const insGlyph = collectGlyphText(ins);
-	const delGlyph = collectGlyphText(del);
+	const insGlyph = wrapperRunText(ins);
+	const delGlyph = wrapperRunText(del);
 	if (!insGlyph || !delGlyph) return null;
 	return { ins, del, insGlyph, delGlyph };
 }
@@ -145,16 +145,4 @@ function isWhitespaceOnlyRun(run: XmlNode): boolean {
 		if (child.collectText().trim().length > 0) return false;
 	}
 	return true;
-}
-
-function collectGlyphText(wrapper: XmlNode): string {
-	let out = "";
-	for (const run of wrapper.findChildren("w:r")) {
-		for (const child of run.children) {
-			if (child.tag === "w:t" || child.tag === "w:delText") {
-				out += child.collectText();
-			}
-		}
-	}
-	return out;
 }
