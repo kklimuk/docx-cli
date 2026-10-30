@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { libreofficeEngine } from "@core/render";
 import { parsePagesSpec } from "../../src/cli/render/parse-pages";
 import { runCli, tempWorkspace } from "./harness";
 
@@ -10,7 +11,7 @@ import { runCli, tempWorkspace } from "./harness";
  * machines without LibreOffice (matches the LibreOffice round-trip
  * integration suite's pattern). Pure-logic tests (--pages parsing,
  * USAGE errors) always run. */
-const LIBREOFFICE_AVAILABLE = await detectLibreOffice();
+const LIBREOFFICE_AVAILABLE = await libreofficeEngine.available();
 
 /** LibreOffice cold-start (the first soffice launch) routinely exceeds bun's 5s
  * default per-test timeout under load — e.g. right after the weak-agent-test
@@ -18,17 +19,6 @@ const LIBREOFFICE_AVAILABLE = await detectLibreOffice();
  * exactly 5001ms. Give them generous headroom; a slow cold-start is latency, not
  * a failure. (They still run in ~2-3s when LibreOffice is warm.) */
 const RENDER_TIMEOUT = 60_000;
-
-async function detectLibreOffice(): Promise<boolean> {
-	const probe = async (cmd: string[]): Promise<boolean> => {
-		const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-		return (await proc.exited) === 0;
-	};
-	return (
-		(await probe(["/bin/sh", "-c", "command -v soffice"])) ||
-		existsSync("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-	);
-}
 
 describe("docx render — argument parsing (no engine needed)", () => {
 	test("missing FILE → USAGE error", async () => {
