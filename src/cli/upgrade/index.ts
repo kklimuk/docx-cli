@@ -161,10 +161,8 @@ export async function run(args: string[]): Promise<number> {
 	// swapped in after: nothing moves until the download has passed its checksum,
 	// so a failure or a Ctrl+C mid-download leaves the old binary where it was.
 	const installPrefix = windows ? join(prefix, ".docx-upgrade") : prefix;
-	// What install.sh sees as PREFIX. Git Bash accepts `C:/...`, and a backslash in
-	// the path must not reach it: GNU sha256sum escapes such a file name and prefixes
-	// its output line with a backslash, which install.sh's `awk '{print $1}'` keeps,
-	// so every Windows upgrade failed its checksum ("actual: \48a6…").
+	// What install.sh sees as PREFIX: Git Bash accepts `C:/...`, and its output (which
+	// withoutStagingPathHint matches on) then names the path the same way.
 	const shellPrefix = windows
 		? installPrefix.split(sep).join("/")
 		: installPrefix;
@@ -204,15 +202,25 @@ export async function run(args: string[]): Promise<number> {
 				await swapIn(join(installPrefix, installedName), binaryPath);
 			}
 		} catch {
-			// swapIn put the running binary back; say so as {code,error,hint}
-			// rather than letting a stack trace escape to the catch-all.
+			// swapIn puts the running binary back; say so as {code,error,hint} rather
+			// than letting a stack trace escape to the catch-all. If that rename failed
+			// too, there is no docx.exe left, and the only useful answer is where it went.
+			if (!(await Bun.file(binaryPath).exists())) {
+				return fail(
+					"UPGRADE_FAILED",
+					`could not swap the new binary into ${binaryPath}, or put the old one back`,
+					`Your previous binary is at ${binaryPath}.old. Rename it to ${installedName} to restore docx.`,
+				);
+			}
 			return fail(
 				"UPGRADE_FAILED",
 				`could not swap the new binary into ${binaryPath} — it is unchanged`,
 				"Something (often antivirus scanning the new file) held it open. Wait a moment and run docx upgrade again.",
 			);
 		} finally {
-			await rm(installPrefix, { recursive: true, force: true });
+			// A leftover folder is harmless and the next upgrade clears it, so a staged
+			// file still held open must not replace the result with a thrown error.
+			await rm(installPrefix, { recursive: true, force: true }).catch(() => {});
 		}
 	}
 	if (exitCode !== 0) {

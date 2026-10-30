@@ -58,6 +58,9 @@ folder and swaps the verified binary in, leaving the old one as `docx.exe.old`
 until the next upgrade. A failed or interrupted upgrade leaves `docx.exe` as it
 was.
 
+Windows binaries up to v0.28.0 refuse to upgrade themselves, so replace those by
+hand once, or reinstall with `install.sh` from Git Bash.
+
 ## `docx render` fails or hangs
 
 `render` is the **only** command that needs an external app. Everything else
