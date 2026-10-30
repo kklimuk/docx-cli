@@ -74,11 +74,24 @@ embedded text equals the file on disk.
 Install-method detection is `import.meta.path.startsWith("/$bunfs/")` (Bun's virtual FS
 for a compiled single-file executable; `~BUN` on Windows). Standalone → self-replace via
 install.sh's rename, which works over a running binary on POSIX. Package-manager install
-→ print `bun add -g bun-docx` and change nothing. Windows → print the release URL, since
-a running `.exe` cannot be replaced. A standalone binary the user RENAMED is refused
-too: install.sh owns the platform→name rule and always writes `${PREFIX}/docx`, so
-"upgrading" a `mydocx` would drop a SECOND file beside it (clobbering any unrelated
-`docx` there) and leave the command the user actually runs stale — while we reported
+→ print `bun add -g bun-docx` and change nothing. Windows locks a running `.exe`
+against overwrite but not rename, so there install.sh gets `PREFIX=<dir>/.docx-upgrade`
+and, only once it exits 0 (downloaded AND checksum-verified), `swapIn`
+([upgrade/swap-in.ts](upgrade/swap-in.ts)) renames the running binary to `docx.exe.old`
+(sweeping the previous one, which couldn't delete itself while running) and the staged
+one into its place; the staging folder is removed either way. If that second rename
+fails (antivirus often holds a fresh `.exe` open), `swapIn` renames the running binary
+back before rethrowing, and `upgrade` reports `UPGRADE_FAILED` as `{code,error,hint}`.
+install.sh's closing PATH note names its PREFIX — the staging folder — so on Windows
+`withoutStagingPathHint` ([upgrade/staging-path-hint.ts](upgrade/staging-path-hint.ts))
+drops those lines from the forwarded stdout; install.sh itself stays untouched. Nothing
+moves before the install succeeds — don't "simplify" this into stepping
+aside first: a Ctrl+C mid-download would strand the user without `docx`, and Ctrl+C
+can't be trapped reliably on Windows (MSYS `sh` on piped stdio ignores it). `sh` must
+be on PATH (Git Bash), checked up front. A standalone binary the user RENAMED is
+refused too: install.sh owns the platform→name rule and always writes `${PREFIX}/docx`
+(`docx.exe` on Windows), so "upgrading" a `mydocx` would drop a SECOND file beside it
+(clobbering any unrelated `docx` there) and leave the command the user actually runs stale — while we reported
 success. The suite always runs from source, so only the package-manager branch is
 reachable in-process; the standalone paths are covered by the compiled-binary test.
 

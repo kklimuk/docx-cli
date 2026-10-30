@@ -1,0 +1,3 @@
+# Git on Windows runners checks text out as CRLF, and `docx upgrade` embeds install.sh
+# at build time and pipes it to `sh -s`, so the checked-out bytes are what ships.
+*.sh text eol=lf

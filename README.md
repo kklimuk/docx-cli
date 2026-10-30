@@ -127,7 +127,7 @@ bunx bun-docx read doc.docx   # run without installing
 
 Every command works directly on the `.docx` file. Only `docx render` (page images, for checking layout) needs Word (macOS/Windows) or LibreOffice installed.
 
-**Upgrading:** `docx upgrade` replaces a standalone binary in place, using the installer embedded in the binary at build time (never fetched), pinned to a release tag and SHA-256-verified. `docx upgrade --to v0.27.0` pins a version; `--dry-run` reports what would change. It won't touch an npm install (use your package manager), a renamed binary, or Windows, where a running `.exe` can't be replaced (download the new one by hand).
+**Upgrading:** `docx upgrade` replaces a standalone binary in place, using the installer embedded in the binary at build time (never fetched), pinned to a release tag and SHA-256-verified. `docx upgrade --to v0.27.0` pins a version; `--dry-run` reports what would change. It won't touch an npm install (use your package manager) or a renamed binary. On Windows it needs Git Bash (for `sh`); a running `.exe` can be renamed but not overwritten, so the verified binary is swapped in and the old one is left as `docx.exe.old` until the next upgrade.
 
 ### Use it from your own code
 

@@ -119,7 +119,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs these jobs on push to `main` an
 | `unit-tests`        | `bun run test:unit` and `bun run test:benchmark` (no model calls) |
 | `macos-output`      | Output contract and real-pipe regressions on macOS with Bun 1.3.10 and latest |
 | `integration-tests` | Installs LibreOffice, runs `bun run test:integration`       |
-| `build-binary`      | Builds on Linux and native Intel/ARM macOS; signs/verifies macOS binaries; runs version/help, read, and schema-validation smoke checks |
+| `build-binary`      | Builds on Linux, native Intel/ARM macOS, and Windows; signs/verifies macOS binaries; runs version/help, read, and schema-validation smoke checks, then a real `docx upgrade` to a pinned release; on Windows, under Git Bash, also runs the installer tests and an informational unit-test pass |
 
 `.github/workflows/release.yml` triggers on `v*` tags, matrix-builds the five binaries, and uploads them to a GitHub Release via [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).
 

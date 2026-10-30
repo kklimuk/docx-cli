@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { tempWorkspace } from "./harness";
 
 const SKILL_INSTALLER = "skills/docx-cli/scripts/install.sh";
 const ROOT_INSTALLER = "install.sh";
@@ -61,6 +62,48 @@ describe("installer drift guards", () => {
 			expect(source).not.toMatch(/raw\.githubusercontent\.com/);
 			expect(source).not.toMatch(/\|\s*(sh|bash)\b/);
 			expect(source).not.toMatch(/(sh|bash)\s+-c\s+"\$\(/);
+		}
+	});
+
+	// `docx upgrade` embeds the checked-out bytes and pipes them to `sh -s`. Only a
+	// Windows checkout can produce CRLF here, so the Windows CI job is what guards this
+	// (v0.28.0's Windows binary shipped a CRLF copy).
+	test("shell scripts check out with LF line endings", async () => {
+		for (const path of [SKILL_INSTALLER, ROOT_INSTALLER, BOOTSTRAP]) {
+			expect(await Bun.file(path).text()).not.toContain("\r");
+		}
+	});
+});
+
+describe("installer sha256_of", () => {
+	// GNU sha256sum escapes a file name holding a backslash by prefixing its output line
+	// with `\`, which used to land in the digest and fail every Windows checksum. Each
+	// fallback is run on its own, since a machine normally only reaches the first.
+	test("every checksum tool prints the bare digest for a backslash path", async () => {
+		const installer = await Bun.file(SKILL_INSTALLER).text();
+		const definitions = [
+			...installer.matchAll(/sha256_of\(\) \{ (\S+) .*\}/g),
+		].map((match) => ({ definition: match[0], tool: match[1] as string }));
+		expect(definitions.map(({ tool }) => tool)).toEqual([
+			"sha256sum",
+			"shasum",
+			"openssl",
+		]);
+
+		const path = `${tempWorkspace("sha256-of")}/back\\slash`;
+		await Bun.write(path, "abc");
+		const expected = new Bun.CryptoHasher("sha256").update("abc").digest("hex");
+
+		for (const { definition, tool } of definitions) {
+			// Asks sh, as install.sh does: on Windows Bun.which also finds a shasum.bat
+			// that sh can't run. An empty stdout therefore means the tool is absent.
+			const script = `command -v ${tool} >/dev/null 2>&1 || exit 0\n${definition}\nsha256_of "$1"`;
+			const proc = Bun.spawn(["sh", "-c", script, "sh", path], {
+				stdout: "pipe",
+			});
+			const stdout = (await new Response(proc.stdout).text()).trim();
+			expect(await proc.exited).toBe(0);
+			if (stdout) expect(stdout).toBe(expected);
 		}
 	});
 });
