@@ -80,7 +80,9 @@ Word for Mac is sandboxed: arbitrary file paths trigger a "Grant File Access" pr
 
 ## LibreOffice profile isolation
 
-`soffice --headless` on macOS locks the default user profile (`~/Library/Application Support/LibreOffice/4`). Two concurrent invocations (or one stale soffice process) make subsequent spawns exit non-zero. We mint a temp profile per call via `-env:UserInstallation=file://<tmpdir>` and `rm -rf` it after. Mirrors [tests/integration/libreoffice-roundtrip.test.ts](../../../tests/integration/libreoffice-roundtrip.test.ts)'s worker-pool pattern; **any new soffice spawn in this codebase must do the same**.
+`soffice --headless` on macOS locks the default user profile (`~/Library/Application Support/LibreOffice/4`). Two concurrent invocations (or one stale soffice process) make subsequent spawns exit non-zero. We mint a temp profile per call via `-env:UserInstallation=<file URL of tmpdir>` and `rm -rf` it after. Mirrors [tests/integration/libreoffice-roundtrip.test.ts](../../../tests/integration/libreoffice-roundtrip.test.ts)'s worker-pool pattern; **any new soffice spawn in this codebase must do the same**.
+
+**Windows, both verified on a runner:** spawn `soffice.exe`, never `soffice.com` (Bun.spawn fails with "Executable not found", and `where soffice` lists the `.com` first), and build the profile URL with `pathToFileURL` (soffice hangs on `file://C:\…`). The `windows-render` CI job guards both.
 
 ## PDF rasterization details
 
