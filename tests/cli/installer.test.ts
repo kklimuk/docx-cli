@@ -95,14 +95,15 @@ describe("installer sha256_of", () => {
 		const expected = new Bun.CryptoHasher("sha256").update("abc").digest("hex");
 
 		for (const { definition, tool } of definitions) {
-			if (!Bun.which(tool)) continue;
-			const proc = Bun.spawn(
-				["sh", "-c", `${definition}\nsha256_of "$1"`, "sh", path],
-				{ stdout: "pipe" },
-			);
-			const stdout = await new Response(proc.stdout).text();
+			// Asks sh, as install.sh does: on Windows Bun.which also finds a shasum.bat
+			// that sh can't run. An empty stdout therefore means the tool is absent.
+			const script = `command -v ${tool} >/dev/null 2>&1 || exit 0\n${definition}\nsha256_of "$1"`;
+			const proc = Bun.spawn(["sh", "-c", script, "sh", path], {
+				stdout: "pipe",
+			});
+			const stdout = (await new Response(proc.stdout).text()).trim();
 			expect(await proc.exited).toBe(0);
-			expect(stdout.trim()).toBe(expected);
+			if (stdout) expect(stdout).toBe(expected);
 		}
 	});
 });
