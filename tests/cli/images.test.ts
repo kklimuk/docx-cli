@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Document, XmlNode } from "@core";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
@@ -235,6 +236,26 @@ async function dataUri(path: string, mime: string): Promise<string> {
 }
 
 describe("docx images add", () => {
+	// Slicing off `file://` left `/C:/x.png` on Windows and a literal `%20` everywhere.
+	test("embeds a PNG from a file:// URL with a space in its path", async () => {
+		const docPath = await newDoc("img-file-url");
+		const spaced = join(tempWorkspace("img file url"), "my pic.png");
+		await Bun.write(spaced, Bun.file(PNG_PATH));
+		const result = await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			pathToFileURL(spaced).href,
+		);
+		expect(result.exitCode).toBe(0);
+
+		const pkg = await Pkg.open(docPath);
+		expect(pkg.listParts()).toContain("word/media/image1.png");
+	});
+
 	test("embeds a PNG from a file path: media part, relationship, content-type", async () => {
 		const docPath = await newDoc("img-png");
 		const result = await runCli(

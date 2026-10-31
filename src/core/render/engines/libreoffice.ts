@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { type RenderEngine, RenderEngineError } from "./types";
+
+/** Long enough for a large document's conversion on a cold start, matching the
+ *  Word for Windows engine's cap. */
+const CONVERT_TIMEOUT_MS = 150_000;
 
 /** Cross-platform LibreOffice engine. Drives `soffice --headless
  * --convert-to pdf` against the input docx. Used as the fallback when Word
@@ -35,7 +40,8 @@ export const libreofficeEngine: RenderEngine = {
 				[
 					soffice,
 					"--headless",
-					`-env:UserInstallation=file://${profile}`,
+					// A real file URL: `file://C:\…` isn't one, and soffice hangs on it.
+					`-env:UserInstallation=${pathToFileURL(profile).href}`,
 					"--convert-to",
 					"pdf",
 					"--outdir",
@@ -44,7 +50,23 @@ export const libreofficeEngine: RenderEngine = {
 				],
 				{ stdout: "pipe", stderr: "pipe" },
 			);
-			const exit = await proc.exited;
+			let timedOut = false;
+			const killTimer = setTimeout(() => {
+				timedOut = true;
+				proc.kill();
+			}, CONVERT_TIMEOUT_MS);
+			let exit: number;
+			try {
+				exit = await proc.exited;
+			} finally {
+				clearTimeout(killTimer);
+			}
+			if (timedOut) {
+				throw new RenderEngineError(
+					"RENDER_FAILED",
+					`soffice did not finish within ${CONVERT_TIMEOUT_MS / 1000}s`,
+				);
+			}
 			if (exit !== 0) {
 				const stderr = await new Response(proc.stderr).text();
 				throw new RenderEngineError(
@@ -64,7 +86,11 @@ export const libreofficeEngine: RenderEngine = {
 				rmSync(sofficeOutput, { force: true });
 			}
 		} finally {
-			rmSync(profile, { recursive: true, force: true });
+			// A killed soffice can still hold its profile open on Windows; a leftover
+			// temp folder is harmless and must not replace the real error.
+			try {
+				rmSync(profile, { recursive: true, force: true });
+			} catch {}
 		}
 	},
 };
@@ -73,15 +99,19 @@ async function findSoffice(): Promise<string | null> {
 	// PATH search first (the brew install on macOS, apt on Linux, the LO
 	// installer's program/ dir on Windows when added to PATH). Then check
 	// the canonical install paths in case PATH wasn't set up.
-	const onPath = await whichEverywhere("soffice");
+	// On Windows, ask for soffice.exe by name: `where soffice` lists soffice.com
+	// first, and Bun.spawn can't launch a .com ("Executable not found").
+	const onPath = await whichEverywhere(
+		process.platform === "win32" ? "soffice.exe" : "soffice",
+	);
 	if (onPath) return onPath;
 	const fallbacks =
 		process.platform === "darwin"
 			? ["/Applications/LibreOffice.app/Contents/MacOS/soffice"]
 			: process.platform === "win32"
 				? [
-						"C:\\Program Files\\LibreOffice\\program\\soffice.com",
-						"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.com",
+						"C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+						"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
 					]
 				: ["/usr/bin/soffice", "/snap/bin/libreoffice"];
 	for (const candidate of fallbacks) {

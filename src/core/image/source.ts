@@ -4,6 +4,7 @@
 // (parsed from the file header) used to size the drawing's <wp:extent>.
 
 import { lookup } from "node:dns/promises";
+import { fileURLToPath } from "node:url";
 import convert from "heic-convert";
 import {
 	CANONICAL_IMAGE_EXTENSION,
@@ -235,9 +236,7 @@ async function readBodyWithCap(
 }
 
 async function loadFile(path: string): Promise<ImageSource> {
-	const cleaned = path.startsWith("file://")
-		? path.slice("file://".length)
-		: path;
+	const cleaned = path.startsWith("file://") ? pathFromFileUrl(path) : path;
 	const file = Bun.file(cleaned);
 	if (!(await file.exists())) {
 		throw new ImageSourceError(`Image file not found: ${cleaned}`);
@@ -320,6 +319,17 @@ async function transcodeHEICToJPEG(bytes: Uint8Array): Promise<Uint8Array> {
 		const reason = error instanceof Error ? error.message : String(error);
 		throw new ImageSourceError(`Failed to transcode HEIC to JPEG: ${reason}`);
 	}
+}
+
+/** `file:///C:/x.png` is `C:\x.png` on Windows, not `/C:/x.png`, and a percent-encoded
+ *  space is a space. A URL with a host keeps meaning the path after the prefix, as it
+ *  always has (`file://relative/x.png`): on Windows, converting it would make a UNC path,
+ *  turning an attacker-influenced `--image` into a request to their server. */
+function pathFromFileUrl(url: string): string {
+	try {
+		if (!new URL(url).host) return fileURLToPath(url);
+	} catch {}
+	return url.slice("file://".length);
 }
 
 function extensionFromPath(path: string): string | undefined {

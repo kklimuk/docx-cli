@@ -100,6 +100,17 @@ HTML), which can transform literal prose. When you need text in **verbatim**, us
 the parser-free channel: `insert` and `create` take `--text-file PATH` (`-` =
 stdin). Every character lands as-is; each newline starts a new paragraph.
 
+## Accents or CJK text look garbled in PowerShell output
+
+`docx` writes UTF-8, and PowerShell decodes captured output using its own console
+encoding, which may be an older code page such as IBM437. The document is fine,
+but what you see isn't, so don't write that text back. Set this once per session
+before running `docx`, or use Git Bash:
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+```
+
 ## I edited a file and lost some unusual formatting
 
 You shouldn't — docx-cli mutates the underlying XML **in place** and leaves

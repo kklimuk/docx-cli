@@ -86,6 +86,31 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: DOCX_LO_ALL=1 bun run test:integration # full fixture sweep in CI
 
+  windows-render:
+    name: Render through LibreOffice (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - name: Install LibreOffice
+        shell: pwsh
+        run: choco install libreoffice-fresh -y --no-progress --limit-output
+      - run: bun install --frozen-lockfile
+      - run: bun test tests/cli/render.test.ts tests/cli/images.test.ts
+      - run: bun run build:binary
+      - name: Render with the compiled binary
+        run: |
+          ./dist/docx render tests/fixtures/markdown-import.docx --out smoke --engine libreoffice --pages 1
+          test -s smoke/page-001.png
+
   build-binary:
     name: Smoke-build compiled binary (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
