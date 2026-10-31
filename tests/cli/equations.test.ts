@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { buildRawDoc, readDocumentXml } from "./helpers";
 
 /** Canonical equations fixture — see `tests/fixtures/setup/equations.ts`.
  *  Authored by the CLI's `docx equations add` pipeline (LaTeX → temml MathML →
@@ -843,5 +843,147 @@ describe("tracked equation edit (Tier 2)", () => {
 		);
 		expect(result.exitCode).toBe(3);
 		expect(result.stdout).toContain("Equation not found");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Word records a tracked edit of an equation INSIDE it — a `<w:del>`/`<w:ins>`
+// in every math run it touched and in each structure's `<m:ctrlPr>` (captured
+// from Word 365 on Windows) — rather than around the `<m:oMath>` the way our own
+// `delete` does. Both shapes must read, list, accept and reject as ONE change.
+// ---------------------------------------------------------------------------
+describe("tracked equations — Word's per-run markers", () => {
+	const MATH_NS =
+		'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
+
+	/** `E=c^2` as Word writes it after deleting it under tracking; `deleted`
+	 *  picks which of the runs (E, =, c, 2) carry a marker. */
+	function wordEquation(deleted: boolean[]): string {
+		let id = 900;
+		const mark = (inner: string, on = true): string =>
+			on
+				? `<w:del w:id="${id++}" w:author="Word User" w:date="2026-01-01T00:00:00Z">${inner}</w:del>`
+				: inner;
+		const run = (text: string, index: number): string =>
+			`<m:r>${mark(`<m:t>${text}</m:t>`, deleted[index])}</m:r>`;
+		const whole = deleted.every(Boolean);
+		return (
+			`<w:p><w:r><w:t>Energy:</w:t></w:r></w:p><w:p><m:oMathPara ${MATH_NS}><m:oMath>` +
+			`${run("E", 0)}${run("=", 1)}<m:sSup><m:sSupPr><m:ctrlPr>${mark("<w:rPr><w:i/></w:rPr>", whole)}</m:ctrlPr></m:sSupPr>` +
+			`<m:e>${run("c", 2)}</m:e><m:sup>${run("2", 3)}</m:sup></m:sSup>` +
+			"</m:oMath></m:oMathPara></w:p>"
+		);
+	}
+
+	type ListEntry = { id: string; kind: string; blockId: string; text: string };
+
+	test("the LaTeX looks through the markers", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-latex",
+		);
+		const [equation] = await equationsOf(docPath);
+		expect(equation?.latex).toBe("E=c^2");
+	});
+
+	test("a wholly deleted equation is one change: hidden, marked, listed", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-whole",
+		);
+		const list = (await runCli("track-changes", "list", docPath))
+			.parsed as ListEntry[];
+		expect(list).toEqual([
+			expect.objectContaining({
+				id: "tc0",
+				kind: "del",
+				blockId: "p1",
+				text: "$E=c^2$",
+			}),
+		]);
+		const current = await runCli("read", docPath, "--current");
+		expect(current.stdout).toContain("{--$$E=c^2$$--}[^tc0]");
+		const accepted = await runCli("read", docPath);
+		expect(accepted.stdout).not.toContain("E=c^2");
+	});
+
+	test("accept removes every marked run; reject restores them all", async () => {
+		const acceptPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-accept",
+		);
+		await runCli("track-changes", "accept", acceptPath, "--at", "tc0");
+		expect(await equationsOf(acceptPath)).toEqual([]);
+
+		const rejectPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-reject",
+		);
+		await runCli("track-changes", "reject", rejectPath, "--at", "tc0");
+		const [equation] = await equationsOf(rejectPath);
+		expect(equation?.latex).toBe("E=c^2");
+		expect(await readDocumentXml(rejectPath)).not.toContain("<w:del");
+	});
+
+	test("a partly deleted equation lists the deleted symbols, the rest stays", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([false, false, true, true]),
+			"eq-word-partial",
+		);
+		const list = (await runCli("track-changes", "list", docPath))
+			.parsed as ListEntry[];
+		expect(list).toEqual([
+			expect.objectContaining({ kind: "del", text: "$c2$" }),
+		]);
+		// Not the whole equation, so the equation itself carries no deletion.
+		const current = await runCli("read", docPath, "--current");
+		expect(current.stdout).not.toContain("{--$$");
+		// The default read is what accept --all leaves — no deleted symbols.
+		expect((await runCli("read", docPath)).stdout).toContain("$$E={}^{}$$");
+		await runCli("track-changes", "accept", docPath, "--all");
+		const [equation] = await equationsOf(docPath);
+		// The emptied superscript stays behind as a skeleton, as it does in Word.
+		expect(equation?.latex).toBe("E={}^{}");
+	});
+
+	test("the schema's shape — a marker wrapping whole math elements — keeps its structure", async () => {
+		const mark = (inner: string, id: number): string =>
+			`<w:del w:id="${id}" w:author="Word User" w:date="2026-01-01T00:00:00Z">${inner}</w:del>`;
+		const docPath = await buildRawDoc(
+			`<w:p><m:oMath ${MATH_NS}>${mark("<m:r><m:t>E</m:t></m:r>", 1)}` +
+				`${mark("<m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>", 2)}` +
+				"</m:oMath></w:p>",
+			"eq-schema-shape",
+		);
+		expect((await runCli("read", docPath, "--current")).stdout).toContain(
+			"{--$Ec^2$--}[^tc0]",
+		);
+	});
+});
+
+describe("tracked equations — our own wrapper around <m:oMath>", () => {
+	test("delete under tracking reads as a deletion, not a paragraph mark", async () => {
+		const workspace = tempWorkspace("eq-own-delete-read");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Keep this.");
+		await runCli(
+			"equations",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--equation",
+			"E=mc^2",
+		);
+		await runCli("track-changes", docPath, "on");
+		await runCli("delete", docPath, "--at", "p1");
+
+		const current = await runCli("read", docPath, "--current");
+		expect(current.stdout).toMatch(/\{--\$E=mc\^2\$--\}\[\^tc\d+\]/);
+		expect((await runCli("read", docPath)).stdout).not.toContain("E=mc^2");
+		const list = (await runCli("track-changes", "list", docPath)).parsed as {
+			text: string;
+		}[];
+		expect(list.map((entry) => entry.text)).toContain("$E=mc^2$");
 	});
 });

@@ -55,6 +55,9 @@ There is a single walk — the AST reader (`core/ast/read.ts`), during `Document
 - **Delete** under tracking: `applyTrackedDeletion` in [cli/delete/index.tsx](../delete/index.tsx) mirrors with `TRACKABLE_DELETE_CHILDREN`. Text runs still get `<w:t>` → `<w:delText>` conversion via `convertTextToDelText`; OMML siblings sit inside `<w:del>` unchanged (no `<m:delText>` equivalent — Word treats the whole element as the deleted unit).
 - **Edit** under tracking: the `equations edit` verb in [cli/equations/edit.ts](../equations/edit.ts) emits a paired `<w:del>OLD</w:del><w:ins>NEW</w:ins>` next to each other in the same parent. Our own `accept`/`reject` resolves cleanly. Word's accept-all picks the semantically correct equation (NEW on accept, OLD on reject) but leaves a small empty `<m:sSup>` / `<m:f>` skeleton next to the kept one — Word's normalization quirk, cosmetic only.
 
+- **Word's shape**: Word marks each math run it touched (`<m:r><w:del>…</w:del></m:r>`) instead of wrapping the equation. The reader groups an equation's markers into one `tcN` per kind and author (`TrackedChangeReference.markers`), and `apply` runs the usual per-node operation on each marker (`markerParts`) — see [core/equation](../../core/equation/CLAUDE.md).
+- **Reading them**: a tracked equation, image, line break or tab follows the same view rule as text — `isRunVisible`/`markRevision` in `cli/read/markdown.ts` take any run via `runRevision` (`core/track-changes/revision-visibility.ts`), and `list` describes it by `recordText` (`$…$`, `[image img0]`, `[line break]`) instead of the empty text that used to read as "¶ paragraph mark".
+
 What's deferred: `<w:rPrChange>` inside math runs (font-property revisions on individual symbols).
 
 ## Adding a tracked-change kind

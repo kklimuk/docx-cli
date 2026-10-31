@@ -3,6 +3,7 @@ import {
 	collectPlainText,
 	ELEMENT_HANDLERS,
 	isFormatSuppressed,
+	mathRunContent,
 } from "./handlers";
 import { stripCommandWrap } from "./latex";
 
@@ -104,7 +105,7 @@ type RunFormat = {
  *  (so the caller doesn't enter the grouping branch). */
 function extractRunFormat(node: XmlNode): RunFormat | undefined {
 	if (node.tag !== "m:r") return undefined;
-	const rPr = node.findChild("m:rPr");
+	const rPr = mathRunContent(node).find((child) => child.tag === "m:rPr");
 	if (!rPr) return undefined;
 	const sty = rPr.findChild("m:sty")?.getAttribute("m:val");
 	const bold = sty === "b" || sty === "bi";

@@ -1,8 +1,9 @@
-import type { SectionProperties, TrackedChange } from "@core";
+import type { Run, SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
 import type { XmlNode } from "@core/parser";
 import { TrackChanges } from "@core/track-changes";
+import { runRevision } from "@core/track-changes/revision-visibility";
 import { revisionGroups } from "./groups";
 
 /** Compact prior/current summary for a `pPrChange`: the direct paragraph
@@ -34,11 +35,12 @@ export function collectTrackedChangeRecords(
 	const byId = new Map<string, TrackedChangeRecord>();
 	for (const paragraph of flattenParagraphs(document.body.blocks)) {
 		for (const run of paragraph.runs) {
-			if (run.type !== "text" || !run.trackedChange) continue;
-			const change = run.trackedChange;
+			const change = runRevision(run);
+			if (!change) continue;
+			const text = recordText(run);
 			const existing = byId.get(change.id);
 			if (existing) {
-				existing.text += run.text;
+				existing.text += text;
 				continue;
 			}
 			// Explicit fields, not a spread: `TrackedChange.within` (the enclosing
@@ -51,13 +53,14 @@ export function collectTrackedChangeRecords(
 				date: change.date,
 				revisionId: change.revisionId,
 				blockId: paragraph.id,
-				text: run.text,
+				text,
 			});
 		}
 	}
 
-	// The AST loop above only sees text-bearing run-level changes. Everything
-	// else — empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
+	// The AST loop above only sees run-level changes. Everything else — part
+	// of an equation (Word marks each edited math run; the whole-equation case
+	// rides the equation run above), empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
 	// table-property revisions, checkbox toggles, and standalone note-body
 	// edits — comes from the single tracked-change inventory the reader built
 	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
@@ -72,7 +75,9 @@ export function collectTrackedChangeRecords(
 			date: change.date,
 			revisionId: change.revisionId,
 			blockId: change.blockId,
-			text: "",
+			text: change.markers
+				? `$${change.markers.map((marker) => marker.node.collectText()).join("")}$`
+				: "",
 		};
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the
@@ -113,6 +118,28 @@ export function collectTrackedChangeRecords(
 		if (group) record.group = group;
 	}
 	return sorted;
+}
+
+/** What a tracked run contributes to its change's `text`: an equation as the
+ *  `$…$` `read` prints, a non-text run as a bracketed token — so a deleted
+ *  equation or image no longer lists as an empty, paragraph-mark-looking change. */
+function recordText(run: Run): string {
+	switch (run.type) {
+		case "text":
+			return run.text;
+		case "equation":
+			return `$${run.latex || run.text}$`;
+		case "image":
+			return `[image ${run.id}]`;
+		case "break":
+			return `[${run.kind} break]`;
+		case "tab":
+			return "[tab]";
+		case "textBox":
+			return `[text box ${run.id}]`;
+		default:
+			return "";
+	}
 }
 
 /** Text-first view: one LOGICAL change per line, keyed by the handle an agent
