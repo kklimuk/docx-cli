@@ -18,7 +18,7 @@ bun add -g bun-docx
 # or: npm install -g bun-docx
 ```
 
-On a macOS/Linux standalone-binary install, run **`docx upgrade`** — it replaces the binary in place, pinned and checksum-verified. (Or re-run the installer by hand from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest).) On Windows, download and verify the replacement binary from Releases. The skill's `scripts/bootstrap.sh` also updates a stale binary, but only when an agent runs it: the skill tells the agent to run it when `docx` isn't installed, and nothing runs it automatically.
+On a standalone-binary install, run **`docx upgrade`** (on Windows, from Git Bash) — it replaces the binary in place, pinned and checksum-verified. (Or re-run the installer by hand from the [latest release](https://github.com/kklimuk/docx-cli/releases/latest).) The skill's `scripts/bootstrap.sh` also updates a stale binary, but only when an agent runs it: the skill tells the agent to run it when `docx` isn't installed, and nothing runs it automatically.
 
 ## Install integrity
 
@@ -56,7 +56,7 @@ docx-cli runs entirely **locally** against `.docx` files on disk. **No command s
 Network access happens in three places in docx-cli itself (plus your package manager, if you install through npm), and none of them uploads anything:
 
 - **`skills/docx-cli/scripts/install.sh`** (also published as the release asset) — fetches the prebuilt `docx` binary and its `SHA256SUMS` manifest from this repo's GitHub Releases over HTTPS. **`scripts/bootstrap.sh`** additionally reads the releases page to learn the latest tag.
-- **`docx upgrade`** — downloads a release binary, and only when you run it. It carries `install.sh` **embedded at build time** (never fetched) and executes that copy with `REQUIRE_CHECKSUM=1`, so the new binary is pinned to a tag and SHA-256-verified before it replaces anything. It refuses to touch a package-manager-owned install. Note the installer it runs is the one embedded in the release you are _currently on_, not the target's — so an installer bug shipped in vN can't be fixed by upgrading from vN; fetch that release's `install.sh` by hand instead (see above).
+- **`docx upgrade`** — downloads a release binary, and only when you run it. It carries `install.sh` **embedded at build time** (never fetched) and executes that copy with `REQUIRE_CHECKSUM=1`, so the new binary is pinned to a tag and SHA-256-verified before it replaces anything. On Windows the installer writes into a staging folder beside the binary and only the verified binary is swapped in; a failed or interrupted upgrade leaves `docx.exe` as it was. It refuses to touch a package-manager-owned install. Note the installer it runs is the one embedded in the release you are _currently on_, not the target's — so an installer bug shipped in vN can't be fixed by upgrading from vN; fetch that release's `install.sh` by hand instead (see above).
 - **`docx images add --image https://…`** — the one verb that fetches _content_ you asked for, when and only when you pass an `http(s)` source (a local path or `--markdown` with a local ref never does). It is guarded against SSRF: private/link-local addresses are blocked, redirects are walked manually and re-checked, capped at 5 hops.
 
 Your document content is never sent anywhere by any of them.
@@ -107,7 +107,7 @@ Nothing in docx-cli phones home after that.
 - `docx-windows-x64.exe` is not Authenticode-signed, so SmartScreen, WDAC, or AppLocker may block it. Allowlist it by hash.
 - Verify it with `Get-FileHash docx-windows-x64.exe -Algorithm SHA256` against `SHA256SUMS`.
 - `install.sh` also works under Git Bash/MSYS.
-- `docx upgrade` can't replace a running `.exe`, so it refuses on Windows. Install the new version the same way as the first.
+- `docx upgrade` works from Git Bash. A running `.exe` can't be overwritten, so the installer writes to a staging folder beside it, and only the verified binary is swapped in; the old one is left as `docx.exe.old` until the next upgrade.
 
 **macOS.** Release binaries are ad-hoc signed and signature-verified before checksumming, but not Developer ID-signed or notarized. Downloading with `curl` (as the installer does) doesn't set the quarantine flag. A browser download does, so Gatekeeper will ask.
 

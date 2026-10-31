@@ -82,18 +82,20 @@ fi
 
 # ─── Pick a checksum tool ───
 # sha256_of() prints ONLY the lowercase hex digest, so callers need not know each tool's
-# output shape: the *sum tools put the digest FIRST ("<hash>  <file>"), while `openssl
-# dgst` puts it LAST ("SHA256(file)= <hash>" on LibreSSL, "SHA2-256(file)= <hash>" on
-# OpenSSL 3.x). openssl is the third fallback because it is a native binary: on macOS,
-# /usr/bin/shasum is a PERL script, and Apple has deprecated the bundled scripting
-# runtimes, so shasum disappears whenever Perl does.
+# output shape: the *sum tools put the digest FIRST ("<hash>  -"), while `openssl dgst`
+# puts it LAST ("SHA2-256(stdin)= <hash>" on OpenSSL 3.x, a bare "<hash>" on LibreSSL).
+# Each tool reads STDIN so no file name reaches its output: GNU sha256sum escapes a name
+# holding a backslash (a native Windows PREFIX) by prefixing the line with `\`, which
+# would land in the digest and fail every comparison. openssl is the third fallback
+# because it is a native binary: on macOS, /usr/bin/shasum is a PERL script, and Apple
+# has deprecated the bundled scripting runtimes, so shasum disappears whenever Perl does.
 verify=1
 if command -v sha256sum >/dev/null 2>&1; then
-  sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+  sha256_of() { sha256sum < "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null 2>&1; then
-  sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+  sha256_of() { shasum -a 256 < "$1" | awk '{print $1}'; }
 elif command -v openssl >/dev/null 2>&1; then
-  sha256_of() { openssl dgst -sha256 "$1" | awk '{print $NF}'; }
+  sha256_of() { openssl dgst -sha256 < "$1" | awk '{print $NF}'; }
 else
   verify=0
 fi
