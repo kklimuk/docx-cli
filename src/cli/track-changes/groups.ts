@@ -79,7 +79,11 @@ export function revisionGroups(changes: Groupable[]): RevisionGroups {
  *  paragraph-mark, table, or property revisions; one author's deletion nested in
  *  another's insertion is two decisions). The classic two-part pair groups on tcN
  *  adjacency alone, as it always has; anything longer must be XML-contiguous, so two
- *  separate edits in one paragraph never merge. */
+ *  separate edits in one paragraph never merge. A blockId that names a whole part
+ *  rather than a paragraph (a note body's "", a header/footer's `hdrN`/`ftrN`)
+ *  says nothing about "same paragraph", so there the two halves must also share a
+ *  container — a deletion in one header line and an insertion in the next are two
+ *  decisions, not one replace. */
 function continuesReplace(
 	chain: Groupable[],
 	previous: Groupable,
@@ -90,12 +94,18 @@ function continuesReplace(
 	if (previous.blockId === undefined || previous.blockId !== candidate.blockId)
 		return false;
 	if (previous.author !== candidate.author) return false;
+	if (isPartWide(previous.blockId) && previous.parent !== candidate.parent)
+		return false;
 	if (areSiblingsSideBySide(previous, candidate)) return true;
 	return chain.length === 1 && previous.kind !== candidate.kind;
 }
 
 function isPlainTextChange(change: Groupable): boolean {
 	return change.kind === "ins" || change.kind === "del";
+}
+
+function isPartWide(blockId: string): boolean {
+	return blockId === "" || /^(hdr|ftr)\d+$/.test(blockId);
 }
 
 /** Markers that sit between runs without contributing text — a bookmark or comment

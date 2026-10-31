@@ -32,7 +32,7 @@ This is the **only walk that assigns `tcN` ids**. `cli/track-changes/list.ts` an
 
 ## Why the reader is free functions and not a `Body` method
 
-The walk reads `document.relationships` + `document.numbering` (image/list resolution) and writes `document.trackedChangeReferences` — a Document-level map spanning body + notes. `readNoteTrackedChanges` operates on the footnote/endnote views directly. So the reader is genuinely cross-part orchestration; making it a `Body` method would force `Body` to reach sideways into its siblings, which is exactly the coupling the embedded-views split removed everywhere else. Free functions stay.
+The walk reads `document.relationships` + `document.numbering` (image/list resolution) and writes `document.trackedChangeReferences` — a Document-level map spanning body + notes. `readNoteTrackedChanges` operates on the footnote/endnote views directly, `readMarginalTrackedChanges` on the header/footer part trees. So the reader is genuinely cross-part orchestration; making it a `Body` method would force `Body` to reach sideways into its siblings, which is exactly the coupling the embedded-views split removed everywhere else. Free functions stay.
 
 ## Adding an AST field
 
