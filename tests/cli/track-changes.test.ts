@@ -2277,3 +2277,61 @@ describe("tracked non-text runs follow the same view rule as text", () => {
 		expect(list.map((entry) => entry.text)).toContain("[image img0]");
 	});
 });
+
+// Release-merge cross-check: the head hint's pending=N is `track-changes
+// list`'s count, in every view, with changes in the body (text, equation,
+// paragraph mark), a header and a footnote — and the list names the note a
+// note-body change lives in, the container the hint counts it under.
+describe("pending=N agrees with track-changes list across parts", () => {
+	test("body + header + footnote changes", async () => {
+		const workspace = tempWorkspace("tc-pending-parts");
+		const docPath = join(workspace, "doc.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/headers-footers.docx"));
+		await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p1",
+			"Energy is $E=mc^2$ in physics.",
+		);
+		await runCli("footnotes", "add", docPath, "--at", "p2", "--text", "Body.");
+		await runCli("track-changes", "on", docPath);
+		await runCli(
+			"footnotes",
+			"edit",
+			docPath,
+			"--at",
+			"fn1",
+			"--text",
+			"Revised body.",
+		);
+		await runCli("replace", docPath, "mc^2", "mc^3");
+		await runCli("replace", docPath, "cover page", "title page");
+		await runCli("delete", docPath, "--at", "p3");
+
+		const list = (await runCli("track-changes", "list", docPath, "--json"))
+			.parsed as { id: string; blockId: string; note?: string }[];
+		const outside = new Map<string, number>();
+		for (const change of list) {
+			const container =
+				change.note ??
+				(/^(hdr|ftr)\d+$/.test(change.blockId) ? change.blockId : "");
+			if (container) outside.set(container, (outside.get(container) ?? 0) + 1);
+		}
+		expect([...outside]).toEqual([
+			["fn1", 2],
+			["hdr0", 2],
+		]);
+		for (const view of [[], ["--current"], ["--baseline"]]) {
+			const head = (await runCli("read", docPath, ...view)).stdout
+				.split("\n")
+				.find((line) => line.includes("docx:track-changes"));
+			expect(head).toBe(
+				`<!-- docx:track-changes on pending=${list.length} (fn1: 2, hdr0: 2) -->`,
+			);
+		}
+		// The text table (spawned: the in-process harness injects --json).
+		const table = (await spawnCli("track-changes", "list", docPath)).stdout;
+		expect(table).toMatch(/rev\d+\s+replace\s+fn1\s+"Body\."/);
+	});
+});

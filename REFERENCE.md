@@ -347,7 +347,9 @@ docx track-changes apply  FILE [--accept H ...] [--reject H ...]
 # A tracked equation lists as its `read` token (`$E=mc^{2}$`, `$$…$$` for a display block). A change to PART of an equation (Word marks
 # the symbols it touched) lists only the marked part, still as LaTeX (`$c^2$`), plus
 # "equation": "eqN" in --json and "(part of eqN — …)" in the table: rewrite it precisely with
-# `docx equations edit --at eqN`.
+# `docx equations edit --at eqN`. A change inside a footnote/endnote lists its note
+# (`fn1`) in the block column and as "note": "fn1" in --json — the same container
+# `read`'s `docx:track-changes … pending=N (fn1: 2)` head hint counts it under.
 # To FINALIZE a review (accept some, reject the rest), use `apply` — it takes both decision
 # lists in ONE call, resolved against the original ids, so nothing renumbers mid-operation
 # and the file is never left half-finalized. Doing it as separate accept then reject calls

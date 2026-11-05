@@ -32,6 +32,10 @@ export type TrackedChangeRecord = Omit<TrackedChange, "within"> & {
 	/** The `eqN` a revision marks PART of (a Word-style edit inside one
 	 *  equation); `text` is then the LaTeX of just the marked part. */
 	equation?: string;
+	/** The footnote/endnote (`fn1`/`en2`) a note-body revision lives in — its
+	 *  `blockId` is "" (note bodies have no `pN`). The same container the
+	 *  `docx:track-changes … (fn1: 2)` head hint counts it under. */
+	note?: string;
 };
 
 /** Walk a document's tracked changes into the enriched, `revN`-grouped records
@@ -96,6 +100,8 @@ export function collectTrackedChangeRecords(
 		// `equations edit --at eqN` to fix the result precisely.
 		if (change.equation?.id && !change.equation.whole)
 			record.equation = change.equation.id;
+		const noteId = document.trackedChangeReferences.get(change.id)?.noteId;
+		if (noteId) record.note = noteId;
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the
 			// snapshot inside the change marker carries the prior values.
@@ -252,7 +258,7 @@ export function renderTrackedChangeTable(
 			rows.push({
 				handle: record.group,
 				verb: "replace",
-				block: record.blockId,
+				block: record.blockId || (record.note ?? ""),
 				desc: `${quote(textOf("del"))} → ${quote(textOf("ins"))}${partOfEquation(members)}`,
 			});
 			continue;
@@ -260,7 +266,7 @@ export function renderTrackedChangeTable(
 		rows.push({
 			handle: record.id,
 			verb: verbLabel(record.kind),
-			block: record.blockId,
+			block: record.blockId || (record.note ?? ""),
 			desc: describeSolo(record),
 		});
 	}
