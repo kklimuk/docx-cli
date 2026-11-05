@@ -43,7 +43,10 @@ a fragment whose roots are `<Relationship>` goes to the rels part
 (`cli/raw/rels.ts`, no placement flags), an `--at rIdN`/`rels` locator
 likewise; everything else is a body block. `docx validate` is a thin shell
 over the same engine on a bare `Pkg` (no `Document` — it validates parts,
-so building the body AST would be pure waste).
+so building the body AST would be pure waste), plus the cross-part
+`checkPackageConsistency` audit (`@core/raw/package-consistency`) over the
+same parsed parts; its findings file under the part they concern, tagged
+`kind: "consistency"`, and count toward exit 1.
 
 ## `info` subcommands & the generated Agent Skill
 
