@@ -829,3 +829,29 @@ describe("docx find — nested revisions follow the all-ancestors rule", () => {
 		]);
 	});
 });
+
+// An equation takes no characters in a match's text, so `--json` is the one
+// place a match shows the equations it runs across.
+describe("find over an inline equation", () => {
+	test("--json lists the equation a match runs across, not one at its edge", async () => {
+		const workspace = tempWorkspace("find-equation");
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		const result = await runCli(
+			"find",
+			docPath,
+			"Energy.*physics",
+			"--regex",
+			"--json",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({
+			matches: [{ locator: "p0:0-21", equations: [{ id: "eq0" }] }],
+		});
+		const edge = await runCli("find", docPath, "Energy is ", "--json");
+		const [edgeMatch] = (edge.parsed as { matches: object[] }).matches;
+		expect(edgeMatch).not.toHaveProperty("equations");
+	});
+});

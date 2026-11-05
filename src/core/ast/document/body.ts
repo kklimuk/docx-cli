@@ -75,6 +75,15 @@ export class Body {
 		return null;
 	}
 
+	/** The AST block read from `node` — the reverse of `resolveBlock`, for a
+	 *  lens that holds an XML ref but needs what `read` shows of it. */
+	findBlockByNode(node: XmlNode): Block | null {
+		for (const [blockId, reference] of this.blockReferences) {
+			if (reference.node === node) return this.findBlockById(blockId);
+		}
+		return null;
+	}
+
 	resolveBlock(blockId: string): BlockReference {
 		const reference = this.blockReferences.get(blockId);
 		if (!reference) {

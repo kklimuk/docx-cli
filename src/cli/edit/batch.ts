@@ -128,17 +128,9 @@ export async function runEditBatch(
 		throw error;
 	}
 
-	if (dryRun) {
-		await respond({
-			operation: "edit",
-			dryRun: true,
-			path: filePath,
-			batch: resolved.map((entry) => ({ locator: entry.locatorString })),
-			...(outputPath ? { output: outputPath } : {}),
-		});
-		return EXIT.OK;
-	}
-
+	// Entries apply in memory even on --dry-run (only the save is skipped), so
+	// the preview refuses exactly what the real call would — as `replace
+	// --batch` already does.
 	for (const entry of ordered) {
 		try {
 			entry.apply();
@@ -153,6 +145,17 @@ export async function runEditBatch(
 			}
 			throw error;
 		}
+	}
+
+	if (dryRun) {
+		await respond({
+			operation: "edit",
+			dryRun: true,
+			path: filePath,
+			batch: resolved.map((entry) => ({ locator: entry.locatorString })),
+			...(outputPath ? { output: outputPath } : {}),
+		});
+		return EXIT.OK;
 	}
 
 	await document.save(outputPath);

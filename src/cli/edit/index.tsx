@@ -387,8 +387,6 @@ async function commitSpanEdit(
 	const blockRef = await resolveBlockOrFail(document, spanTarget.blockId);
 	if (typeof blockRef === "number") return blockRef;
 
-	if (opts.dryRun) return respondDryRun(opts);
-
 	try {
 		const edit = new Edit(document);
 		if (spec.kind === "clear") {
@@ -421,6 +419,9 @@ async function commitSpanEdit(
 		throw error;
 	}
 
+	// --dry-run applies in memory and skips only the save, so the preview
+	// refuses exactly what the real edit would.
+	if (opts.dryRun) return respondDryRun(opts);
 	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
@@ -435,8 +436,6 @@ async function commitBlockEdit(
 	opts: ValidatedOptions,
 	cell?: { id: string; parent: XmlNode[] },
 ): Promise<number> {
-	if (opts.dryRun) return respondDryRun(opts);
-
 	const track = resolveTracked(document, opts.trackFlag);
 	let resolvedAuthors: string[] = [];
 	try {
@@ -509,6 +508,8 @@ async function commitBlockEdit(
 		throw error;
 	}
 
+	// Applied in memory, as for a span: the preview refuses what the edit would.
+	if (opts.dryRun) return respondDryRun(opts);
 	if (cell) ensureCellEndsWithParagraph(cell.parent);
 	await document.save(opts.outputPath);
 	await warnPendingRevisions(opts.locator, resolvedAuthors, {
