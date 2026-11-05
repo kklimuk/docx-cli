@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { expectValidClean, readDocumentXml } from "./helpers";
 
 async function readPart(docPath: string, partName: string): Promise<string> {
 	const pkg = await Pkg.open(docPath);
@@ -1493,7 +1493,7 @@ describe("docx comments — Word's durable-id sidecars (issue #33)", () => {
 		state = await sidecarState(docPath);
 		expect(state.idsDurableIds).not.toContain("1A2B3C4D");
 		expectConsistent(state);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("a package without the sidecars stays without them", async () => {
@@ -1560,11 +1560,11 @@ describe("docx comments — a commentsExtended part we materialize covers every 
 		expect(entries.filter((entry) => entry.parent)).toEqual([
 			{ paraId: paraIds[1], parent: paraIds[0] },
 		]);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 
 		await runCli("comments", "add", docPath, "--at", "p1", "--text", "C");
 		expect(await extendedEntries(docPath)).toHaveLength(4);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("the first resolve registers every comment, resolving only its target", async () => {
@@ -1573,7 +1573,7 @@ describe("docx comments — a commentsExtended part we materialize covers every 
 		const xml = await readPart(docPath, "word/commentsExtended.xml");
 		expect(xml.match(/<w15:commentEx /g)).toHaveLength(2);
 		expect(xml.match(/w15:done="1"/g)).toHaveLength(1);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 });
 
@@ -1604,7 +1604,7 @@ describe("docx comments delete — markers in note parts", () => {
 		pkg.writeText("word/document.xml", body);
 		pkg.writeText("word/footnotes.xml", notes);
 		await pkg.save();
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 
 		expect(
 			(await runCli("comments", "delete", docPath, "--at", "c0")).exitCode,
@@ -1612,7 +1612,7 @@ describe("docx comments delete — markers in note parts", () => {
 		expect(await readPart(docPath, "word/footnotes.xml")).not.toContain(
 			"comment",
 		);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 });
 
@@ -1679,7 +1679,7 @@ describe("docx comments — removing one paragraph of a cross-paragraph comment"
 			const [verb, ...rest] = args;
 			expect((await runCli(verb, docPath, ...rest)).exitCode).toBe(0);
 			expect(await markerCounts(docPath)).toEqual([1, 1, 1]);
-			expect((await runCli("validate", docPath)).exitCode).toBe(0);
+			await expectValidClean(docPath);
 		});
 	}
 });

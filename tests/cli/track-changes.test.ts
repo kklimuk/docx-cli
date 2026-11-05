@@ -5,6 +5,7 @@ import { runCli, spawnCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
 	freshFixture as copyFixture,
+	expectValidClean,
 	markdownProse,
 	NESTED_REVISION_BODY,
 } from "./helpers";
@@ -2131,7 +2132,7 @@ describe("docx track-changes — comment markers inside a removed revision", () 
 	test("rejecting a tracked rewrite of a commented paragraph keeps the comment whole", async () => {
 		const docPath = await commentedTrackedDoc("tc-reject-comment-markers");
 		await runCli("edit", docPath, "--at", "p0", "--text", "Rewritten wording.");
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 		expect(
 			(await runCli("track-changes", "reject", docPath, "--all")).exitCode,
 		).toBe(0);
@@ -2140,7 +2141,7 @@ describe("docx track-changes — comment markers inside a removed revision", () 
 			ends: 1,
 			references: 1,
 		});
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 		const comments = JSON.parse(
 			(await runCli("comments", "list", docPath)).stdout,
 		);
@@ -2159,6 +2160,6 @@ describe("docx track-changes — comment markers inside a removed revision", () 
 			ends: 1,
 			references: 1,
 		});
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 });

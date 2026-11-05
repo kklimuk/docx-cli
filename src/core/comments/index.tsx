@@ -33,9 +33,11 @@ export {
 	SpanOutOfRangeError,
 } from "./markers";
 
+import type { CommentFinding } from "../ast/document/comments/reconcile-sidecars";
 import type { Comment } from "../ast/types";
 import type { FindView } from "../find";
 import { resolveDate } from "../track-changes";
+import { auditCommentMarkers, type StoryPart } from "./marker-audit";
 
 /** Cross-cutting lens over the document's comments: spans the body (marker
  * placement / removal) and the comments part (mint + persist `<w:comment>`,
@@ -396,6 +398,27 @@ export class Comments {
 		commentsRoot.children.push(comment);
 	}
 
+	/** Cure every cross-part comment inconsistency `docx validate` can fix,
+	 * in place, and return what was done (`[]` when the document was already
+	 * consistent): marker cures across every story part (a dangling
+	 * reference's markers removed, a half-open range collapsed onto its
+	 * reference as Word does, a reference-less range closed with one — see
+	 * `auditCommentMarkers`), then the sidecar reconcile every save runs anyway
+	 * (`CommentsView.reconcileSidecars`). Orphan comments and dangling thread
+	 * links have no deterministic cure and are left for `validate` to report.
+	 * The `validate --fix` back end. */
+	repair(): CommentFinding[] {
+		const commentIds = new Set(this.document.comments?.listIds() ?? []);
+		const markerRepairs = auditCommentMarkers(this.#storyParts(), commentIds, {
+			repair: true,
+			threadRoots: this.document.comments?.threadRoots(),
+		});
+		return [
+			...markerRepairs,
+			...(this.document.comments?.reconcileSidecars() ?? []),
+		].filter((finding) => finding.fix !== undefined);
+	}
+
 	/** Every part that can carry comment markers: the body, both note parts,
 	 * and each header/footer part. */
 	#storyTrees(): XmlNode[][] {
@@ -406,6 +429,26 @@ export class Comments {
 			...(endnotes ? [endnotes.tree] : []),
 			...[...(marginals?.parts.values() ?? [])].map((part) => part.tree),
 		];
+	}
+
+	/** `#storyTrees` as named part roots, for the marker audit. */
+	#storyParts(): StoryPart[] {
+		const { documentTree, footnotes, endnotes, marginals } = this.document;
+		const named: [string, XmlNode[] | undefined][] = [
+			["word/document.xml", documentTree],
+			["word/footnotes.xml", footnotes?.tree],
+			["word/endnotes.xml", endnotes?.tree],
+			...[...(marginals?.parts ?? [])].map(
+				([name, part]): [string, XmlNode[]] => [name, part.tree],
+			),
+		];
+		const parts: StoryPart[] = [];
+		for (const [name, tree] of named) {
+			for (const root of tree ?? []) {
+				if (!root.isText && root.tag !== "?xml") parts.push({ name, root });
+			}
+		}
+		return parts;
 	}
 
 	#resolveBlock(blockId: string): { node: XmlNode; parent: XmlNode[] } {

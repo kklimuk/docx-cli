@@ -59,7 +59,7 @@ export class Document {
 	}
 
 	static async open(path: string): Promise<Document> {
-		return Document.fromPkg(await Pkg.open(path));
+		return Document.fromPackage(await Pkg.open(path));
 	}
 
 	/** Open a document from raw `.docx` bytes rather than a path — the `docx
@@ -68,10 +68,13 @@ export class Document {
 		bytes: ArrayBuffer | Uint8Array,
 		path: string,
 	): Promise<Document> {
-		return Document.fromPkg(await Pkg.fromBytes(bytes, path));
+		return Document.fromPackage(await Pkg.fromBytes(bytes, path));
 	}
 
-	private static async fromPkg(pkg: Pkg): Promise<Document> {
+	/** Open a document over an already-loaded package — `docx validate --fix`
+	 * audits the raw parts first, then repairs through the views of the SAME
+	 * package rather than reading the file twice. */
+	static async fromPackage(pkg: Pkg): Promise<Document> {
 		const view = new Document({
 			pkg,
 			documentTree: await pkg.ensurePart("word/document.xml"),
@@ -141,6 +144,14 @@ export class Document {
 	}
 
 	async save(path?: string): Promise<void> {
+		this.stage();
+		await this.pkg.save(path);
+	}
+
+	/** Serialize every view into the in-memory package without writing it to
+	 * disk — what `save` does before zipping. `validate --fix` stages, then
+	 * re-validates the staged parts (and `--dry-run` stops there). */
+	stage(): void {
 		// Word keeps each text box's Choice/Fallback twins in sync on save; our
 		// edits land in the Choice copy, so mirror it before serializing (see
 		// `syncTextBoxFallbacks`). Headers/footers hold text boxes too.
@@ -160,7 +171,6 @@ export class Document {
 		this.endnotes?.writeTo(this.pkg);
 		this.comments?.writeTo(this.pkg);
 		this.marginals?.writeTo(this.pkg);
-		await this.pkg.save(path);
 	}
 	/** Convenience over `view.settings?.isTrackChangesEnabled() ?? false` —
 	 * every mutating CLI verb checks this once per call to decide whether to

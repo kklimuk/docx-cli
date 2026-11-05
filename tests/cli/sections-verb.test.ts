@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
+import { expectValidClean } from "./helpers";
 
 // `docx sections` is the intuitive verb for column layout: wrap a paragraph range
 // in its own N-column section (--at pN-pM / pN), or recount an existing section
@@ -274,7 +275,7 @@ describe("docx sections — range wrap carries headers/footers into the new sect
 		// Uniform across sections → one head-level hint, not a per-section one.
 		const md = (await runCli("read", doc)).stdout;
 		expect(md.match(/docx:header/g)).toHaveLength(1);
-		expect((await runCli("validate", doc)).exitCode).toBe(0);
+		await expectValidClean(doc);
 	});
 });
 
@@ -288,7 +289,7 @@ describe("docx sections — tracked range wrap", () => {
 			(await runCli("sections", doc, "--at", "p2-p4", "--columns", "2"))
 				.exitCode,
 		).toBe(0);
-		expect((await runCli("validate", doc)).exitCode).toBe(0);
+		await expectValidClean(doc);
 		await runCli("track-changes", "reject", doc, "--all");
 		expect((await sections(doc)).filter((s) => s.columns)).toHaveLength(0);
 	});
