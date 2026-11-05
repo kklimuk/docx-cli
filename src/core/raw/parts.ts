@@ -225,6 +225,10 @@ function partReplaceRoute(name: string): PartReplaceRoute | { hint: string } {
 			"Comment ids pair with body range marks — use docx comments add/reply/resolve.",
 		"word/commentsExtended.xml":
 			"Threading pairs with comments.xml — use docx comments add/reply/resolve.",
+		"word/commentsIds.xml":
+			"Durable ids pair with comments.xml — use docx comments add/reply/delete.",
+		"word/commentsExtensible.xml":
+			"Durable ids pair with comments.xml — use docx comments add/reply/delete.",
 		"docProps/core.xml": "Core properties are managed by docx-cli.",
 		"[Content_Types].xml":
 			"Content types are registered automatically when parts are added.",
