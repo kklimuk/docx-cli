@@ -474,13 +474,16 @@ const MARGINAL_BLOCK_CONTAINERS = new Set([
  * `<mc:AlternateContent>` (a text box's shape) descends into its chosen branch
  * only: Choice and Fallback carry the same story, so walking both listed every
  * revision in it twice, and the save-time Choice→Fallback mirror would undo a
- * decision made on the Fallback copy. */
+ * decision made on the Fallback copy. An equation registers through
+ * `registerMathRevisions`, as in the body, so Word's per-math-run markers are
+ * one revision rather than one per symbol. */
 function registerStandaloneRunChanges(
 	document: Document,
 	container: XmlNode,
 	state: WalkState,
 	blockId = "",
 ): void {
+	const scope: RevisionScope = { document, state, blockId };
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
 		if (child.tag === "w:sdt") continue;
@@ -490,13 +493,17 @@ function registerStandaloneRunChanges(
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const id = `tc${state.trackedChangeIndex++}`;
-			document.trackedChangeReferences.set(id, {
-				node: child,
-				parent: container.children,
-				blockId,
-			});
+			registerTrackedChange(
+				scope,
+				TRACKED_CHANGE_KIND_BY_TAG[child.tag],
+				{ node: child, parent: container.children },
+				undefined,
+			);
 			registerStandaloneRunChanges(document, child, state, blockId);
+			continue;
+		}
+		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
+			registerMathRevisions(scope, child, undefined);
 			continue;
 		}
 		if (isAlternateContent(child)) {
@@ -594,6 +601,12 @@ type WalkContext = {
 	offsetRef: { value: number };
 	skipNodes: Set<XmlNode>;
 };
+
+/** What registering a revision needs from a walk: the document whose inventory
+ *  it lands in, the shared tcN counter, and the block it's reported under. A
+ *  body paragraph's `WalkContext` is one; a note or header/footer paragraph,
+ *  which has no AST paragraph to fill, passes just these. */
+type RevisionScope = Pick<WalkContext, "document" | "state" | "blockId">;
 
 function walkRunContainer(
 	context: WalkContext,
@@ -755,7 +768,7 @@ function walkRunContainer(
  *  unchanged. `markers` lists every element of a revision Word spread over
  *  several (see `registerMathRevisions`); `marker` is the first of them. */
 function registerTrackedChange(
-	context: WalkContext,
+	context: RevisionScope,
 	kind: TrackedChange["kind"],
 	marker: TrackedChangeMarker,
 	outer: TrackedChange | undefined,
@@ -792,7 +805,7 @@ function registerTrackedChange(
  *  way an enclosing `<w:del>` does; `partial` says the equation holds revisions
  *  that don't. */
 function registerMathRevisions(
-	context: WalkContext,
+	context: RevisionScope,
 	equation: XmlNode,
 	outer: TrackedChange | undefined,
 ): { whole?: TrackedChange; partial: boolean } {

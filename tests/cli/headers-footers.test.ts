@@ -564,6 +564,48 @@ describe("headers/footers — tracked changes", () => {
 		const changes = await listed(path);
 		expect(changes.map((change) => change.group)).toEqual(["rev0", "rev0"]);
 	});
+
+	// Word marks a tracked equation edit inside each math run it touched (see
+	// the body case in equations.test.ts) — in a header too. The markers are ONE
+	// revision there, as in the body, not one "paragraph mark" per symbol.
+	const wordDeletedEquation = () => {
+		let id = 700;
+		const mark = (inner: string) =>
+			`<w:del w:id="${id++}" ${REVISION}>${inner}</w:del>`;
+		const run = (text: string) => `<m:r>${mark(`<m:t>${text}</m:t>`)}</m:r>`;
+		return (
+			`<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">` +
+			`${run("E")}${run("=")}<m:sSup><m:sSupPr><m:ctrlPr>${mark("<w:rPr><w:i/></w:rPr>")}</m:ctrlPr></m:sSupPr>` +
+			`<m:e>${run("c")}</m:e><m:sup>${run("2")}</m:sup></m:sSup></m:oMath></w:p>`
+		);
+	};
+
+	test("Word's per-run equation markers in a header are one revision", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-equation",
+			wordDeletedEquation(),
+		);
+		expect(await listed(path)).toEqual([
+			expect.objectContaining({ kind: "del", blockId: "hdr0", text: "$E=c2$" }),
+		]);
+		await runCli("track-changes", "reject", path, "--at", "tc0");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:del");
+		expect(header).toContain("<m:t>E</m:t>");
+		expect((await runCli("validate", path)).exitCode).toBe(0);
+	});
+
+	test("a deleted header line break lists as a line break, not a paragraph mark", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-break",
+			`<w:p><w:r><w:t>Line</w:t></w:r><w:del w:id="995" ${REVISION}><w:r><w:br/></w:r></w:del><w:r><w:t>two</w:t></w:r></w:p>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{ kind: "del", blockId: "hdr0", text: "[line break]" },
+		]);
+		const table = (await runCli("track-changes", "list", path)).stdout;
+		expect(table).not.toContain("paragraph mark");
+	});
 });
 
 describe("headers/footers — validation", () => {

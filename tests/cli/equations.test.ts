@@ -907,6 +907,14 @@ describe("tracked equations — Word's per-run markers", () => {
 		expect(accepted.stdout).not.toContain("E=c^2");
 	});
 
+	test("Word's shape passes validate (MS-OI29500 allows a mark in a math run)", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-validate",
+		);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
 	test("accept removes every marked run; reject restores them all", async () => {
 		const acceptPath = await buildRawDoc(
 			wordEquation([true, true, true, true]),

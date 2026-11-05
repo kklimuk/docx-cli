@@ -266,8 +266,9 @@ function collectInnerRuns(wrapper: XmlNode, out: XmlNode[]): void {
 
 /** The text of a run wrapper's DIRECT runs (`<w:t>`/`<w:delText>`): what a
  *  tracked `<w:ins>`/`<w:del>` inserted or deleted, read straight off the XML
- *  where there are no AST runs (a note body, a header/footer part, a checkbox
- *  glyph). A paragraph-mark marker or a wrapper holding only another wrapper
+ *  where there are no AST runs (a checkbox toggle's glyphs). `track-changes
+ *  list` describes non-text runs too, so it has its own `wrapperRecordText`.
+ *  A paragraph-mark marker or a wrapper holding only another wrapper
  *  has no direct runs, so it reads "". */
 export function wrapperRunText(wrapper: XmlNode): string {
 	let text = "";

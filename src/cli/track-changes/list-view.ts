@@ -1,7 +1,8 @@
 import type { Run, SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
-import { wrapperRunText, type XmlNode } from "@core/parser";
+import { ommlToLatex } from "@core/equation";
+import type { XmlNode } from "@core/parser";
 import { TrackChanges } from "@core/track-changes";
 import { runRevision } from "@core/track-changes/revision-visibility";
 import { revisionGroups } from "./groups";
@@ -66,7 +67,7 @@ export function collectTrackedChangeRecords(
 	// single tracked-change inventory the reader built (TrackChanges.list reads
 	// document.trackedChangeReferences; no re-walk). kind, author, date and
 	// revisionId are already resolved on each record; a note or marginal
-	// wrapper's text is read off its own runs (`wrapperRunText`).
+	// wrapper's text is read off its own runs (`wrapperRecordText`).
 	const inventory = new TrackChanges(document).list();
 	for (const change of inventory) {
 		if (byId.has(change.id)) continue;
@@ -81,7 +82,7 @@ export function collectTrackedChangeRecords(
 			// marginal wrapper's text is read off its own runs.
 			text: change.markers
 				? `$${change.markers.map((marker) => marker.node.collectText()).join("")}$`
-				: wrapperRunText(change.node),
+				: wrapperRecordText(change.node),
 		};
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the
@@ -141,6 +142,42 @@ function recordText(run: Run): string {
 			return "[tab]";
 		case "textBox":
 			return `[text box ${run.id}]`;
+		default:
+			return "";
+	}
+}
+
+/** `recordText` for a wrapper with no AST runs (a note body, a header/footer
+ *  part): its runs' text, with a break, tab, drawing or equation described by
+ *  the same token — so a deleted header line break doesn't list as an empty,
+ *  paragraph-mark-looking change either. */
+function wrapperRecordText(wrapper: XmlNode): string {
+	let text = "";
+	for (const child of wrapper.children) {
+		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
+			text += `$${ommlToLatex(child)}$`;
+			continue;
+		}
+		if (child.tag !== "w:r") continue;
+		for (const part of child.children) text += runChildText(part);
+	}
+	return text;
+}
+
+function runChildText(node: XmlNode): string {
+	switch (node.tag) {
+		case "w:t":
+		case "w:delText":
+			return node.collectText();
+		case "w:cr":
+			return "[line break]";
+		case "w:br":
+			return `[${node.getAttribute("w:type") ?? "line"} break]`;
+		case "w:tab":
+			return "[tab]";
+		case "w:drawing":
+		case "w:pict":
+			return "[drawing]";
 		default:
 			return "";
 	}
