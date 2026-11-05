@@ -1900,6 +1900,22 @@
       </xsd:extension>
     </xsd:complexContent>
   </xsd:complexType>
+  <!-- docx-cli: MS-OI29500 Part 1 §22.1.2.87(e) — Word allows w:ins/w:del inside a math run: the w:ins/w:del elements m:CT_R references (they must be declared
+       in the w namespace), carrying the standard revision attributes (w:id, w:author,
+       w:date?) of CT_TrackChange around one marked piece of the run. -->
+  <xsd:group name="EG_MathRunRevision">
+    <xsd:choice>
+      <xsd:element name="ins" type="CT_MathRunTrackChange"/>
+      <xsd:element name="del" type="CT_MathRunTrackChange"/>
+    </xsd:choice>
+  </xsd:group>
+  <xsd:complexType name="CT_MathRunTrackChange">
+    <xsd:complexContent>
+      <xsd:extension base="CT_TrackChange">
+        <xsd:group ref="m:EG_MathRunRevisionContent"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
   <xsd:complexType name="CT_RPrOriginal">
     <xsd:sequence>
       <xsd:group ref="EG_RPrBase" minOccurs="0" maxOccurs="unbounded"/>

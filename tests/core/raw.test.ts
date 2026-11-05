@@ -378,6 +378,50 @@ describe("gate 6 — XSD engine", () => {
 		expect(issues).toHaveLength(1);
 		expect(issues[0]?.message).toContain("bogusElement");
 	});
+
+	// The mark is checked as a revision, not unwrapped away: its own attributes
+	// are CT_TrackChange's (w:id and w:author required).
+	test("a math-run revision mark without w:author is reported", () => {
+		const root = mathDocument(
+			`<m:r><w:del w:id="0"><m:t>x</m:t></w:del></m:r>`,
+		);
+		const issues = validateWmlXml(validationXmlFor(root));
+		expect(issues).toHaveLength(1);
+		expect(issues[0]?.message).toContain("author");
+	});
+
+	test("a math-run revision mark without w:id is reported", () => {
+		const root = mathDocument(
+			`<m:r><w:ins w:author="Word User"><m:t>x</m:t></w:ins></m:r>`,
+		);
+		const issues = validateWmlXml(validationXmlFor(root));
+		expect(issues).toHaveLength(1);
+		expect(issues[0]?.message).toContain("id");
+	});
+
+	// Unwrapping these used to leave `rPr t rPr t`, which CT_R rejects.
+	test("two marked pieces in one math run validate", () => {
+		const mark = (tag: string, id: number, text: string) =>
+			`<${tag} w:id="${id}" w:author="Word User" w:date="2026-10-28T11:55:00Z"><m:rPr><m:sty m:val="p"/></m:rPr><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><m:t>${text}</m:t></${tag}>`;
+		const root = mathDocument(
+			`<m:r>${mark("w:del", 1, "a")}${mark("w:ins", 2, "b")}</m:r>`,
+		);
+		expect(validateWmlXml(validationXmlFor(root))).toEqual([]);
+	});
+
+	test("every vendored-schema deviation from ECMA carries a docx-cli: comment", async () => {
+		const math = await Bun.file(
+			join(import.meta.dir, "../../src/core/raw/schemas/shared-math.xsd"),
+		).text();
+		const wml = await Bun.file(
+			join(import.meta.dir, "../../src/core/raw/schemas/wml.xsd"),
+		).text();
+		for (const xsd of [math, wml]) {
+			expect(xsd).toContain(
+				"docx-cli: MS-OI29500 Part 1 §22.1.2.87(e) — Word allows w:ins/w:del inside a math run",
+			);
+		}
+	});
 });
 
 describe("diffValidationIssues", () => {
