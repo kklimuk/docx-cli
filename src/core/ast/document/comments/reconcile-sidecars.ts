@@ -1,11 +1,20 @@
 import { XmlNode } from "../../../parser";
-import { isValidDurableId, mintDurableId, mintUniqueParaId } from "./para-id";
+import {
+	isValidDurableId,
+	isValidParaId,
+	mintDurableId,
+	mintUniqueParaId,
+} from "./para-id";
 
 /** Bring Word's paraId-keyed comment sidecars back in line with
  *  `word/comments.xml`, mutating the roots in place — the same repairs Word
  *  for Mac (16.114) makes when it opens and re-saves the package:
  *
- *  - every comment's LAST paragraph gets a `w14:paraId` (minted unique);
+ *  - every comment's LAST paragraph gets a `w14:paraId` (minted unique), and
+ *    an out-of-range one (MS-DOCX: hex in (0, 0x80000000)) is re-keyed, its
+ *    sidecar entries and reply links following it — Word re-keys it too, but
+ *    WITHOUT carrying the entries, so on Word's next open every reply in the
+ *    file loses its thread (verified against Word for Mac);
  *  - in each sidecar the package HAS (an absent one stays absent): an entry
  *    is added for every comment without one, and entries whose comment is gone
  *    are pruned;
@@ -23,7 +32,7 @@ import { isValidDurableId, mintDurableId, mintUniqueParaId } from "./para-id";
  *  real — one rule set, so a reported finding is always one the fix cures. */
 export function reconcileSidecars(roots: SidecarRoots): CommentFinding[] {
 	const findings: CommentFinding[] = [];
-	const comments = keyComments(roots.comments, findings);
+	const comments = keyComments(roots, findings);
 	if (roots.extended) reconcileExtended(roots.extended, comments, findings);
 	if (roots.ids) {
 		reconcileIds(roots.ids, comments, findings);
@@ -105,37 +114,81 @@ export function threadRootsOf(roots: {
 }
 
 /** Every `<w:comment>` with its threading key (its last paragraph's paraId),
- * minting the paraId where it is missing. A comment with no `<w:p>` at all
- * has nothing to key and is skipped. */
+ * minting the paraId where it is missing and re-keying one Word would reject
+ * (rewriting the sidecar entries keyed to it, so thread links and resolved
+ * flags survive). A comment with no `<w:p>` at all has nothing to key and is
+ * skipped. */
 function keyComments(
-	commentsRoot: XmlNode,
+	roots: SidecarRoots,
 	findings: CommentFinding[],
 ): KeyedComment[] {
 	const taken = new Set<string>();
-	collectParaIds(commentsRoot, taken);
+	collectParaIds(roots.comments, taken);
+	const mint = () => {
+		const fresh = mintUniqueParaId(taken);
+		taken.add(fresh);
+		return fresh;
+	};
+	const rekeyed = new Map<string, string>();
 	const keyed: KeyedComment[] = [];
-	for (const comment of commentsRoot.findChildren("w:comment")) {
+	for (const comment of roots.comments.findChildren("w:comment")) {
 		const id = comment.getAttribute("w:id");
-		const paragraph = lastParagraph(comment);
+		const paragraphs = comment.findChildren("w:p");
+		const paragraph = paragraphs.at(-1);
 		if (id === undefined || !paragraph) continue;
+		// An earlier paragraph's paraId keys nothing, so re-keying it is silent.
+		for (const earlier of paragraphs.slice(0, -1)) {
+			const paraId = earlier.getAttribute("w14:paraId");
+			if (paraId && !isValidParaId(paraId)) {
+				earlier.setAttribute("w14:paraId", mint());
+			}
+		}
 		const existing = paragraph.getAttribute("w14:paraId");
 		const date = comment.getAttribute("w:date") ?? "";
-		if (existing) {
+		if (existing && isValidParaId(existing)) {
 			keyed.push({ id, paraId: existing, hadParaId: true, date });
 			continue;
 		}
-		const fresh = mintUniqueParaId(taken);
-		taken.add(fresh);
+		const fresh = mint();
 		paragraph.setAttribute("w14:paraId", fresh);
-		keyed.push({ id, paraId: fresh, hadParaId: false, date });
+		keyed.push({ id, paraId: fresh, hadParaId: existing !== undefined, date });
+		if (!existing) {
+			findings.push({
+				part: COMMENTS_PART_NAME,
+				severity: "silent",
+				message: `comment c${id} has no w14:paraId`,
+				fix: `minted w14:paraId ${fresh} for c${id}`,
+			});
+			continue;
+		}
+		rekeyed.set(key(existing), fresh);
 		findings.push({
 			part: COMMENTS_PART_NAME,
-			severity: "silent",
-			message: `comment c${id} has no w14:paraId`,
-			fix: `minted w14:paraId ${fresh} for c${id}`,
+			// Only commentsExtended carries data Word's re-key loses.
+			severity: roots.extended ? "warning" : "silent",
+			message: `comment c${id}'s w14:paraId ${existing} is out of range (Word accepts 8-digit hex 00000001–7FFFFFFF) — Word re-keys it on open and the thread link of every reply in the file is lost`,
+			fix: `re-keyed c${id}'s w14:paraId ${existing} → ${fresh} (its sidecar entries and replies follow)`,
 		});
 	}
+	if (rekeyed.size > 0) rekeySidecars(roots, rekeyed);
 	return keyed;
+}
+
+/** Point every sidecar reference to a re-keyed paraId at its fresh value —
+ * the entry's own key and any reply's `w15:paraIdParent` — so the re-key
+ * moves the thread/resolved data instead of orphaning it. */
+function rekeySidecars(roots: SidecarRoots, rekeyed: Map<string, string>) {
+	const follow = (node: XmlNode, attribute: string) => {
+		const fresh = rekeyed.get(key(node.getAttribute(attribute)));
+		if (fresh) node.setAttribute(attribute, fresh);
+	};
+	for (const entry of roots.extended?.findChildren("w15:commentEx") ?? []) {
+		follow(entry, "w15:paraId");
+		follow(entry, "w15:paraIdParent");
+	}
+	for (const entry of roots.ids?.findChildren("w16cid:commentId") ?? []) {
+		follow(entry, "w16cid:paraId");
+	}
 }
 
 function collectParaIds(node: XmlNode, into: Set<string>): void {

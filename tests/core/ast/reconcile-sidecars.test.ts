@@ -195,6 +195,48 @@ describe("reconcileSidecars", () => {
 		expect(extended).not.toContain("0000027A");
 	});
 
+	test("re-keys an out-of-range paraId and carries its entries and reply links along", () => {
+		const parts = roots({
+			comments: comment("0", "E33D2225") + comment("1", "1A2B3C4D"),
+			extended: `<w15:commentEx w15:paraId="E33D2225" w15:done="1"/><w15:commentEx w15:paraId="1A2B3C4D" w15:paraIdParent="e33d2225" w15:done="0"/>`,
+			ids: `<w16cid:commentId w16cid:paraId="E33D2225" w16cid:durableId="11111111"/><w16cid:commentId w16cid:paraId="1A2B3C4D" w16cid:durableId="22222222"/>`,
+		});
+		const findings = reconcileSidecars(parts);
+		const fresh = serialize(parts.comments).match(
+			/<w:comment w:id="0"[^>]*><w:p w14:paraId="([0-9A-F]{8})">/,
+		)?.[1];
+		expect(fresh).toBeDefined();
+		expect(Number.parseInt(fresh ?? "", 16)).toBeLessThan(0x80000000);
+		expect(serialize(parts.extended)).toBe(
+			serialize(
+				roots({
+					comments: "",
+					extended: `<w15:commentEx w15:paraId="${fresh}" w15:done="1"/><w15:commentEx w15:paraId="1A2B3C4D" w15:paraIdParent="${fresh}" w15:done="0"/>`,
+				}).extended,
+			),
+		);
+		expect(serialize(parts.ids)).toContain(
+			`w16cid:paraId="${fresh}" w16cid:durableId="11111111"`,
+		);
+		expect(findings).toHaveLength(1);
+		expect(findings[0]?.severity).toBe("warning");
+		expect(findings[0]?.message).toContain("out of range");
+		expect(findings[0]?.fix).toContain(`→ ${fresh}`);
+	});
+
+	test("an out-of-range paraId is re-keyed silently when no commentsExtended holds thread data", () => {
+		const parts = roots({
+			comments: `<w:comment w:id="0" w:author="A"><w:p w14:paraId="FFFFFFFF"/><w:p w14:paraId="8000ABCD"/></w:comment>`,
+		});
+		const findings = reconcileSidecars(parts);
+		const paraIds = [
+			...serialize(parts.comments).matchAll(/w14:paraId="([0-9A-F]{8})"/g),
+		].map((match) => Number.parseInt(match[1] ?? "", 16));
+		expect(paraIds).toHaveLength(2);
+		for (const paraId of paraIds) expect(paraId).toBeLessThan(0x80000000);
+		expect(findings.map((finding) => finding.severity)).toEqual(["silent"]);
+	});
+
 	test("is idempotent", () => {
 		const parts = roots({
 			comments: comment("0") + comment("1", "1A2B3C4D"),

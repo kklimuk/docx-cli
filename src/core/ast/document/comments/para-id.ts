@@ -49,6 +49,15 @@ export function mintDurableId(taken: Set<string>): string {
 	}
 }
 
+/** Whether `value` is a `w14:paraId` Word keeps: 8-digit hex in
+ * (0, 0x80000000). Word re-keys anything else on open — dropping every
+ * sidecar link to it — so the reconcile re-keys it first, links and all. */
+export function isValidParaId(value: string): boolean {
+	if (!/^[0-9A-Fa-f]{8}$/.test(value)) return false;
+	const numeric = Number.parseInt(value, 16);
+	return numeric > 0 && numeric < 0x80000000;
+}
+
 /** Whether `value` is a durableId Word accepts: hex, in (0, 0x7FFFFFFF). */
 export function isValidDurableId(value: string | undefined): boolean {
 	if (!value || !/^[0-9A-Fa-f]{1,8}$/.test(value)) return false;

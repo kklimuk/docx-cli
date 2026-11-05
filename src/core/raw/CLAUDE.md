@@ -112,7 +112,9 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   `commentReference` naming no comment (the one state Word refused to open);
   `warning` for what Word repairs or drops — missing side-part entries /
   paraIds (worded as data loss for commentsExtended: Word re-adds an OPEN,
-  TOP-LEVEL entry), half-open ranges (Word collapses them to the reference),
+  TOP-LEVEL entry), out-of-range paraIds (Word re-keys them WITHOUT their
+  entries and every reply in the file loses its thread — the cure re-keys and
+  carries the entries), half-open ranges (Word collapses them to the reference),
   reference-less ranges, orphan comments (Word deletes them), dangling
   `paraIdParent` (Word drops the thread); `silent` (cured, never reported)
   for what Word handles harmlessly — stale entries, duplicate durableIds. Ids

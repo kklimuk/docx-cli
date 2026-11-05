@@ -422,6 +422,43 @@ describe("reconcile on save — any mutation cures a file older docx-cli left in
 		expect(await threadState(wordDoc)).toEqual(before);
 	});
 
+	test("an out-of-range comment paraId (docx-cli < 0.14.1 minted them) is re-keyed with its thread intact", async () => {
+		// Word re-keys such an id on open WITHOUT carrying its sidecar entries,
+		// so every reply in the file loses its thread (verified on Word for Mac).
+		const doc = join(workspace, "high-para-ids.docx");
+		await runCli("create", doc, "--text", "hello world");
+		await runCli("comments", "add", doc, "--at", "p0", "--text", "Root");
+		await runCli("comments", "reply", doc, "--at", "c0", "--text", "Reply");
+		await runCli("comments", "resolve", doc, "--at", "c0");
+		const before = await threadState(doc);
+		expect(before).toEqual(["c0<->resolved", "c1<c0>open"]);
+		const pkg = await Pkg.open(doc);
+		const toHigh = (xml: string) =>
+			xml.replace(
+				/(paraId(?:Parent)?=")([0-9A-F])([0-9A-F]{7})"/g,
+				(_, prefix, first, rest) =>
+					`${prefix}${(Number.parseInt(first, 16) | 8).toString(16).toUpperCase()}${rest}"`,
+			);
+		for (const name of ["word/comments.xml", "word/commentsExtended.xml"]) {
+			pkg.writeText(name, toHigh(await pkg.readText(name)));
+		}
+		await pkg.save();
+		const report = await runCli("validate", doc);
+		expect(report.exitCode).toBe(0);
+		expect(report.stdout).toContain("2 warnings");
+		expect(report.stdout).toContain("is out of range");
+		expect(report.stdout).toContain("(consistency, fixable)");
+
+		await runCli("edit", doc, "--at", "p0", "--text", "hello there");
+		const after = await runCli("validate", doc);
+		expect(after.stdout.trim()).toMatch(/^valid — \d+ parts checked$/);
+		expect(await threadState(doc)).toEqual(before);
+		const comments = await (await Pkg.open(doc)).readText("word/comments.xml");
+		for (const [, paraId] of comments.matchAll(/w14:paraId="([0-9A-F]{8})"/g)) {
+			expect(Number.parseInt(paraId ?? "", 16)).toBeLessThan(0x80000000);
+		}
+	});
+
 	test("an unchanged sidecar keeps its original bytes on an unrelated save", async () => {
 		const wordDoc = await freshFixture(
 			"reconcile-bytes",

@@ -373,6 +373,7 @@ open:
 | `commentReference` names no comment | error | refuses to open the file | removes that id's markers |
 | comment missing from `commentsExtended.xml` (or no `w14:paraId`) | warning | re-adds it **open and top-level** — a reply loses its thread, a resolved comment reopens | adds the entry (`done="0"`, no parent) |
 | comment missing from `commentsIds.xml` | warning | mints one | adds it (durableId = paraId when valid) |
+| comment `w14:paraId` out of range (≥ `80000000`; docx-cli < 0.14.1 minted these) | warning | re-keys it **without** its sidecar entries — every reply in the file loses its thread | re-keys it and moves its entries and reply links along |
 | `commentRangeStart` without `commentRangeEnd` (or the reverse) | warning | collapses the range to the reference mark | does the same collapse |
 | range with no `commentReference` | warning | drops the comment | closes the range, adds the reference |
 | comment with no marker anywhere (orphan) | warning | silently deletes it | re-anchors it only when it is a reply in an anchored thread; otherwise reported, never deleted |
@@ -380,7 +381,7 @@ open:
 | stale ids entry, duplicate durableId, stale extensible entry | not reported | handles it harmlessly | cleaned up |
 
 Every save of a document with comments already runs the sidecar half of this
-(entries, paraIds, stale entries, durableIds — never touching an existing
+(entries, paraIds — missing or out of range — stale entries, durableIds — never touching an existing
 `paraIdParent`/`done`, and rewriting a sidecar only when it changed), so any
 `docx-cli` mutation cures a file an older producer — including docx-cli ≤ 0.28
 — left inconsistent. `validate --fix` adds the marker cures, saves (honoring
