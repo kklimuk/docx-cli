@@ -444,7 +444,11 @@ export type Marginal = {
 	kind: "header" | "footer";
 	type: "default" | "first" | "even";
 	sectionId: string;
+	/** The accepted view (an insertion shows, a deletion doesn't). */
 	text: string;
+	/** Pending revisions inside this header/footer part (`tcN` ids feed
+	 *  `track-changes accept/reject --at`). Absent when there are none. */
+	trackedChanges?: TrackedChange[];
 };
 
 export type TrackedChange = {

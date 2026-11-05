@@ -296,6 +296,9 @@ export type TrackedChangeReference = {
 	 *  note and header equations have none), and whether it covers the whole
 	 *  equation. `list` renders the marked part as LaTeX from it. */
 	equation?: TrackedEquation;
+	/** The note (`fn1`/`en2`) a note-body revision lives in — its `blockId` is
+	 *  "" (note bodies have no `pN`). */
+	noteId?: string;
 };
 
 /** One revision marker element and the child list that holds it. */

@@ -78,6 +78,15 @@ export type MarkdownOptions = {
 	 *  wrong tracking guess is high-cost), so an agent sees the state on the first
 	 *  read instead of spending a `track-changes list` call to learn it. */
 	trackChangesOn?: boolean;
+	/** A header/footer's text in `view`, with `mark` wrapping each pending
+	 *  revision — `Marginal.text` is the accepted view only, so `--baseline` and
+	 *  `--current` (CriticMarkup) need the part itself. Undefined = use
+	 *  `Marginal.text` in every view. */
+	marginalText?: (
+		marginal: Marginal,
+		view: MarkdownView,
+		mark: (text: string, change: TrackedChange) => string,
+	) => string;
 };
 
 /** The canonical create-template `docDefaults` (Calibri 11pt) — the universal
@@ -201,7 +210,6 @@ export function renderMarkdown(
 	const sectionCount = blocks.filter(
 		(block) => block.type === "sectionBreak",
 	).length;
-	const marginal = formatMarginalNotes(doc.headers, doc.footers, sectionCount);
 	const ctx: RenderContext = {
 		options,
 		baseline,
@@ -215,8 +223,15 @@ export function renderMarkdown(
 		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)?.geometry),
 		governingColumns: computeGoverningColumns(blocks),
 		wrappingTabLines: [],
-		marginalsBySection: marginal.bySection,
+		marginalsBySection: new Map(),
 	};
+	const marginal = formatMarginalNotes(
+		doc.headers,
+		doc.footers,
+		sectionCount,
+		ctx,
+	);
+	ctx.marginalsBySection = marginal.bySection;
 
 	// Sections render at their START (where their content begins), not at the
 	// sectPr's physical end, so each section's `docx:section` + header/footer
@@ -870,13 +885,24 @@ function formatPageNote(
 /** Build the `<!-- docx:header … -->` / `<!-- docx:footer … -->` hints, split into
  *  UNIFORM (identical across every section — head block, no section token) and
  *  PER-SECTION (text differs by section — co-located with each section break,
- *  keyed by `sN`). Deviation-only: the `type` attr is omitted when `default`.
- *  Content rides the `text` attribute so the importer's `docx:`-comment drop can't
- *  re-inject it into the body. */
+ *  keyed by `sN`). Deviation-only: the `type` attr is omitted when `default`, the
+ *  `pending` attr when the part holds no tracked change. Content rides the `text`
+ *  attribute so the importer's `docx:`-comment drop can't re-inject it into the
+ *  body.
+ *
+ *  Pending revisions inside the part are visible two ways: in EVERY view a
+ *  `pending="tc1 tc2"` attr names their ids (the handles `track-changes
+ *  accept/reject --at` take — the accepted-view text alone hides that anything
+ *  is pending), and the `text` follows the view, so `--current` shows them as
+ *  the body's CriticMarkup (`{++new++}[^tc1]`, `{--old--}[^tc2]`). The `--` of a deletion inside the
+ *  `<!-- … -->` is safe: HTML (and CommonMark's comment block) only ends a
+ *  comment at `-->` (or `--!>`), and `htmlAttr` escapes every `>` in the value,
+ *  so no `--` in the text can close it; the importer drops the line whole. */
 function formatMarginalNotes(
 	headers: Marginal[],
 	footers: Marginal[],
 	sectionCount: number,
+	ctx: RenderContext,
 ): { uniform: string[]; bySection: Map<string, string[]> } {
 	const uniform: string[] = [];
 	const bySection = new Map<string, string[]>();
@@ -889,25 +915,56 @@ function formatMarginalNotes(
 		group.push(line);
 		bySection.set(sectionId, group);
 	};
-	collectMarginalNotes("header", headers, sectionCount, emit);
-	collectMarginalNotes("footer", footers, sectionCount, emit);
+	const shown = (marginal: Marginal): MarginalHint => ({
+		marginal,
+		pairs: marginalHintPairs(marginal, ctx),
+	});
+	collectMarginalNotes("header", headers.map(shown), sectionCount, emit);
+	collectMarginalNotes("footer", footers.map(shown), sectionCount, emit);
 	return { uniform, bySection };
+}
+
+type MarginalHint = { marginal: Marginal; pairs: NotePair[] };
+
+/** A marginal's `pending` + `text` attrs in the render view. Under `--current`
+ *  each revision reads as `{++…++}[^tcN]` / `{--…--}[^tcN]` like the body's, but
+ *  WITHOUT a `[^tcN]:` appendix definition: the reference sits in a comment no
+ *  renderer shows, and the importer would turn an orphan definition into a
+ *  footnote on a `read → create` rebuild. The author/date are in
+ *  `track-changes list`. */
+function marginalHintPairs(marginal: Marginal, ctx: RenderContext): NotePair[] {
+	const view = ctx.options.view ?? "accepted";
+	const text =
+		view === "accepted" || !ctx.options.marginalText
+			? marginal.text
+			: ctx.options.marginalText(marginal, view, (rendered, change) =>
+					view === "current" ? criticMarkup(rendered, change) : rendered,
+				);
+	const pending = (marginal.trackedChanges ?? []).map((change) => change.id);
+	return [
+		...(pending.length > 0 ? [["pending", pending.join(" ")] as const] : []),
+		["text", text],
+	];
 }
 
 function collectMarginalNotes(
 	noteType: "header" | "footer",
-	marginals: Marginal[],
+	hints: MarginalHint[],
 	sectionCount: number,
 	emit: (sectionId: string | null, line: string) => void,
 ): void {
-	const byType = new Map<string, Marginal[]>();
-	for (const marginal of marginals) {
-		const group = byType.get(marginal.type) ?? [];
-		group.push(marginal);
-		byType.set(marginal.type, group);
+	const byType = new Map<string, MarginalHint[]>();
+	for (const hint of hints) {
+		const group = byType.get(hint.marginal.type) ?? [];
+		group.push(hint);
+		byType.set(hint.marginal.type, group);
 	}
 	for (const [placement, group] of byType) {
-		const distinctText = new Set(group.map((marginal) => marginal.text));
+		// Same text AND same pending ids — two parts reading alike can still hold
+		// different revisions, and each must keep its own `pending` attr.
+		const distinctContent = new Set(
+			group.map((hint) => JSON.stringify(hint.pairs)),
+		);
 		const typePairs: NotePair[] =
 			placement === "default" ? [] : [["type", placement]];
 		// Document chrome (ONE head line, no sN) ONLY when the marginal is identical
@@ -916,7 +973,7 @@ function collectMarginalNotes(
 		// mislabeled as covering sections it doesn't (e.g. a header only on the
 		// trailing section would otherwise imply the earlier sections carry it too).
 		const coversEverySection = group.length >= sectionCount;
-		if (distinctText.size === 1 && coversEverySection) {
+		if (distinctContent.size === 1 && coversEverySection) {
 			const first = group[0];
 			if (!first) continue;
 			// Leading token is the marginal id (`hdr0`/`ftr0`) — the handle
@@ -925,7 +982,11 @@ function collectMarginalNotes(
 			// id addresses it. Rides the head block (no section placement).
 			emit(
 				null,
-				formatNote(noteType, [...typePairs, ["text", first.text]], [first.id]),
+				formatNote(
+					noteType,
+					[...typePairs, ...first.pairs],
+					[first.marginal.id],
+				),
 			);
 			continue;
 		}
@@ -934,12 +995,12 @@ function collectMarginalNotes(
 		// `raw get`/`--at` take) AND the section `sN` (which section it governs, and
 		// the `--at sN` scope). The `sN` also marks it per-section (a uniform marginal
 		// rides the head with the id ALONE), so read stays unambiguous.
-		for (const marginal of group) {
+		for (const { marginal, pairs } of group) {
 			emit(
 				marginal.sectionId,
 				formatNote(
 					noteType,
-					[...typePairs, ["text", marginal.text]],
+					[...typePairs, ...pairs],
 					[marginal.id, marginal.sectionId],
 				),
 			);

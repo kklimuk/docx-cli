@@ -145,7 +145,15 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   the content it governs. The text lives in the comment attribute
   so the importer drops it (it can't re-inject into the body); full entries are in
   `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
-headers`/`docx footers`.
+headers`/`docx footers`. A header/footer holding a reviewer's **pending tracked
+  changes** names them in every view — `<!-- docx:header hdr0 pending="tc2 tc3"
+  text="Acme Report (Draft)" -->` — so you can `track-changes accept/reject --at
+  tc2` without guessing; the `text` follows the view: accepted by default, the
+  original under `--baseline`, and the body's CriticMarkup under `--current`
+  (`text="Acme Report{++ (Draft)++}[^tc2]{-- v1--}[^tc3]"`; author/date are in
+  `track-changes list`, not the appendix). The `--` of a deletion is safe inside
+  the comment: a comment only ends at `-->`, and every `>` in the value is
+  escaped (`&gt;`).
 - **Track-changes state** always rides a head `<!-- docx:track-changes on|off -->`
   line — it's the one read hint that states its default too (an agent shouldn't have
   to infer "off" from a missing line), so you can see whether subsequent edits will be

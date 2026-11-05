@@ -108,11 +108,15 @@ export function buildBody(document: Document, path: string): Body {
 	readNoteTrackedChanges(document, state);
 	// Resolved once: both the revision walk and the Marginal[] projection need it.
 	const marginalRefs = enumerateMarginalRefs(document);
-	readMarginalTrackedChanges(document, marginalRefs, state);
+	const marginalChanges = readMarginalTrackedChanges(
+		document,
+		marginalRefs,
+		state,
+	);
 	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
 	doc.footnotes = document.footnotes?.toNotes() ?? [];
 	doc.endnotes = document.endnotes?.toNotes() ?? [];
-	const marginals = readMarginals(marginalRefs);
+	const marginals = readMarginals(marginalRefs, marginalChanges);
 	doc.headers = marginals.headers;
 	doc.footers = marginals.footers;
 
@@ -125,8 +129,13 @@ export function buildBody(document: Document, path: string): Body {
  *  relationship Target → part name → the loaded part tree (in `MarginalsView`),
  *  and reads the part text with fields as tokens. One entry per reference, so a
  *  document-wide marginal (one part, referenced from each section) appears once
- *  per section. Locators `hdr0`/`ftr0` are positional in document order. */
-function readMarginals(refs: MarginalRef[]): {
+ *  per section. Locators `hdr0`/`ftr0` are positional in document order. Each
+ *  entry lists the pending revisions inside its part (every entry of a shared
+ *  part lists the same ones — it is one part). */
+function readMarginals(
+	refs: MarginalRef[],
+	changesByPart: Map<XmlNode[], TrackedChange[]>,
+): {
 	headers: Marginal[];
 	footers: Marginal[];
 } {
@@ -140,6 +149,8 @@ function readMarginals(refs: MarginalRef[]): {
 			sectionId: ref.sectionId,
 			text: marginalText(ref.tree),
 		};
+		const trackedChanges = changesByPart.get(ref.tree) ?? [];
+		if (trackedChanges.length > 0) marginal.trackedChanges = trackedChanges;
 		(ref.kind === "header" ? headers : footers).push(marginal);
 	}
 	return { headers, footers };
@@ -409,9 +420,17 @@ function registerNotePartChanges(
 		if (note.getAttribute("w:type")) continue;
 		const noteId = note.getAttribute("w:id");
 		if (noteId && paired.has(`${kind}:${noteId}`)) continue;
+		// The note's own locator (`fn1`/`en2`) — `read`'s head hint names the
+		// note a pending revision sits in; the change's blockId stays "".
+		const scope: RevisionScope = {
+			document,
+			state,
+			blockId: "",
+			...(noteId && { noteId: `${config.idPrefix}${noteId}` }),
+		};
 		for (const paragraph of note.children) {
 			if (paragraph.tag !== "w:p") continue;
-			registerStandaloneRunChanges(document, paragraph, state);
+			registerStandaloneRunChanges(scope, paragraph);
 		}
 	}
 }
@@ -424,14 +443,20 @@ function readMarginalTrackedChanges(
 	document: Document,
 	refs: MarginalRef[],
 	state: WalkState,
-): void {
-	const seen = new Set<XmlNode[]>();
+): Map<XmlNode[], TrackedChange[]> {
+	const byPart = new Map<XmlNode[], TrackedChange[]>();
 	for (const ref of refs) {
-		if (seen.has(ref.tree)) continue;
-		seen.add(ref.tree);
+		if (byPart.has(ref.tree)) continue;
+		const registered: TrackedChange[] = [];
+		byPart.set(ref.tree, registered);
 		const root = XmlNode.findRoot(ref.tree, marginalConfig(ref.kind).rootTag);
-		if (root) registerMarginalBlockChanges(document, root, state, ref.id);
+		if (root)
+			registerMarginalBlockChanges(
+				{ document, state, blockId: ref.id, registered },
+				root,
+			);
 	}
+	return byPart;
 }
 
 /** Walk a header/footer part's blocks down to its paragraphs. Unlike a note
@@ -440,24 +465,21 @@ function readMarginalTrackedChanges(
  *  tables, and a block may sit in an `<mc:AlternateContent>` (its chosen branch
  *  only, so a Choice/Fallback twin isn't registered twice). */
 function registerMarginalBlockChanges(
-	document: Document,
+	scope: RevisionScope,
 	container: XmlNode,
-	state: WalkState,
-	blockId: string,
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:p") {
-			registerStandaloneRunChanges(document, child, state, blockId);
+			registerStandaloneRunChanges(scope, child);
 			continue;
 		}
 		if (isAlternateContent(child)) {
 			const branch = alternateContentBranch(child);
-			if (branch)
-				registerMarginalBlockChanges(document, branch, state, blockId);
+			if (branch) registerMarginalBlockChanges(scope, branch);
 			continue;
 		}
 		if (MARGINAL_BLOCK_CONTAINERS.has(child.tag)) {
-			registerMarginalBlockChanges(document, child, state, blockId);
+			registerMarginalBlockChanges(scope, child);
 		}
 	}
 }
@@ -482,12 +504,9 @@ const MARGINAL_BLOCK_CONTAINERS = new Set([
  * `registerMathRevisions`, as in the body, so Word's per-math-run markers are
  * one revision rather than one per symbol. */
 function registerStandaloneRunChanges(
-	document: Document,
+	scope: RevisionScope,
 	container: XmlNode,
-	state: WalkState,
-	blockId = "",
 ): void {
-	const scope: RevisionScope = { document, state, blockId };
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
 		if (child.tag === "w:sdt") continue;
@@ -503,7 +522,7 @@ function registerStandaloneRunChanges(
 				{ node: child, parent: container.children },
 				undefined,
 			);
-			registerStandaloneRunChanges(document, child, state, blockId);
+			registerStandaloneRunChanges(scope, child);
 			continue;
 		}
 		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
@@ -512,12 +531,10 @@ function registerStandaloneRunChanges(
 		}
 		if (isAlternateContent(child)) {
 			const branch = alternateContentBranch(child);
-			if (branch)
-				registerStandaloneRunChanges(document, branch, state, blockId);
+			if (branch) registerStandaloneRunChanges(scope, branch);
 			continue;
 		}
-		if (child.children.length > 0)
-			registerStandaloneRunChanges(document, child, state, blockId);
+		if (child.children.length > 0) registerStandaloneRunChanges(scope, child);
 	}
 }
 
@@ -610,7 +627,13 @@ type WalkContext = {
  *  it lands in, the shared tcN counter, and the block it's reported under. A
  *  body paragraph's `WalkContext` is one; a note or header/footer paragraph,
  *  which has no AST paragraph to fill, passes just these. */
-type RevisionScope = Pick<WalkContext, "document" | "state" | "blockId">;
+type RevisionScope = Pick<WalkContext, "document" | "state" | "blockId"> & {
+	/** The note (`fn1`/`en2`) a note-body revision sits in. */
+	noteId?: string;
+	/** Collects every revision registered under this scope — a header/footer
+	 *  part's, for `Marginal.trackedChanges`. */
+	registered?: TrackedChange[];
+};
 
 function walkRunContainer(
 	context: WalkContext,
@@ -803,7 +826,9 @@ function registerTrackedChange(
 		blockId: context.blockId,
 		...(markers && { markers }),
 		...(equation && { equation }),
+		...(context.noteId && { noteId: context.noteId }),
 	});
+	context.registered?.push(change);
 	return change;
 }
 

@@ -176,6 +176,26 @@ describe("LibreOffice round-trip", () => {
 		});
 	}
 
+	// The fixture's default header holds a reviewer's pending replace (its root
+	// also started as xmlns:w only). After LibreOffice re-saves it, the header
+	// hint must still name the revisions and show them under --current.
+	test("a pending header revision stays visible in read after LibreOffice", async () => {
+		const converted = join(
+			workspace,
+			"lo-headers-footers.docx",
+			"headers-footers.docx",
+		);
+		const accepted = (await runCli("read", converted)).stdout;
+		expect(accepted).toMatch(
+			/<!-- docx:header hdr\d+ pending="tc\d+ tc\d+" text="Acme Corp\./,
+		);
+		const current = (await runCli("read", converted, "--current")).stdout;
+		expect(current).toMatch(
+			/text="Acme \{--Corporation--\}\[\^tc\d+\]\{\+\+Corp\.\+\+\}\[\^tc\d+\]/,
+		);
+		expect((await runCli("validate", converted)).exitCode).toBe(0);
+	});
+
 	test("tracked-on edits round-trip through LibreOffice with markers preserved", async () => {
 		const docPath = join(workspace, "tracked-roundtrip.docx");
 		await runCli("create", docPath, "--text", "Original body text here.");

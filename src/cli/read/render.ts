@@ -1,4 +1,5 @@
 import type { Document } from "@core";
+import { Marginals } from "@core";
 import { Images } from "@core/image";
 import { type MarkdownView, renderMarkdown } from "./markdown";
 
@@ -29,5 +30,7 @@ export async function renderReadMarkdown(
 		defaultFont: document.styles?.defaultFont(),
 		resolveFont: document.styles?.resolveFont.bind(document.styles),
 		trackChangesOn: document.isTrackChangesEnabled(),
+		marginalText: (marginal, view, mark) =>
+			new Marginals(document).text(marginal, view, mark),
 	});
 }

@@ -442,8 +442,74 @@ describe("headers/footers — tracked changes", () => {
 	test("header text shows a tracked insertion and hides a tracked deletion", async () => {
 		const path = await docWithHeaderRevisions("hf-rev-read");
 		expect((await list("headers", path))[0]?.text).toBe("Header text edited");
+		// The accepted text alone hides that anything is pending — the hint names
+		// the revisions so an agent can accept/reject them.
 		expect(await readMarkdown(path)).toContain(
-			'<!-- docx:header hdr0 text="Header text edited" -->',
+			'<!-- docx:header hdr0 pending="tc0 tc1" text="Header text edited" -->',
+		);
+	});
+
+	test("read --current shows header revisions as CriticMarkup", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-current");
+		const current = (await runCli("read", path, "--current")).stdout;
+		expect(current).toContain(
+			'<!-- docx:header hdr0 pending="tc0 tc1" text="Header text{++ edited++}[^tc0]{-- old--}[^tc1]" -->',
+		);
+		// The [^tcN] sits in a comment no renderer shows, so it gets no appendix
+		// definition (the importer would mint an orphan footnote from one).
+		expect(current).not.toContain("[^tc0]:");
+	});
+
+	test("read --baseline shows the header as it was before the revisions", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-baseline");
+		expect((await runCli("read", path, "--baseline")).stdout).toContain(
+			'<!-- docx:header hdr0 pending="tc0 tc1" text="Header text old" -->',
+		);
+	});
+
+	test("the AST lists a header's pending revisions", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-ast");
+		const [header] = await list("headers", path);
+		expect(
+			(header as { trackedChanges?: { id: string; kind: string }[] })
+				.trackedChanges,
+		).toMatchObject([
+			{ id: "tc0", kind: "ins", author: "Ann" },
+			{ id: "tc1", kind: "del", author: "Ann" },
+		]);
+	});
+
+	test("the --current hint stays one dropped comment, even when the deleted text holds -- and >", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-comment-hazard",
+			`<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r>${deletion(940, "b --> c -- d")}</w:p>`,
+		);
+		const current = (await runCli("read", path, "--current")).stdout;
+		const [hint] = current.split("\n");
+		// `>` is escaped, so the deletion's `--` can never form the `-->` that
+		// would end the comment early.
+		expect(hint).toBe(
+			'<!-- docx:header hdr0 pending="tc0" text="A {--b --&gt; c -- d--}[^tc0]" -->',
+		);
+		expect(hint?.indexOf("-->")).toBe((hint?.length ?? 0) - 3);
+		// The importer drops the hint whole: nothing leaks into a rebuild.
+		const markdownPath = join(tempWorkspace("hf-rev-comment-md"), "in.md");
+		await Bun.write(markdownPath, current);
+		const rebuilt = join(tempWorkspace("hf-rev-comment-out"), "out.docx");
+		expect(
+			(await runCli("create", rebuilt, "--from", markdownPath)).exitCode,
+		).toBe(0);
+		const rebuiltRead = await readMarkdown(rebuilt);
+		expect(rebuiltRead).not.toContain("b --");
+		expect(rebuiltRead).not.toContain("docx:header");
+		expect((await runCli("footnotes", "list", rebuilt)).parsed).toEqual([]);
+	});
+
+	test("a header with no revisions carries no pending attr", async () => {
+		const path = await newDoc("hf-rev-none");
+		await runCli("headers", "set", path, "--text", "Plain");
+		expect(await readMarkdown(path)).toContain(
+			'<!-- docx:header hdr0 text="Plain" -->',
 		);
 	});
 

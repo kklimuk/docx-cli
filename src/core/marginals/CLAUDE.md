@@ -25,10 +25,15 @@ word, hence the coinage). Three files behind the `@core` barrel:
   extraction that turns a `<w:hdr>`/`<w:ftr>` tree into `Marginal.text`, rendering
   `<w:fldSimple>` fields as `{page}` / `{pages}` / `{date}` / `{time}` /
   `{styleref:NAME}` / `{filename}` / `{title}` / `{author}` tokens (not the cached
-  value). Tracked changes inside the part read in the accepted view
-  (`isWrapperVisibleInView`): an insertion shows, a deletion doesn't. `{time}` is read-only (no authoring flag mints it). Pure, no JSX.
+  value). Tracked changes inside the part read in the accepted view by default
+  (`isWrapperVisibleInView`): an insertion shows, a deletion doesn't. A `view`
+  argument reads `baseline`/`current` instead (a deletion's `<w:delText>`
+  counts there), and a `markRevision` callback wraps each revision wrapper's
+  text — the hook `read --current` uses for CriticMarkup. `{time}` is read-only (no authoring flag mints it). Pure, no JSX.
 - [index.tsx](index.tsx) — the **`Marginals` lens** (`new Marginals(document).set(…)`
-  / `.clear(…)`) + the part-body emitters (`<w:hdr>`/`<w:ftr>` root, the content
+  / `.clear(…)`, plus the read-side `.text(marginal, view, markRevision)` that
+  resolves a `Marginal` to its part and reads it in a view, keyed to its
+  `Marginal.trackedChanges`) + the part-body emitters (`<w:hdr>`/`<w:ftr>` root, the content
   paragraph incl. the two-zone right-tab path, and the `fldSimple` field vocabulary).
 
 ## View (state) + lens (operation)

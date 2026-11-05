@@ -154,7 +154,14 @@ handle `raw get --at` and `headers`/`footers set/clear --at` accept, the same id
 `headers`/`footers list` reports; a per-section marginal also carries its `sN` as a
 second bare token, a uniform one rides the head with the id alone. Content in a
 `text` attr — so the importer's `docx:` drop can't re-inject it into the body —
-with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`),
+with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`;
+`pending="tcN …"` only when the part holds tracked changes — every view, since
+the accepted-view text alone hides them — and the `text` follows the view, with
+the body's CriticMarkup under `--current` but no `[^tcN]:` appendix definition,
+because the importer would turn that orphan into a footnote. `--` inside the
+comment is safe — HTML/CommonMark end a comment only at `-->`, and `htmlAttr`
+escapes every `>` in the value — see `formatMarginalNotes` in
+`cli/read/markdown.ts`),
 `docx:textbox tbxN anchor="pM" [wrap=… align=…]` … `docx:textbox-end tbxN`
 bracketing a text box's story (rendered by `renderTextBoxes` right AFTER the
 block that anchors it — a paragraph, or the whole table when the anchor sits in a

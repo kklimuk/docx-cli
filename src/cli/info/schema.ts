@@ -294,6 +294,12 @@ const JSON_SCHEMA = {
 				type: { enum: ["default", "first", "even"] },
 				sectionId: { type: "string" },
 				text: { type: "string" },
+				trackedChanges: {
+					type: "array",
+					description:
+						"Pending revisions inside this header/footer part (absent when none)",
+					items: { $ref: "#/$defs/RunTrackedChange" },
+				},
 			},
 		},
 		Table: {

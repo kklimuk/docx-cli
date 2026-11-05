@@ -1,9 +1,11 @@
 import type { Document } from "../ast/document";
+import type { Marginal, TrackedChange } from "../ast/types";
 import { textToRunElements } from "../blocks";
 import { w } from "../jsx";
 import type { XmlNode } from "../parser";
 import { insertSectPrChildInOrder, wrapSectPrChange } from "../sections";
 import { TrackChanges } from "../track-changes";
+import type { RevisionView } from "../track-changes/revision-visibility";
 import {
 	type MarginalConfig,
 	type MarginalKind,
@@ -11,6 +13,8 @@ import {
 	marginalConfig,
 	marginalPartNameFromTarget,
 } from "./config";
+import { findMarginalRef } from "./resolve";
+import { marginalText } from "./text";
 
 export type {
 	MarginalConfig,
@@ -51,6 +55,28 @@ export type MarginalSpec = {
  *  `<w:sectPrChange>` machinery under `--track`. */
 export class Marginals {
 	constructor(private document: Document) {}
+
+	/** A header/footer's text in `view` — `Marginal.text` is the accepted view;
+	 *  `read --baseline`/`--current` need theirs. `markRevision` wraps each of
+	 *  the part's pending revisions (the `Marginal.trackedChanges` entry for its
+	 *  wrapper), which is how `--current` shows them as CriticMarkup. */
+	text(
+		marginal: Marginal,
+		view: RevisionView,
+		markRevision?: (text: string, change: TrackedChange) => string,
+	): string {
+		const ref = findMarginalRef(this.document, marginal.id);
+		if (!ref) return marginal.text;
+		const changeByWrapper = new Map<XmlNode, TrackedChange>();
+		for (const change of marginal.trackedChanges ?? []) {
+			const reference = this.document.trackedChangeReferences.get(change.id);
+			if (reference) changeByWrapper.set(reference.node, change);
+		}
+		return marginalText(ref.tree, view, (text, wrapper) => {
+			const change = changeByWrapper.get(wrapper);
+			return change && markRevision ? markRevision(text, change) : text;
+		});
+	}
 
 	/** Set (create or replace) a header/footer of `type` on each of `sectPrs`,
 	 *  sharing ONE part across all of them (one rId referenced from each section,

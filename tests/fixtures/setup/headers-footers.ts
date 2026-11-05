@@ -22,6 +22,12 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  * add must re-declare `xmlns:r` on save (`declareUsedNamespaces`); before that
  * fix `validate` rejected the file ("Namespace prefix r … not defined").
  *
+ * A reviewer's tracked replace INSIDE the default header ("Corporation" →
+ * "Corp.", Word keeps it in header1.xml) rides along, so the `docx:header`
+ * hint's `pending="tcN …"` token and its `--current` CriticMarkup survive the
+ * LibreOffice round-trip (`raw part edit` — no verb authors a tracked header
+ * edit; `headers set` replaces the part).
+ *
  * Two physical pages (a page break splits the body) so the first-page header
  * differs from the default on page 2 and the page-count field is meaningful.
  * Built entirely through the surface verbs, so building it is an end-to-end smoke
@@ -100,6 +106,20 @@ await cli(
 
 // Default running header — two-zone: company name (left) + auto date (right).
 await cli("headers", "set", out, "--text", "Acme Corporation", "--date");
+// A reviewer's pending replace inside the running header.
+const revision = 'w:author="Reviewer" w:date="2026-05-22T00:00:00Z"';
+await cli(
+	"raw",
+	"part",
+	"edit",
+	out,
+	"--name",
+	"word/header1.xml",
+	"--find",
+	'<w:t xml:space="preserve">Acme Corporation</w:t></w:r>',
+	"--with",
+	`<w:t xml:space="preserve">Acme </w:t></w:r><w:del w:id="9001" ${revision}><w:r><w:delText>Corporation</w:delText></w:r></w:del><w:ins w:id="9002" ${revision}><w:r><w:t>Corp.</w:t></w:r></w:ins>`,
+);
 // Different first page (sets <w:titlePg/> on the section). The `\n` decodes to a
 // <w:br/> in the header part, so this fixture also round-trips break-bearing
 // marginal content through LibreOffice (guards the inline-escape emit path).
