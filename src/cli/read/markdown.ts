@@ -33,6 +33,7 @@ import {
 	type RunFormatBaseline,
 	resolveInheritedFonts,
 } from "@core/dominant-formatting";
+import { formatEquationToken } from "@core/equation";
 import { extensionForImageMime } from "@core/image/formats";
 import { inlineEscapeMask } from "@core/markdown";
 import {
@@ -1504,11 +1505,10 @@ function renderRuns(
 			// `$…$` for inline, `$$…$$` for display. The walker in
 			// `@core/equation` reconstructed `run.latex` from the OMML subtree;
 			// `run.text` is the legacy plaintext fallback for fully-degraded
-			// (unrecognized) equations — use it only when the LaTeX walker
-			// returned empty.
-			const body = run.latex.length > 0 ? run.latex : run.text;
+			// (unrecognized) equations. The token is the one find/replace and
+			// span offsets count, so a span read off this view lines up.
 			out += markRevision(
-				run.display ? `$$${body}$$` : `$${body}$`,
+				formatEquationToken(run.latex, run.text, run.display),
 				run.trackedChange,
 				view,
 				ctx,

@@ -1,6 +1,11 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
-import { ommlToLatex } from "../equation";
 import { MATH_REVISION_TAGS } from "../equation/handlers";
+import {
+	equationLatex,
+	formatEquationToken,
+	hasUnmarkedMathText,
+	mathText,
+} from "../equation/token";
 
 import { marginalConfig } from "../marginals/config";
 import { enumerateMarginalRefs, type MarginalRef } from "../marginals/resolve";
@@ -680,7 +685,7 @@ function walkRunContainer(
 		}
 
 		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
-			const text = collectMathText(child);
+			const text = mathText(child);
 			if (text.length > 0) {
 				const display = child.tag === "m:oMathPara";
 				const id = `eq${context.state.equationIndex++}`;
@@ -693,9 +698,9 @@ function walkRunContainer(
 				// A partly revised equation has no run-level revision to hide it by,
 				// so its LaTeX is the accepted view `read` defaults to — what
 				// `accept --all` leaves — not the deleted symbols beside the kept ones.
-				const latex = ommlToLatex(
-					revisions.partial ? withoutMathDeletions(child) : child,
-				);
+				// `equationLatex` is the same call the XML offset walkers make
+				// (`equationToken`), so both sides give the equation one width.
+				const latex = equationLatex(child);
 				const run: EquationRun = {
 					type: "equation",
 					id,
@@ -709,6 +714,13 @@ function walkRunContainer(
 				const change = revisions.whole ?? trackedChange;
 				if (change) run.trackedChange = change;
 				context.paragraph.runs.push(run);
+				// The equation's `read` token is part of the offset space, as in
+				// `find`, so a comment anchor after it lands where `find` says.
+				context.offsetRef.value += formatEquationToken(
+					latex,
+					text,
+					display,
+				).length;
 				context.document.body.equationReferences.set(id, {
 					node: child,
 					parent: container.children,
@@ -861,29 +873,6 @@ function collectMathRevisionMarkers(
 		markers.push({ node: child, parent: node.children });
 		groups.set(key, markers);
 	}
-}
-
-/** Whether any of the equation's text sits outside a revision marker. */
-function hasUnmarkedMathText(node: XmlNode): boolean {
-	return node.children.some((child) => {
-		if (MATH_REVISION_TAGS.has(child.tag)) return false;
-		if (child.tag === "m:t") return child.collectText().length > 0;
-		return hasUnmarkedMathText(child);
-	});
-}
-
-/** A copy of `node` as it reads once its tracked deletions are accepted — a
- *  copy, so the live tree keeps every marker for `accept`/`reject`. */
-function withoutMathDeletions(node: XmlNode): XmlNode {
-	const copy = new XmlNode(
-		node.tag,
-		node.attributes,
-		node.children
-			.filter((child) => child.tag !== "w:del")
-			.map(withoutMathDeletions),
-	);
-	if (node.text !== undefined) copy.text = node.text;
-	return copy;
 }
 
 const TRACKED_CHANGE_KIND_BY_TAG: Record<
@@ -1262,20 +1251,6 @@ function classifyDrawing(drawing: XmlNode): ChartRun {
 	if (drawing.findDescendant("wps:wsp"))
 		return { type: "chart", kind: "shape" };
 	return { type: "chart", kind: "drawing" };
-}
-
-/** Concatenate all <m:t> descendants in document order. The structural OOMath
- * (subs, sups, fractions) collapses to flat characters — degraded but readable. */
-function collectMathText(node: XmlNode): string {
-	let out = "";
-	for (const child of node.children) {
-		if (child.tag === "m:t") {
-			out += child.collectText();
-			continue;
-		}
-		out += collectMathText(child);
-	}
-	return out;
 }
 
 function applyRunProperties(run: TextRun, runProperties: XmlNode): void {

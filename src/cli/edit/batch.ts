@@ -748,7 +748,7 @@ async function buildWholeParagraphContent(
 	return () =>
 		new Edit(document).paragraph(
 			blockRef,
-			{ kind: "markdown-blocks", blocks, paragraphOptions },
+			{ kind: "markdown-blocks", blocks, paragraphOptions, source },
 			{
 				authorFlag: author,
 				noFormatting: opts.noFormatting,

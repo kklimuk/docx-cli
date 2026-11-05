@@ -6,6 +6,7 @@ import {
 	locatorToBlockTarget,
 	parseLocator,
 } from "@core";
+import { runViewText } from "@core/find";
 import { Hyperlinks, HyperlinkWrapError } from "@core/hyperlinks";
 import {
 	EXIT,
@@ -175,7 +176,8 @@ export async function run(args: string[]): Promise<number> {
  *  overlapping an existing hyperlink, so the only hyperlink covering this offset
  *  after the add is the new one; the contiguous text runs carrying that id are
  *  the wrapped span — echoing them lets the caller catch an off-by-one offset.
- *  The text-offset model mirrors `paragraphText` (only `text` runs count).
+ *  Offsets are `find`'s (`runViewText`: an equation takes its `$…$` token's
+ *  width), so a link after an equation is found where the span put it.
  *  Returns `undefined` only if the re-read can't relocate the link (defensive —
  *  the span was just wrapped). */
 async function findMintedHyperlink(
@@ -191,7 +193,10 @@ async function findMintedHyperlink(
 	let foundId: string | undefined;
 	let text = "";
 	for (const run of block.runs) {
-		if (run.type !== "text") continue;
+		if (run.type !== "text") {
+			offset += runViewText(run, "current").length;
+			continue;
+		}
 		const runEnd = offset + run.text.length;
 		// The first text run reaching past `spanStart` carries the new hyperlink.
 		if (foundId === undefined && run.hyperlink && spanStart < runEnd) {

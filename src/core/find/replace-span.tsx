@@ -2,6 +2,8 @@ import { textToRunElements } from "../blocks";
 import { applyRunFormatToRpr, type RunFormat } from "../edit/set-formatting";
 import { w } from "../jsx";
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	rewrapSplitHalf,
@@ -57,11 +59,33 @@ export function sumVisibleTextLength(
 			total += runTextLength(child);
 			continue;
 		}
+		if (isEquation(child)) {
+			total += equationWidth(child, view);
+			continue;
+		}
 		if (isWrapperVisibleInView(child.tag, view)) {
 			total += sumVisibleTextLength(wrapperContent(child), view);
 		}
 	}
 	return total;
+}
+
+/** Where an atomic equation occupying `[start, end)` falls against `span`:
+ *  wholly before it (or hidden, width 0 — it then keeps its document position
+ *  like any marker), wholly after it, or covered by it. A span that cuts one
+ *  is refused above the walkers (`equationOverlaps` → `cut`), so reaching one
+ *  here is a bug, not an input. */
+export function equationSide(
+	start: number,
+	end: number,
+	span: Span,
+): "before" | "after" | "covered" {
+	if (end === start || end <= span.start) return "before";
+	if (start >= span.end) return "after";
+	if (start >= span.start && end <= span.end) return "covered";
+	throw new Error(
+		`span ${span.start}-${span.end} cuts the equation at ${start}-${end}; equationOverlaps should have refused it`,
+	);
 }
 
 /**
@@ -109,7 +133,7 @@ export function replaceSpanInParagraph(
 		return;
 	}
 
-	const inheritedProperties = firstSlot.run.findChild("w:rPr")?.clone() ?? null;
+	const inheritedProperties = inheritedRunProperties(slots, overlapping, span);
 	const firstParent = firstSlot.parent;
 	const allSameParent = overlapping.every(
 		(slot) => slot.parent === firstParent,
@@ -162,6 +186,31 @@ export function replaceSpanInParagraph(
 	);
 }
 
+/** The rPr the replacement inherits: the first overlapping RUN's. A span
+ *  over nothing but an equation takes the text beside it (before, else after)
+ *  instead — an equation has no run formatting to hand on. */
+function inheritedRunProperties(
+	slots: RunSlot[],
+	overlapping: RunSlot[],
+	span: Span,
+): XmlNode | null {
+	const textSlot =
+		overlapping.find((slot) => slot.run.tag === "w:r") ??
+		slots
+			.filter(
+				(slot) =>
+					slot.run.tag === "w:r" &&
+					slot.offsetBefore + slot.length <= span.start,
+			)
+			.at(-1) ??
+		slots.find(
+			(slot) => slot.run.tag === "w:r" && slot.offsetBefore >= span.end,
+		);
+	return textSlot?.run.findChild("w:rPr")?.clone() ?? null;
+}
+
+/** One unit of the paragraph's offset space: a `<w:r>`, or an equation
+ *  (`<m:oMath>`/`<m:oMathPara>`, one atomic unit as wide as its token). */
 type RunSlot = {
 	parent: XmlNode;
 	/** Offset at which `parent`'s content starts (0 for the paragraph). */
@@ -177,8 +226,11 @@ function collectRunSlots(paragraph: XmlNode, view: FindView): RunSlot[] {
 	function walk(parent: XmlNode, children: XmlNode[]): void {
 		const parentStart = offset;
 		for (const child of children) {
-			if (child.tag === "w:r") {
-				const length = runTextLength(child);
+			if (child.tag === "w:r" || isEquation(child)) {
+				const length =
+					child.tag === "w:r"
+						? runTextLength(child)
+						: equationWidth(child, view);
 				slots.push({
 					parent,
 					parentStart,
@@ -256,6 +308,22 @@ function rebuildContainer(
 			if (sliceEndInRun < length) {
 				newChildren.push(sliceRun(child, sliceEndInRun, length));
 			}
+			continue;
+		}
+		if (isEquation(child)) {
+			const start = offset;
+			offset += equationWidth(child, view);
+			const side = equationSide(start, offset, span);
+			if (side === "after") placeReplacement();
+			if (side !== "covered") {
+				newChildren.push(child);
+				continue;
+			}
+			// Covered: the match visibly included the whole `$…$` token, so the
+			// equation goes with it — whole, inside a `<w:del>` when tracked.
+			if (tracked)
+				newChildren.push(<Del meta={mintMeta(tracked)}>{child}</Del>);
+			placeReplacement();
 			continue;
 		}
 		if (isWrapperVisibleInView(child.tag, view)) {
@@ -365,6 +433,21 @@ function rebuildChildrenAcrossSpan(
 			continue;
 		}
 
+		if (isEquation(child)) {
+			const start = offset;
+			offset += equationWidth(child, view);
+			const side = equationSide(start, offset, span);
+			if (side === "after") placeReplacement();
+			if (side !== "covered") {
+				newChildren.push(child);
+				continue;
+			}
+			if (tracked)
+				newChildren.push(<Del meta={mintMeta(tracked)}>{child}</Del>);
+			placeReplacement();
+			continue;
+		}
+
 		// Wrappers invisible in the chosen view (and any non-wrapper child)
 		// pass through untouched — their inner text contributes nothing to the
 		// offset and the span never slices into them.
@@ -404,6 +487,7 @@ function rebuildChildrenAcrossSpan(
 				wrapperStart,
 				span,
 				tracked,
+				view,
 				newChildren,
 				placeReplacement,
 			);
@@ -431,6 +515,7 @@ function rebuildChildrenAcrossSpan(
 			child,
 			wrapperStart,
 			span,
+			view,
 			newChildren,
 			placeReplacement,
 		);
@@ -503,6 +588,7 @@ function splitWrapperAcrossSpan(
 	wrapperStart: number,
 	span: Span,
 	tracked: TrackedReplaceOptions,
+	view: FindView,
 	out: XmlNode[],
 	placeReplacement: () => void,
 ): void {
@@ -519,6 +605,18 @@ function splitWrapperAcrossSpan(
 	let innerOffset = wrapperStart;
 
 	for (const inner of wrapper.children) {
+		if (isEquation(inner)) {
+			const start = innerOffset;
+			innerOffset += equationWidth(inner, view);
+			const side = equationSide(start, innerOffset, span);
+			(side === "before"
+				? preInner
+				: side === "after"
+					? postInner
+					: cutInner
+			).push(inner);
+			continue;
+		}
 		if (inner.tag !== "w:r") {
 			preInner.push(inner);
 			continue;
@@ -581,6 +679,7 @@ function splitTransparentWrapperAcrossSpan(
 	wrapper: XmlNode,
 	wrapperStart: number,
 	span: Span,
+	view: FindView,
 	out: XmlNode[],
 	placeReplacement: () => void,
 ): void {
@@ -592,6 +691,16 @@ function splitTransparentWrapperAcrossSpan(
 	// branch's runs — the halves come back BARE (`rewrapSplitHalf`), since a
 	// wrapper can't be split into two valid Choice/Fallback pairs.
 	for (const inner of wrapperContent(wrapper)) {
+		if (isEquation(inner)) {
+			// Covered → dropped with the rest of the cut (these wrappers are
+			// only split untracked or, for a link, inside the editor's own ins).
+			const start = innerOffset;
+			innerOffset += equationWidth(inner, view);
+			const side = equationSide(start, innerOffset, span);
+			if (side === "before") preInner.push(inner);
+			if (side === "after") postInner.push(inner);
+			continue;
+		}
 		if (inner.tag !== "w:r") {
 			preInner.push(inner);
 			continue;
@@ -640,6 +749,16 @@ function splitHyperlinkAcrossSpan(
 	let innerOffset = wrapperStart;
 
 	for (const inner of wrapper.children) {
+		if (isEquation(inner)) {
+			// Covered → dropped with the rest of the cut (these wrappers are
+			// only split untracked or, for a link, inside the editor's own ins).
+			const start = innerOffset;
+			innerOffset += equationWidth(inner, view);
+			const side = equationSide(start, innerOffset, span);
+			if (side === "before") preInner.push(inner);
+			if (side === "after") postInner.push(inner);
+			continue;
+		}
 		if (inner.tag !== "w:r") {
 			preInner.push(inner);
 			continue;

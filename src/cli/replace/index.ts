@@ -3,9 +3,7 @@ import {
 	findTextSpans,
 	type ReplacementFormatting,
 	replacementExpander,
-	replaceSpanInParagraph,
 	selectMatches,
-	spanOverEquationsError,
 	type TrackedReplaceOptions,
 } from "@core/find";
 import {
@@ -28,6 +26,7 @@ import {
 	writeStdout,
 } from "../respond";
 import { partialReplaceHint, runReplaceAcross } from "./across";
+import { applyMatchesOrFail } from "./apply-matches";
 import { runReplaceBatch } from "./batch";
 import { matchesInScope, resolveReplaceScope, ScopeError } from "./scope";
 
@@ -51,7 +50,7 @@ Examples:
   docx replace doc.docx "fox" "cat" --all
   docx replace doc.docx "TODO" "Done" --bold --color 008000 --clear highlight
   docx replace doc.docx "TODO|FIXME" "DONE" --regex --all
-  docx replace doc.docx "(\\w+) (\\w+)" "$2 $1" --regex --all
+  docx replace doc.docx '(\\w+) (\\w+)' '$2 $1' --regex --all
   docx replace doc.docx "wordy phrase" "tighter phrase" --all --dry-run
 
 Options:
@@ -107,8 +106,8 @@ Matching:
   inherited properties and the formatting flags overlay new values on only the
   replacement text. --exact matches the raw pattern verbatim; --regex is always
   verbatim.
-  If PATTERN or REPLACEMENT begins with a dash ("-$500.00", "--TODO"), put a
-  bare "--" before the positionals: docx replace doc.docx -- "Total" "-$500.00"
+  If PATTERN or REPLACEMENT begins with a dash ('-$500.00', "--TODO"), put a
+  bare "--" before the positionals: docx replace doc.docx -- 'Total' '-$500.00'
   With --regex, REPLACEMENT supports $1, $2, … (capture groups), $& (the
   whole match), and $$ (a literal $).
 
@@ -131,11 +130,13 @@ Output:
   occurrences exits nonzero (MATCH_NOT_FOUND). Unsure it matches? Probe with
   \`docx find FILE PATTERN\` or --dry-run and READ the reported count — both
   exit 0 whether or not it matches; only the real replace exits nonzero on 0.
-  An equation takes no characters in the matched text, so a match can run
-  across one unseen (\`find --json\` lists it under "equations"); such a match
-  is refused (UNSUPPORTED, nothing written) rather than leave the equation
-  stranded — rewrite that paragraph as markdown with
-  \`docx edit FILE --at pN "… $…$ …"\` instead.
+  An equation is its token exactly as \`read\` prints it ($E=mc^2$, $$…$$ for
+  a display block): a match covering the whole token deletes the equation, a
+  match inside it ("mc^2" → "mc^3") rewrites its LaTeX, and a match cutting a $
+  delimiter is refused (UNSUPPORTED, nothing written). The replacement is
+  literal text — "$5" stays "$5". Bash expands $ inside double quotes, so pass a
+  $-bearing pattern or replacement in single quotes or a --batch file (written
+  with a QUOTED heredoc: cat > subs.jsonl <<'EOF' … EOF).
   --batch: if ANY entry matches nothing, the exit is nonzero — but the entries
   that DID match are already applied and SAVED. Nonzero means "some entries
   missed," not "nothing changed" (the error names the misses).
@@ -320,16 +321,48 @@ export async function run(args: string[]): Promise<number> {
 
 	const outputPath = parsed.values.output as string | undefined;
 
-	// Checked before --dry-run, so the preview refuses exactly what the real
-	// replace would, and a refused --all leaves the file untouched.
-	const crossing = selected.find((match) => match.equations);
-	if (crossing?.equations) {
-		const refusal = spanOverEquationsError(
-			spanLocator(crossing),
-			crossing.equations,
+	// A zero-match replace is a SILENT NO-OP — the document is unchanged. Exit
+	// nonzero (MATCH_NOT_FOUND) instead of a cheerful "0 occurrences replaced":
+	// weak agents key their done/retry decision off the exit code (they demonstrably
+	// react to nonzero and ignore a 0-count success line), so a 0 exit here bakes in
+	// a confidently-wrong document. Nonzero forces them to notice and fix. (Not on
+	// --dry-run: a probe reports its count and exits 0.)
+	if (selected.length === 0 && !parsed.values["dry-run"]) {
+		const scopeNote = atScope ? ` within ${atScope}` : "";
+		return await fail(
+			"MATCH_NOT_FOUND",
+			`Pattern not found${scopeNote}: ${JSON.stringify(pattern)} — 0 occurrences, nothing changed.`,
+			`Match LITERAL document text, not read-view markup (\`<mark>\`/\`<u>\`/\`**\`…) or a locator. Run \`docx find ${path} ${JSON.stringify(pattern)}\` to see if/where it occurs; add --ignore-case, --regex, --at <locator> to scope, or --current/--baseline to search tracked-change text.`,
 		);
-		return fail(refusal.code, refusal.message, refusal.hint);
 	}
+
+	const authorFlag = parsed.values.author as string | undefined;
+	const tracked: TrackedReplaceOptions | undefined = resolveTracked(
+		document,
+		parsed.values.track,
+	)
+		? {
+				meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
+				allocator: new TrackChanges(document).createAllocator(),
+			}
+		: undefined;
+
+	const expand = replacementExpander({
+		pattern,
+		replacement,
+		regex: useRegex,
+		ignoreCase,
+	});
+	// Applied in memory even on --dry-run (only the save is skipped), so the
+	// preview refuses exactly what the real replace would — an equation the
+	// match cuts, a shell-mangled replacement, LaTeX that won't parse — and a
+	// refused --all leaves the file untouched.
+	const refused = await applyMatchesOrFail(document.body, selected, expand, {
+		tracked,
+		view: findView,
+		formatting: formatting ?? undefined,
+	});
+	if (refused !== undefined) return refused;
 
 	if (parsed.values["dry-run"]) {
 		await respond({
@@ -349,58 +382,6 @@ export async function run(args: string[]): Promise<number> {
 			...(outputPath ? { output: outputPath } : {}),
 		});
 		return EXIT.OK;
-	}
-
-	// A zero-match replace is a SILENT NO-OP — the document is unchanged. Exit
-	// nonzero (MATCH_NOT_FOUND) instead of a cheerful "0 occurrences replaced":
-	// weak agents key their done/retry decision off the exit code (they demonstrably
-	// react to nonzero and ignore a 0-count success line), so a 0 exit here bakes in
-	// a confidently-wrong document. Nonzero forces them to notice and fix.
-	if (selected.length === 0) {
-		const scopeNote = atScope ? ` within ${atScope}` : "";
-		return await fail(
-			"MATCH_NOT_FOUND",
-			`Pattern not found${scopeNote}: ${JSON.stringify(pattern)} — 0 occurrences, nothing changed.`,
-			`Match LITERAL document text, not read-view markup (\`<mark>\`/\`<u>\`/\`**\`…) or a locator. Run \`docx find ${path} ${JSON.stringify(pattern)}\` to see if/where it occurs; add --ignore-case, --regex, --at <locator> to scope, or --current/--baseline to search tracked-change text.`,
-		);
-	}
-
-	// Apply in reverse document order so earlier offsets stay valid as later
-	// ones get rewritten — both within a paragraph and across paragraphs.
-	const reversed = [...selected].sort((leftMatch, rightMatch) => {
-		if (leftMatch.blockId !== rightMatch.blockId) {
-			return rightMatch.blockId.localeCompare(leftMatch.blockId);
-		}
-		return rightMatch.start - leftMatch.start;
-	});
-
-	const authorFlag = parsed.values.author as string | undefined;
-	const tracked: TrackedReplaceOptions | undefined = resolveTracked(
-		document,
-		parsed.values.track,
-	)
-		? {
-				meta: { author: resolveAuthor(authorFlag), date: resolveDate() },
-				allocator: new TrackChanges(document).createAllocator(),
-			}
-		: undefined;
-
-	const expand = replacementExpander({
-		pattern,
-		replacement,
-		regex: useRegex,
-		ignoreCase,
-	});
-	for (const match of reversed) {
-		const blockRef = document.body.resolveBlock(match.blockId);
-		replaceSpanInParagraph(
-			blockRef.node,
-			{ start: match.start, end: match.end },
-			expand(match.text),
-			tracked,
-			findView,
-			formatting ?? undefined,
-		);
 	}
 
 	await document.save(outputPath);

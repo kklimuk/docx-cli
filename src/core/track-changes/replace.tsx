@@ -8,6 +8,7 @@ import {
 } from "../blocks";
 import { hasTextBox, isAlternateContent } from "../mc";
 import {
+	isEquation,
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	partitionParagraphRuns,
@@ -28,6 +29,7 @@ import {
 	buildUntrackedRuns,
 	diffTokens,
 	extractOldTokens,
+	type InsertedEquations,
 	paragraphMarkRunRpr,
 	tokenize,
 } from "./preserve-formatting";
@@ -37,7 +39,13 @@ import {
  *  mode emits the Word-shaped mix of plain runs / `<w:ins>` / `<w:del>` that
  *  Word produces when an author edits a few words mid-paragraph under tracking.
  *  Pure pPr properties (`--style`, `--alignment`) apply to the existing pPr in
- *  place via `applyParagraphOptionsInPlace`. */
+ *  place via `applyParagraphOptionsInPlace`.
+ *
+ *  Equations are tokens in the diff: `newText` is the planned text
+ *  (`planEquationText`), each kept equation a sentinel that aligns with the
+ *  old one so the object stays where the text puts it, a deleted one gone (in
+ *  `<w:del>` under tracking), and each sentinel the old text lacks emitted from
+ *  `insertedEquations` (an edit's recompiled OMML, or a moved original). */
 export function applyFormattingPreservingEdit(
 	document: Document,
 	paragraph: XmlNode,
@@ -45,6 +53,7 @@ export function applyFormattingPreservingEdit(
 	paragraphOptions: ParagraphOptions,
 	authorFlag: string | undefined,
 	tracked: boolean,
+	insertedEquations: InsertedEquations = new Map(),
 ): void {
 	const oldTokens = extractOldTokens(paragraph);
 	const newTokens = tokenize(newText);
@@ -55,10 +64,20 @@ export function applyFormattingPreservingEdit(
 	// up the cell's declared font/size — matching how Word fills empty styled cells.
 	const fallbackRpr = paragraphMarkRunRpr(paragraph);
 	const runChildren = tracked
-		? buildTrackedRuns(ops, makeMetaMinter(document, authorFlag), fallbackRpr)
-		: buildUntrackedRuns(ops, fallbackRpr);
+		? buildTrackedRuns(
+				ops,
+				makeMetaMinter(document, authorFlag),
+				fallbackRpr,
+				insertedEquations,
+			)
+		: buildUntrackedRuns(ops, fallbackRpr, insertedEquations);
 
-	const { nonRuns } = partitionParagraphRuns(paragraph);
+	// A visible equation came back through its token above; a direct-child one
+	// its own markers delete (hidden in the accepted view) goes with the rest of
+	// the pending deletions the rebuild drops — never hoisted to the front.
+	const nonRuns = partitionParagraphRuns(paragraph).nonRuns.filter(
+		(child) => !isEquation(child),
+	);
 	// The text diff rebuilds runs from TOKENS, which sees no drawing — so the
 	// runs carrying a text box, image, or legacy embed are lifted out first and
 	// put back around the new text (anchors that led the paragraph lead it

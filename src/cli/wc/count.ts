@@ -6,6 +6,7 @@ import {
 	paragraphTextAccepted,
 	paragraphTextBaseline,
 } from "@core";
+import { runViewText } from "@core/find";
 
 export type CountView = "current" | "accepted" | "baseline";
 export type CountOptions = { view?: CountView };
@@ -86,10 +87,24 @@ export function countWordsInParagraphSpan(
 	end: number,
 	options: CountOptions = {},
 ): number {
-	const text = textFor(options)(paragraph);
+	const text = spanText(paragraph, options.view ?? "accepted");
 	const clampedEnd = Math.min(Math.max(end, 0), text.length);
 	const clampedStart = Math.min(Math.max(start, 0), clampedEnd);
 	return countWords(text.slice(clampedStart, clampedEnd));
+}
+
+/** The paragraph's text in `find`'s offset model, so a span `find` printed
+ *  slices the same characters here: tabs and line breaks take one character,
+ *  an equation its `$…$` token's width. The token is blanked to spaces —
+ *  whole-paragraph counts don't count an equation as words, and a span
+ *  covering one mustn't either. */
+function spanText(paragraph: Paragraph, view: CountView): string {
+	let out = "";
+	for (const run of paragraph.runs) {
+		const text = runViewText(run, view);
+		out += run.type === "equation" ? " ".repeat(text.length) : text;
+	}
+	return out;
 }
 
 /** Word-count a cross-paragraph range: chars [startOffset..end-of-pStart], all
@@ -127,7 +142,7 @@ export function countWordsInRange(
 		total += countWordsInParagraphSpan(
 			first,
 			startOffset,
-			text(first).length,
+			Number.POSITIVE_INFINITY,
 			options,
 		);
 	}

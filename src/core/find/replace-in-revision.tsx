@@ -1,5 +1,7 @@
 import {
+	equationWidth,
 	inlineMarkerWidth,
+	isEquation,
 	runTextLength,
 	sliceRun,
 	wrapperContent,
@@ -110,9 +112,11 @@ function partitionWrapperChildren(
 		const length =
 			child.tag === "w:r"
 				? runTextLength(child)
-				: isWrapperVisibleInView(child.tag, view)
-					? sumVisibleTextLength(wrapperContent(child), view)
-					: 0;
+				: isEquation(child)
+					? equationWidth(child, view)
+					: isWrapperVisibleInView(child.tag, view)
+						? sumVisibleTextLength(wrapperContent(child), view)
+						: 0;
 		const childStart = offset;
 		const childEnd = offset + length;
 		offset = childEnd;
@@ -156,6 +160,8 @@ function cutRemnants(cut: XmlNode[]): { before: XmlNode[]; after: XmlNode[] } {
 	const after: XmlNode[] = [];
 	let seenRun = false;
 	for (const child of cut) {
+		// A covered equation is content, like the cut's characters: it goes.
+		if (isEquation(child)) continue;
 		if (child.tag !== "w:r") {
 			if (!seenRun || RANGE_START_TAGS.has(child.tag)) before.push(child);
 			else after.push(child);
@@ -198,6 +204,12 @@ function deleteCutInOrder(
 	for (const child of cut) {
 		if (child.tag === "w:r") {
 			group.push(convertTextToDelText(child));
+			continue;
+		}
+		// A covered equation is deleted with the runs around it, whole — the
+		// way Word deletes one (`<w:del><m:oMath>…</m:oMath></w:del>`).
+		if (isEquation(child)) {
+			group.push(child);
 			continue;
 		}
 		flush();

@@ -1391,3 +1391,84 @@ describe("docx comments reply --batch", () => {
 		expect(result.exitCode).toBe(2);
 	});
 });
+
+// An equation is its `read` token in --anchor/--at offsets, so a phrase copied
+// from `read` anchors exactly, and a range can't open or close inside one.
+describe("comments over an inline equation", () => {
+	async function equationDoc(): Promise<string> {
+		const workspace = tempWorkspace("comments-equation");
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		return docPath;
+	}
+	const markerOrder = async (docPath: string) =>
+		(await readDocumentXml(docPath)).match(
+			/<w:commentRange(?:Start|End)|<m:oMath>|<\/m:oMath>|physics/g,
+		);
+
+	test("--anchor across the token brackets the whole equation", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"is $E=mc^2$ in",
+			"--text",
+			"Cite this.",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await markerOrder(docPath)).toEqual([
+			"<w:commentRangeStart",
+			"<m:oMath>",
+			"</m:oMath>",
+			"<w:commentRangeEnd",
+			"physics",
+		]);
+	});
+
+	test("text after the equation anchors at its read offsets", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"physics",
+			"--text",
+			"Which branch?",
+		);
+		const [comment] = (await runCli("comments", "list", docPath)).parsed as {
+			anchor?: object;
+		}[];
+		// The same offsets `find physics` reports past the 8-char token.
+		expect(comment?.anchor).toEqual({
+			startBlockId: "p0",
+			startOffset: 22,
+			endBlockId: "p0",
+			endOffset: 29,
+		});
+	});
+
+	test("a span strictly inside the token snaps outward around the equation", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0:13-17",
+			"--text",
+			"Squared?",
+		);
+		expect(await markerOrder(docPath)).toEqual([
+			"<w:commentRangeStart",
+			"<m:oMath>",
+			"</m:oMath>",
+			"<w:commentRangeEnd",
+			"physics",
+		]);
+	});
+});

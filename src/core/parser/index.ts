@@ -1,5 +1,7 @@
 export {
+	equationWidth,
 	inlineMarkerWidth,
+	isEquation,
 	isRunBearingWrapper,
 	isSubtractiveTrackedChangeWrapper,
 	partitionParagraphRuns,

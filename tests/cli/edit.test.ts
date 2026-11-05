@@ -5352,36 +5352,174 @@ describe("edit with markdown that changes only words is a word-level edit", () =
 	});
 });
 
-// `--text` can't say where an equation goes, and a span edit can't remove one:
-// both used to move or strand it silently. Both refuse now; markdown with $…$
-// is the way to rewrite such a paragraph.
+// An equation is its `read` token (`$E=mc^2$`) in both span offsets and a
+// whole-paragraph `--text` rewrite: keep the token to keep the equation, change
+// what's between its delimiters to edit it, leave it out to delete it. A span
+// cutting a `$` delimiter is refused, as is a rewrite that can't be read one way.
 describe("edit over an inline equation", () => {
-	async function equationDoc(): Promise<string> {
+	async function equationDoc(source = "Energy is $E=mc^2$ in physics.\n") {
 		const workspace = tempWorkspace("edit-equation");
 		const docPath = join(workspace, "eq.docx");
-		const source = join(workspace, "eq.md");
-		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
-		await runCli("create", docPath, "--from", source);
+		const markdownPath = join(workspace, "eq.md");
+		await Bun.write(markdownPath, source);
+		await runCli("create", docPath, "--from", markdownPath);
 		return docPath;
 	}
+	const firstLine = async (docPath: string, ...flags: string[]) =>
+		(await runCli("read", docPath, ...flags)).stdout
+			.split("\n")
+			.find((line) => line.includes("<!-- p0 -->"));
+	const equationCount = async (docPath: string) =>
+		((await readDocumentXml(docPath)).match(/<m:oMath[ >]/g) ?? []).length;
+	// An equation carrying what a recompile from LaTeX would not reproduce
+	// (Word's Cambria Math run font), so "kept" is distinguishable from
+	// "rebuilt from its token".
+	const wordEquationDoc = () =>
+		buildRawDoc(
+			'<w:p><w:r><w:t xml:space="preserve">Energy is </w:t></w:r>' +
+				'<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><m:t>x</m:t></m:r></m:oMath>' +
+				'<w:r><w:t xml:space="preserve"> in physics.</w:t></w:r></w:p>',
+			"edit-word-equation",
+		);
 
-	test("a span edit across the equation is refused", async () => {
-		const docPath = await equationDoc();
-		const before = await readDocumentXml(docPath);
+	test("--text keeping the token keeps the equation object in place", async () => {
+		const docPath = await wordEquationDoc();
 		const result = await runCli(
 			"edit",
 			docPath,
 			"--at",
-			"p0:7-13",
+			"p0",
 			"--text",
-			"XX",
+			"Energy is $x$ in modern physics.",
 		);
-		expect(result.exitCode).toBe(1);
-		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $x$ in modern physics. <!-- p0 -->",
+		);
+		// The very same OMML, not a recompile from `x`.
+		expect(await readDocumentXml(docPath)).toContain("Cambria Math");
+	});
+
+	test("--text leaving the token out deletes the equation", async () => {
+		const docPath = await equationDoc();
+		await runCli("edit", docPath, "--at", "p0", "--text", "Energy is huge.");
+		expect(await firstLine(docPath)).toBe("Energy is huge. <!-- p0 -->");
+		expect(await equationCount(docPath)).toBe(0);
+	});
+
+	test("--text changing the LaTeX between the delimiters edits the equation", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Energy is $E=mc^3$ in physics.",
+		);
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+		expect(await equationCount(docPath)).toBe(1);
+	});
+
+	test("a tracked --text equation edit is a del/ins pair, rejectable", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Energy is $E=mc^3$ in physics.",
+			"--track",
+		);
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+		expect(await firstLine(docPath, "--baseline")).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+	});
+
+	test("a tracked --text edit beside a kept token leaves the equation untracked", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Energy is $E=mc^2$ in modern physics.",
+			"--track",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toMatch(/<w:(?:ins|del) [^>]*><m:oMath>/);
+		expect(await firstLine(docPath, "--baseline")).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+	});
+
+	test("a $5 in --text stays literal text", async () => {
+		const docPath = await equationDoc();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"It costs $5 in physics.",
+		);
+		expect(await firstLine(docPath)).toBe(
+			"It costs $5 in physics. <!-- p0 -->",
+		);
+		expect(await equationCount(docPath)).toBe(0);
+	});
+
+	test("an ambiguous --text rewrite is refused", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		for (const text of [
+			// two spans where one equation was
+			"Energy is $a$ and $b$ in physics.",
+			// an inline equation turned display
+			"Energy is $$E=mc^2$$ in physics.",
+		]) {
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				"--text",
+				text,
+			);
+			expect(result.exitCode).toBe(1);
+			expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		}
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
-	test("a whole-paragraph --text edit is refused instead of moving the equation", async () => {
+	test("--text swapping two equations is refused, not silently retyped", async () => {
+		const docPath = await equationDoc("Both $a$ and $b$ here.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Both $b$ and $a$ here.",
+		);
+		expect(result.exitCode).toBe(1);
+		expect((result.parsed as { error: string }).error).toContain(
+			"can't move an equation",
+		);
+	});
+
+	test("--text whose new LaTeX doesn't parse is refused before anything changes", async () => {
 		const docPath = await equationDoc();
 		const before = await readDocumentXml(docPath);
 		const result = await runCli(
@@ -5390,15 +5528,85 @@ describe("edit over an inline equation", () => {
 			"--at",
 			"p0",
 			"--text",
-			"New words.",
+			"Energy is $E=mc^{$ in physics.",
 		);
-		expect(result.exitCode).toBe(1);
-		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(result.exitCode).toBe(2);
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
-	test("the span refusal names the whole span", async () => {
+	test("a shell-mangled --text or markdown that drops the equation is refused", async () => {
+		// Double-quoted bash turns "Energy is $E=mc^2$ now" into this.
 		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		for (const flag of [["--text"], []]) {
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				...flag,
+				"Energy is =mc^2$ now",
+			);
+			expect(result.exitCode).toBe(2);
+			const { error, hint } = result.parsed as { error: string; hint: string };
+			expect(error).toContain('"=mc^2$"');
+			expect(hint).toContain('{"at":"p0","markdown":"Energy is $E=mc^2$ now"}');
+			expect(hint).toContain("<<'EOF'");
+		}
+		// A stray `$` is the other telltale.
+		const stray = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Energy is $ now",
+		);
+		expect(stray.exitCode).toBe(2);
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("the backstop leaves a paragraph without equations alone", async () => {
+		const docPath = await equationDoc("Plain words here.\n");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"It costs $ now",
+		);
+		expect(result.exitCode).toBe(0);
+	});
+
+	test("the same edit from a batch file keeps the $ the shell would eat", async () => {
+		const docPath = await equationDoc();
+		const script = join(docPath, "..", "edits.jsonl");
+		await Bun.write(
+			script,
+			'{"at":"p0","markdown":"Energy is $E=mc^2$ now"}\n',
+		);
+		const result = await runCli("edit", docPath, "--batch", script);
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine(docPath)).toBe("Energy is $E=mc^2$ now <!-- p0 -->");
+	});
+
+	test("a span covering the token deletes the equation; inside rewrites it", async () => {
+		const docPath = await equationDoc();
+		await runCli("edit", docPath, "--at", "p0:13-17", "--text", "mc^3");
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+		await runCli("edit", docPath, "--at", "p0:10-18", "--text", "X");
+		expect(await firstLine(docPath)).toBe(
+			"Energy is X in physics. <!-- p0 -->",
+		);
+		expect(await equationCount(docPath)).toBe(0);
+	});
+
+	test("a span cutting the token is refused, naming the whole span", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
 		const result = await runCli(
 			"edit",
 			docPath,
@@ -5407,7 +5615,28 @@ describe("edit over an inline equation", () => {
 			"--text",
 			"XX",
 		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
 		expect((result.parsed as { error: string }).error).toStartWith("p0:7-13:");
+		expect((result.parsed as { hint: string }).hint).toContain("p0:10-18");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("--text that must rebuild from literal text is refused over an equation", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Energy is $E=mc^2$ in physics.",
+			"--bold",
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
 	test("a whole-paragraph --runs edit is refused instead of dropping the equation", async () => {
@@ -5426,30 +5655,16 @@ describe("edit over an inline equation", () => {
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
-	test("the hint sends the agent to its own read line, not a sample sentence", async () => {
-		const docPath = await equationDoc();
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--text",
-			"New words.",
-		);
-		const hint = (result.parsed as { hint: string }).hint;
-		expect(hint).toContain("docx read FILE");
-		expect(hint).not.toContain("here.");
-	});
-
 	test("--dry-run refuses what the real edit refuses, single and batch", async () => {
 		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
 		const single = await runCli(
 			"edit",
 			docPath,
 			"--at",
 			"p0",
 			"--text",
-			"New words.",
+			"Energy is $a$ and $b$.",
 			"--dry-run",
 		);
 		expect(single.exitCode).toBe(1);
@@ -5465,10 +5680,10 @@ describe("edit over an inline equation", () => {
 		);
 		expect(span.parsed).toMatchObject({ code: "UNSUPPORTED" });
 		const script = join(docPath, "..", "entries.jsonl");
-		await Bun.write(script, '{"at":"p0","text":"New"}\n');
+		await Bun.write(script, '{"at":"p0","text":"Energy is =mc^2$"}\n');
 		const batch = await runCli("edit", docPath, "--batch", script, "--dry-run");
-		expect(batch.exitCode).toBe(1);
-		expect(batch.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		expect(batch.exitCode).toBe(2);
+		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
 	test("a batch --dry-run that would succeed writes nothing", async () => {
@@ -5501,17 +5716,35 @@ describe("edit over an inline equation", () => {
 		expect((await runCli("read", docPath)).stdout).toContain("Rewritten.");
 	});
 
-	test("a markdown rewrite keeps the equation where it is written", async () => {
-		const docPath = await equationDoc();
+	test("a markdown rewrite re-stating the token keeps the original equation", async () => {
+		const docPath = await wordEquationDoc();
 		const result = await runCli(
 			"edit",
 			docPath,
 			"--at",
 			"p0",
-			"Energy is $E=mc^2$ in modern physics.",
+			"Energy is $x$ in **modern** physics.",
 		);
 		expect(result.exitCode).toBe(0);
-		const markdown = (await runCli("read", docPath)).stdout;
-		expect(markdown).toContain("Energy is $E=mc^2$ in modern physics.");
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $x$ in **modern** physics. <!-- p0 -->",
+		);
+		expect(await readDocumentXml(docPath)).toContain("Cambria Math");
+		expect(await equationCount(docPath)).toBe(1);
+	});
+
+	test("a markdown rewrite changing the token rebuilds the equation", async () => {
+		const docPath = await wordEquationDoc();
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"Energy is $y$ in **modern** physics.",
+		);
+		expect(await firstLine(docPath)).toBe(
+			"Energy is $y$ in **modern** physics. <!-- p0 -->",
+		);
+		expect(await readDocumentXml(docPath)).not.toContain("Cambria Math");
 	});
 });

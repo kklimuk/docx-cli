@@ -998,14 +998,8 @@ describe("multi-line display equations (several m:oMath in one m:oMathPara)", ()
 
 	test("an equation refusal names a display block with $$, the way read prints it", async () => {
 		const docPath = await multiLineDoc("eq-multiline-refusal");
-		const result = await runCli(
-			"edit",
-			docPath,
-			"--at",
-			"p0",
-			"--text",
-			"plain",
-		);
+		// Covers the opening `$$` and part of the LaTeX: a cut.
+		const result = await runCli("replace", docPath, "$$\\begin", "plain");
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout + result.stderr).toContain(
 			`eq0 ($$${gathered("x=1", "y=2")}$$)`.replaceAll("\\", "\\\\"),

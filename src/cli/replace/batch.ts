@@ -1,9 +1,4 @@
-import {
-	type EquationRun,
-	resolveAuthor,
-	resolveDate,
-	TrackChanges,
-} from "@core";
+import { resolveAuthor, resolveDate, TrackChanges } from "@core";
 import {
 	type AcrossReplaceResult,
 	applyAcrossReplace,
@@ -11,9 +6,7 @@ import {
 	findTextSpans,
 	type ReplacementFormatting,
 	replacementExpander,
-	replaceSpanInParagraph,
 	selectMatches,
-	spanOverEquationsError,
 	type TrackedReplaceOptions,
 } from "@core/find";
 import {
@@ -35,6 +28,7 @@ import {
 	respondAck,
 } from "../respond";
 import { ACROSS_TRACKED_HINT, ACROSS_TRACKED_MESSAGE } from "./across";
+import { applyMatchesOrFail } from "./apply-matches";
 import { matchesInScope, ScopeError, validateScopeShape } from "./scope";
 
 type RawValues = Record<
@@ -163,12 +157,9 @@ export async function runReplaceBatch(
 						: String(matcherError);
 				return fail("USAGE", `entry ${index}: invalid pattern: ${message}`);
 			}
-			if (acrossResult.crossing?.equations) {
-				return failOverEquations(
-					index,
-					spanLocator(acrossResult.crossing),
-					acrossResult.crossing.equations,
-				);
+			if (acrossResult.refusal) {
+				const { code, message, hint } = acrossResult.refusal;
+				return fail(code, `entry ${index}: ${message}`, hint);
 			}
 			results.push({
 				pattern: spec.pattern,
@@ -233,36 +224,20 @@ export async function runReplaceBatch(
 				}
 			: undefined;
 
-		// Reverse document order so earlier offsets stay valid as later ones get
-		// rewritten — same as single-shot replace.
-		const reversed = [...selected].sort((left, right) => {
-			if (left.blockId !== right.blockId) {
-				return right.blockId.localeCompare(left.blockId);
-			}
-			return right.start - left.start;
-		});
 		// Refused before this entry applies; the batch fails before its save, so
 		// the entries before it aren't written either (like an invalid pattern).
-		const crossing = selected.find((match) => match.equations);
-		if (crossing?.equations) {
-			return failOverEquations(
-				index,
-				spanLocator(crossing),
-				crossing.equations,
-			);
-		}
-		const expand = replacementExpander(spec);
-		for (const match of reversed) {
-			const blockRef = document.body.resolveBlock(match.blockId);
-			replaceSpanInParagraph(
-				blockRef.node,
-				{ start: match.start, end: match.end },
-				expand(match.text),
+		const refused = await applyMatchesOrFail(
+			document.body,
+			selected,
+			replacementExpander(spec),
+			{
 				tracked,
-				spec.view,
-				spec.formatting,
-			);
-		}
+				view: spec.view,
+				formatting: spec.formatting,
+				entry: index,
+			},
+		);
+		if (refused !== undefined) return refused;
 
 		results.push({
 			pattern: spec.pattern,
@@ -327,15 +302,6 @@ export async function runReplaceBatch(
 		batch: results,
 	});
 	return EXIT.OK;
-}
-
-function failOverEquations(
-	index: number,
-	locator: string,
-	equations: EquationRun[],
-): Promise<number> {
-	const refusal = spanOverEquationsError(locator, equations);
-	return fail(refusal.code, `entry ${index}: ${refusal.message}`, refusal.hint);
 }
 
 type ReplaceSpec = {

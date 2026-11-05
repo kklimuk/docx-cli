@@ -5,13 +5,22 @@ import type {
 	Paragraph,
 	TrackedChange,
 } from "../ast/types";
+import { formatEquationToken } from "../equation/token";
 import {
 	isRevisionVisible,
 	type RevisionView,
 } from "../track-changes/revision-visibility";
 import { replaceAcrossParagraphs } from "./replace-across";
+import { type EquationRefusal, equationSpanRefusal } from "./replace-matches";
 import type { ReplacementFormatting } from "./replace-span";
 
+export {
+	type EquationRefusal,
+	equationSpanRefusal,
+	replaceInParagraph,
+	replaceMatches,
+	type SpanReplacement,
+} from "./replace-matches";
 export {
 	type ReplacementFormatting,
 	replaceSpanInParagraph,
@@ -26,9 +35,28 @@ export type TextMatch = {
 	end: number;
 	text: string;
 	trackedChanges?: TrackedChange[];
-	/** Equations strictly inside the match. An equation takes no characters in
-	 *  the matched text, so this is the only place a match shows one. */
-	equations?: EquationRun[];
+	/** The equations the match touches. Each equation is its `read` token in
+	 *  the search text (`$E=mc^2$`), so a match can cover one whole, sit inside
+	 *  its LaTeX, or cut it — see `EquationOverlap`. */
+	equations?: EquationOverlap[];
+};
+
+/** How a text span meets one equation token (paragraph-local offsets of the
+ *  TOKEN, delimiters included):
+ *  - `covered`: the span includes the whole token — replacing it deletes the
+ *    equation;
+ *  - `inside`: the span lies within the LaTeX, delimiters excluded — replacing
+ *    it rewrites the equation's LaTeX;
+ *  - `cut`: the span crosses a `$` delimiter — refused, since no edit of
+ *    plain text or of the LaTeX alone can carry it out. */
+export type EquationOverlap = {
+	id: string;
+	blockId: string;
+	latex: string;
+	display: boolean;
+	start: number;
+	end: number;
+	relation: "covered" | "inside" | "cut";
 };
 
 export type FindView = RevisionView;
@@ -103,8 +131,8 @@ export type ParagraphSpanMatch = {
 	endBlockId: string;
 	endOffset: number;
 	text: string;
-	/** Equations strictly inside the match, as on `TextMatch`. */
-	equations?: EquationRun[];
+	/** The equations the match touches, as on `TextMatch`. */
+	equations?: EquationOverlap[];
 };
 
 /** What `findAcrossParagraphs` returns: the spanning matches plus the same
@@ -173,9 +201,9 @@ export function findAcrossParagraphs(
 			const equations = group
 				.slice(start.entryIndex, end.entryIndex + 1)
 				.flatMap((paragraph, index) =>
-					equationsWithin(
+					equationOverlaps(
 						paragraph,
-						index === 0 ? start.local : -1,
+						index === 0 ? start.local : 0,
 						index === end.entryIndex - start.entryIndex
 							? end.local
 							: Number.POSITIVE_INFINITY,
@@ -268,9 +296,10 @@ export type AcrossReplaceResult = {
 	/** The matches actually replaced (or that WOULD be, under dryRun), in
 	 *  document order. */
 	replaced: ParagraphSpanMatch[];
-	/** The first match with an equation inside it. When set, nothing was
-	 *  applied: the caller refuses with `spanOverEquationsError`. */
-	crossing?: ParagraphSpanMatch | undefined;
+	/** Set when a match can't be applied over the equations it touches (it
+	 *  cuts one, or would put a paragraph break inside one — see
+	 *  `equationSpanRefusal`). When set, NOTHING was applied. */
+	refusal?: EquationRefusal | undefined;
 	normalizedQuery?: string;
 	normalizationApplied?: NormalizationKind[];
 };
@@ -298,9 +327,19 @@ export function applyAcrossReplace(
 		},
 	);
 	const replaced = selectMatches(matches, spec);
-	const crossing = replaced.find((match) => match.equations);
-	if (!dryRun && !crossing) {
-		const expand = replacementExpander(spec);
+	const expand = replacementExpander(spec);
+	const refusal = replaced
+		.map((match) =>
+			equationSpanRefusal(
+				acrossLocator(match),
+				match.equations,
+				expand(match.text),
+				"replace",
+				{ multiline: true, pattern: match.text },
+			),
+		)
+		.find((found) => found !== null);
+	if (!dryRun && !refusal) {
 		for (const match of [...replaced].reverse()) {
 			replaceAcrossParagraphs(
 				doc,
@@ -311,35 +350,14 @@ export function applyAcrossReplace(
 			);
 		}
 	}
-	return { totalMatches: matches.length, replaced, crossing, ...normalization };
+	return { totalMatches: matches.length, replaced, refusal, ...normalization };
 }
 
-/** The refusal for a text span with an equation inside it — shared by every
- *  replace surface and `edit --at pN:S-E`, so all of them say the same thing.
- *  Cutting such a span removed the words around the equation and left the
- *  equation itself stranded in the new text, silently. */
-export function spanOverEquationsError(
-	locator: string,
-	equations: EquationRun[],
-): { code: "UNSUPPORTED"; message: string; hint: string } {
-	return {
-		code: "UNSUPPORTED",
-		message: `${locator}: the text span covers ${describeEquations(equations)}, which the matched text doesn't show. Nothing was changed.`,
-		hint: 'Equations take no characters in find/replace offsets. Match only the text on one side of the equation, change the equation with `docx equations edit FILE --at eqN`, or rewrite the paragraph as markdown with `docx edit FILE --at pN "…"` — keep the equation as $…$, or leave it out to delete it.',
-	};
-}
-
-/** `eq0 ($E=mc^2$), eq1 ($$x$$)` — how every equation refusal names what it
- *  would have stranded, delimited the way `read` prints it (`$$` for a display
- *  block), so an agent copying it into a markdown rewrite keeps a display
- *  block a display block. */
-export function describeEquations(equations: EquationRun[]): string {
-	return equations
-		.map((equation) => {
-			const delimiter = equation.display ? "$$" : "$";
-			return `${equation.id} (${delimiter}${equation.latex}${delimiter})`;
-		})
-		.join(", ");
+/** `pN:S-E`, or `pN:S-pM:E` across paragraphs — `spanLocator`'s spelling. */
+function acrossLocator(match: ParagraphSpanMatch): string {
+	return match.startBlockId === match.endBlockId
+		? `${match.startBlockId}:${match.startOffset}-${match.endOffset}`
+		: `${match.startBlockId}:${match.startOffset}-${match.endBlockId}:${match.endOffset}`;
 }
 
 /** First/all/limit selection, shared by every replace surface: `limit` caps
@@ -527,7 +545,7 @@ function collectMatches(
 				view,
 			);
 			if (overlaps.length > 0) match.trackedChanges = overlaps;
-			const equations = equationsWithin(block, span.start, span.end, view);
+			const equations = equationOverlaps(block, span.start, span.end, view);
 			if (equations.length > 0) match.equations = equations;
 			out.push(match);
 		}
@@ -541,12 +559,17 @@ function paragraphTextForView(paragraph: Paragraph, view: FindView): string {
 }
 
 /** The text a run contributes in the given view — the AST-side counterpart of
- *  `inlineMarkerWidth` in run-ops.ts. Visible text is itself; a visible tab or
- *  line break renders as "\t"/"\n" in `read`, so `find` matches them the same
- *  way; everything else (images, math, page/column breaks, hidden runs) is "".
+ *  `inlineMarkerWidth` / `equationWidth` in run-ops.ts. Visible text is
+ *  itself; a visible tab or line break renders as "\t"/"\n" in `read`, so
+ *  `find` matches them the same way; a visible equation is the token `read`
+ *  prints for it (`$latex$` / `$$latex$$`) — what you see in `read` is what you
+ *  search; everything else (images, page/column breaks, hidden runs) is "".
  *  Every offset walker here derives both its haystack text and its offset
  *  widths from this one function, so they can't disagree. */
-function runViewText(run: Paragraph["runs"][number], view: FindView): string {
+export function runViewText(
+	run: Paragraph["runs"][number],
+	view: FindView,
+): string {
 	if (run.type === "text") {
 		return isRevisionVisible(run.trackedChange, view) ? run.text : "";
 	}
@@ -558,7 +581,18 @@ function runViewText(run: Paragraph["runs"][number], view: FindView): string {
 			? "\n"
 			: "";
 	}
+	if (run.type === "equation") {
+		return isRevisionVisible(run.trackedChange, view)
+			? equationRunToken(run)
+			: "";
+	}
 	return "";
+}
+
+/** The token `read` prints for an equation run — `formatEquationToken`, the
+ *  same spelling the XML walkers measure (`equationToken`). */
+export function equationRunToken(run: EquationRun): string {
+	return formatEquationToken(run.latex, run.text, run.display);
 }
 
 function normalizeQuery(query: string): {
@@ -669,7 +703,10 @@ function trackedChangesOverlapping(
 		offset = runEnd;
 		if (runEnd <= start || runStart >= end) continue;
 		const change =
-			run.type === "text" || run.type === "tab" || run.type === "break"
+			run.type === "text" ||
+			run.type === "tab" ||
+			run.type === "break" ||
+			run.type === "equation"
 				? run.trackedChange
 				: undefined;
 		if (!change) continue;
@@ -680,22 +717,49 @@ function trackedChangesOverlapping(
 	return out;
 }
 
-/** The equations strictly between `start` and `end` — the zero-width twin of
- *  `trackedChangesOverlapping`, on the same `runViewText` offsets. An equation
- *  at either edge sits outside the cut and stays put, so it isn't counted. */
-export function equationsWithin(
+/** The equations a span `[start, end)` touches, each classified against its
+ *  token (see `EquationOverlap`) on the same `runViewText` offsets `find`
+ *  matched on. An equation the view hides has no token and so never overlaps;
+ *  one that merely touches an edge of the span sits outside it. */
+export function equationOverlaps(
 	paragraph: Paragraph,
 	start: number,
 	end: number,
 	view: FindView,
-): EquationRun[] {
-	const out: EquationRun[] = [];
+): EquationOverlap[] {
+	const out: EquationOverlap[] = [];
 	let offset = 0;
 	for (const run of paragraph.runs) {
-		if (run.type === "equation" && offset > start && offset < end) {
-			out.push(run);
-		}
-		offset += runViewText(run, view).length;
+		const width = runViewText(run, view).length;
+		const tokenStart = offset;
+		const tokenEnd = offset + width;
+		offset = tokenEnd;
+		if (run.type !== "equation" || width === 0) continue;
+		if (tokenEnd <= start || tokenStart >= end) continue;
+		out.push({
+			id: run.id,
+			blockId: paragraph.id,
+			latex: run.latex.length > 0 ? run.latex : run.text,
+			display: run.display,
+			start: tokenStart,
+			end: tokenEnd,
+			relation: equationRelation(run.display, tokenStart, tokenEnd, start, end),
+		});
 	}
 	return out;
+}
+
+function equationRelation(
+	display: boolean,
+	tokenStart: number,
+	tokenEnd: number,
+	start: number,
+	end: number,
+): EquationOverlap["relation"] {
+	if (start <= tokenStart && end >= tokenEnd) return "covered";
+	const delimiter = display ? 2 : 1;
+	if (start >= tokenStart + delimiter && end <= tokenEnd - delimiter) {
+		return "inside";
+	}
+	return "cut";
 }

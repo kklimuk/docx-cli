@@ -1,6 +1,8 @@
 import type { Body } from "../ast/document/body";
 import { w } from "../jsx";
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	rewrapSplitHalf,
 	runTextLength,
@@ -160,12 +162,13 @@ type ChildSplit = { before: XmlNode[]; after: XmlNode[] };
 
 /** Split a run container's children at a paragraph-local text offset, in the
  *  same offset space as `collectRunSlots`/`findTextSpans` (runs via
- *  `runTextLength`, visible wrappers descended and split when the offset lands
- *  inside them). `<w:pPr>` always stays in `before` (it's the paragraph's own
- *  metadata); zero-width children (equations, markers, view-invisible tracked
- *  wrappers) go by position, and one sitting exactly AT the offset goes to the
- *  `edge` side — outside the cut, so an equation at the edge of a match stays
- *  where it was (`equationsWithin` doesn't count it either). */
+ *  `runTextLength`, an equation as one atomic unit as wide as its `read` token,
+ *  visible wrappers descended and split when the offset lands inside them).
+ *  `<w:pPr>` always stays in `before` (it's the paragraph's own metadata);
+ *  zero-width children (markers, view-invisible tracked wrappers, an equation
+ *  the view hides) go by position, and one sitting exactly AT the offset goes
+ *  to the `edge` side — outside the cut. An offset strictly inside an equation
+ *  is a cut `equationOverlaps` refuses before anything gets here. */
 function splitChildrenAt(
 	children: XmlNode[],
 	offset: number,
@@ -193,6 +196,18 @@ function splitChildrenAt(
 			cursor += length;
 			continue;
 		}
+		const width = isEquation(child) ? equationWidth(child, view) : 0;
+		if (width > 0) {
+			if (cursor + width <= offset) before.push(child);
+			else if (cursor >= offset) after.push(child);
+			else {
+				throw new Error(
+					`offset ${offset} cuts the equation at ${cursor}-${cursor + width}; equationOverlaps should have refused it`,
+				);
+			}
+			cursor += width;
+			continue;
+		}
 		if (
 			isRunBearingWrapper(child.tag) &&
 			isWrapperVisibleInView(child.tag, view)
@@ -215,8 +230,8 @@ function splitChildrenAt(
 			cursor += length;
 			continue;
 		}
-		// Zero-width: equations, comment/bookmark markers, view-invisible tracked
-		// wrappers.
+		// Zero-width: comment/bookmark markers, view-invisible tracked wrappers,
+		// a hidden equation.
 		const inBefore =
 			cursor < offset || (cursor === offset && edge === "before");
 		(inBefore ? before : after).push(child);
@@ -242,7 +257,7 @@ function firstVisibleRun(children: XmlNode[], view: FindView): XmlNode | null {
 
 /** What the cut region keeps: comment/bookmark markers (so a range that
  *  started outside the span isn't left dangling) and view-invisible tracked
- *  wrappers (whose content the span never covered — `replaceSpanInParagraph`
+ *  wrappers and equations (whose content the span never covered — `replaceSpanInParagraph`
  *  passes them through untouched, so this path must too). Visible wrappers'
  *  own runs are consumed by the replacement; only markers inside them
  *  survive. */
@@ -250,6 +265,8 @@ function salvageNonContent(children: XmlNode[], view: FindView): XmlNode[] {
 	const out: XmlNode[] = [];
 	for (const child of children) {
 		if (child.tag === "w:r" || child.tag === "w:pPr") continue;
+		// A visible equation in the cut was covered by the match: content, gone.
+		if (isEquation(child) && equationWidth(child, view) > 0) continue;
 		if (isRunBearingWrapper(child.tag)) {
 			if (isWrapperVisibleInView(child.tag, view)) {
 				out.push(...salvageNonContent(wrapperContent(child), view));

@@ -750,3 +750,69 @@ describe("docx replace — across hyperlink boundaries", () => {
 		expect(links[0]?.url).toBe("https://example.com/link");
 	});
 });
+
+// An equation is its `read` token in --at offsets: a link may hold the whole
+// equation, never part of one.
+describe("hyperlinks over an inline equation", () => {
+	async function equationDoc(): Promise<string> {
+		const workspace = tempWorkspace("hyperlinks-equation");
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		return docPath;
+	}
+
+	test("a span covering the token moves the equation into the link", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:7-22",
+			"--url",
+			"https://example.com",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(
+			/<w:hyperlink [^>]*>(?:(?!<\/w:hyperlink>).)*<m:oMath>/,
+		);
+		expect(xml.match(/<w:hyperlink /g)).toHaveLength(1);
+	});
+
+	test("a link after the equation is reported with the text it wraps", async () => {
+		const docPath = await equationDoc();
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:22-29",
+			"--url",
+			"https://example.com",
+		);
+		expect(result.parsed).toMatchObject({
+			hyperlinkId: "link0",
+			text: "physics",
+		});
+	});
+
+	test("a span cutting the token is refused with the widened span", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:12-22",
+			"--url",
+			"https://example.com",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect((result.parsed as { error: string }).error).toContain("10-22");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+});

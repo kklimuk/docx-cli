@@ -1,5 +1,7 @@
 import { w } from "../jsx";
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
@@ -74,6 +76,27 @@ export function wrapSpanInHyperlink(
 			if (sliceEndInRun < length) {
 				newChildren.push(sliceRun(child, sliceEndInRun, length));
 			}
+			continue;
+		}
+
+		if (isEquation(child)) {
+			// One atomic unit as wide as its `read` token: a link may hold a
+			// whole equation (CT_Hyperlink admits `<m:oMath>`), never part of one.
+			const start = offset;
+			const end = offset + equationWidth(child);
+			offset = end;
+			if (end === start || end <= span.start || start >= span.end) {
+				if (start >= span.end) placeWrapper();
+				newChildren.push(child);
+				continue;
+			}
+			if (start < span.start || end > span.end) {
+				throw new HyperlinkWrapError(
+					`Span ${span.start}-${span.end} cuts through an equation (offsets ${start}-${end}); a link can hold a whole equation, not part of one — widen the span to ${Math.min(start, span.start)}-${Math.max(end, span.end)}`,
+				);
+			}
+			wrappedRuns.push(child);
+			if (end >= span.end) placeWrapper();
 			continue;
 		}
 
