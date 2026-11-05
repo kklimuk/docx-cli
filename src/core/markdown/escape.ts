@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+import { remarkReadHintLabels } from "./read-hint-labels";
 
 // A node's source-offset span. Every mdast node carries this, but the union also
 // includes our own CriticMarkup nodes (which don't), so we read it structurally
@@ -16,7 +17,14 @@ type Positioned = {
 // unescaped is precisely what the importer reads back as literal text. We parse
 // only (no `runSync`): the inline-surgery transformer re-pairs our OWN emitted
 // HTML wrappers and never reclassifies raw run content, so it's irrelevant here.
-const rawParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
+// `remarkReadHintLabels` IS included: its parser construct claims a literal
+// `[^tcN]`/`[^cN]` in run text (the importer would drop it as a read
+// annotation), so the mask escapes it and the text survives the round-trip.
+const rawParser = unified()
+	.use(remarkParse)
+	.use(remarkGfm)
+	.use(remarkMath)
+	.use(remarkReadHintLabels);
 
 // Every char CommonMark lets a backslash escape. A `\` before one of these is an
 // escape; escaping anything else (a letter, a space) is a no-op the parser drops.
