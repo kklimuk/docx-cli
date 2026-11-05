@@ -1,4 +1,5 @@
 import type { Document } from "../ast/document";
+import { isMarginalLocator } from "../locators";
 import type { XmlNode } from "../parser";
 import {
 	type ApplyVerb,
@@ -97,6 +98,26 @@ export class TrackChanges {
 	 * disagree. */
 	list(): ReturnType<typeof collectTrackedChanges> {
 		return collectTrackedChanges(this.document);
+	}
+
+	/** How many revisions are pending (`list().length` — the tcN count, what
+	 *  `accept --all` would resolve), and how many of them live OUTSIDE the
+	 *  body, keyed by the header/footer (`hdr0`/`ftr1`) or note (`fn1`/`en2`)
+	 *  that holds them, in document order. `read`'s head hint states both, so
+	 *  a pending change the accepted view hides (a deleted paragraph, a header
+	 *  edit) is never invisible. */
+	pending(): { total: number; outsideBody: Map<string, number> } {
+		const changes = this.list();
+		const outsideBody = new Map<string, number>();
+		for (const change of changes) {
+			const reference = this.document.trackedChangeReferences.get(change.id);
+			const container =
+				reference?.noteId ??
+				(isMarginalLocator(change.blockId) ? change.blockId : undefined);
+			if (container)
+				outsideBody.set(container, (outsideBody.get(container) ?? 0) + 1);
+		}
+		return { total: changes.length, outsideBody };
 	}
 
 	/** Records that an accept/reject of `target` (tcN ids or "all") WOULD

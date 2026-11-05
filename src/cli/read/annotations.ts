@@ -10,9 +10,9 @@ import { CELL_MARGIN_SIDES, type CellMargins } from "@core";
  * per-cell merge/shading (`docx:cell`), image size/placement (`docx:image`), a
  * text box's story bracketed by `docx:textbox tbxN anchor="pM"` /
  * `docx:textbox-end tbxN` (the story's paragraphs carry bare `tbxN:pK` locators),
- * the document-level track-changes state (`docx:track-changes on|off`, at the head
- * — the one note that ALWAYS emits, default included, so a weak agent never has to
- * infer "off" from a missing hint), and a layout hazard (`docx:layout`) on a tab-aligned paragraph
+ * the document-level track-changes state (`docx:track-changes on|off pending=N`, at
+ * the head — the one note that ALWAYS emits, default included, so a weak agent never
+ * has to infer "off" or "nothing pending" from a missing hint), and a layout hazard (`docx:layout`) on a tab-aligned paragraph
  * inside a multi-column section, where tab stops wrap mid-line in the narrow
  * column — a render-only break Markdown can't show.
  *

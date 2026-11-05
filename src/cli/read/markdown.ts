@@ -73,11 +73,17 @@ export type MarkdownOptions = {
 	 *  hiding as "matches `docx:base`". Undefined = unknown, never marked. */
 	resolveFont?: FontResolver;
 	/** Whether the document's global track-changes toggle is on. ALWAYS surfaced as
-	 *  a head `<!-- docx:track-changes on|off -->` hint — the one `docx:` note that
+	 *  a head `<!-- docx:track-changes on|off pending=N -->` hint — the one `docx:` note that
 	 *  states its default too (weak agents can't read "no hint" as "off," and a
 	 *  wrong tracking guess is high-cost), so an agent sees the state on the first
 	 *  read instead of spending a `track-changes list` call to learn it. */
 	trackChangesOn?: boolean;
+	/** Pending revisions — the total tcN count and the per-container count of
+	 *  those outside the body (`hdr0`, `fn1`, …) — stated on the same head hint
+	 *  ALWAYS, `pending=0` included: the default accepted view hides a pending
+	 *  deletion outright (a wholly deleted paragraph loses its locator too), so
+	 *  `off` alone read as "nothing to review." Undefined = not stated. */
+	pendingChanges?: { total: number; outsideBody: Map<string, number> };
 	/** A header/footer's text in `view`, with `mark` wrapping each pending
 	 *  revision — `Marginal.text` is the accepted view only, so `--baseline` and
 	 *  `--current` (CriticMarkup) need the part itself. Undefined = use
@@ -314,12 +320,15 @@ export function renderMarkdown(
 	// section): weak agents can't reliably read "no hint" as "off," and getting the
 	// tracking state wrong is high-cost (a silent redline, or edits that skip the
 	// journal). So we state it outright rather than make them infer it from absence.
+	// The pending count rides the same line for the same reason: the default
+	// accepted view hides a pending deletion outright, so `off` alone read as
+	// "nothing to review."
 	// Still an own-`docx:` metadata hint, dropped on import — it just orients the
 	// agent so edits/`--track` decisions don't need a separate `track-changes list`.
 	const trackNote = formatNote(
 		"track-changes",
 		[],
-		[options.trackChangesOn ? "on" : "off"],
+		trackChangesTokens(options),
 	);
 	// One consolidated, actionable summary for every line that WILL wrap in render —
 	// the per-line hints alone got ignored by both Haiku and Sonnet across repeated
@@ -339,6 +348,20 @@ export function renderMarkdown(
 	].filter((line) => line.length > 0);
 	const head = headLines.length > 0 ? `${headLines.join("\n")}\n\n` : "";
 	return `${head}${parts.join("\n\n")}\n`;
+}
+
+/** `on|off`, then `pending=N`, then — only when some pending revisions live
+ *  outside the body — where: `(hdr0: 1, fn2: 2)`. One line, bare tokens. */
+function trackChangesTokens(options: MarkdownOptions): string[] {
+	const tokens = [options.trackChangesOn ? "on" : "off"];
+	const pending = options.pendingChanges;
+	if (!pending) return tokens;
+	tokens.push(`pending=${pending.total}`);
+	const outside = [...pending.outsideBody].map(
+		([container, count]) => `${container}: ${count}`,
+	);
+	if (outside.length > 0) tokens.push(`(${outside.join(", ")})`);
+	return tokens;
 }
 
 /** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare —

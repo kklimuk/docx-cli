@@ -154,10 +154,16 @@ headers`/`docx footers`. A header/footer holding a reviewer's **pending tracked
   `track-changes list`, not the appendix). The `--` of a deletion is safe inside
   the comment: a comment only ends at `-->`, and every `>` in the value is
   escaped (`&gt;`).
-- **Track-changes state** always rides a head `<!-- docx:track-changes on|off -->`
+- **Track-changes state** always rides a head `<!-- docx:track-changes on|off pending=N -->`
   line — it's the one read hint that states its default too (an agent shouldn't have
   to infer "off" from a missing line), so you can see whether subsequent edits will be
-  redlined without inspecting `settings.xml`.
+  redlined without inspecting `settings.xml`. `pending=N` is ALWAYS there too,
+  `pending=0` included: it counts the tracked changes awaiting a decision (the `tcN`s
+  `track-changes list` shows), because the default accepted view hides a pending
+  deletion outright — a wholly deleted paragraph loses its locator as well — so
+  `off` alone doesn't mean "nothing to review." When some of them live outside the
+  body, a parenthetical names where: `<!-- docx:track-changes off pending=3 (hdr0:
+  1, fn2: 1) -->` (header/footer `hdrN`/`ftrN`, footnote/endnote `fnN`/`enN`).
   Toggle it with `docx track-changes on|off FILE`; the three tracked-change read views
   (`--accepted`/`--current`/`--baseline`) are covered under the review loop below.
 

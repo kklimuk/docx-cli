@@ -146,9 +146,15 @@ branch (a cell holding `<w:customXml>`/`<w:altChunk>` still would — those stay
 unmodeled). A block inside a content control also carries a
 `content-control="<alias>"` pair on its `docx:p`/`docx:table` note, so an agent
 editing there knows the change lands inside a control Word may have LOCKED. The
-remaining annotations include a head `docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
+remaining annotations include a head `docx:track-changes on|off pending=N [(hdr0: 1, fn2: 1)]` that ALWAYS emits (unlike every other note it states
 its default — a weak agent reads "no hint" as "unknown," not "off," and a wrong
-tracking guess is high-cost, so the state is stated outright),
+tracking guess is high-cost, so the state is stated outright; `pending=N` is stated
+always too, `pending=0` included, because the default accepted view HIDES a pending
+deletion — a wholly deleted paragraph, locator and all — and `off` read as "nothing
+to review." N is `TrackChanges.pending().total`, the tcN count `track-changes list`
+shows; the parenthetical, only when some live outside the body, counts them per
+header/footer/note container via `TrackedChangeReference.noteId` / a marginal
+`blockId`),
 `docx:header`/`docx:footer` notes (led by the marginal's `hdrN`/`ftrN` id — the
 handle `raw get --at` and `headers`/`footers set/clear --at` accept, the same id
 `headers`/`footers list` reports; a per-section marginal also carries its `sN` as a

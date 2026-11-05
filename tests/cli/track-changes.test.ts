@@ -52,12 +52,72 @@ describe("docx track-changes", () => {
 		// reliably read "no hint" as "off," so this note breaks the deviation-only
 		// rule and always emits its state.
 		const before = await runCli("read", docPath);
-		expect(before.stdout).toContain("<!-- docx:track-changes off -->");
+		expect(before.stdout).toContain(
+			"<!-- docx:track-changes off pending=0 -->",
+		);
 
 		await runCli("track-changes", "on", docPath);
 		const after = await runCli("read", docPath);
-		expect(after.stdout).toContain("<!-- docx:track-changes on -->");
+		expect(after.stdout).toContain("<!-- docx:track-changes on pending=0 -->");
 		expect(after.stdout).not.toContain("docx:track-changes off");
+	});
+
+	test("the head hint counts pending changes the accepted view hides", async () => {
+		const docPath = join(tempWorkspace("track-hint-pending"), "out.docx");
+		await runCli("create", docPath, "--text", "Keep this.");
+		await runCli("insert", docPath, "--after", "p0", "--text", "Drop this.");
+		await runCli("delete", docPath, "--at", "p1", "--track");
+		// Tracking is OFF and the default view hides the deleted paragraph — its
+		// locator included — but the hint still says something is pending.
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).not.toContain("Drop this.");
+		const listed = (await runCli("track-changes", "list", docPath))
+			.parsed as unknown[];
+		expect(read).toContain(
+			`<!-- docx:track-changes off pending=${listed.length} -->`,
+		);
+		expect(listed.length).toBeGreaterThan(0);
+	});
+
+	test("the head hint names the headers and notes holding pending changes", async () => {
+		const docPath = join(tempWorkspace("track-hint-outside"), "out.docx");
+		await runCli("create", docPath, "--text", "Body text.");
+		await runCli("footnotes", "add", docPath, "--at", "p0:4", "--text", "Old");
+		await runCli("headers", "set", docPath, "--text", "Header");
+		const revision = 'w:author="Ann" w:date="2026-01-01T00:00:00Z"';
+		await runCli(
+			"raw",
+			"part",
+			"edit",
+			docPath,
+			"--name",
+			"word/header1.xml",
+			"--find",
+			"Header</w:t></w:r>",
+			"--with",
+			`Header</w:t></w:r><w:ins w:id="901" ${revision}><w:r><w:t>!</w:t></w:r></w:ins>`,
+		);
+		// A note-body edit under tracking is a standalone revision in footnotes.xml.
+		await runCli(
+			"footnotes",
+			"edit",
+			docPath,
+			"--at",
+			"fn1",
+			"--text",
+			"New",
+			"--track",
+		);
+		const listed = (await runCli("track-changes", "list", docPath)).parsed as {
+			blockId: string;
+		}[];
+		const inHeader = listed.filter((change) => change.blockId === "hdr0");
+		const inNote = listed.filter((change) => change.blockId === "");
+		expect(inHeader.length).toBe(1);
+		expect(inNote.length).toBeGreaterThan(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			`<!-- docx:track-changes off pending=${listed.length} (fn1: ${inNote.length}, hdr0: 1) -->`,
+		);
 	});
 
 	test("accepts verb-first order (track-changes on FILE), matching list/accept/reject", async () => {
