@@ -1,5 +1,8 @@
 import type { Document } from "../ast/document";
-import type { TrackedChangeReference } from "../ast/document/body";
+import type {
+	TrackedChangeMarker,
+	TrackedChangeReference,
+} from "../ast/document/body";
 import type { TrackedChangeKind } from "../ast/types";
 import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
@@ -98,8 +101,10 @@ function applyResolvedTargets(
 	// Reverse pre-order so a nested ins/del is processed before its parent —
 	// keeps stored parent refs valid for the outer node when we get to it.
 	for (const { found, verb } of [...sorted].reverse()) {
-		if (verb === "accept") applyAccept(found);
-		else applyReject(found);
+		for (const part of markerParts(found)) {
+			if (verb === "accept") applyAccept(part);
+			else applyReject(part);
+		}
 	}
 
 	// Cell removals (accept-cellDel / reject-cellIns) shrink rows without
@@ -116,6 +121,14 @@ function applyResolvedTargets(
 	applyNotePairing(document, affectedNotes);
 
 	return records;
+}
+
+/** A revision spread over several markers resolves as each marker would on its
+ * own — accept-del removes every marked math run, reject-del unwraps each —
+ * so the per-node operations below stay the only ones. */
+function markerParts(found: ChangeFound): ChangeFound[] {
+	if (!found.markers) return [found];
+	return found.markers.map((marker) => ({ ...found, ...marker }));
 }
 
 /** Index of a resolved target within the inventory, by node identity (the same
@@ -208,6 +221,7 @@ function changeFoundFromReference(
 	};
 	if (reference.tableRow) found.tableRow = reference.tableRow;
 	if (reference.tableRowParent) found.tableRowParent = reference.tableRowParent;
+	if (reference.markers) found.markers = reference.markers;
 	if (reference.tableCell) found.tableCell = reference.tableCell;
 	if (reference.tableCellParent)
 		found.tableCellParent = reference.tableCellParent;
@@ -755,6 +769,9 @@ export type ChangeFound = {
 	/** Set for cellIns/cellDel: the owning `<w:tc>` and the row's children. */
 	tableCell?: XmlNode;
 	tableCellParent?: XmlNode[];
+	/** Set when one revision spans several markers (Word's equation edits — see
+	 * `TrackedChangeReference.markers`); `node`/`parent` are the first. */
+	markers?: TrackedChangeMarker[];
 };
 
 type ChangeAction =

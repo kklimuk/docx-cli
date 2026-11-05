@@ -1,5 +1,6 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
+import { MATH_REVISION_TAGS } from "../equation/handlers";
 
 import { enumerateMarginalRefs } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
@@ -15,7 +16,7 @@ import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
 import { readCellMargins } from "./cell-margins";
 import type { Document } from "./document";
-import { Body } from "./document/body";
+import { Body, type TrackedChangeMarker } from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
 import { decodeSym } from "./sym";
 import type {
@@ -597,7 +598,13 @@ function walkRunContainer(
 			if (text.length > 0) {
 				const display = child.tag === "m:oMathPara";
 				const id = `eq${context.state.equationIndex++}`;
-				const latex = ommlToLatex(child);
+				const revisions = registerMathRevisions(context, child, trackedChange);
+				// A partly revised equation has no run-level revision to hide it by,
+				// so its LaTeX is the accepted view `read` defaults to — what
+				// `accept --all` leaves — not the deleted symbols beside the kept ones.
+				const latex = ommlToLatex(
+					revisions.partial ? withoutMathDeletions(child) : child,
+				);
 				const run: EquationRun = {
 					type: "equation",
 					id,
@@ -608,6 +615,8 @@ function walkRunContainer(
 				if (context.activeComments.size > 0) {
 					run.comments = [...context.activeComments];
 				}
+				const change = revisions.whole ?? trackedChange;
+				if (change) run.trackedChange = change;
 				context.paragraph.runs.push(run);
 				context.document.body.equationReferences.set(id, {
 					node: child,
@@ -626,34 +635,12 @@ function walkRunContainer(
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const trackedChangeId = `tc${context.state.trackedChangeIndex++}`;
-			const change: TrackedChange = {
-				id: trackedChangeId,
-				kind: TRACKED_CHANGE_KIND_BY_TAG[child.tag],
-				author: child.getAttribute("w:author") ?? "",
-				date: child.getAttribute("w:date") ?? "",
-				revisionId: child.getAttribute("w:id") ?? "",
-			};
-			// A wrapper nested inside another (Word's `<w:ins><w:del>…` for a
-			// deletion inside a pending insertion) records its enclosing chain,
-			// outermost first, so every view consumer can apply the
-			// all-ancestors rule (`isRevisionVisible`). Top-level wrappers carry
-			// no `within`, so the AST of an un-nested document is unchanged.
-			if (trackedChange) {
-				change.within = [
-					...(trackedChange.within ?? []),
-					{
-						id: trackedChange.id,
-						kind: trackedChange.kind,
-						author: trackedChange.author,
-					},
-				];
-			}
-			context.document.trackedChangeReferences.set(trackedChangeId, {
-				node: child,
-				parent: container.children,
-				blockId: context.blockId,
-			});
+			const change = registerTrackedChange(
+				context,
+				TRACKED_CHANGE_KIND_BY_TAG[child.tag],
+				{ node: child, parent: container.children },
+				trackedChange,
+			);
 			walkRunContainer(context, child, change, hyperlink);
 			continue;
 		}
@@ -688,6 +675,115 @@ function walkRunContainer(
 			walkRunContainer(context, child, trackedChange, hyperlink);
 		}
 	}
+}
+
+/** Mint the next `tcN` for a revision marker and record where it lives in
+ *  `document.trackedChangeReferences` — the one place ids are assigned. A marker
+ *  nested inside another wrapper (Word's `<w:ins><w:del>…` for a deletion inside
+ *  a pending insertion) records its enclosing chain, outermost first, so every
+ *  view consumer can apply the all-ancestors rule (`isRevisionVisible`).
+ *  Top-level markers carry no `within`, so the AST of an un-nested document is
+ *  unchanged. `markers` lists every element of a revision Word spread over
+ *  several (see `registerMathRevisions`); `marker` is the first of them. */
+function registerTrackedChange(
+	context: WalkContext,
+	kind: TrackedChange["kind"],
+	marker: TrackedChangeMarker,
+	outer: TrackedChange | undefined,
+	markers?: TrackedChangeMarker[],
+): TrackedChange {
+	const id = `tc${context.state.trackedChangeIndex++}`;
+	const change: TrackedChange = {
+		id,
+		kind,
+		author: marker.node.getAttribute("w:author") ?? "",
+		date: marker.node.getAttribute("w:date") ?? "",
+		revisionId: marker.node.getAttribute("w:id") ?? "",
+	};
+	if (outer) {
+		change.within = [
+			...(outer.within ?? []),
+			{ id: outer.id, kind: outer.kind, author: outer.author },
+		];
+	}
+	context.document.trackedChangeReferences.set(id, {
+		...marker,
+		blockId: context.blockId,
+		...(markers && { markers }),
+	});
+	return change;
+}
+
+/** Word records a tracked edit of an equation INSIDE it: a `<w:del>`/`<w:ins>`
+ *  in every math run it touched and in each structure's `<m:ctrlPr>` — six
+ *  markers for one deleted `E=mc^2`. Register them as ONE revision per kind and
+ *  author, so the equation lists, accepts and rejects as a unit (apply runs the
+ *  ordinary per-marker operation on each — see `ChangeFound.markers`). `whole`
+ *  is the revision when it covers the whole equation, so it rides the run the
+ *  way an enclosing `<w:del>` does; `partial` says the equation holds revisions
+ *  that don't. */
+function registerMathRevisions(
+	context: WalkContext,
+	equation: XmlNode,
+	outer: TrackedChange | undefined,
+): { whole?: TrackedChange; partial: boolean } {
+	const groups = new Map<string, TrackedChangeMarker[]>();
+	collectMathRevisionMarkers(equation, groups);
+	if (groups.size === 0) return { partial: false };
+	const coversEquation = groups.size === 1 && !hasUnmarkedMathText(equation);
+	let whole: TrackedChange | undefined;
+	for (const markers of groups.values()) {
+		const [first] = markers;
+		if (!first) continue;
+		const change = registerTrackedChange(
+			context,
+			first.node.tag === "w:ins" ? "ins" : "del",
+			first,
+			outer,
+			markers,
+		);
+		if (coversEquation) whole = change;
+	}
+	return coversEquation ? { whole, partial: false } : { partial: true };
+}
+
+function collectMathRevisionMarkers(
+	node: XmlNode,
+	groups: Map<string, TrackedChangeMarker[]>,
+): void {
+	for (const child of node.children) {
+		if (!MATH_REVISION_TAGS.has(child.tag)) {
+			collectMathRevisionMarkers(child, groups);
+			continue;
+		}
+		const key = `${child.tag} ${child.getAttribute("w:author") ?? ""}`;
+		const markers = groups.get(key) ?? [];
+		markers.push({ node: child, parent: node.children });
+		groups.set(key, markers);
+	}
+}
+
+/** Whether any of the equation's text sits outside a revision marker. */
+function hasUnmarkedMathText(node: XmlNode): boolean {
+	return node.children.some((child) => {
+		if (MATH_REVISION_TAGS.has(child.tag)) return false;
+		if (child.tag === "m:t") return child.collectText().length > 0;
+		return hasUnmarkedMathText(child);
+	});
+}
+
+/** A copy of `node` as it reads once its tracked deletions are accepted — a
+ *  copy, so the live tree keeps every marker for `accept`/`reject`. */
+function withoutMathDeletions(node: XmlNode): XmlNode {
+	const copy = new XmlNode(
+		node.tag,
+		node.attributes,
+		node.children
+			.filter((child) => child.tag !== "w:del")
+			.map(withoutMathDeletions),
+	);
+	if (node.text !== undefined) copy.text = node.text;
+	return copy;
 }
 
 const TRACKED_CHANGE_KIND_BY_TAG: Record<

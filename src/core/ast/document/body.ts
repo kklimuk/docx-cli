@@ -287,4 +287,11 @@ export type TrackedChangeReference = {
 	/** Set for cellIns/cellDel: the owning `<w:tc>` and the row's children. */
 	tableCell?: XmlNode;
 	tableCellParent?: XmlNode[];
+	/** Every element of a revision Word spreads over several markers — an
+	 * equation edit puts a `<w:del>`/`<w:ins>` in each math run it touched.
+	 * `node`/`parent` are the first of them; accept/reject act on each. */
+	markers?: TrackedChangeMarker[];
 };
+
+/** One revision marker element and the child list that holds it. */
+export type TrackedChangeMarker = { node: XmlNode; parent: XmlNode[] };
