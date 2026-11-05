@@ -38,6 +38,7 @@ import type { Comment } from "../ast/types";
 import type { FindView } from "../find";
 import { resolveDate } from "../track-changes";
 import { auditCommentMarkers, type StoryPart } from "./marker-audit";
+import { containedCommentIds } from "./straddling-markers";
 
 /** Cross-cutting lens over the document's comments: spans the body (marker
  * placement / removal) and the comments part (mint + persist `<w:comment>`,
@@ -336,6 +337,22 @@ export class Comments {
 
 			removeCommentMarkers(storyTrees, numericId);
 		}
+	}
+
+	/** Delete every comment wholly anchored inside `children` (a paragraph's
+	 * content — see `containedCommentIds`) — what Word does when the text
+	 * holding a comment's whole range is deleted. Called BEFORE an untracked
+	 * paragraph removal (`removeParagraphLine`), so the `<w:comment>`, its
+	 * sidecar entries and its replies go with their anchor instead of
+	 * lingering as an anchorless comment. A marker naming no comment is left
+	 * to the audit. Replies cascade, as in `delete`. */
+	deleteContainedIn(children: XmlNode[]): void {
+		const view = this.document.comments;
+		if (!view) return;
+		const ids = containedCommentIds(children)
+			.filter((numericId) => view.findById(numericId))
+			.map((numericId) => `c${numericId}`);
+		if (ids.length > 0) this.delete(ids);
 	}
 
 	/** Emit a comment for operations OOXML can't track natively (hyperlink

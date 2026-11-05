@@ -1796,3 +1796,94 @@ describe("comments over an inline equation", () => {
 		]);
 	});
 });
+
+// Release-merge cross-check: equation-anchored comments × the comment-integrity
+// fixes. Deleting the paragraph that holds a comment's WHOLE range used to drop
+// only its markers, leaving an anchorless `<w:comment>` (validate's "no
+// anchor" warning; Word deletes it on open). It must go with its anchor, while
+// a cross-paragraph comment that only straddles the line keeps both halves.
+describe("comments wholly on a removed paragraph go with it", () => {
+	async function commentedEquationDoc(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(
+			source,
+			"Intro paragraph.\n\nEnergy is $E=mc^2$ in physics.\n\nTail paragraph.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"$E=mc^2$",
+			"--text",
+			"On the equation",
+		);
+		await runCli("comments", "reply", docPath, "--at", "c0", "--text", "Ack");
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0:6-p1:12",
+			"--text",
+			"Straddles into the equation",
+		);
+		return docPath;
+	}
+
+	const remainingTexts = async (docPath: string) =>
+		(
+			(await runCli("comments", "list", docPath)).parsed as { text: string }[]
+		).map((comment) => comment.text);
+
+	test("delete --at pN removes the comment and its reply, keeps the straddler", async () => {
+		const docPath = await commentedEquationDoc("comments-contained-delete");
+		expect((await runCli("delete", docPath, "--at", "p1")).exitCode).toBe(0);
+		expect(await remainingTexts(docPath)).toEqual([
+			"Straddles into the equation",
+		]);
+		await expectValidClean(docPath);
+	});
+
+	test("edit --text '' on the line does the same", async () => {
+		const docPath = await commentedEquationDoc("comments-contained-blank");
+		expect(
+			(await runCli("edit", docPath, "--at", "p1", "--text", "")).exitCode,
+		).toBe(0);
+		expect(await remainingTexts(docPath)).toEqual([
+			"Straddles into the equation",
+		]);
+		await expectValidClean(docPath);
+	});
+
+	test("a cell's last paragraph is blanked, and its comment still goes", async () => {
+		const workspace = tempWorkspace("comments-contained-cell");
+		const docPath = join(workspace, "cell.docx");
+		const source = join(workspace, "cell.md");
+		await Bun.write(source, "| A | B |\n| --- | --- |\n| one | two |\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"t0:r1c0:p0",
+			"--text",
+			"Cell note",
+		);
+		expect(
+			(await runCli("delete", docPath, "--at", "t0:r1c0:p0")).exitCode,
+		).toBe(0);
+		expect(await remainingTexts(docPath)).toEqual([]);
+		await expectValidClean(docPath);
+	});
+
+	test("read --comments quotes an equation as its read token", async () => {
+		const docPath = await commentedEquationDoc("comments-equation-quote");
+		const read = await runCli("read", docPath, "--comments");
+		expect(read.stdout).toContain('[^c0]: "$E=mc^2$" — ');
+	});
+});

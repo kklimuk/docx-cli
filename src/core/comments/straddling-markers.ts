@@ -21,6 +21,24 @@ export function straddlingCommentMarkers(children: XmlNode[]): XmlNode[] {
 		.map((marker) => marker.node);
 }
 
+/** The ids of the comments WHOLLY inside `children` — range start, range end
+ *  AND reference all within, searched through run-bearing wrappers — the
+ *  complement of `straddlingCommentMarkers`. Removing `children` removes the
+ *  whole anchor, so the comment itself must go too: a `<w:comment>` with no
+ *  marker anywhere is what `validate` reports as "no anchor" and Word
+ *  silently deletes on open. */
+export function containedCommentIds(children: XmlNode[]): string[] {
+	const kindsById = new Map<string, Set<string>>();
+	for (const marker of commentMarkersWithin(children)) {
+		const kinds = kindsById.get(marker.id) ?? new Set<string>();
+		kinds.add(marker.kind);
+		kindsById.set(marker.id, kinds);
+	}
+	return [...kindsById]
+		.filter(([, kinds]) => kinds.size === 3)
+		.map(([id]) => id);
+}
+
 function commentMarkersWithin(children: XmlNode[]): CommentMarker[] {
 	const markers: CommentMarker[] = [];
 	for (const child of children) {

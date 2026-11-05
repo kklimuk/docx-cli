@@ -6,6 +6,7 @@ import {
 	type ParagraphOptions,
 	wrapPprChange,
 } from "../blocks";
+import { Comments } from "../comments";
 import { straddlingCommentMarkers } from "../comments/straddling-markers";
 import { hasTextBox, isAlternateContent } from "../mc";
 import {
@@ -491,6 +492,7 @@ export function removeParagraphLine(
 		if (opts.track) {
 			new TrackChanges(document).applyContentDeletion(node, opts.author);
 		} else {
+			new Comments(document).deleteContainedIn(node.children);
 			blankParagraphInPlace(node);
 		}
 		return;
@@ -506,6 +508,9 @@ export function removeParagraphLine(
 	if (index < 0) return;
 	relocateTextBoxes(node, parent, index);
 	relocateStraddlingCommentMarkers(node, parent, index);
+	// A comment wholly on the line goes with it — the `<w:comment>` too, or it
+	// lingers anchorless (validate's "no anchor"; Word deletes it on open).
+	new Comments(document).deleteContainedIn(node.children);
 	parent.splice(index, 1);
 }
 

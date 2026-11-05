@@ -412,11 +412,13 @@ function buildCommentIndex(
 			const comments = runComments(run);
 			if (!comments) return;
 			if (!isRunVisible(run, view)) return;
+			// An equation quotes as the token `read` prints for it (and that
+			// `--anchor` matches), not its flattened symbols (`E=mc2`).
 			const spanContribution =
 				run.type === "text"
 					? run.text
 					: run.type === "equation"
-						? run.text
+						? formatEquationToken(run.latex, run.text, run.display)
 						: "";
 			for (const commentId of comments) {
 				if (!spanText.has(commentId)) orderedIds.push(commentId);
