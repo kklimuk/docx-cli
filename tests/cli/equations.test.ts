@@ -975,6 +975,43 @@ describe("multi-line display equations (several m:oMath in one m:oMathPara)", ()
 		expect(eq?.latex).toBe(read?.latex);
 	});
 
+	test("markdown edit with the line `read` prints keeps a multi-line display block", async () => {
+		// `read` prints a display block as `$$…$$` on one line, which remark-math
+		// alone parses as INLINE math — pasting it back used to demote the block
+		// to one inline `<m:oMath>` (an `aligned` eqArr).
+		const docPath = await multiLineDoc("eq-multiline-markdown");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			`$$${gathered("x=1", "y=3")}$$`,
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml.match(/<m:oMathPara>/g)).toHaveLength(1);
+		expect(xml.match(/<m:oMath>/g)).toHaveLength(2);
+		const [eq] = await equationsOf(docPath);
+		expect(eq?.display).toBe(true);
+		expect(eq?.latex).toBe(gathered("x=1", "y=3"));
+	});
+
+	test("an equation refusal names a display block with $$, the way read prints it", async () => {
+		const docPath = await multiLineDoc("eq-multiline-refusal");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"plain",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout + result.stderr).toContain(
+			`eq0 ($$${gathered("x=1", "y=2")}$$)`.replaceAll("\\", "\\\\"),
+		);
+	});
+
 	test("a matrix row break inside a line is not a line break", async () => {
 		const docPath = await multiLineDoc("eq-multiline-matrix");
 		const latex = gathered(

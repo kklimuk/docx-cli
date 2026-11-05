@@ -27,6 +27,7 @@ import { NoteBody, noteConfig, TrackedNoteBody } from "../notes";
 import { XmlNode } from "../parser";
 import { getPageContentWidthEmu } from "../sections";
 import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
+import { promoteDisplayMath } from "./display-math";
 import { MarkdownImportError } from "./errors";
 import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
 import { remarkInlineSurgery } from "./inline-surgery";
@@ -121,6 +122,7 @@ function parseToMdast(source: string): Root {
 	// mutated in place; we cast back to `Root` because unified's typing keeps
 	// it generic.
 	processor.runSync(tree);
+	promoteDisplayMath(tree as Root, source);
 	return tree as Root;
 }
 

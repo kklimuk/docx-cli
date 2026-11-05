@@ -1,18 +1,19 @@
 # src/core/markdown — `MarkdownImport` lens, walker, inline-surgery (CriticMarkup + spans)
 
-Five files behind the `@core/markdown` barrel ([index.ts](index.ts)):
+Six files behind the `@core/markdown` barrel ([index.ts](index.ts)):
 
 - [import.tsx](import.tsx) — the `MarkdownImport` lens. Assembles the unified pipeline (`remark-parse` + `remark-gfm` + `remark-math` + our `remarkInlineSurgery`), pre-walks the mdast tree once for side effects (mint footnote ids, register bodies into `footnotes.xml`, fetch image bytes and mint rels), then hands off to the block walker.
 - [walker.tsx](walker.tsx) — block dispatcher (`walkRoot`, `walkBlock`). One handler per mdast block type, each composing the existing emitters in `@core` (`Paragraph` / `HorizontalRule` / `Table` / `BlankTable` / `buildCodeBlockParagraphs` / `latexToOmml`).
 - [inline.tsx](inline.tsx) — phrasing walker (`walkInline`). Returns `<w:p>`-child siblings: a mix of `<w:r>`, `<w:hyperlink>`, `<m:oMath>`, `<w:ins>`, `<w:del>`. Threads an immutable `InlineFormat` through nested strong / em / delete / inlineCode / bracketed-span wrappers.
 - [inline-surgery.ts](inline-surgery.ts) — `remarkInlineSurgery` plugin. Post-parse, rewrites each phrasing-children array with two reducers: text-marker surgery gathers CriticMarkup (`{++…++}` / `{--…--}`) and legacy Pandoc spans (`[text]{.class key="value"}`); **HTML-element surgery (`gatherHtmlSpans`)** re-pairs the `<span>` / `<mark>` / `<sup>` / `<sub>` / `<u>` tags `read` now emits (remark leaves inline HTML as FLAT, unpaired `html` tokens — open tag, mdast content, close tag as separate siblings — so we re-pair them, the same stack-reduce as the text markers). Both feed `bracketedSpan` (etc.) parent nodes the inline walker dispatches on. Each tag's attributes are parsed with the project's `XmlNode.parse` (fast-xml-parser), not a bespoke regex. Scanning whole sibling arrays (not single `text` nodes) is what lets a marker straddle inline formatting.
+- [display-math.ts](display-math.ts) — `promoteDisplayMath`. Post-parse, turns a top-level paragraph that is ONLY a one-line `$$…$$` (whitespace and `<!-- … -->` comments aside) into a display `math` block. `read` prints a display equation exactly that way, and remark-math alone parses it as INLINE math, so pasting a read line back into `edit`/`insert`/`create` demoted the block to inline (a multi-line `\begin{gathered}` block collapsed into one inline `<m:oMath>`). A `$$…$$` beside other text stays inline.
 - [errors.ts](errors.ts) — `MarkdownImportError` (code is a strict subset of `cli/respond.ts`'s `ErrorCode`).
 
 ## The lens does an async pre-walk, then a sync block walk
 
 `MarkdownImport.blocks(source)` is the only public entry point. It runs in three phases:
 
-1. **Parse** — `parseToMdast(source)`: build the unified processor, call `.parse()`, then `.runSync()` to apply the inline-surgery transformer. Returns the mutated mdast `Root`.
+1. **Parse** — `parseToMdast(source)`: build the unified processor, call `.parse()`, then `.runSync()` to apply the inline-surgery transformer, then `promoteDisplayMath`. Returns the mutated mdast `Root`.
 2. **Pre-walk (async)** — `collectFootnoteDefinitions` then `registerFootnotes` (mint numeric ids, append `<w:footnote>` bodies to `footnotes.xml`, populate `ctx.mintedNoteIds`); `preloadImages` (for each `<image>` URL: if the URL is hash-shaped — `<sha256>.<ext>` — first try to reuse an existing image from the target document via `body.findImageByHash`; otherwise fetch via `loadImageSource`, mint rel + image part via `Images.add`, compute EMU extents, cache as `ResolvedImage`).
 3. **Block walk (sync)** — `walkRoot(tree, ctx)` reads from `ctx.mintedNoteIds` / `ctx.imageCache` without itself touching async; produces the `<w:body>`-ready `XmlNode[]` the caller splices.
 

@@ -329,11 +329,16 @@ export function spanOverEquationsError(
 	};
 }
 
-/** `eq0 ($E=mc^2$), eq1 ($x$)` — how every equation refusal names what it
- *  would have stranded. */
+/** `eq0 ($E=mc^2$), eq1 ($$x$$)` — how every equation refusal names what it
+ *  would have stranded, delimited the way `read` prints it (`$$` for a display
+ *  block), so an agent copying it into a markdown rewrite keeps a display
+ *  block a display block. */
 export function describeEquations(equations: EquationRun[]): string {
 	return equations
-		.map((equation) => `${equation.id} ($${equation.latex}$)`)
+		.map((equation) => {
+			const delimiter = equation.display ? "$$" : "$";
+			return `${equation.id} (${delimiter}${equation.latex}${delimiter})`;
+		})
 		.join(", ");
 }
 

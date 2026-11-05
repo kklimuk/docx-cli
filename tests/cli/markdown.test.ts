@@ -240,6 +240,27 @@ describe("docx insert/create --markdown — block features", () => {
 		expect(display?.latex?.replace(/\s/g, "")).toContain("\\sum");
 	});
 
+	test("a paragraph that is only one-line $$..$$ is display math; $$ beside text stays inline", async () => {
+		// `read` prints a display equation as `$$latex$$` on one line, so that
+		// form must import as display — remark-math alone reads it as inline.
+		const docPath = join(tempWorkspace("md-math-oneline"), "out.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"--markdown",
+			"$$E=mc^2$$\n<!-- p1 -->\n\nSee $$a+b$$ here.",
+		);
+
+		const blocks = await readBlocks(docPath);
+		const equations = blocks.flatMap((b) =>
+			(b.runs ?? []).filter((r) => r.type === "equation"),
+		);
+		expect(equations.map((e) => e.display)).toEqual([true, false]);
+	});
+
 	test("footnoteReference + footnoteDefinition register in footnotes.xml", async () => {
 		const docPath = join(tempWorkspace("md-footnote"), "out.docx");
 		await runCli("create", docPath, "--text", "Intro.");
