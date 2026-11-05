@@ -1,12 +1,26 @@
 import { type Body, iterateBlocks } from "../ast/document/body";
-import type { Block, Paragraph, TrackedChange } from "../ast/types";
+import type {
+	Block,
+	EquationRun,
+	Paragraph,
+	TrackedChange,
+} from "../ast/types";
+import { formatEquationToken } from "../equation/token";
 import {
 	isRevisionVisible,
 	type RevisionView,
 } from "../track-changes/revision-visibility";
 import { replaceAcrossParagraphs } from "./replace-across";
+import { type EquationRefusal, equationSpanRefusal } from "./replace-matches";
 import type { ReplacementFormatting } from "./replace-span";
 
+export {
+	type EquationRefusal,
+	equationSpanRefusal,
+	replaceInParagraph,
+	replaceMatches,
+	type SpanReplacement,
+} from "./replace-matches";
 export {
 	type ReplacementFormatting,
 	replaceSpanInParagraph,
@@ -21,6 +35,28 @@ export type TextMatch = {
 	end: number;
 	text: string;
 	trackedChanges?: TrackedChange[];
+	/** The equations the match touches. Each equation is its `read` token in
+	 *  the search text (`$E=mc^2$`), so a match can cover one whole, sit inside
+	 *  its LaTeX, or cut it — see `EquationOverlap`. */
+	equations?: EquationOverlap[];
+};
+
+/** How a text span meets one equation token (paragraph-local offsets of the
+ *  TOKEN, delimiters included):
+ *  - `covered`: the span includes the whole token — replacing it deletes the
+ *    equation;
+ *  - `inside`: the span lies within the LaTeX, delimiters excluded — replacing
+ *    it rewrites the equation's LaTeX;
+ *  - `cut`: the span crosses a `$` delimiter — refused, since no edit of
+ *    plain text or of the LaTeX alone can carry it out. */
+export type EquationOverlap = {
+	id: string;
+	blockId: string;
+	latex: string;
+	display: boolean;
+	start: number;
+	end: number;
+	relation: "covered" | "inside" | "cut";
 };
 
 export type FindView = RevisionView;
@@ -95,6 +131,8 @@ export type ParagraphSpanMatch = {
 	endBlockId: string;
 	endOffset: number;
 	text: string;
+	/** The equations the match touches, as on `TextMatch`. */
+	equations?: EquationOverlap[];
 };
 
 /** What `findAcrossParagraphs` returns: the spanning matches plus the same
@@ -151,13 +189,29 @@ export function findAcrossParagraphs(
 			const start = mapFlatOffset(span.start, entries, entryCursor);
 			const end = mapFlatOffset(span.end, entries, start.entryIndex);
 			entryCursor = end.entryIndex;
-			out.push({
+			const match: ParagraphSpanMatch = {
 				startBlockId: start.blockId,
 				startOffset: start.local,
 				endBlockId: end.blockId,
 				endOffset: end.local,
 				text: span.text,
-			});
+			};
+			// Each paragraph's share of the match: from the start offset in the
+			// first, all of a middle one, up to the end offset in the last.
+			const equations = group
+				.slice(start.entryIndex, end.entryIndex + 1)
+				.flatMap((paragraph, index) =>
+					equationOverlaps(
+						paragraph,
+						index === 0 ? start.local : 0,
+						index === end.entryIndex - start.entryIndex
+							? end.local
+							: Number.POSITIVE_INFINITY,
+						view,
+					),
+				);
+			if (equations.length > 0) match.equations = equations;
+			out.push(match);
 		}
 	}
 	return { matches: out, ...normalization };
@@ -242,6 +296,10 @@ export type AcrossReplaceResult = {
 	/** The matches actually replaced (or that WOULD be, under dryRun), in
 	 *  document order. */
 	replaced: ParagraphSpanMatch[];
+	/** Set when a match can't be applied over the equations it touches (it
+	 *  cuts one, or would put a paragraph break inside one — see
+	 *  `equationSpanRefusal`). When set, NOTHING was applied. */
+	refusal?: EquationRefusal | undefined;
 	normalizedQuery?: string;
 	normalizationApplied?: NormalizationKind[];
 };
@@ -269,8 +327,19 @@ export function applyAcrossReplace(
 		},
 	);
 	const replaced = selectMatches(matches, spec);
-	if (!dryRun) {
-		const expand = replacementExpander(spec);
+	const expand = replacementExpander(spec);
+	const refusal = replaced
+		.map((match) =>
+			equationSpanRefusal(
+				acrossLocator(match),
+				match.equations,
+				expand(match.text),
+				"replace",
+				{ multiline: true, pattern: match.text },
+			),
+		)
+		.find((found) => found !== null);
+	if (!dryRun && !refusal) {
 		for (const match of [...replaced].reverse()) {
 			replaceAcrossParagraphs(
 				doc,
@@ -281,7 +350,14 @@ export function applyAcrossReplace(
 			);
 		}
 	}
-	return { totalMatches: matches.length, replaced, ...normalization };
+	return { totalMatches: matches.length, replaced, refusal, ...normalization };
+}
+
+/** `pN:S-E`, or `pN:S-pM:E` across paragraphs — `spanLocator`'s spelling. */
+function acrossLocator(match: ParagraphSpanMatch): string {
+	return match.startBlockId === match.endBlockId
+		? `${match.startBlockId}:${match.startOffset}-${match.endOffset}`
+		: `${match.startBlockId}:${match.startOffset}-${match.endBlockId}:${match.endOffset}`;
 }
 
 /** First/all/limit selection, shared by every replace surface: `limit` caps
@@ -469,6 +545,8 @@ function collectMatches(
 				view,
 			);
 			if (overlaps.length > 0) match.trackedChanges = overlaps;
+			const equations = equationOverlaps(block, span.start, span.end, view);
+			if (equations.length > 0) match.equations = equations;
 			out.push(match);
 		}
 	}
@@ -481,12 +559,17 @@ function paragraphTextForView(paragraph: Paragraph, view: FindView): string {
 }
 
 /** The text a run contributes in the given view — the AST-side counterpart of
- *  `inlineMarkerWidth` in run-ops.ts. Visible text is itself; a visible tab or
- *  line break renders as "\t"/"\n" in `read`, so `find` matches them the same
- *  way; everything else (images, math, page/column breaks, hidden runs) is "".
+ *  `inlineMarkerWidth` / `equationWidth` in run-ops.ts. Visible text is
+ *  itself; a visible tab or line break renders as "\t"/"\n" in `read`, so
+ *  `find` matches them the same way; a visible equation is the token `read`
+ *  prints for it (`$latex$` / `$$latex$$`) — what you see in `read` is what you
+ *  search; everything else (images, page/column breaks, hidden runs) is "".
  *  Every offset walker here derives both its haystack text and its offset
  *  widths from this one function, so they can't disagree. */
-function runViewText(run: Paragraph["runs"][number], view: FindView): string {
+export function runViewText(
+	run: Paragraph["runs"][number],
+	view: FindView,
+): string {
 	if (run.type === "text") {
 		return isRevisionVisible(run.trackedChange, view) ? run.text : "";
 	}
@@ -498,7 +581,18 @@ function runViewText(run: Paragraph["runs"][number], view: FindView): string {
 			? "\n"
 			: "";
 	}
+	if (run.type === "equation") {
+		return isRevisionVisible(run.trackedChange, view)
+			? equationRunToken(run)
+			: "";
+	}
 	return "";
+}
+
+/** The token `read` prints for an equation run — `formatEquationToken`, the
+ *  same spelling the XML walkers measure (`equationToken`). */
+export function equationRunToken(run: EquationRun): string {
+	return formatEquationToken(run.latex, run.text, run.display);
 }
 
 function normalizeQuery(query: string): {
@@ -609,7 +703,10 @@ function trackedChangesOverlapping(
 		offset = runEnd;
 		if (runEnd <= start || runStart >= end) continue;
 		const change =
-			run.type === "text" || run.type === "tab" || run.type === "break"
+			run.type === "text" ||
+			run.type === "tab" ||
+			run.type === "break" ||
+			run.type === "equation"
 				? run.trackedChange
 				: undefined;
 		if (!change) continue;
@@ -618,4 +715,51 @@ function trackedChangesOverlapping(
 		out.push(change);
 	}
 	return out;
+}
+
+/** The equations a span `[start, end)` touches, each classified against its
+ *  token (see `EquationOverlap`) on the same `runViewText` offsets `find`
+ *  matched on. An equation the view hides has no token and so never overlaps;
+ *  one that merely touches an edge of the span sits outside it. */
+export function equationOverlaps(
+	paragraph: Paragraph,
+	start: number,
+	end: number,
+	view: FindView,
+): EquationOverlap[] {
+	const out: EquationOverlap[] = [];
+	let offset = 0;
+	for (const run of paragraph.runs) {
+		const width = runViewText(run, view).length;
+		const tokenStart = offset;
+		const tokenEnd = offset + width;
+		offset = tokenEnd;
+		if (run.type !== "equation" || width === 0) continue;
+		if (tokenEnd <= start || tokenStart >= end) continue;
+		out.push({
+			id: run.id,
+			blockId: paragraph.id,
+			latex: run.latex.length > 0 ? run.latex : run.text,
+			display: run.display,
+			start: tokenStart,
+			end: tokenEnd,
+			relation: equationRelation(run.display, tokenStart, tokenEnd, start, end),
+		});
+	}
+	return out;
+}
+
+function equationRelation(
+	display: boolean,
+	tokenStart: number,
+	tokenEnd: number,
+	start: number,
+	end: number,
+): EquationOverlap["relation"] {
+	if (start <= tokenStart && end >= tokenEnd) return "covered";
+	const delimiter = display ? 2 : 1;
+	if (start >= tokenStart + delimiter && end <= tokenEnd - delimiter) {
+		return "inside";
+	}
+	return "cut";
 }

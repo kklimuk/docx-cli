@@ -6,7 +6,6 @@ import {
 	findTextSpans,
 	type ReplacementFormatting,
 	replacementExpander,
-	replaceSpanInParagraph,
 	selectMatches,
 	type TrackedReplaceOptions,
 } from "@core/find";
@@ -29,6 +28,7 @@ import {
 	respondAck,
 } from "../respond";
 import { ACROSS_TRACKED_HINT, ACROSS_TRACKED_MESSAGE } from "./across";
+import { applyMatchesOrFail } from "./apply-matches";
 import { matchesInScope, ScopeError, validateScopeShape } from "./scope";
 
 type RawValues = Record<
@@ -157,6 +157,10 @@ export async function runReplaceBatch(
 						: String(matcherError);
 				return fail("USAGE", `entry ${index}: invalid pattern: ${message}`);
 			}
+			if (acrossResult.refusal) {
+				const { code, message, hint } = acrossResult.refusal;
+				return fail(code, `entry ${index}: ${message}`, hint);
+			}
 			results.push({
 				pattern: spec.pattern,
 				replacement: spec.replacement,
@@ -220,26 +224,20 @@ export async function runReplaceBatch(
 				}
 			: undefined;
 
-		// Reverse document order so earlier offsets stay valid as later ones get
-		// rewritten — same as single-shot replace.
-		const reversed = [...selected].sort((left, right) => {
-			if (left.blockId !== right.blockId) {
-				return right.blockId.localeCompare(left.blockId);
-			}
-			return right.start - left.start;
-		});
-		const expand = replacementExpander(spec);
-		for (const match of reversed) {
-			const blockRef = document.body.resolveBlock(match.blockId);
-			replaceSpanInParagraph(
-				blockRef.node,
-				{ start: match.start, end: match.end },
-				expand(match.text),
+		// Refused before this entry applies; the batch fails before its save, so
+		// the entries before it aren't written either (like an invalid pattern).
+		const refused = await applyMatchesOrFail(
+			document.body,
+			selected,
+			replacementExpander(spec),
+			{
 				tracked,
-				spec.view,
-				spec.formatting,
-			);
-		}
+				view: spec.view,
+				formatting: spec.formatting,
+				entry: index,
+			},
+		);
+		if (refused !== undefined) return refused;
 
 		results.push({
 			pattern: spec.pattern,

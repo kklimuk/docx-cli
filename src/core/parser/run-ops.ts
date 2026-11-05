@@ -1,3 +1,4 @@
+import { equationToken, type TokenView } from "../equation/token";
 import { alternateContentBranch, isAlternateContent } from "../mc";
 import { XmlNode } from "./xml-node";
 
@@ -205,10 +206,10 @@ export function rewrapSplitHalf(wrapper: XmlNode, inner: XmlNode[]): XmlNode[] {
 	return [half];
 }
 
-/** Sum the text lengths of all `<w:r>` reachable from `children`, descending
- *  transparently through every run-bearing wrapper. Matches what the AST's
- *  `paragraph.runs.map(r => r.text).join("").length` would compute, so this
- *  is the canonical XML-side counterpart for `find`'s offset arithmetic. */
+/** Sum the offset widths of everything reachable from `children` — each
+ *  `<w:r>`'s text and each equation's `read` token — descending transparently
+ *  through every run-bearing wrapper. The `current`-view XML-side counterpart
+ *  of `find`'s offset arithmetic (every run counted, deleted ones included). */
 export function sumRunBearingTextLength(children: XmlNode[]): number {
 	let total = 0;
 	for (const child of children) {
@@ -216,11 +217,36 @@ export function sumRunBearingTextLength(children: XmlNode[]): number {
 			total += runTextLength(child);
 			continue;
 		}
+		if (isEquation(child)) {
+			total += equationWidth(child);
+			continue;
+		}
 		if (isRunBearingWrapper(child.tag)) {
 			total += sumRunBearingTextLength(wrapperContent(child));
 		}
 	}
 	return total;
+}
+
+/** An equation as a run-level sibling: `<m:oMath>` inline, `<m:oMathPara>` a
+ *  display block. It sits beside `<w:r>` (in a paragraph or any run-bearing
+ *  wrapper), never inside one. */
+export function isEquation(node: XmlNode): boolean {
+	return node.tag === "m:oMath" || node.tag === "m:oMathPara";
+}
+
+/** An equation's offset width: the length of the token `read` prints for it
+ *  (`$latex$` / `$$latex$$`, see `equationToken`), 0 when `view` hides it.
+ *  The equation is ATOMIC in every offset walker — one unit of this width that
+ *  a span either covers whole, sits strictly inside (an edit of its LaTeX,
+ *  decided above the walkers), or cuts (refused above them) — so a walker
+ *  never splits it; it only needs the width to keep its cursor aligned with
+ *  `find`. Kept in lockstep with `runViewText` in `core/find/index.ts`. */
+export function equationWidth(
+	node: XmlNode,
+	view: TokenView = "current",
+): number {
+	return equationToken(node, view)?.length ?? 0;
 }
 
 /** Split a paragraph's children into the runs that carry visible content

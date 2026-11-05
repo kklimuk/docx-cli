@@ -3,6 +3,8 @@ import { textToRunElements } from "../blocks";
 import type { FindView } from "../find";
 import { w } from "../jsx";
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
@@ -36,6 +38,10 @@ function sumVisibleTextLength(children: XmlNode[], view: FindView): number {
 	for (const child of children) {
 		if (child.tag === "w:r") {
 			total += runTextLength(child);
+			continue;
+		}
+		if (isEquation(child)) {
+			total += equationWidth(child, view);
 			continue;
 		}
 		if (isWrapperVisibleInView(child.tag, view)) {
@@ -204,6 +210,10 @@ export function findElementOffsetsInParagraph(
 			}
 			if (child.tag === "w:r") {
 				cursor += runTextLength(child);
+				continue;
+			}
+			if (isEquation(child)) {
+				cursor += equationWidth(child);
 				continue;
 			}
 			if (isRunBearingWrapper(child.tag)) {
@@ -398,6 +408,24 @@ function walkAndPlace(
 			// pPr always comes first in a paragraph; markers must sit AFTER it.
 			result.push(child);
 			flushAtCurrentOffset(result, pending, state);
+			continue;
+		}
+
+		if (isEquation(child)) {
+			// One atomic unit as wide as its `read` token. A range can't open or
+			// close INSIDE an equation, so an offset within the token snaps
+			// outward: a range start to before the equation, anything else (a
+			// range end) to after it — `comments add --anchor "mc^2"` comments
+			// the whole equation rather than failing or collapsing.
+			const start = state.offset;
+			const end = start + equationWidth(child, view);
+			for (const marker of pending) {
+				if (!marker || marker.offset <= start || marker.offset >= end) continue;
+				marker.offset = marker.node.tag === "w:commentRangeStart" ? start : end;
+			}
+			flushAtCurrentOffset(result, pending, state);
+			result.push(child);
+			state.offset = end;
 			continue;
 		}
 

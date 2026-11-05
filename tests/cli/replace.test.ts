@@ -1949,3 +1949,236 @@ describe("docx replace across a wrapper nested in another author's insertion (#1
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 });
+
+// An equation is its `read` token in find/replace text (`$E=mc^2$`, 8 chars):
+// a match covering the token deletes the equation, a match inside it rewrites
+// its LaTeX, and a match cutting a `$` delimiter is the one refusal.
+describe("docx replace over an inline equation", () => {
+	let workspace: string;
+	let docPath: string;
+
+	beforeEach(async () => {
+		workspace = tempWorkspace("replace-equation");
+		docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(
+			source,
+			"Energy is $E=mc^2$ in physics.\n\nMid $x$ mid.\n\nEnd two.\n",
+		);
+		await runCli("create", docPath, "--from", source);
+	});
+
+	const firstLine = async (...flags: string[]) =>
+		(await runCli("read", docPath, ...flags)).stdout
+			.split("\n")
+			.find((line) => line.includes("<!-- p0 -->"));
+
+	test("a match covering the whole token deletes the equation", async () => {
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Energy.*physics",
+			"Gone",
+			"--regex",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe("Gone. <!-- p0 -->");
+		expect(await readDocumentXml(docPath)).toContain("<m:oMath>"); // eq1 stays
+		const equations = await runCli("equations", "list", docPath);
+		expect(equations.stdout).not.toContain("E=mc^2");
+	});
+
+	test("a tracked whole-token match wraps the equation in <w:del>", async () => {
+		await runCli(
+			"replace",
+			docPath,
+			"Energy.*physics",
+			"Gone",
+			"--regex",
+			"--track",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(/<w:del [^>]*>(?:(?!<\/w:del>).)*<m:oMath>/);
+		expect(await firstLine()).toBe("Gone. <!-- p0 -->");
+		expect(await firstLine("--baseline")).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+		await runCli("track-changes", "reject", docPath, "--all");
+		expect(await firstLine()).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+	});
+
+	test("a match inside the token rewrites the equation's LaTeX", async () => {
+		const result = await runCli("replace", docPath, "mc^2", "mc^3");
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+		expect((await readDocumentXml(docPath)).match(/<m:oMath>/g)).toHaveLength(
+			2,
+		);
+	});
+
+	test("a tracked inside match is a del/ins pair of equations, one revN", async () => {
+		await runCli("replace", docPath, "mc^2", "mc^3", "--track");
+		expect(await firstLine()).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+		expect(await firstLine("--baseline")).toBe(
+			"Energy is $E=mc^2$ in physics. <!-- p0 -->",
+		);
+		const listed = (await runCli("track-changes", "list", docPath)).parsed;
+		expect(listed).toMatchObject([
+			{ kind: "del", text: "$E=mc^2$", group: "rev0" },
+			{ kind: "ins", text: "$E=mc^3$", group: "rev0" },
+		]);
+		await runCli("track-changes", "accept", docPath, "--all");
+		expect(await firstLine()).toBe(
+			"Energy is $E=mc^3$ in physics. <!-- p0 -->",
+		);
+	});
+
+	test("several matches inside one equation fold into one rewrite", async () => {
+		const result = await runCli(
+			"replace",
+			docPath,
+			"=|\\^2",
+			"+",
+			"--regex",
+			"--all",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe("Energy is $E+mc+$ in physics. <!-- p0 -->");
+		const xml = await readDocumentXml(docPath);
+		// One <w:del> for the old equation, not one per match.
+		expect(xml.match(/<w:del [^>]*><m:oMath>/g)).toHaveLength(1);
+	});
+
+	test("a match cutting a $ delimiter is refused and the file is untouched", async () => {
+		const before = await readDocumentXml(docPath);
+		for (const extra of [[], ["--track"], ["--dry-run"]]) {
+			const result = await runCli("replace", docPath, "is $E", "X", ...extra);
+			expect(result.exitCode).toBe(1);
+			expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+			const { error, hint } = result.parsed as { error: string; hint: string };
+			expect(error).toStartWith("p0:7-12: the span cuts eq0 ($E=mc^2$)");
+			expect(hint).toContain("Match the whole token ($E=mc^2$)");
+			// Nothing here looks shell-gutted, so no batch-file detour.
+			expect(hint).not.toContain("--batch");
+		}
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a pattern the shell gutted gets the batch line it meant", async () => {
+		// bash turns "$E=mc^2$ in" into "=mc^2$ in", which cuts eq0.
+		const result = await runCli("replace", docPath, "=mc^2$ in", "X");
+		expect(result.exitCode).toBe(1);
+		const { hint } = result.parsed as { hint: string };
+		expect(hint).toContain(
+			'--batch subs.jsonl` with the line {"pattern":"$E=mc^2$ in","replacement":"X"}',
+		);
+		expect(hint).toContain("<<'EOF'");
+	});
+
+	test("LaTeX the rewrite leaves unparsable is refused before anything changes", async () => {
+		const before = await readDocumentXml(docPath);
+		const result = await runCli("replace", docPath, "mc^2", "mc^{");
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain('"E=mc^{"');
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("the replacement is literal: a $5 next to a deleted equation stays text", async () => {
+		const result = await runCli("replace", docPath, "$E=mc^2$", "costs $5");
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe(
+			"Energy is costs $5 in physics. <!-- p0 -->",
+		);
+	});
+
+	test("a shell-mangled replacement that would delete the equation is refused", async () => {
+		// bash turns "Energy is $E=mc^2$ now" into "Energy is =mc^2$ now".
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"replace",
+			docPath,
+			"Energy.*physics",
+			"Energy is =mc^2$ now",
+			"--regex",
+		);
+		expect(result.exitCode).toBe(2);
+		const { error, hint } = result.parsed as { error: string; hint: string };
+		expect(error).toContain('"=mc^2$"');
+		// The hint's example line puts the gutted token back.
+		expect(hint).toContain(
+			'{"pattern":"Energy is $E=mc^2$ in physics","replacement":"Energy is $E=mc^2$ now"}',
+		);
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a match that only touches the equation's edge still replaces", async () => {
+		const result = await runCli("replace", docPath, "Energy is ", "Mass ");
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe("Mass $E=mc^2$ in physics. <!-- p0 -->");
+	});
+
+	test("a cross-paragraph match covering an equation deletes it", async () => {
+		const result = await runCli(
+			"replace",
+			docPath,
+			"physics.\\nMid $x$ mid",
+			"J",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe("Energy is $E=mc^2$ in J. <!-- p0 -->");
+		expect((await readDocumentXml(docPath)).match(/<m:oMath>/g)).toHaveLength(
+			1,
+		);
+	});
+
+	test("a cross-paragraph match cutting an equation is refused", async () => {
+		const before = await readDocumentXml(docPath);
+		const result = await runCli("replace", docPath, "physics.\\nMid $x", "J");
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
+		// The refusal names the whole span, both paragraphs.
+		expect((result.parsed as { error: string }).error).toStartWith(
+			"p0:22-p1:6:",
+		);
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a cross-paragraph match starting at the equation's edge leaves it in place", async () => {
+		const result = await runCli("replace", docPath, " in physics.\\nMid", " X");
+		expect(result.exitCode).toBe(0);
+		expect(await firstLine()).toBe("Energy is $E=mc^2$ X $x$ mid. <!-- p0 -->");
+	});
+
+	test("batch entries delete and rewrite equations, read as tokens", async () => {
+		const script = join(workspace, "subs.jsonl");
+		await Bun.write(
+			script,
+			'{"pattern":"$x$","replacement":"y"}\n{"pattern":"mc^2","replacement":"mc^3"}\n',
+		);
+		const result = await runCli("replace", docPath, "--batch", script);
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("Energy is $E=mc^3$ in physics.");
+		expect(markdown).toContain("Mid y mid.");
+	});
+
+	test("a batch entry cutting an equation fails before anything is saved", async () => {
+		const before = await readDocumentXml(docPath);
+		const script = join(workspace, "subs.jsonl");
+		await Bun.write(
+			script,
+			'{"pattern":"End","replacement":"Finish"}\n{"pattern":"Mid $x","replacement":"K"}\n',
+		);
+		const result = await runCli("replace", docPath, "--batch", script);
+		expect(result.exitCode).toBe(1);
+		expect((result.parsed as { error: string }).error).toContain("entry 1:");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+});

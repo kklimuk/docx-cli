@@ -1,6 +1,6 @@
 # src/core/equation — OMML ↔ LaTeX
 
-Six files behind the `@core/equation` barrel ([index.ts](index.ts)):
+The files behind the `@core/equation` barrel ([index.ts](index.ts)):
 
 **Read side** (OMML → LaTeX):
 - [read.ts](read.ts) — entry (`ommlToLatex`) + dispatcher
@@ -25,6 +25,13 @@ Six files behind the `@core/equation` barrel ([index.ts](index.ts)):
   `<FunctionApply>`, `<Bar>`, `<Box>`, etc.) plus a dispatcher that walks
   the MathML tree and recognizes the patterns temml emits (e.g.,
   big-operator absorbed body, fenced expressions, function-name + arg)
+
+**In text** (an equation as find/replace/edit see it):
+- [token.ts](token.ts) — `formatEquationToken` / `equationToken`: the
+  `$…$` / `$$…$$` token an equation occupies in every offset model
+- [shell-mangle.ts](shell-mangle.ts) — `shellMangledEquationLoss` +
+  `batchFileHint`: the backstop for a `$` bash expanded away (see "Equations
+  in text" below)
 
 The canonical read fixture is [tests/fixtures/equations.docx](
 ../../../tests/fixtures/equations.docx), built by
@@ -67,7 +74,16 @@ The walker has three key behaviors:
 The AST's `EquationRun` carries `id` (`eqN`, document order, parallels
 imgN/linkN/tcN), `latex` (the new reconstructed form), `text` (legacy
 plaintext fallback), and `display` (inline `<m:oMath>` vs block
-`<m:oMathPara>`). The original `<m:oMath>` XmlNode lives in
+`<m:oMathPara>`). A multi-line display block — Word's `<m:oMathPara>`
+holding several `<m:oMath>` lines — stays ONE `eqN` whose `latex` is
+`\begin{gathered}line\\line\end{gathered}`; `latexToOmml` splits that form
+(top-level `\\` only, not a matrix row) back into one `<m:oMath>` per line,
+dropping a break's own `*` / `[4pt]` option (OMML has no per-line spacing).
+So a line that itself opens with `[` or `*` reads with a leading `{}`
+(`x=1\\{}[A,B]=0`) — without it the write-back would take `[A,B]` for the
+break's option.
+Reading only the first line hid the rest, and `equations edit` then deleted
+lines the agent never saw. The original `<m:oMath>` XmlNode lives in
 `document.body.equationReferences` for emit-back paths — same pattern as
 `document.body.imageById` / `document.body.hyperlinkById` (body-scoped
 maps on `Body`) and `document.trackedChangeReferences` (cross-part map
@@ -249,6 +265,47 @@ the kept equation renders correctly.
 What's still deferred:
 - `<w:rPrChange>` inside math runs (font property revisions on individual
   symbols) — niche, would need a dedicated probe.
+
+## Equations in text: the token (find / replace / edit)
+
+[token.ts](token.ts) is the one spelling of an equation in TEXT:
+`formatEquationToken` (`$latex$`, `$$latex$$`), `equationToken(node, view)`
+(null for a textless equation or one a whole-equation Word marker hides in
+`view`), `equationLatex`/`mathText` (what the reader stores on `EquationRun`).
+`read`'s markdown, `find`'s search text and every XML offset walker
+(`equationWidth` in `parser/run-ops.ts`) all go through it, so an agent can
+copy a token from `read` into `find`/`replace`, and a `pN:S-E` read off `find`
+lines up everywhere. How an edit meets the token decides what happens:
+
+| Span vs token                  | Effect                                                    |
+| ------------------------------ | --------------------------------------------------------- |
+| covers it whole                | the equation is deleted (inside the span's `<w:del>` tracked) |
+| strictly inside (not a `$`)    | its LaTeX is rewritten — `replaceInParagraph` folds every such span of one equation into ONE `latexToOmml` recompile; untracked in place, tracked `<w:del>OLD</w:del><w:ins>NEW</w:ins>` minted from the operation's shared allocator; empty LaTeX deletes |
+| cuts a `$` delimiter           | refused, `UNSUPPORTED`, nothing written (`equationSpanRefusal`) |
+
+The replacement is literal — a `$5` in it is text, never math. Whole-paragraph
+`edit --text` (and a word-only markdown rewrite) goes through
+`planEquationText` ([track-changes/equation-text.ts](../track-changes/equation-text.ts)):
+the new text is matched against the paragraph's token view — a token found in
+order is KEPT (the very `<m:oMath>` object rides the word diff as one sentinel
+token), a gap whose missing equations face exactly as many well-formed spans of
+the same kinds is an EDIT, a gap with none is a DELETE, and the rest is
+literal. Ambiguity (span/equation counts or kinds that don't pair, a token
+moved to where no equation was) refuses. A whole-paragraph markdown replace
+re-attaches the ORIGINAL equation for every token it re-states
+(`keepRestatedEquations` in [edit/restated-equations.ts](../edit/restated-equations.ts)),
+since a recompile from LaTeX loses what OMML carried. `--runs` and a `--text`
+that can't take the diff refuse a paragraph holding an equation.
+
+**Shell backstop.** Double-quoted bash eats `$E` from `"…$E=mc^2$…"`, turning
+"keep" into "delete". [shell-mangle.ts](shell-mangle.ts)'s
+`shellMangledEquationLoss` refuses (`USAGE`) only when an edit drops an
+equation AND the new value carries the shell's fingerprint — the token as bash
+expands it (`=mc^2$`; a digit run where `$$` was) or a stray `$` that is no
+math span, price (`$` + digit — which double-quoted bash would ALSO have
+eaten) or escape. It returns the value with the gutted token restored, so
+`batchFileHint` can show the exact JSONL line to send instead (plus the
+quoted-heredoc caveat). A paragraph without equations is never examined.
 
 ## Adding support for a new OMML element
 

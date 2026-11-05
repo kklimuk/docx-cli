@@ -1,4 +1,6 @@
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
@@ -96,6 +98,13 @@ function clearInContainer(
 			stripRunProperties(middle, tags);
 			out.push(middle);
 			if (sliceEnd < length) out.push(sliceRun(child, sliceEnd, length));
+			continue;
+		}
+		// An equation carries no run formatting, but it occupies its `read`
+		// token's width in the offsets `find` reported — advance past it.
+		if (isEquation(child)) {
+			offset += equationWidth(child, "accepted");
+			out.push(child);
 			continue;
 		}
 		// `<w:del>` / `<w:moveFrom>` are invisible in the accepted view — pass

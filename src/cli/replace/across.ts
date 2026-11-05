@@ -75,6 +75,10 @@ export async function runReplaceAcross(
 				: String(matcherError);
 		return fail("USAGE", `Invalid pattern: ${message}`);
 	}
+	if (result.refusal) {
+		const { code, message, hint } = result.refusal;
+		return fail(code, message, hint);
+	}
 
 	const matchesPayload = result.replaced.map((match) => ({
 		locator: spanLocator(match),

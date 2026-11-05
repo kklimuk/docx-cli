@@ -829,3 +829,59 @@ describe("docx find — nested revisions follow the all-ancestors rule", () => {
 		]);
 	});
 });
+
+// An equation is its `read` token in the search text — `$E=mc^2$` is 8
+// characters — so a query copied from `read` finds it, and offsets past it
+// line up with the read view. `--json` says how each match meets it.
+describe("find over an inline equation", () => {
+	async function locatorLines(
+		docPath: string,
+		...args: string[]
+	): Promise<string[]> {
+		const result = await runCli("find", docPath, ...args, "--json");
+		return (
+			result.parsed as { matches: Array<{ locator: string }> }
+		).matches.map((match) => match.locator);
+	}
+
+	async function equationDoc(label: string): Promise<string> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		return docPath;
+	}
+
+	test("the token as read prints it is found, and offsets count its width", async () => {
+		const docPath = await equationDoc("find-equation-token");
+		expect(await locatorLines(docPath, "$E=mc^2$")).toEqual(["p0:10-18"]);
+		expect(await locatorLines(docPath, "physics")).toEqual(["p0:22-29"]);
+	});
+
+	test("--json says whether a match covers, sits inside, or cuts the token", async () => {
+		const docPath = await equationDoc("find-equation-json");
+		const relation = async (query: string, ...flags: string[]) => {
+			const result = await runCli("find", docPath, query, "--json", ...flags);
+			const [match] = (
+				result.parsed as { matches: { equations?: { relation: string }[] }[] }
+			).matches;
+			return match?.equations?.map((overlap) => overlap.relation);
+		};
+		expect(await relation("Energy.*physics", "--regex")).toEqual(["covered"]);
+		expect(await relation("mc^2")).toEqual(["inside"]);
+		expect(await relation("is $E")).toEqual(["cut"]);
+		expect(await relation("Energy is ")).toBeUndefined();
+	});
+
+	test("an equation in a pending deletion has no token in the accepted view", async () => {
+		const docPath = await equationDoc("find-equation-deleted");
+		await runCli("replace", docPath, "$E=mc^2$", "X", "--track");
+		expect(await locatorLines(docPath, "$E=mc^2$")).toEqual([]);
+		expect(await locatorLines(docPath, "$E=mc^2$", "--current")).toEqual([
+			"p0:10-18",
+		]);
+		// Accepted: "Energy is X in physics." — the deleted token takes nothing.
+		expect(await locatorLines(docPath, "physics")).toEqual(["p0:15-22"]);
+	});
+});

@@ -32,7 +32,17 @@ import {
 	reanchorCommentMarkers,
 } from "../comments/markers";
 import { matchDocumentLook } from "../dominant-formatting";
-import { replaceSpanInParagraph, type TrackedReplaceOptions } from "../find";
+import { EquationParseError, latexToOmml } from "../equation/emit";
+import {
+	batchFileHint,
+	shellMangledEquationLoss,
+} from "../equation/shell-mangle";
+import {
+	equationOverlaps,
+	equationSpanRefusal,
+	replaceInParagraph,
+	type TrackedReplaceOptions,
+} from "../find";
 import { continueList } from "../lists/continue-list";
 import { hasTextBox } from "../mc";
 import {
@@ -58,6 +68,14 @@ import {
 	TrackChanges,
 	type TrackedMeta,
 } from "../track-changes";
+import {
+	type EquationTextPlan,
+	editSentinel,
+	keepSentinel,
+	type OldEquation,
+	planEquationText,
+	visibleEquations,
+} from "../track-changes/equation-text";
 import { watchPendingRevisions } from "../track-changes/pending-authors";
 import { paragraphMarkRunRpr } from "../track-changes/preserve-formatting";
 import {
@@ -70,6 +88,7 @@ import {
 	TrackedRangeConflictError,
 } from "../track-changes/replace";
 import { markdownAsTextEdit } from "./markdown-as-text-edit";
+import { keepRestatedEquations } from "./restated-equations";
 
 /** Cross-cutting lens over "edit an existing block." Stateless — each method
  * takes an already-resolved `BlockReference` (or `BlockRangeReference`) plus
@@ -157,6 +176,18 @@ export class Edit {
 				"Block reference is stale (parent does not contain it)",
 			);
 		}
+		if (spec.kind === "runs") this.refuseRunsOverEquations(blockRef.node);
+		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
+		// Decided before anything mutates, so a refusal leaves the paragraph as
+		// it was (and a --dry-run refuses exactly what the edit would).
+		const textEdit = wordDiffText(blockRef.node, spec, opts, tracked);
+		const equationPlan =
+			textEdit === null
+				? null
+				: this.planTextEquations(blockRef.node, textEdit, spec, tracked);
+		if (textEdit === null && spec.kind === "text") {
+			this.refuseTextRebuildOverEquations(blockRef.node);
+		}
 		// Snapshot BEFORE the rebuild: the single-author content rebuild resolves
 		// other authors' pending revisions without review (issue #17), so the
 		// caller can warn about whichever ones didn't survive.
@@ -174,22 +205,20 @@ export class Edit {
 			this.document.ensureStyles().ensureReferencedRunStyles(spec.runs);
 		}
 
-		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
-
 		// Lift any comment range markers out of the old paragraph BEFORE its
 		// content is rebuilt, so they can be re-anchored to the new content
 		// instead of collapsing to a zero-length range (the orphaned-comment bug).
 		const commentMarkers = extractCommentMarkers(blockRef.node);
 
-		const textEdit = wordDiffText(blockRef.node, spec, opts, tracked);
-		if (textEdit !== null) {
+		if (textEdit !== null && equationPlan) {
 			applyFormattingPreservingEdit(
 				this.document,
 				blockRef.node,
-				textEdit,
+				equationPlan.text,
 				spec.paragraphOptions,
 				opts.authorFlag,
 				tracked,
+				equationPlan.inserted,
 			);
 			this.reanchorComments(blockRef.node, commentMarkers);
 			// Mutated in place — the same <w:p> node is the result.
@@ -200,6 +229,9 @@ export class Edit {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
 		const newParagraphs = buildNewParagraphs(spec);
+		if (spec.kind === "markdown-blocks") {
+			this.keepEquations([blockRef.node], newParagraphs, spec, tracked);
+		}
 		// The replacement is built from content that never saw the old paragraph's
 		// text box / image / embed, so lift those runs out first and put them back
 		// on the live result below — the text-box invariant ("the box rides its
@@ -358,6 +390,24 @@ export class Edit {
 				'Run `docx find FILE "phrase"` to get an exact span locator.',
 			);
 		}
+		// An equation is its `$…$` token in these offsets, exactly as `find`
+		// reports them: a span covering one deletes it, a span inside one
+		// rewrites its LaTeX, a span cutting one is refused.
+		const paragraph = this.document.body.findBlockByNode(blockRef.node);
+		const equations =
+			paragraph?.type === "paragraph"
+				? equationOverlaps(paragraph, span.start, span.end, "accepted")
+				: [];
+		const blockId = paragraph?.id ?? "pN";
+		const refusal = equationSpanRefusal(
+			`${blockId}:${span.start}-${span.end}`,
+			equations,
+			replacement,
+			"edit",
+		);
+		if (refusal) {
+			throw new EditError(refusal.code, refusal.message, refusal.hint);
+		}
 		const tracked: TrackedReplaceOptions | undefined =
 			(opts.track ?? this.document.isTrackChangesEnabled())
 				? {
@@ -368,13 +418,130 @@ export class Edit {
 						allocator: new TrackChanges(this.document).createAllocator(),
 					}
 				: undefined;
-		replaceSpanInParagraph(
-			blockRef.node,
-			span,
-			replacement,
-			tracked,
-			"accepted",
+		try {
+			replaceInParagraph(
+				blockRef.node,
+				[{ blockId, ...span, replacement, equations }],
+				(id) => this.document.body.equationReferences.get(id)?.node,
+				{ tracked, view: "accepted" },
+			);
+		} catch (error) {
+			if (error instanceof EquationParseError) {
+				throw unparsableLatexError(error);
+			}
+			throw error;
+		}
+	}
+
+	/** `--runs` states each run byte for byte and has no way to say where an
+	 *  equation goes, so rewriting a paragraph that holds one would drop it
+	 *  silently. Refuse; `--text` and markdown both carry it as its `$…$`
+	 *  token. An equation in a pending deletion is gone in the accepted view
+	 *  and doesn't count. */
+	private refuseRunsOverEquations(node: XmlNode): void {
+		const equations = visibleEquations(node);
+		if (equations.length === 0) return;
+		const blockId = this.blockIdOf(node);
+		throw new EditError(
+			"UNSUPPORTED",
+			`${blockId} holds ${equations.map((equation) => equation.token).join(", ")}, which --runs can't carry: a run-by-run rewrite would drop it. Nothing was changed.`,
+			`Rewrite the paragraph as markdown or --text instead, keeping each equation's token where it belongs (leave it out to delete it). ${batchFileHint("edit", "edits.jsonl", { at: blockId, markdown: `… ${equations[0]?.token ?? "$x$"} …` })}`,
 		);
+	}
+
+	/** A `--text` rewrite that can't take the token diff (format flags,
+	 *  `--no-formatting`, or a tracked paragraph with pending revisions)
+	 *  rebuilds the paragraph from the literal text, which can't hold an
+	 *  equation — so it would turn each `$…$` into plain characters. */
+	private refuseTextRebuildOverEquations(node: XmlNode): void {
+		const equations = visibleEquations(node);
+		if (equations.length === 0) return;
+		const blockId = this.blockIdOf(node);
+		throw new EditError(
+			"UNSUPPORTED",
+			`${blockId} holds ${equations.map((equation) => equation.token).join(", ")}, and this --text edit rebuilds the paragraph from literal text (because of --bold/--italic/--color, --no-formatting, or tracked revisions already pending in it), which would turn each equation into plain characters. Nothing was changed.`,
+			`Drop the formatting flags (apply them after with a span edit), or accept/reject ${blockId}'s pending revisions first (\`docx track-changes list FILE\`), or rewrite it as markdown, keeping each equation's token. ${batchFileHint("edit", "edits.jsonl", { at: blockId, markdown: `… ${equations[0]?.token ?? "$x$"} …` })}`,
+		);
+	}
+
+	/** Plan how the word diff treats the paragraph's equations
+	 *  (`planEquationText`), refusing an ambiguous rewrite and a shell-mangled
+	 *  one that would drop an equation, and compile each edited equation's new
+	 *  LaTeX up front (a parse error refuses before anything mutates). */
+	private planTextEquations(
+		node: XmlNode,
+		text: string,
+		spec: ParagraphContentSpec,
+		tracked: boolean,
+	): EquationTextPlan & { inserted: Map<string, XmlNode> } {
+		const plan = planEquationText(node, text);
+		const inserted = new Map<string, XmlNode>();
+		if (plan.equations.length === 0) return { ...plan, inserted };
+		const blockId = this.blockIdOf(node);
+		const example = batchFileHint("edit", "edits.jsonl", {
+			at: blockId,
+			markdown: `… ${plan.equations[0]?.token ?? "$x$"} …`,
+		});
+		if (plan.ambiguity) {
+			throw new EditError(
+				"UNSUPPORTED",
+				`${blockId}: can't tell what this rewrite does to its equations — ${plan.ambiguity}. Nothing was changed.`,
+				`Keep each equation's token (as \`docx read\` shows it) where it stands to keep it, change only the LaTeX between its delimiters to edit it, or leave it out to delete it; move or add one with \`docx equations\`. ${example}`,
+			);
+		}
+		refuseShellMangledLoss(
+			blockId,
+			spec.kind === "markdown-blocks" ? (spec.source ?? text) : text,
+			plan.deleted,
+		);
+		for (const equation of plan.equations) {
+			if (plan.deleted.includes(equation)) continue;
+			// A kept equation the diff saw MOVE comes back as an insert: the
+			// original untracked, a copy tracked (the original rides the `<w:del>`).
+			inserted.set(
+				keepSentinel(equation.index),
+				tracked ? equation.node.clone() : equation.node,
+			);
+		}
+		for (const { equation, latex } of plan.edited) {
+			try {
+				inserted.set(
+					editSentinel(equation.index),
+					latexToOmml(latex, equation.display),
+				);
+			} catch (error) {
+				if (error instanceof EquationParseError) {
+					throw unparsableLatexError(error);
+				}
+				throw error;
+			}
+		}
+		return { ...plan, inserted };
+	}
+
+	/** A whole-paragraph markdown replace rebuilds every equation from its
+	 *  LaTeX. Put each one the new content RE-STATES (same token as an old one)
+	 *  back as the original object — LaTeX can't carry everything OMML holds —
+	 *  and refuse a shell-mangled source that drops one (see
+	 *  `keepRestatedEquations`). */
+	private keepEquations(
+		oldParagraphs: XmlNode[],
+		newBlocks: XmlNode[],
+		spec: Extract<ParagraphContentSpec, { kind: "markdown-blocks" }>,
+		tracked: boolean,
+	): void {
+		const dropped = keepRestatedEquations(oldParagraphs, newBlocks, tracked);
+		if (spec.source === undefined) return;
+		const [first] = oldParagraphs;
+		refuseShellMangledLoss(
+			first ? this.blockIdOf(first) : "pN",
+			spec.source,
+			dropped,
+		);
+	}
+
+	private blockIdOf(node: XmlNode): string {
+		return this.document.body.findBlockByNode(node)?.id ?? "pN";
 	}
 
 	/** Re-place the comment markers snapshotted before an edit so they bracket
@@ -528,6 +695,16 @@ export class Edit {
 			opts.authorFlag,
 		);
 		const newParagraphs = buildNewParagraphs(spec);
+		if (spec.kind === "markdown-blocks") {
+			this.keepEquations(
+				rangeRef.parent
+					.slice(rangeRef.startIndex, rangeRef.endIndex + 1)
+					.filter((block) => block.tag === "w:p"),
+				newParagraphs,
+				spec,
+				tracked,
+			);
+		}
 		applyMarkdownRideAlong(spec, newParagraphs);
 		const firstReplaced = rangeRef.parent[rangeRef.startIndex];
 		if (!opts.noFormatting && authorsFreshText(spec)) {
@@ -584,6 +761,9 @@ export type ParagraphContentSpec =
 			kind: "markdown-blocks";
 			blocks: XmlNode[];
 			paragraphOptions: ParagraphOptions;
+			/** The markdown the blocks were parsed from, for the shell-mangling
+			 *  backstop (`shellMangledEquationLoss`). */
+			source?: string;
 	  };
 
 type TextFormatting = {
@@ -599,7 +779,8 @@ export type EditErrorCode =
 	| "USAGE"
 	| "INVALID_LOCATOR"
 	| "BLOCK_NOT_FOUND"
-	| "TRACKED_CHANGE_CONFLICT";
+	| "TRACKED_CHANGE_CONFLICT"
+	| "UNSUPPORTED";
 
 export class EditError extends Error {
 	constructor(
@@ -650,6 +831,43 @@ function hasPendingRevisions(paragraph: XmlNode): boolean {
 		if (child.children.length > 0 && hasPendingRevisions(child)) return true;
 	}
 	return false;
+}
+
+/** Refuse an edit whose new content drops `dropped` AND carries a shell's
+ *  fingerprint (`shellMangledEquationLoss`) — the agent meant to keep the
+ *  equation, bash ate its `$`. The hint shows the line to put in a batch file:
+ *  the source with the gutted token restored when it can be told. */
+function refuseShellMangledLoss(
+	blockId: string,
+	source: string,
+	dropped: OldEquation[],
+): void {
+	const mangled = shellMangledEquationLoss(
+		source,
+		dropped.map((equation) => ({
+			latex: equation.token.replace(/^\$+|\$+$/g, ""),
+			display: equation.display,
+		})),
+	);
+	if (!mangled) return;
+	const example = batchFileHint("edit", "edits.jsonl", {
+		at: blockId,
+		markdown: mangled.repaired ?? `… ${dropped[0]?.token ?? "$x$"} …`,
+	});
+	throw new EditError(
+		"USAGE",
+		`${blockId}: this edit deletes ${dropped.map((equation) => equation.token).join(", ")}, and ${mangled.reason}. Nothing was changed.`,
+		`${example} To delete the equation on purpose, leave its token out with no stray $ in the text.`,
+	);
+}
+
+/** The refusal for an edit whose new LaTeX temml rejects. */
+function unparsableLatexError(error: EquationParseError): EditError {
+	return new EditError(
+		"USAGE",
+		`The edit leaves LaTeX that doesn't parse (${JSON.stringify(error.latex)}): ${error.message}. Nothing was changed.`,
+		"Text inside an equation's $…$ is its LaTeX, so it must stay valid LaTeX. Check it, or set the whole equation with `docx equations edit FILE --at eqN --equation '…'`.",
+	);
 }
 
 /** The formatting-preservation path applies only to `--text` (not `--runs`,

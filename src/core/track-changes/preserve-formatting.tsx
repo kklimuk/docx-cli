@@ -1,11 +1,14 @@
+import { equationToken } from "../equation/token";
 import { w } from "../jsx";
 import {
+	isEquation,
 	isRunBearingWrapper,
 	rewrapSplitHalf,
 	wrapperContent,
 	XmlNode,
 } from "../parser";
 import { Del, Ins } from "./emit";
+import { keepSentinel, parseSentinel, SENTINEL_TOKEN } from "./equation-text";
 import type { TrackedMeta } from "./index";
 
 /**
@@ -39,6 +42,9 @@ export type OldToken = {
 	text: string;
 	rPr: XmlNode | null;
 	link: XmlNode | null;
+	/** The `<m:oMath>`/`<m:oMathPara>` this token IS — an equation is one
+	 *  atomic token (`keepSentinel(i)`), never split, never re-typed. */
+	equation?: XmlNode;
 };
 
 /** Read the paragraph's accepted-view text as a list of word/whitespace
@@ -78,8 +84,23 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 	let fullText = "";
 	const charToRpr: Array<XmlNode | null> = [];
 	const charToLink: Array<XmlNode | null> = [];
+	// Each visible equation stands in the text as its sentinel — numbered in
+	// walk order, the same order `visibleEquations` numbers them — so the new
+	// text's kept tokens (see `planEquationText`) align with it.
+	const equations: XmlNode[] = [];
 	function walk(children: XmlNode[], link: XmlNode | null): void {
 		for (const child of children) {
+			if (isEquation(child)) {
+				if (equationToken(child, "accepted") === null) continue;
+				const sentinel = keepSentinel(equations.length);
+				equations.push(child);
+				fullText += sentinel;
+				for (let index = 0; index < sentinel.length; index++) {
+					charToRpr.push(null);
+					charToLink.push(link);
+				}
+				continue;
+			}
 			if (child.tag === "w:r") {
 				const segText = collectRunText(child);
 				if (segText.length === 0) continue;
@@ -116,12 +137,16 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 		const rPrSource = dominantBy(charToRpr, offset, text.length, (rPr) =>
 			rPr ? XmlNode.serialize([rPr]) : "",
 		);
+		const sentinel = parseSentinel(text);
+		const equation =
+			sentinel?.kind === "keep" ? equations[sentinel.index] : undefined;
 		tokens.push({
 			text,
 			rPr: rPrSource ? rPrSource.clone() : null,
 			// The link owning most of the token (by node identity), so a space
 			// straddling a link's edge lands on the side Word showed it.
 			link: dominantBy(charToLink, offset, text.length, (link) => link),
+			...(equation && { equation }),
 		});
 		offset += text.length;
 	}
@@ -205,7 +230,20 @@ function collectRunText(run: XmlNode): string {
  *  and each tab-delimited segment formatted on its own side. */
 export function tokenize(text: string): string[] {
 	if (text.length === 0) return [];
-	return text.match(/\S+|\t+|[^\S\t]+/g) ?? [];
+	return text.match(TOKEN_PATTERN) ?? [];
+}
+
+/** An equation sentinel (always its own token, even glued to punctuation as
+ *  in `($x$)`), a word, a run of tabs, or a run of other whitespace. */
+const TOKEN_PATTERN = new RegExp(
+	`${SENTINEL_TOKEN}|[^\\s\uE000\uE002]+|\\t+|[^\\S\\t]+`,
+	"g",
+);
+
+/** Whether a diff token stands for an equation, not text. Equation tokens
+ *  carry no run formatting, so rPr inheritance looks straight past them. */
+function isEquationToken(text: string): boolean {
+	return parseSentinel(text) !== null;
 }
 
 export type DiffOp =
@@ -409,6 +447,7 @@ function isWhitespaceOnly(text: string): boolean {
 export function buildUntrackedRuns(
 	ops: DiffOp[],
 	fallbackRpr: XmlNode | null = null,
+	insertedEquations: InsertedEquations = new Map(),
 ): XmlNode[] {
 	const flow: FlowEntry[] = [];
 	for (let index = 0; index < ops.length; index++) {
@@ -420,14 +459,17 @@ export function buildUntrackedRuns(
 				text: op.old.text,
 				rPr: cloneOrNull(op.old.rPr),
 				link: op.old.link,
+				...(op.old.equation && { node: op.old.equation }),
 			});
 			continue;
 		}
 		const inherited = inheritedForInsert(ops, index, fallbackRpr);
+		const node = insertedEquations.get(op.text);
 		flow.push({
 			text: op.text,
 			rPr: cloneOrNull(inherited.rPr),
 			link: inherited.link,
+			...(node && { node }),
 		});
 	}
 	const out: XmlNode[] = [];
@@ -438,8 +480,19 @@ export function buildUntrackedRuns(
 }
 
 /** A token headed for the rebuilt paragraph: text, its rPr, and the
- *  `<w:hyperlink>` (old node, by identity) it belongs inside, if any. */
-type FlowEntry = { text: string; rPr: XmlNode | null; link: XmlNode | null };
+ *  `<w:hyperlink>` (old node, by identity) it belongs inside, if any. An
+ *  equation token carries the `node` emitted verbatim in its place. */
+type FlowEntry = {
+	text: string;
+	rPr: XmlNode | null;
+	link: XmlNode | null;
+	node?: XmlNode;
+};
+
+/** The equation each inserted sentinel token emits: a recompiled one for an
+ *  edited equation, the old object itself for one the diff saw move. Built by
+ *  the caller (`Edit.paragraph`), which owns the LaTeX compiler. */
+export type InsertedEquations = ReadonlyMap<string, XmlNode>;
 
 /** Split a flow into maximal runs of entries sharing one link (or none), in
  *  order. The link is the OUTERMOST wrapper on rebuild: CT_Hyperlink holds runs
@@ -520,6 +573,9 @@ function inheritedForInsert(
 	for (let cursor = groupStart; cursor <= groupEnd; cursor++) {
 		const op = ops[cursor];
 		if (!op) continue;
+		if (isEquationToken(op.kind === "insert" ? op.text : op.old.text)) {
+			continue;
+		}
 		if (op.kind === "delete") {
 			allDeletes.push(op.old);
 			if (!isWhitespaceOnly(op.old.text)) wordDeletes.push(op.old);
@@ -563,14 +619,14 @@ function inheritedForInsert(
 	let forward: OldToken | null = null;
 	for (let cursor = groupStart - 1; cursor >= 0; cursor--) {
 		const op = ops[cursor];
-		if (op?.kind === "keep") {
+		if (op?.kind === "keep" && !op.old.equation) {
 			backward = op.old;
 			break;
 		}
 	}
 	for (let cursor = groupEnd + 1; cursor < ops.length; cursor++) {
 		const op = ops[cursor];
-		if (op?.kind === "keep") {
+		if (op?.kind === "keep" && !op.old.equation) {
 			forward = op.old;
 			break;
 		}
@@ -624,6 +680,7 @@ export function buildTrackedRuns(
 	ops: DiffOp[],
 	mintMeta: () => TrackedMeta,
 	fallbackRpr: XmlNode | null = null,
+	insertedEquations: InsertedEquations = new Map(),
 ): XmlNode[] {
 	// Every op lands in the flow (deletes too — they're emitted as `<w:del>`),
 	// tagged with its kind. Segmenting by LINK first keeps a hyperlink the
@@ -640,25 +697,30 @@ export function buildTrackedRuns(
 				text: op.old.text,
 				rPr: cloneOrNull(op.old.rPr),
 				link: op.old.link,
+				...(op.old.equation && { node: op.old.equation }),
 			});
 			continue;
 		}
 		if (op.kind === "insert") {
 			const inherited = inheritedForInsert(ops, index, fallbackRpr);
+			const node = insertedEquations.get(op.text);
 			flow.push({
 				kind: "insert",
 				text: op.text,
 				rPr: cloneOrNull(inherited.rPr),
 				link: inherited.link,
+				...(node && { node }),
 			});
 			continue;
 		}
-		// delete: keeps the original rPr (and stays inside its link)
+		// delete: keeps the original rPr (and stays inside its link); a deleted
+		// equation rides the `<w:del>` whole, the way Word deletes one.
 		flow.push({
 			kind: "delete",
 			text: op.old.text,
 			rPr: cloneOrNull(op.old.rPr),
 			link: op.old.link,
+			...(op.old.equation && { node: op.old.equation }),
 		});
 	}
 
@@ -698,11 +760,17 @@ export function buildTrackedRuns(
  *  the concatenation. Whitespace-only segments collapse with their
  *  neighbors when rPr matches. */
 function groupAndEmitPlainRuns(
-	flow: Array<{ text: string; rPr: XmlNode | null }>,
+	flow: Array<{ text: string; rPr: XmlNode | null; node?: XmlNode }>,
 ): XmlNode[] {
 	const out: XmlNode[] = [];
 	let current: { text: string; rPr: XmlNode | null } | null = null;
 	for (const entry of flow) {
+		if (entry.node) {
+			if (current) out.push(emitPlainRun(current.text, current.rPr));
+			current = null;
+			out.push(entry.node);
+			continue;
+		}
 		if (entry.text.length === 0) continue;
 		if (current && rPrEqual(current.rPr, entry.rPr)) {
 			current.text += entry.text;
@@ -716,11 +784,17 @@ function groupAndEmitPlainRuns(
 }
 
 function groupAndEmitDeletedRuns(
-	flow: Array<{ text: string; rPr: XmlNode | null }>,
+	flow: Array<{ text: string; rPr: XmlNode | null; node?: XmlNode }>,
 ): XmlNode[] {
 	const out: XmlNode[] = [];
 	let current: { text: string; rPr: XmlNode | null } | null = null;
 	for (const entry of flow) {
+		if (entry.node) {
+			if (current) out.push(emitDeletedRun(current.text, current.rPr));
+			current = null;
+			out.push(entry.node);
+			continue;
+		}
 		if (entry.text.length === 0) continue;
 		if (current && rPrEqual(current.rPr, entry.rPr)) {
 			current.text += entry.text;

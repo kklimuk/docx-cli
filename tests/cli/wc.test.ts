@@ -279,3 +279,25 @@ describe("docx wc — nested revisions follow the all-ancestors rule", () => {
 		expect(await words(docPath, "--accepted")).toBe(resolved.afterAcceptAll);
 	});
 });
+
+// A span `find` prints slices the same characters in `wc`: an equation takes
+// its `$…$` token's width, and isn't itself counted as words.
+describe("wc span over an inline equation", () => {
+	test("offsets past an equation line up with find", async () => {
+		const workspace = tempWorkspace("wc-equation");
+		const docPath = join(workspace, "eq.docx");
+		const source = join(workspace, "eq.md");
+		await Bun.write(source, "Energy is $E=mc^2$ in physics.\n");
+		await runCli("create", docPath, "--from", source);
+		const words = async (locator: string) =>
+			(
+				(await runCli("wc", docPath, locator, "--json")).parsed as {
+					words: number;
+				}
+			).words;
+		expect(await words("p0")).toBe(4);
+		expect(await words("p0:22-29")).toBe(1); // "physics"
+		expect(await words("p0:10-18")).toBe(0); // the token alone
+		expect(await words("p0:0-18")).toBe(2);
+	});
+});

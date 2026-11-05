@@ -263,6 +263,11 @@ const ENTRIES: Array<[string, string, boolean?]> = [
 		true,
 	],
 	["Tagged equation (display)", "x = 1 \\tag{1}", true],
+	[
+		"Multi-line block (display)",
+		"\\begin{gathered} a + b = c \\\\ x^2 = 4 \\end{gathered}",
+		true,
+	],
 ];
 
 // `create` produces a single paragraph (the title). The first equation pair
@@ -294,6 +299,51 @@ for (const [index, [header, latex, display]] of ENTRIES.entries()) {
 		equationsInColumn = 0;
 	}
 }
+
+// ---- Equations as text: find/replace/edit see each one as its `$…$` token ----
+// Prose paragraphs with inline equations, then the text verbs aimed at the
+// TOKEN: a replace strictly inside one rewrites its LaTeX (plain and tracked —
+// the tracked one leaves an old/new <w:del>/<w:ins> equation pair), a tracked
+// replace covering a whole token deletes the equation, and a whole-paragraph
+// `edit --text` that keeps one token and re-states another with new LaTeX
+// keeps the first object and recompiles the second. LibreOffice must open and
+// render every shape these leave behind.
+await cli("insert", out, "--after", `p${position}`, "--column-break");
+position += 1;
+const TEXT_CASES = [
+	"Token rewrite: energy is $E=mc^2$ in physics.",
+	"Tracked rewrite: the rate is $k_1x$ per hour.",
+	"Tracked delete: the ratio $q/r$ cancels.",
+	"Text edit: keep $a+b$ and change $c-d$ here.",
+];
+for (const markdown of TEXT_CASES) {
+	await cli("insert", out, "--after", `p${position}`, markdown);
+	position += 1;
+}
+const paragraphAt = (back: number) => `p${position - back}`;
+const rewrite = paragraphAt(3);
+const trackedRewrite = paragraphAt(2);
+const trackedDelete = paragraphAt(1);
+const textEdit = paragraphAt(0);
+await cli("replace", out, "mc^2", "mc^3", "--at", rewrite);
+await cli("replace", out, "k_1", "k_2", "--at", trackedRewrite, "--track");
+await cli(
+	"replace",
+	out,
+	"the ratio $q/r$",
+	"it",
+	"--at",
+	trackedDelete,
+	"--track",
+);
+await cli(
+	"edit",
+	out,
+	"--at",
+	textEdit,
+	"--text",
+	"Text edit: keep $a+b$ and change $c+d$ here, by --text.",
+);
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);

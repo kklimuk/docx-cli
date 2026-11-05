@@ -92,6 +92,7 @@ ${batchExampleIntro("Edit several blocks")}
   #     {"at":"p7:0-4","text":"ACME","bold":true}               # a character span
   #     {"at":"p9","style":"Heading1"}                           # formatting only
   #     {"at":"p5","delete":true}                                # remove the line
+  #     {"at":"p6","markdown":"Energy is $E=mc^2$ now"}          # $ is safe in a file
   docx edit doc.docx --batch edits.jsonl
   # …or one at a time:
   docx edit doc.docx --at p3 "## Revised heading"
@@ -110,7 +111,8 @@ ${AT_FORMS}
 
 Content (one — or none, to reformat in place):
   "MARKDOWN"        Positional, after the flags (same as --markdown TEXT). Quote it
-                    as ONE argument; single-quote '$' amounts.
+                    as ONE argument; single-quote anything with a $ (amounts,
+                    $…$ equations) — or put it in a --batch file.
   --markdown TEXT   Parsed GFM, the dialect \`read\` prints. Inline HTML round-trips
                     (<span style="font-family:X;color:#hex;font-size:Npt">, <mark>,
                     <u>, <sup>, <sub>). A multi-block source replaces the paragraph
@@ -145,6 +147,15 @@ Batch (--batch PATH | -): one JSON object per line; keys mirror the flags
   ({"at":…} + one content field + any formatting). Every locator addresses the
   document AS READ — ids never shift between entries. Ranges (pN-pM) aren't
   batchable; sections → \`docx sections\`, equations → \`docx equations edit\`.
+
+Equations: an equation is its token exactly as \`read\` prints it ($E=mc^2$,
+  $$…$$ for a display block), in --text, markdown and pN:S-E offsets alike.
+  Keep the token to keep the equation (untouched), change the LaTeX between
+  its delimiters to edit it, leave it out to delete it; a span that cuts a $
+  delimiter is refused. Bash expands $ inside double quotes ("$E=mc^2$" →
+  "=mc^2$"), and an edit that loses an equation that way is refused: put such
+  content in a --batch file, written with a QUOTED heredoc (cat > edits.jsonl
+  <<'EOF' … EOF) since an unquoted one expands $ too.
 
 Options:
   --track           Record as a tracked change even when the doc toggle is off
@@ -387,8 +398,6 @@ async function commitSpanEdit(
 	const blockRef = await resolveBlockOrFail(document, spanTarget.blockId);
 	if (typeof blockRef === "number") return blockRef;
 
-	if (opts.dryRun) return respondDryRun(opts);
-
 	try {
 		const edit = new Edit(document);
 		if (spec.kind === "clear") {
@@ -421,6 +430,9 @@ async function commitSpanEdit(
 		throw error;
 	}
 
+	// --dry-run applies in memory and skips only the save, so the preview
+	// refuses exactly what the real edit would.
+	if (opts.dryRun) return respondDryRun(opts);
 	await document.save(opts.outputPath);
 	return emitEditAck(opts);
 }
@@ -435,8 +447,6 @@ async function commitBlockEdit(
 	opts: ValidatedOptions,
 	cell?: { id: string; parent: XmlNode[] },
 ): Promise<number> {
-	if (opts.dryRun) return respondDryRun(opts);
-
 	const track = resolveTracked(document, opts.trackFlag);
 	let resolvedAuthors: string[] = [];
 	try {
@@ -509,6 +519,8 @@ async function commitBlockEdit(
 		throw error;
 	}
 
+	// Applied in memory, as for a span: the preview refuses what the edit would.
+	if (opts.dryRun) return respondDryRun(opts);
 	if (cell) ensureCellEndsWithParagraph(cell.parent);
 	await document.save(opts.outputPath);
 	await warnPendingRevisions(opts.locator, resolvedAuthors, {
@@ -1184,6 +1196,7 @@ async function resolveMarkdownBlocks(
 			kind: "markdown-blocks",
 			blocks,
 			paragraphOptions: spec.paragraphOptions,
+			source: spec.source,
 		};
 	} catch (error) {
 		if (error instanceof MarkdownImportError) {

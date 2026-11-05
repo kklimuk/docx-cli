@@ -16,6 +16,13 @@ Verbs:
   add   Insert an equation (--after/--before/--at-start/--at-end; --equation LATEX; --display)
   edit  Retype or re-mode an existing equation (--at eqN; --equation/--display/--inline)
 
+In \`read\`, find/replace and edit text, an equation is its token: $latex$
+inline, $$latex$$ for a display block. So \`docx replace FILE 'mc^2' 'mc^3'\`
+rewrites the LaTeX of $E=mc^2$, replacing the whole token deletes it, and a
+whole-paragraph \`docx edit\` keeps every token it leaves in place. Bash
+expands $ inside double quotes — single-quote LaTeX, or put it in a --batch
+file: {"at":"p0","markdown":"Energy is $E=mc^2$ now"}.
+
 Run "docx equations <verb> --help" for verb-specific help.
 `;
 

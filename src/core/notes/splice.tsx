@@ -1,4 +1,6 @@
 import {
+	equationWidth,
+	isEquation,
 	isRunBearingWrapper,
 	runTextLength,
 	sliceRun,
@@ -89,6 +91,27 @@ function walkAndPlace(
 			state.placed = true;
 			out.push(sliceRun(child, localOffset, length));
 			state.offset = runEnd;
+			continue;
+		}
+		if (isEquation(child)) {
+			// One atomic unit as wide as its `read` token. A reference can't sit
+			// inside an equation, so an offset within the token lands right after
+			// it (the note marks the formula); at its start, before it.
+			const start = state.offset;
+			const end = start + equationWidth(child);
+			if (targetOffset === start && end > start) {
+				out.push(noteRun);
+				state.placed = true;
+				out.push(child);
+				state.offset = end;
+				continue;
+			}
+			out.push(child);
+			state.offset = end;
+			if (targetOffset > start && targetOffset <= end) {
+				out.push(noteRun);
+				state.placed = true;
+			}
 			continue;
 		}
 		if (isRunBearingWrapper(child.tag)) {
