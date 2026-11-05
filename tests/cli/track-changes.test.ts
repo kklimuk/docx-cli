@@ -2100,3 +2100,65 @@ describe("docx track-changes — several handles after one flag", () => {
 		expect(await Bun.file(docPath).bytes()).toEqual(before);
 	});
 });
+
+describe("docx track-changes — comment markers inside a removed revision", () => {
+	// Removing a revision's content (reject an insertion, accept a deletion)
+	// used to take the comment markers inside it along, stranding the half
+	// that lived outside: a range start with no end, or a range with no
+	// reference — the inconsistency `validate` reports and Word drops.
+	async function commentedTrackedDoc(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Original clause text.");
+		await runCli("comments", "add", docPath, "--at", "p0:9-15", "--text", "A");
+		await runCli("track-changes", "on", docPath);
+		return docPath;
+	}
+
+	async function markerCounts(docPath: string) {
+		const xml = await Pkg.open(docPath).then((pkg) =>
+			pkg.readText("word/document.xml"),
+		);
+		const count = (tag: string) =>
+			xml.match(new RegExp(`<w:${tag} w:id="0"/>`, "g"))?.length ?? 0;
+		return {
+			starts: count("commentRangeStart"),
+			ends: count("commentRangeEnd"),
+			references: count("commentReference"),
+		};
+	}
+
+	test("rejecting a tracked rewrite of a commented paragraph keeps the comment whole", async () => {
+		const docPath = await commentedTrackedDoc("tc-reject-comment-markers");
+		await runCli("edit", docPath, "--at", "p0", "--text", "Rewritten wording.");
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		expect(
+			(await runCli("track-changes", "reject", docPath, "--all")).exitCode,
+		).toBe(0);
+		expect(await markerCounts(docPath)).toEqual({
+			starts: 1,
+			ends: 1,
+			references: 1,
+		});
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		const comments = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		);
+		expect(comments[0].anchor.startBlockId).toBe("p0");
+	});
+
+	test("accepting a tracked delete of a commented paragraph keeps the comment whole", async () => {
+		const docPath = await commentedTrackedDoc("tc-accept-comment-markers");
+		await runCli("insert", docPath, "--at", "p0", "--text", "Next clause.");
+		await runCli("delete", docPath, "--at", "p0");
+		expect(
+			(await runCli("track-changes", "accept", docPath, "--all")).exitCode,
+		).toBe(0);
+		expect(await markerCounts(docPath)).toEqual({
+			starts: 1,
+			ends: 1,
+			references: 1,
+		});
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+});
