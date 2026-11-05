@@ -275,12 +275,18 @@ export class CommentsView {
 			childParaIdsByParent.set(parentParaId, siblings);
 		}
 
+		// `visited` guards a `paraIdParent` cycle (or a paraId shared by two
+		// comments) in a malformed sidecar — without it the walk never ended and
+		// `comments delete` hung, growing memory until killed.
 		const descendants: string[] = [];
+		const visited = new Set([startParaId]);
 		const queue = [startParaId];
 		while (queue.length > 0) {
 			const paraId = queue.pop();
 			if (!paraId) break;
 			for (const childParaId of childParaIdsByParent.get(paraId) ?? []) {
+				if (visited.has(childParaId)) continue;
+				visited.add(childParaId);
 				const childId = idByParaId.get(childParaId);
 				if (childId) descendants.push(childId);
 				queue.push(childParaId);

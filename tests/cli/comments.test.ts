@@ -1683,3 +1683,35 @@ describe("docx comments — removing one paragraph of a cross-paragraph comment"
 		});
 	}
 });
+
+describe("docx comments delete — malformed threading", () => {
+	test("a paraIdParent cycle in commentsExtended.xml doesn't hang the reply cascade", async () => {
+		const workspace = tempWorkspace("comments-thread-cycle");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Clause.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		await runCli("comments", "reply", docPath, "--at", "c0", "--text", "R");
+		// Point the root back at its own reply: root → reply → root → …
+		const pkg = await Pkg.open(docPath);
+		const extended = await pkg.readText("word/commentsExtended.xml");
+		const [, replyParaId, rootParaId] =
+			extended.match(
+				/w15:paraId="([0-9A-F]+)" w15:paraIdParent="([0-9A-F]+)"/,
+			) ?? [];
+		expect(rootParaId).toBeDefined();
+		pkg.writeText(
+			"word/commentsExtended.xml",
+			extended.replace(
+				`w15:paraId="${rootParaId}" w15:done`,
+				`w15:paraId="${rootParaId}" w15:paraIdParent="${replyParaId}" w15:done`,
+			),
+		);
+		await pkg.save();
+
+		const deleted = await runCli("comments", "delete", docPath, "--at", "c0");
+		expect(deleted.exitCode).toBe(0);
+		expect(
+			JSON.parse((await runCli("comments", "list", docPath)).stdout),
+		).toEqual([]);
+	}, 10_000);
+});
