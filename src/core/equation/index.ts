@@ -9,4 +9,4 @@ export {
 export { markedLatex } from "./marked-latex";
 export { mathmlToOmml } from "./mathml-to-omml";
 export { ommlToLatex } from "./read";
-export { formatEquationToken } from "./token";
+export { equationToken, formatEquationToken } from "./token";

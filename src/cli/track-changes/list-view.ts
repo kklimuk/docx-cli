@@ -1,7 +1,11 @@
 import type { Run, SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
-import { markedLatex, ommlToLatex } from "@core/equation";
+import {
+	equationToken,
+	formatEquationToken,
+	markedLatex,
+} from "@core/equation";
 import type { XmlNode } from "@core/parser";
 import { type ChangeFound, TrackChanges } from "@core/track-changes";
 import { runRevision } from "@core/track-changes/revision-visibility";
@@ -133,25 +137,28 @@ export function collectTrackedChangeRecords(
 	return sorted;
 }
 
-/** A revision spread over an equation's math runs (Word's shape), as LaTeX:
- *  the whole equation when it covers it, else the marked part (`c^{2}` from
- *  `E=mc^2`, never the joined `c2`, which loses the structure and can't be
- *  pasted back). Falls back to the markers' symbols when the marked part has
- *  no LaTeX (a marker on formatting alone). */
+/** A revision spread over an equation's math runs (Word's shape), as the
+ *  token `read` prints: the whole equation's own `$latex$`/`$$latex$$` when it
+ *  covers it (`equationToken`, the find/replace/edit width), else the marked
+ *  part as inline `$…$` (`c^{2}` from `E=mc^2`, never the joined `c2`, which
+ *  loses the structure and can't be pasted back). Falls back to the markers'
+ *  symbols when the marked part has no LaTeX (a marker on formatting alone). */
 function equationRevisionText(change: ChangeFound): string {
 	const markers = change.markers ?? [];
+	const symbols = markers.map((marker) => marker.node.collectText()).join("");
 	const equation = change.equation;
-	const latex = equation
-		? equation.whole
-			? ommlToLatex(equation.node)
-			: markedLatex(
+	if (equation?.whole) {
+		const token = equationToken(equation.node);
+		if (token) return token;
+	}
+	const latex =
+		equation && !equation.whole
+			? markedLatex(
 					equation.node,
 					new Set(markers.map((marker) => marker.node)),
 				)
-		: "";
-	const text =
-		latex || markers.map((marker) => marker.node.collectText()).join("");
-	return `$${text}$`;
+			: "";
+	return formatEquationToken(latex, symbols, false);
 }
 
 /** What a tracked run contributes to its change's `text`: an equation as the
@@ -162,7 +169,7 @@ function recordText(run: Run): string {
 		case "text":
 			return run.text;
 		case "equation":
-			return `$${run.latex || run.text}$`;
+			return formatEquationToken(run.latex, run.text, run.display);
 		case "image":
 			return `[image ${run.id}]`;
 		case "break":
@@ -184,7 +191,7 @@ function wrapperRecordText(wrapper: XmlNode): string {
 	let text = "";
 	for (const child of wrapper.children) {
 		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
-			text += `$${ommlToLatex(child)}$`;
+			text += equationToken(child) ?? "";
 			continue;
 		}
 		if (child.tag !== "w:r") continue;

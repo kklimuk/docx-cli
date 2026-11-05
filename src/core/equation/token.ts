@@ -70,38 +70,57 @@ export function mathText(node: XmlNode): string {
 /** How Word's in-equation revision markers cover it: `whole` names the marker
  *  tag when ONE revision (one kind, one author) covers every symbol, the way
  *  an enclosing wrapper would; `partial` is set when markers exist but don't.
- *  Grouped by tag + author exactly as `registerMathRevisions` groups them into
- *  `tcN`s, so the reader and the walkers agree on which is which. */
+ *  Decided over `mathRevisionGroups` — the grouping the reader registers as
+ *  `tcN`s — so the reader and the walkers agree on which is which. */
 export function mathRevisionCoverage(node: XmlNode): {
 	whole?: "w:ins" | "w:del";
 	partial: boolean;
 } {
-	const groups = new Map<string, "w:ins" | "w:del">();
-	collectMarkerGroups(node, groups);
+	const groups = mathRevisionGroups(node);
 	if (groups.size === 0) return { partial: false };
 	const [only] = groups.values();
-	if (groups.size === 1 && only && !hasUnmarkedMathText(node)) {
-		return { whole: only, partial: false };
+	const tag = only?.[0]?.node.tag;
+	if (groups.size === 1 && tag && !hasUnmarkedMathText(node)) {
+		return { whole: tag === "w:ins" ? "w:ins" : "w:del", partial: false };
 	}
 	return { partial: true };
 }
 
+/** Word's in-equation revision markers (a `<w:del>`/`<w:ins>` in every math
+ *  run and `<m:ctrlPr>` an edit touched), grouped into ONE revision per kind
+ *  and author, each group's markers in document order with the child list
+ *  that holds them. The reader registers each group as one `tcN`, and
+ *  `mathRevisionCoverage` decides a whole-equation revision from the same
+ *  groups. */
+export function mathRevisionGroups(
+	node: XmlNode,
+): Map<string, MathRevisionMarker[]> {
+	const groups = new Map<string, MathRevisionMarker[]>();
+	collectMarkerGroups(node, groups);
+	return groups;
+}
+
+/** One revision marker inside an equation and the child list that holds it. */
+export type MathRevisionMarker = { node: XmlNode; parent: XmlNode[] };
+
 function collectMarkerGroups(
 	node: XmlNode,
-	groups: Map<string, "w:ins" | "w:del">,
+	groups: Map<string, MathRevisionMarker[]>,
 ): void {
 	for (const child of node.children) {
 		if (!MATH_REVISION_TAGS.has(child.tag)) {
 			collectMarkerGroups(child, groups);
 			continue;
 		}
-		const tag = child.tag === "w:ins" ? "w:ins" : "w:del";
-		groups.set(`${child.tag} ${child.getAttribute("w:author") ?? ""}`, tag);
+		const key = `${child.tag} ${child.getAttribute("w:author") ?? ""}`;
+		const markers = groups.get(key) ?? [];
+		markers.push({ node: child, parent: node.children });
+		groups.set(key, markers);
 	}
 }
 
 /** Whether any of the equation's text sits outside a revision marker. */
-export function hasUnmarkedMathText(node: XmlNode): boolean {
+function hasUnmarkedMathText(node: XmlNode): boolean {
 	return node.children.some((child) => {
 		if (MATH_REVISION_TAGS.has(child.tag)) return false;
 		if (child.tag === "m:t") return child.collectText().length > 0;

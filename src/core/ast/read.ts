@@ -1,9 +1,9 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
-import { MATH_REVISION_TAGS } from "../equation/handlers";
 import {
 	equationLatex,
 	formatEquationToken,
-	hasUnmarkedMathText,
+	mathRevisionCoverage,
+	mathRevisionGroups,
 	mathText,
 } from "../equation/token";
 
@@ -859,10 +859,9 @@ function registerMathRevisions(
 	outer: TrackedChange | undefined,
 	equationId?: string,
 ): { whole?: TrackedChange; partial: boolean } {
-	const groups = new Map<string, TrackedChangeMarker[]>();
-	collectMathRevisionMarkers(equation, groups);
+	const groups = mathRevisionGroups(equation);
 	if (groups.size === 0) return { partial: false };
-	const coversEquation = groups.size === 1 && !hasUnmarkedMathText(equation);
+	const coversEquation = mathRevisionCoverage(equation).whole !== undefined;
 	let whole: TrackedChange | undefined;
 	for (const markers of groups.values()) {
 		const [first] = markers;
@@ -882,22 +881,6 @@ function registerMathRevisions(
 		if (coversEquation) whole = change;
 	}
 	return coversEquation ? { whole, partial: false } : { partial: true };
-}
-
-function collectMathRevisionMarkers(
-	node: XmlNode,
-	groups: Map<string, TrackedChangeMarker[]>,
-): void {
-	for (const child of node.children) {
-		if (!MATH_REVISION_TAGS.has(child.tag)) {
-			collectMathRevisionMarkers(child, groups);
-			continue;
-		}
-		const key = `${child.tag} ${child.getAttribute("w:author") ?? ""}`;
-		const markers = groups.get(key) ?? [];
-		markers.push({ node: child, parent: node.children });
-		groups.set(key, markers);
-	}
 }
 
 const TRACKED_CHANGE_KIND_BY_TAG: Record<

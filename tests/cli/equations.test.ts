@@ -1075,12 +1075,13 @@ describe("tracked equations — Word's per-run markers", () => {
 		);
 		const list = (await runCli("track-changes", "list", docPath))
 			.parsed as ListEntry[];
+		// A whole display equation lists as the token `read` prints for it.
 		expect(list).toEqual([
 			expect.objectContaining({
 				id: "tc0",
 				kind: "del",
 				blockId: "p1",
-				text: "$E=c^2$",
+				text: "$$E=c^2$$",
 			}),
 		]);
 		const current = await runCli("read", docPath, "--current");

@@ -245,7 +245,10 @@ transparent to the LaTeX walker like `<m:e>`. A PARTLY revised equation's LaTeX
 is built from a copy with its `w:del` markers removed, so `read` shows the
 accepted view (what `accept --all` leaves), and the
 reader registers all of an equation's markers as ONE `tcN` per kind and author
-(`registerMathRevisions` in [ast/read.ts](../ast/read.ts)); when it covers the
+(`registerMathRevisions` in [ast/read.ts](../ast/read.ts), over
+`mathRevisionGroups` in [token.ts](token.ts) — the SAME grouping
+`mathRevisionCoverage` decides a whole-equation marker from, so the reader's
+`tcN`s and the offset walkers' widths can't disagree); when it covers the
 whole equation it becomes the `EquationRun.trackedChange`, exactly like an
 enclosing `<w:del>`. Each such revision's reference also records the equation
 (`TrackedChangeReference.equation`), so `list` reads it as LaTeX — the whole
@@ -272,7 +275,8 @@ What's still deferred:
 `formatEquationToken` (`$latex$`, `$$latex$$`), `equationToken(node, view)`
 (null for a textless equation or one a whole-equation Word marker hides in
 `view`), `equationLatex`/`mathText` (what the reader stores on `EquationRun`).
-`read`'s markdown, `find`'s search text and every XML offset walker
+`read`'s markdown, `find`'s search text, `track-changes list`'s record text and
+every XML offset walker
 (`equationWidth` in `parser/run-ops.ts`) all go through it, so an agent can
 copy a token from `read` into `find`/`replace`, and a `pN:S-E` read off `find`
 lines up everywhere. How an edit meets the token decides what happens:
