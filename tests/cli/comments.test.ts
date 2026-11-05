@@ -1615,3 +1615,71 @@ describe("docx comments delete — markers in note parts", () => {
 		expect((await runCli("validate", docPath)).exitCode).toBe(0);
 	});
 });
+
+describe("docx comments — removing one paragraph of a cross-paragraph comment", () => {
+	// A comment spanning p0..p1 has its start in p0 and its end + reference in
+	// p1. Removing either paragraph used to take its half along, leaving the
+	// other half unbalanced — the inconsistency `validate` reports.
+	async function spanningComment(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "out.docx");
+		const source = join(workspace, "source.md");
+		writeFileSync(source, "First clause.\n\nSecond clause.\n\nThird clause.\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0:6-p1:6",
+			"--text",
+			"A",
+		);
+		const comments = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		);
+		expect(comments[0].anchor).toMatchObject({
+			startBlockId: "p0",
+			endBlockId: "p1",
+		});
+		return docPath;
+	}
+
+	async function markerCounts(docPath: string) {
+		const xml = await readDocumentXml(docPath);
+		const count = (tag: string) =>
+			xml.match(new RegExp(`<w:${tag} w:id="0"/>`, "g"))?.length ?? 0;
+		return [
+			count("commentRangeStart"),
+			count("commentRangeEnd"),
+			count("commentReference"),
+		];
+	}
+
+	for (const [label, args] of [
+		["delete the start paragraph", ["delete", "--at", "p0"]],
+		["delete the end paragraph", ["delete", "--at", "p1"]],
+		[
+			"edit --text '' on the start paragraph",
+			["edit", "--at", "p0", "--text", ""],
+		],
+		[
+			"edit --text '' on the end paragraph",
+			["edit", "--at", "p1", "--text", ""],
+		],
+		[
+			"edit --runs '[]' on the end paragraph",
+			["edit", "--at", "p1", "--runs", "[]"],
+		],
+	] as const) {
+		test(`${label} keeps the comment's markers balanced`, async () => {
+			const docPath = await spanningComment(
+				`comments-straddle-${label.replace(/\W+/g, "-")}`,
+			);
+			const [verb, ...rest] = args;
+			expect((await runCli(verb, docPath, ...rest)).exitCode).toBe(0);
+			expect(await markerCounts(docPath)).toEqual([1, 1, 1]);
+			expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		});
+	}
+});

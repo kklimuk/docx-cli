@@ -470,7 +470,9 @@ function runHasCommentReference(run: XmlNode): boolean {
  *  paragraph start, each `end` to the paragraph end — so a comment that was on
  *  the paragraph now spans the new content rather than collapsing. Returns the
  *  ids that could NOT be re-anchored because the new paragraph has no text
- *  (caller should mark those comments resolved). Offsets use the `current`
+ *  (caller should mark those comments resolved) — except the half of a
+ *  cross-paragraph comment, which still lands at offset 0 so its other half
+ *  keeps a partner. Offsets use the `current`
  *  view so the range covers all runs regardless of tracked-change wrappers. */
 export function reanchorCommentMarkers(
 	paragraph: XmlNode,
@@ -479,8 +481,31 @@ export function reanchorCommentMarkers(
 ): string[] {
 	if (markers.length === 0) return [];
 	const total = paragraphTextLength(paragraph, view);
-	if (total === 0) return [...new Set(markers.map((marker) => marker.id))];
-	const specs: MarkerSpec[] = markers.map((marker) =>
+	let placed = markers;
+	let orphaned: string[] = [];
+	if (total === 0) {
+		// Nothing left to bracket: a comment wholly on this paragraph is
+		// orphaned, but the half of a cross-paragraph comment still lands (at
+		// offset 0) — dropping it stranded the other half in its own paragraph.
+		const halves = new Set(
+			markers
+				.filter(
+					(marker) =>
+						markers.filter((other) => other.id === marker.id).length === 1,
+				)
+				.map((marker) => marker.id),
+		);
+		placed = markers.filter((marker) => halves.has(marker.id));
+		orphaned = [
+			...new Set(
+				markers
+					.filter((marker) => !halves.has(marker.id))
+					.map((marker) => marker.id),
+			),
+		];
+		if (placed.length === 0) return orphaned;
+	}
+	const specs: MarkerSpec[] = placed.map((marker) =>
 		marker.kind === "start"
 			? { offset: 0, node: commentRangeStartMarker(marker.id) }
 			: {
@@ -490,7 +515,7 @@ export function reanchorCommentMarkers(
 				},
 	);
 	placeMarkersInParagraph(paragraph, specs, view);
-	return [];
+	return orphaned;
 }
 
 export type CommentBodyOptions = {

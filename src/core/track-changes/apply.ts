@@ -1,8 +1,9 @@
 import type { Document } from "../ast/document";
 import type { TrackedChangeReference } from "../ast/document/body";
 import type { TrackedChangeKind } from "../ast/types";
+import { straddlingCommentMarkers } from "../comments/straddling-markers";
 import { type NoteKind, noteConfig } from "../notes";
-import { isRunBearingWrapper, wrapperContent, XmlNode } from "../parser";
+import { XmlNode } from "../parser";
 import { acceptCheckboxToggle, rejectCheckboxToggle } from "../task-list";
 
 export type ApplyVerb = "accept" | "reject";
@@ -608,47 +609,7 @@ function unwrapNode(node: XmlNode, parent: XmlNode[]): void {
 function removeRevisionContent(node: XmlNode, parent: XmlNode[]): void {
 	const index = parent.indexOf(node);
 	if (index === -1) return;
-	const markers = commentMarkersWithin(node.children);
-	const kindsById = new Map<string, Set<string>>();
-	for (const marker of markers) {
-		const kinds = kindsById.get(marker.id) ?? new Set<string>();
-		kinds.add(marker.kind);
-		kindsById.set(marker.id, kinds);
-	}
-	const straddling = markers.filter(
-		(marker) => (kindsById.get(marker.id)?.size ?? 0) < 3,
-	);
-	parent.splice(index, 1, ...straddling.map((marker) => marker.node));
-}
-
-function commentMarkersWithin(
-	children: XmlNode[],
-): { id: string; kind: string; node: XmlNode }[] {
-	const markers: { id: string; kind: string; node: XmlNode }[] = [];
-	for (const child of children) {
-		if (
-			child.tag === "w:commentRangeStart" ||
-			child.tag === "w:commentRangeEnd"
-		) {
-			const id = child.getAttribute("w:id");
-			if (id !== undefined) markers.push({ id, kind: child.tag, node: child });
-			continue;
-		}
-		if (child.tag === "w:r") {
-			const reference = child.findChild("w:commentReference");
-			const id = reference?.getAttribute("w:id");
-			if (!reference || id === undefined) continue;
-			const run = new XmlNode("w:r", { ...child.attributes });
-			const rPr = child.findChild("w:rPr");
-			run.children = rPr ? [rPr, reference] : [reference];
-			markers.push({ id, kind: reference.tag, node: run });
-			continue;
-		}
-		if (isRunBearingWrapper(child.tag)) {
-			markers.push(...commentMarkersWithin(wrapperContent(child)));
-		}
-	}
-	return markers;
+	parent.splice(index, 1, ...straddlingCommentMarkers(node.children));
 }
 
 function deleteNode(node: XmlNode, parent: XmlNode[]): void {
