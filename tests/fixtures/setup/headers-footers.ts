@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
+import JSZip from "jszip";
 
 // Pin core.xml timestamps so rebuilds are byte-deterministic. The DATE field's
 // cached run is empty (the viewer recomputes on open), so no live date leaks in.
@@ -15,6 +16,17 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   - a FIRST-PAGE header "Annual Report 2026" (sets <w:titlePg/>) — `--first-page`;
  *   - a DEFAULT footer with centered "Page X of Y" (PAGE + NUMPAGES fields) —
  *     `docx footers set --page-number --of-pages`.
+ *
+ * The document root is then stripped to `xmlns:w` alone — another producer's
+ * shape — so every `r:id` the header/footer references (and the body hyperlink)
+ * add must re-declare `xmlns:r` on save (`declareUsedNamespaces`); before that
+ * fix `validate` rejected the file ("Namespace prefix r … not defined").
+ *
+ * A reviewer's tracked replace INSIDE the default header ("Corporation" →
+ * "Corp.", Word keeps it in header1.xml) rides along, so the `docx:header`
+ * hint's `pending="tcN …"` token and its `--current` CriticMarkup survive the
+ * LibreOffice round-trip (`raw part edit` — no verb authors a tracked header
+ * edit; `headers set` replaces the part).
  *
  * Two physical pages (a page break splits the body) so the first-page header
  * differs from the default on page 2 and the page-count field is meaningful.
@@ -60,6 +72,8 @@ await cli(
 	"--force",
 );
 
+await stripToWordNamespace(out);
+
 await cli(
 	"edit",
 	out,
@@ -79,8 +93,33 @@ await appendText(
 	"The body continues onto a second page so the running header, the first-page header, and the page-count footer are all visible and distinct in a render.",
 );
 
+// A body hyperlink: another `r:id` minted on the stripped root.
+await cli(
+	"hyperlinks",
+	"add",
+	out,
+	"--at",
+	"p1:5-11",
+	"--url",
+	"https://example.com/report",
+);
+
 // Default running header — two-zone: company name (left) + auto date (right).
 await cli("headers", "set", out, "--text", "Acme Corporation", "--date");
+// A reviewer's pending replace inside the running header.
+const revision = 'w:author="Reviewer" w:date="2026-05-22T00:00:00Z"';
+await cli(
+	"raw",
+	"part",
+	"edit",
+	out,
+	"--name",
+	"word/header1.xml",
+	"--find",
+	'<w:t xml:space="preserve">Acme Corporation</w:t></w:r>',
+	"--with",
+	`<w:t xml:space="preserve">Acme </w:t></w:r><w:del w:id="9001" ${revision}><w:r><w:delText>Corporation</w:delText></w:r></w:del><w:ins w:id="9002" ${revision}><w:r><w:t>Corp.</w:t></w:r></w:ins>`,
+);
 // Different first page (sets <w:titlePg/> on the section). The `\n` decodes to a
 // <w:br/> in the header part, so this fixture also round-trips break-bearing
 // marginal content through LibreOffice (guards the inline-escape emit path).
@@ -96,6 +135,8 @@ await cli(
 await cli("footers", "set", out, "--page-number", "--of-pages");
 
 // Verify and report.
+// Throws (nonzero exit) if any part is invalid — e.g. an undeclared `r:`.
+await cli("validate", out);
 const verifyJson = await cli("read", out, "--ast");
 const doc = JSON.parse(verifyJson) as {
 	headers: Array<{ id: string; type: string; text: string }>;
@@ -109,4 +150,22 @@ for (const header of doc.headers) {
 console.log("Footers:");
 for (const footer of doc.footers) {
 	console.log(`  ${footer.id}: type=${footer.type} text="${footer.text}"`);
+}
+
+/** Rewrite `word/document.xml`'s root to declare ONLY `xmlns:w` (no `r`, `m`,
+ *  `wp`, `w14`, `mc:Ignorable`, …), the way a minimal third-party producer
+ *  writes it, so the later verbs exercise the save-time namespace declaration. */
+async function stripToWordNamespace(path: string): Promise<void> {
+	const zip = await JSZip.loadAsync(await Bun.file(path).arrayBuffer());
+	const part = zip.file("word/document.xml");
+	if (!part) throw new Error("no word/document.xml");
+	const xml = (await part.async("string")).replace(
+		/<w:document [^>]*>/,
+		'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+	);
+	zip.file("word/document.xml", xml);
+	await Bun.write(
+		path,
+		await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }),
+	);
 }

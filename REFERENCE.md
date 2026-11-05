@@ -146,11 +146,25 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   the content it governs. The text lives in the comment attribute
   so the importer drops it (it can't re-inject into the body); full entries are in
   `read --ast` under `headers`/`footers` (`Marginal[]`). Set with `docx
-headers`/`docx footers`.
-- **Track-changes state** always rides a head `<!-- docx:track-changes on|off -->`
+headers`/`docx footers`. A header/footer holding a reviewer's **pending tracked
+  changes** names them in every view — `<!-- docx:header hdr0 pending="tc2 tc3"
+  text="Acme Report (Draft)" -->` — so you can `track-changes accept/reject --at
+  tc2` without guessing; the `text` follows the view: accepted by default, the
+  original under `--baseline`, and the body's CriticMarkup under `--current`
+  (`text="Acme Report{++ (Draft)++}[^tc2]{-- v1--}[^tc3]"`; author/date are in
+  `track-changes list`, not the appendix). The `--` of a deletion is safe inside
+  the comment: a comment only ends at `-->`, and every `>` in the value is
+  escaped (`&gt;`).
+- **Track-changes state** always rides a head `<!-- docx:track-changes on|off pending=N -->`
   line — it's the one read hint that states its default too (an agent shouldn't have
   to infer "off" from a missing line), so you can see whether subsequent edits will be
-  redlined without inspecting `settings.xml`.
+  redlined without inspecting `settings.xml`. `pending=N` is ALWAYS there too,
+  `pending=0` included: it counts the tracked changes awaiting a decision (the `tcN`s
+  `track-changes list` shows), because the default accepted view hides a pending
+  deletion outright — a wholly deleted paragraph loses its locator as well — so
+  `off` alone doesn't mean "nothing to review." When some of them live outside the
+  body, a parenthetical names where: `<!-- docx:track-changes off pending=3 (hdr0:
+  1, fn2: 1) -->` (header/footer `hdrN`/`ftrN`, footnote/endnote `fnN`/`enN`).
   Toggle it with `docx track-changes on|off FILE`; the three tracked-change read views
   (`--accepted`/`--current`/`--baseline`) are covered under the review loop below.
 
@@ -330,6 +344,10 @@ docx track-changes apply  FILE [--accept H ...] [--reject H ...]
 # `list` defaults to a text table, one LOGICAL change per line (revN collapses a del+ins
 # pair onto one line); `--json` for the raw array. A del+ins REPLACE pair shares a
 # "group": "revN"; `--at revN` accepts/rejects both halves in one call.
+# A tracked equation lists as LaTeX (`$E=mc^{2}$`). A change to PART of an equation (Word marks
+# the symbols it touched) lists only the marked part, still as LaTeX (`$c^2$`), plus
+# "equation": "eqN" in --json and "(part of eqN — …)" in the table: rewrite it precisely with
+# `docx equations edit --at eqN`.
 # To FINALIZE a review (accept some, reject the rest), use `apply` — it takes both decision
 # lists in ONE call, resolved against the original ids, so nothing renumbers mid-operation
 # and the file is never left half-finalized. Doing it as separate accept then reject calls
@@ -548,7 +566,7 @@ docx track-changes apply doc.docx --accept rev0 --reject rev1   # finalize: acce
 
 **Rich content.** Images insert from a path, `data:` URI, or `http(s)` URL (bounded fetch; HEIC→JPEG transcode; SVG sanitized; non-public/metadata addresses refused at every redirect hop). Equations round-trip OOXML `<m:oMath>` ↔ LaTeX (reconstructed, not legacy plaintext) — authored via temml (LaTeX→MathML) plus an in-house MathML→OMML adapter (the math path pulls in no LGPL code). Code blocks emit one `CodeBlock`-styled paragraph per line with optional lowlight syntax highlighting (37 bundled languages); they collapse back to a GFM fenced block on read. GFM task lists round-trip Word's checkbox content control (and the Word-for-Web Wingdings-glyph variant), surfacing as `taskState` in the AST. Tables operate on a merge-aware logical grid so `gridSpan`/`vMerge` cells map onto physical `<w:tc>`, and structural edits refuse to bisect an existing merge.
 
-**Markdown dialect.** `create --from`, `insert/edit --markdown`, and the note bodies all parse the same GFM + math + CriticMarkup + inline-HTML-formatting dialect (remark + remark-gfm + remark-math + an in-house inline-surgery transform), composing the existing OOXML emitters. `read` emits a compatible dialect, so the read → edit → write loop round-trips (lossless for paragraphs, lists, and nested blockquotes; code/tables/math/headings inside a blockquote intentionally escape to top level on import). `read --ast` is the fully lossless JSON form.
+**Markdown dialect.** `create --from`, `insert/edit --markdown`, and the note bodies all parse the same GFM + math + CriticMarkup + inline-HTML-formatting dialect (remark + remark-gfm + remark-math + an in-house inline-surgery transform), composing the existing OOXML emitters. `read` emits a compatible dialect, so the read → edit → write loop round-trips (lossless for paragraphs, lists, and nested blockquotes; code/tables/math/headings inside a blockquote intentionally escape to top level on import). `read --ast` is the fully lossless JSON form. The `[^tcN]` and `[^cN]` labels `read --current` / `--comments` add (and their definition lines) are read-time hints like the `<!-- … -->` comments: the importer drops them, so pasting a `--current` line back applies its CriticMarkup exactly as if the labels weren't there, and never mints a footnote. Real footnotes read as `[^fnN]`/`[^enN]`; name your own anything but `tcN`/`cN`.
 
 **Literal text — the parser-free channel.** When you want prose inserted _exactly_ — reviewer notes, quoted excerpts, anything where Markdown would misfire — use `create --text-file PATH` / `insert --text-file PATH` (or `-` for stdin). Every character lands verbatim and each newline starts a new paragraph; nothing is interpreted, so `3. note` stays `3.` (no ordered-list renumber), and `*x*`, `[t](u)`, bare URLs, and `{++x++}` are kept as written. This exists because GFM corruption isn't always escapable: bare URLs autolink with no escape sequence at all, and CriticMarkup eats `{++…++}` regardless of backslashes — so a literal path is the only safe way to author untouched prose.
 

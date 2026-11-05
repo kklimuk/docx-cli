@@ -1,5 +1,6 @@
 import { w, w15 } from "../../../jsx";
 import { ensureIgnorable, NS_MC } from "../../../mc";
+import { declareUsedNamespaces } from "../../../namespaces";
 import { XmlNode } from "../../../parser";
 import type { Comment, CommentAnchor } from "../../types";
 import type { CommentReference } from "../body";
@@ -128,6 +129,7 @@ export class CommentsView {
 		];
 		for (const [partName, partTree] of parts) {
 			if (!partTree) continue;
+			declareUsedNamespaces(partTree);
 			const xml = XmlNode.serialize(partTree);
 			if (this.#isUnchanged(partName, xml)) continue;
 			pkg.writeText(partName, xml);

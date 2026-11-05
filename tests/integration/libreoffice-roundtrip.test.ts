@@ -32,7 +32,7 @@ const CORE_FIXTURES = [
 	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`) + CodeBlock/Code rStyle/lowlight colors (incl. 6E7781 comment token, formerly code-blocks.docx)
 	"word-formatted.docx", // run-level rPr (color/themeColor, shd, u@color, vertAlign, smallCaps, caps; p4) + bold/italic edit-preservation layout (p0-p3); absorbed run-formatting.docx
 	"letter.docx", // paragraph pPr: <w:spacing> (before/after/line) + <w:ind> (left/right/firstLine/hanging), authored via insert/edit
-	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields
+	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields; root starts as xmlns:w only, so every r:id re-declares xmlns:r on save
 	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
 	"raw-ooxml.docx", // `docx raw` escape hatch: drop-cap framePr, nested table, sectPr patch loop (lnNumType) + dcx:raw markers
 	"text-boxes.docx", // Word-shaped text box (mc:AlternateContent wps Choice + VML Fallback) edited through tbxN:pK, Fallback re-synced on save
@@ -176,6 +176,26 @@ describe("LibreOffice round-trip", () => {
 			expect(result.convertedBytes).toBeGreaterThan(0);
 		});
 	}
+
+	// The fixture's default header holds a reviewer's pending replace (its root
+	// also started as xmlns:w only). After LibreOffice re-saves it, the header
+	// hint must still name the revisions and show them under --current.
+	test("a pending header revision stays visible in read after LibreOffice", async () => {
+		const converted = join(
+			workspace,
+			"lo-headers-footers.docx",
+			"headers-footers.docx",
+		);
+		const accepted = (await runCli("read", converted)).stdout;
+		expect(accepted).toMatch(
+			/<!-- docx:header hdr\d+ pending="tc\d+ tc\d+" text="Acme Corp\./,
+		);
+		const current = (await runCli("read", converted, "--current")).stdout;
+		expect(current).toMatch(
+			/text="Acme \{--Corporation--\}\[\^tc\d+\]\{\+\+Corp\.\+\+\}\[\^tc\d+\]/,
+		);
+		expect((await runCli("validate", converted)).exitCode).toBe(0);
+	});
 
 	test("tracked-on edits round-trip through LibreOffice with markers preserved", async () => {
 		const docPath = join(workspace, "tracked-roundtrip.docx");

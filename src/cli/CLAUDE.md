@@ -163,15 +163,28 @@ branch (a cell holding `<w:customXml>`/`<w:altChunk>` still would — those stay
 unmodeled). A block inside a content control also carries a
 `content-control="<alias>"` pair on its `docx:p`/`docx:table` note, so an agent
 editing there knows the change lands inside a control Word may have LOCKED. The
-remaining annotations include a head `docx:track-changes on|off` that ALWAYS emits (unlike every other note it states
+remaining annotations include a head `docx:track-changes on|off pending=N [(hdr0: 1, fn2: 1)]` that ALWAYS emits (unlike every other note it states
 its default — a weak agent reads "no hint" as "unknown," not "off," and a wrong
-tracking guess is high-cost, so the state is stated outright),
+tracking guess is high-cost, so the state is stated outright; `pending=N` is stated
+always too, `pending=0` included, because the default accepted view HIDES a pending
+deletion — a wholly deleted paragraph, locator and all — and `off` read as "nothing
+to review." N is `TrackChanges.pending().total`, the tcN count `track-changes list`
+shows; the parenthetical, only when some live outside the body, counts them per
+header/footer/note container via `TrackedChangeReference.noteId` / a marginal
+`blockId`),
 `docx:header`/`docx:footer` notes (led by the marginal's `hdrN`/`ftrN` id — the
 handle `raw get --at` and `headers`/`footers set/clear --at` accept, the same id
 `headers`/`footers list` reports; a per-section marginal also carries its `sN` as a
 second bare token, a uniform one rides the head with the id alone. Content in a
 `text` attr — so the importer's `docx:` drop can't re-inject it into the body —
-with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`),
+with fields as `{page}`/`{date}`/… tokens; `type` attr only for `first`/`even`;
+`pending="tcN …"` only when the part holds tracked changes — every view, since
+the accepted-view text alone hides them — and the `text` follows the view, with
+the body's CriticMarkup under `--current` but no `[^tcN]:` appendix definition,
+because the importer would turn that orphan into a footnote. `--` inside the
+comment is safe — HTML/CommonMark end a comment only at `-->`, and `htmlAttr`
+escapes every `>` in the value — see `formatMarginalNotes` in
+`cli/read/markdown.ts`),
 `docx:textbox tbxN anchor="pM" [wrap=… align=…]` … `docx:textbox-end tbxN`
 bracketing a text box's story (rendered by `renderTextBoxes` right AFTER the
 block that anchors it — a paragraph, or the whole table when the anchor sits in a

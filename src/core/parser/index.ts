@@ -11,6 +11,7 @@ export {
 	TRACKED_CHANGE_WRAPPER_TAGS,
 	wrapperContent,
 	wrapperContentNode,
+	wrapperRunText,
 } from "./run-ops";
 export {
 	type NullableXmlNode,

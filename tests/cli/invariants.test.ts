@@ -845,6 +845,50 @@ describe("generated .docx is valid OOXML", () => {
 	});
 });
 
+// A docx from another producer may declare only `xmlns:w` on its root, while
+// our emitters write `r:id`, `wp:inline`, `m:oMath`, `w14:checkbox`, … — the
+// save declares every standard prefix a part uses (`declareUsedNamespaces`).
+describe("emitters on a document whose root declares only xmlns:w", () => {
+	const png = join(import.meta.dir, "..", "fixtures", "assets", "sample.png");
+	const cases: [label: string, args: string[]][] = [
+		["headers set", ["headers", "set", "FILE", "--text", "Head"]],
+		["footers set", ["footers", "set", "FILE", "--text", "Foot"]],
+		[
+			"hyperlinks add",
+			["hyperlinks", "add", "FILE", "--at", "p0:6-11", "--url", "https://e.x"],
+		],
+		["markdown link", ["insert", "FILE", "--after", "p0", "[a](https://e.x)"]],
+		["images add", ["images", "add", "FILE", "--after", "p0", "--image", png]],
+		[
+			"equations add",
+			["equations", "add", "FILE", "--after", "p0", "--equation", "E=mc^2"],
+		],
+		["task list", ["insert", "FILE", "--after", "p0", "- [ ] todo"]],
+	];
+	for (const [label, args] of cases) {
+		test(`${label} declares the prefixes it writes`, async () => {
+			const docPath = await buildRawDoc(
+				"<w:p><w:r><w:t>Hello world.</w:t></w:r></w:p>",
+				`ns-${label.replace(/\s+/g, "-")}`,
+			);
+			const result = await runCli(
+				...args.map((arg) => (arg === "FILE" ? docPath : arg)),
+			);
+			expect(result.exitCode).toBe(0);
+			await assertValidDocx(docPath);
+			expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		});
+	}
+
+	test("an extension prefix joins mc:Ignorable", async () => {
+		const docPath = await buildRawDoc("<w:p/>", "ns-ignorable");
+		await runCli("insert", docPath, "--after", "p0", "- [ ] todo");
+		const root = (await readDocumentXml(docPath)).match(/<w:document[^>]*>/);
+		expect(root?.[0]).toContain('xmlns:w14="');
+		expect(root?.[0]).toMatch(/mc:Ignorable="[^"]*\bw14\b/);
+	});
+});
+
 /** Assert every XML part of `docPath` is namespace-well-formed and every
  *  relationship reference resolves. */
 async function assertValidDocx(docPath: string): Promise<void> {

@@ -658,6 +658,216 @@ describe("docx insert --markdown — inline-surgery (straddle fix + spans)", () 
 	});
 });
 
+describe("read-annotation labels ([^tcN] / [^cN]) are hints, dropped on import", () => {
+	// `read --current` labels each tracked change `{++…++}[^tcN]` + a definition
+	// line; `read --comments` does the same with `[^cN]`. Pasting either back used
+	// to mint REAL footnotes reading "deletion by …" (`create --from`), or — with
+	// no definition in the pasted line — leave `[^tc0]` literal and swallow the
+	// `{++45++}` after it (`]{++45++}` parsed as a Pandoc-span close).
+	const LABELED = "Net {--30--}[^tc0]{++45++}[^tc1] days payment terms.";
+	const UNLABELED = "Net {--30--}{++45++} days payment terms.";
+
+	async function reviewedDoc(label: string): Promise<string> {
+		const docPath = join(tempWorkspace(label), "doc.docx");
+		await runCli("create", docPath, "--text", "Net 30 days payment terms.");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"--text",
+			"Net 45 days payment terms.",
+			"--track",
+			"--author",
+			"Reviewer",
+		);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"days",
+			"--text",
+			"Is this right?",
+		);
+		return docPath;
+	}
+
+	async function paragraphText(docPath: string, id = "p0"): Promise<string> {
+		const blocks = await readBlocks(docPath);
+		return (blocks.find((b) => b.id === id)?.runs ?? [])
+			.filter((r) => r.type === "text")
+			.map((r) => r.text)
+			.join("");
+	}
+
+	async function footnoteIds(docPath: string): Promise<string[]> {
+		const result = await runCli("footnotes", "list", docPath);
+		return (result.parsed as Array<{ id: string }>).map((note) => note.id);
+	}
+
+	const withoutDates = (xml: string) => xml.replace(/ w:date="[^"]*"/g, "");
+
+	test("create --from the full `read --current --comments` output mints no footnotes", async () => {
+		const source = await reviewedDoc("hint-create-current");
+		const markdown = (await runCli("read", source, "--current", "--comments"))
+			.stdout;
+		expect(markdown).toContain("[^tc0]:");
+		expect(markdown).toContain("[^c0]:");
+		const markdownPath = join(tempWorkspace("hint-create-current-md"), "c.md");
+		await Bun.write(markdownPath, markdown);
+		const rebuilt = join(tempWorkspace("hint-create-current-out"), "b.docx");
+		expect(
+			(await runCli("create", rebuilt, "--from", markdownPath)).exitCode,
+		).toBe(0);
+
+		expect(await footnoteIds(rebuilt)).toEqual([]);
+		// `create` starts untracked, so CriticMarkup lands as the accepted view.
+		expect((await paragraphText(rebuilt)).trim()).toBe(
+			"Net 45 days payment terms.",
+		);
+		const documentXml = await readDocumentXml(rebuilt);
+		expect(documentXml).not.toContain("[^");
+		expect(documentXml).not.toContain("<w:footnoteReference");
+	});
+
+	test("create --from `read --comments` output mints no footnotes", async () => {
+		const source = await reviewedDoc("hint-create-comments");
+		const markdown = (await runCli("read", source, "--comments")).stdout;
+		expect(markdown).toContain("days[^c0]");
+		const markdownPath = join(tempWorkspace("hint-create-comments-md"), "c.md");
+		await Bun.write(markdownPath, markdown);
+		const rebuilt = join(tempWorkspace("hint-create-comments-out"), "b.docx");
+		await runCli("create", rebuilt, "--from", markdownPath);
+
+		expect(await footnoteIds(rebuilt)).toEqual([]);
+		expect((await paragraphText(rebuilt)).trim()).toBe(
+			"Net 45 days payment terms.",
+		);
+	});
+
+	test("edit with a labeled --current line, tracking off: CriticMarkup applies, labels vanish", async () => {
+		const docPath = join(tempWorkspace("hint-edit-off"), "doc.docx");
+		await runCli("create", docPath, "--text", "Net 30 days payment terms.");
+		expect(
+			(await runCli("edit", docPath, "--at", "p0", LABELED)).exitCode,
+		).toBe(0);
+		expect(await paragraphText(docPath)).toBe("Net 45 days payment terms.");
+		expect(await footnoteIds(docPath)).toEqual([]);
+	});
+
+	test("edit with a labeled --current line, tracking on: real deletion + insertion, same as label-free", async () => {
+		const edited = async (label: string, markdown: string) => {
+			const docPath = join(tempWorkspace(label), "doc.docx");
+			await runCli("create", docPath, "--text", "Net 30 days payment terms.");
+			await runCli("track-changes", docPath, "on");
+			await runCli(
+				"edit",
+				docPath,
+				"--at",
+				"p0",
+				markdown,
+				"--author",
+				"Reviewer",
+			);
+			return docPath;
+		};
+		const labeled = await edited("hint-edit-on", LABELED);
+		const unlabeled = await edited("hint-edit-on-plain", UNLABELED);
+
+		const documentXml = await readDocumentXml(labeled);
+		expect(documentXml).toMatch(/<w:del [^>]*>[\s\S]*?<w:delText[^>]*>30</);
+		expect(documentXml).toMatch(/<w:ins [^>]*>[\s\S]*?<w:t[^>]*>45</);
+		expect(documentXml).not.toContain("[^");
+		expect(documentXml).not.toContain("{++");
+		expect(withoutDates(documentXml)).toBe(
+			withoutDates(await readDocumentXml(unlabeled)),
+		);
+		expect(await footnoteIds(labeled)).toEqual([]);
+	});
+
+	test("edit --batch markdown entries drop labels too", async () => {
+		const docPath = join(tempWorkspace("hint-edit-batch"), "doc.docx");
+		await runCli("create", docPath, "--text", "Net 30 days payment terms.");
+		const batchPath = join(tempWorkspace("hint-edit-batch-jsonl"), "b.jsonl");
+		await Bun.write(
+			batchPath,
+			`${JSON.stringify({ at: "p0", markdown: LABELED })}\n`,
+		);
+		expect((await runCli("edit", docPath, "--batch", batchPath)).exitCode).toBe(
+			0,
+		);
+		expect(await paragraphText(docPath)).toBe("Net 45 days payment terms.");
+	});
+
+	test("insert with a labeled line drops [^tcN] and [^cN]", async () => {
+		const docPath = join(tempWorkspace("hint-insert"), "doc.docx");
+		await runCli("create", docPath, "--text", "Intro.");
+		await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			"Then {++60++}[^tc3] more[^c2].",
+		);
+		expect(await paragraphText(docPath, "p1")).toBe("Then 60 more.");
+		expect(await footnoteIds(docPath)).toEqual([]);
+	});
+
+	test("note bodies drop labels too (footnotes add --markdown)", async () => {
+		const docPath = join(tempWorkspace("hint-note-body"), "doc.docx");
+		await runCli("create", docPath, "--text", "Claim.");
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--at",
+			"p0",
+			"--markdown",
+			"Body {++x++}[^tc3] here",
+		);
+		const notes = (await runCli("footnotes", "list", docPath)).parsed as Array<{
+			text: string;
+		}>;
+		expect(notes.map((note) => note.text)).toEqual(["Body x here"]);
+	});
+
+	test("real footnotes survive: [^fn1], a named [^note], [^cat]; code spans and escapes stay literal", async () => {
+		const markdownPath = join(tempWorkspace("hint-real-notes-md"), "k.md");
+		await Bun.write(
+			markdownPath,
+			"Real[^fn1] and named[^note], code `[^tc0]`, escaped \\[^c1], dropped[^tc9].\n\n[^fn1]: First.\n[^note]: Second.\n[^tc9]: insertion by X\n",
+		);
+		const docPath = join(tempWorkspace("hint-real-notes"), "doc.docx");
+		await runCli("create", docPath, "--from", markdownPath);
+
+		const notes = (await runCli("footnotes", "list", docPath)).parsed as Array<{
+			text: string;
+		}>;
+		expect(notes.map((note) => note.text)).toEqual(["First.", "Second."]);
+		const blocks = await readBlocks(docPath);
+		const runs = blocks.find((b) => b.id === "p0")?.runs ?? [];
+		expect(runs.find((r) => r.runStyle === "Code")?.text).toBe("[^tc0]");
+		const text = await paragraphText(docPath);
+		expect(text).toContain("escaped [^c1], dropped.");
+		expect(text).not.toContain("[^tc9]");
+	});
+
+	test("a literal [^tc0] in document text is escaped by read and round-trips", async () => {
+		const docPath = join(tempWorkspace("hint-literal"), "doc.docx");
+		const literal = "Literal [^tc0] and [^C12] and [^cat] stay.";
+		await runCli("create", docPath, "--text", literal);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain("\\[\\^tc0\\]");
+		expect(markdown).toContain("[^cat]"); // not a hint shape: left clean
+		const markdownPath = join(tempWorkspace("hint-literal-md"), "l.md");
+		await Bun.write(markdownPath, markdown);
+		const rebuilt = join(tempWorkspace("hint-literal-out"), "b.docx");
+		await runCli("create", rebuilt, "--from", markdownPath);
+		expect((await paragraphText(rebuilt)).trim()).toBe(literal);
+	});
+});
+
 describe("docx edit --markdown", () => {
 	test("single-paragraph replace: pN ← parsed blocks (untracked)", async () => {
 		const docPath = join(tempWorkspace("md-edit-single"), "out.docx");

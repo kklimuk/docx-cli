@@ -91,7 +91,9 @@ export const WML_ROOT_TAGS = new Set([
 	"w:glossaryDocument",
 ]);
 
-/** Serialize a part root for validation: clone, apply MCE preprocessing, emit. */
+/** Serialize a part root for validation: clone, apply MCE preprocessing, emit.
+ *  (Word's revision marks inside a math run need no preprocessing: the vendored
+ *  schemas carry a `docx-cli:` patch for them — see src/core/raw/CLAUDE.md.) */
 export function validationXmlFor(root: XmlNode): string {
 	const cleaned = root.clone();
 	mceStrip(cleaned, new Set());

@@ -1,5 +1,7 @@
 import type { Document } from "@core";
+import { Marginals } from "@core";
 import { Images } from "@core/image";
+import { TrackChanges } from "@core/track-changes";
 import { type MarkdownView, renderMarkdown } from "./markdown";
 
 /** Render an already-open document to its `docx read` markdown — the
@@ -29,5 +31,8 @@ export async function renderReadMarkdown(
 		defaultFont: document.styles?.defaultFont(),
 		resolveFont: document.styles?.resolveFont.bind(document.styles),
 		trackChangesOn: document.isTrackChangesEnabled(),
+		pendingChanges: new TrackChanges(document).pending(),
+		marginalText: (marginal, view, mark) =>
+			new Marginals(document).text(marginal, view, mark),
 	});
 }

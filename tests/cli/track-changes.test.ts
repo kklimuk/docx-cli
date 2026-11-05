@@ -53,12 +53,72 @@ describe("docx track-changes", () => {
 		// reliably read "no hint" as "off," so this note breaks the deviation-only
 		// rule and always emits its state.
 		const before = await runCli("read", docPath);
-		expect(before.stdout).toContain("<!-- docx:track-changes off -->");
+		expect(before.stdout).toContain(
+			"<!-- docx:track-changes off pending=0 -->",
+		);
 
 		await runCli("track-changes", "on", docPath);
 		const after = await runCli("read", docPath);
-		expect(after.stdout).toContain("<!-- docx:track-changes on -->");
+		expect(after.stdout).toContain("<!-- docx:track-changes on pending=0 -->");
 		expect(after.stdout).not.toContain("docx:track-changes off");
+	});
+
+	test("the head hint counts pending changes the accepted view hides", async () => {
+		const docPath = join(tempWorkspace("track-hint-pending"), "out.docx");
+		await runCli("create", docPath, "--text", "Keep this.");
+		await runCli("insert", docPath, "--after", "p0", "--text", "Drop this.");
+		await runCli("delete", docPath, "--at", "p1", "--track");
+		// Tracking is OFF and the default view hides the deleted paragraph — its
+		// locator included — but the hint still says something is pending.
+		const read = (await runCli("read", docPath)).stdout;
+		expect(read).not.toContain("Drop this.");
+		const listed = (await runCli("track-changes", "list", docPath))
+			.parsed as unknown[];
+		expect(read).toContain(
+			`<!-- docx:track-changes off pending=${listed.length} -->`,
+		);
+		expect(listed.length).toBeGreaterThan(0);
+	});
+
+	test("the head hint names the headers and notes holding pending changes", async () => {
+		const docPath = join(tempWorkspace("track-hint-outside"), "out.docx");
+		await runCli("create", docPath, "--text", "Body text.");
+		await runCli("footnotes", "add", docPath, "--at", "p0:4", "--text", "Old");
+		await runCli("headers", "set", docPath, "--text", "Header");
+		const revision = 'w:author="Ann" w:date="2026-01-01T00:00:00Z"';
+		await runCli(
+			"raw",
+			"part",
+			"edit",
+			docPath,
+			"--name",
+			"word/header1.xml",
+			"--find",
+			"Header</w:t></w:r>",
+			"--with",
+			`Header</w:t></w:r><w:ins w:id="901" ${revision}><w:r><w:t>!</w:t></w:r></w:ins>`,
+		);
+		// A note-body edit under tracking is a standalone revision in footnotes.xml.
+		await runCli(
+			"footnotes",
+			"edit",
+			docPath,
+			"--at",
+			"fn1",
+			"--text",
+			"New",
+			"--track",
+		);
+		const listed = (await runCli("track-changes", "list", docPath)).parsed as {
+			blockId: string;
+		}[];
+		const inHeader = listed.filter((change) => change.blockId === "hdr0");
+		const inNote = listed.filter((change) => change.blockId === "");
+		expect(inHeader.length).toBe(1);
+		expect(inNote.length).toBeGreaterThan(0);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			`<!-- docx:track-changes off pending=${listed.length} (fn1: ${inNote.length}, hdr0: 1) -->`,
+		);
 	});
 
 	test("accepts verb-first order (track-changes on FILE), matching list/accept/reject", async () => {
@@ -2161,5 +2221,59 @@ describe("docx track-changes — comment markers inside a removed revision", () 
 			references: 1,
 		});
 		await expectValidClean(docPath);
+	});
+});
+
+describe("tracked non-text runs follow the same view rule as text", () => {
+	// Only text runs used to be filtered by view and listed with their content:
+	// a deleted image or line break still showed in the accepted view, carried
+	// no CriticMarkup in the current one, and listed as "¶ paragraph mark".
+	test("a deleted line break is hidden, marked, and listed as a break", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>line one</w:t></w:r><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:br/></w:r></w:del><w:r><w:t>line two</w:t></w:r></w:p>',
+			"tracked-break",
+		);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"line oneline two",
+		);
+		expect((await runCli("read", docPath, "--current")).stdout).toContain(
+			"line one{--\n--}[^tc0]line two",
+		);
+		const list = (await runCli("track-changes", "list", docPath)).parsed as {
+			text: string;
+		}[];
+		expect(list.map((entry) => entry.text)).toEqual(["[line break]"]);
+	});
+
+	test("a hidden run before a commented equation keeps the comment's marker", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>a</w:t></w:r><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:br/></w:r></w:del>' +
+				'<w:commentRangeStart w:id="0"/><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>y</m:t></m:r></m:oMath><w:commentRangeEnd w:id="0"/>' +
+				"<w:r><w:t>b</w:t></w:r></w:p>",
+			"tracked-break-comment",
+		);
+		expect((await runCli("read", docPath, "--comments")).stdout).toContain(
+			"a$y$[^c0]b",
+		);
+	});
+
+	test("a tracked image delete is hidden, marked, and listed as an image", async () => {
+		const docPath = await copyFixture(
+			"tracked-image-delete",
+			"tests/fixtures/images.docx",
+		);
+		await runCli("track-changes", docPath, "on");
+		expect(
+			(await runCli("images", "delete", docPath, "--at", "img0")).exitCode,
+		).toBe(0);
+
+		expect((await runCli("read", docPath)).stdout).not.toContain("img0");
+		expect((await runCli("read", docPath, "--current")).stdout).toMatch(
+			/\{--!\[[^\]]*\]\([^)]*\)[^}]*--\}\[\^tc\d+\]/,
+		);
+		const list = (await runCli("track-changes", "list", docPath)).parsed as {
+			text: string;
+		}[];
+		expect(list.map((entry) => entry.text)).toContain("[image img0]");
 	});
 });

@@ -368,6 +368,10 @@ export type EquationRun = {
 	 *  — typically from the audit-comment fallback for tracked equation
 	 *  edits (Word doesn't have a `<w:oMathChange>` element). */
 	comments?: string[];
+	/** Set when the whole equation is a tracked insertion/deletion — inside a
+	 *  `<w:ins>`/`<w:del>` wrapper, or (Word's shape) with every math run
+	 *  carrying its own marker. See `registerMathRevisions` in `ast/read.ts`. */
+	trackedChange?: TrackedChange;
 };
 
 /** Reference to a footnote or endnote whose body lives in Body.footnotes or
@@ -440,7 +444,11 @@ export type Marginal = {
 	kind: "header" | "footer";
 	type: "default" | "first" | "even";
 	sectionId: string;
+	/** The accepted view (an insertion shows, a deletion doesn't). */
 	text: string;
+	/** Pending revisions inside this header/footer part (`tcN` ids feed
+	 *  `track-changes accept/reject --at`). Absent when there are none. */
+	trackedChanges?: TrackedChange[];
 };
 
 export type TrackedChange = {

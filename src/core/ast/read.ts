@@ -1,7 +1,9 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
 import { ommlToLatex } from "../equation";
+import { MATH_REVISION_TAGS } from "../equation/handlers";
 
-import { enumerateMarginalRefs } from "../marginals/resolve";
+import { marginalConfig } from "../marginals/config";
+import { enumerateMarginalRefs, type MarginalRef } from "../marginals/resolve";
 import { marginalText } from "../marginals/text";
 import {
 	alternateContentBranch,
@@ -15,7 +17,11 @@ import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
 import { readCellMargins } from "./cell-margins";
 import type { Document } from "./document";
-import { Body } from "./document/body";
+import {
+	Body,
+	type TrackedChangeMarker,
+	type TrackedEquation,
+} from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
 import { decodeSym } from "./sym";
 import type {
@@ -100,10 +106,17 @@ export function buildBody(document: Document, path: string): Body {
 
 	doc.blocks = readBlocks(document, body, state);
 	readNoteTrackedChanges(document, state);
+	// Resolved once: both the revision walk and the Marginal[] projection need it.
+	const marginalRefs = enumerateMarginalRefs(document);
+	const marginalChanges = readMarginalTrackedChanges(
+		document,
+		marginalRefs,
+		state,
+	);
 	doc.comments = document.comments?.toComments(state.commentAnchors) ?? [];
 	doc.footnotes = document.footnotes?.toNotes() ?? [];
 	doc.endnotes = document.endnotes?.toNotes() ?? [];
-	const marginals = readMarginals(document);
+	const marginals = readMarginals(marginalRefs, marginalChanges);
 	doc.headers = marginals.headers;
 	doc.footers = marginals.footers;
 
@@ -116,14 +129,19 @@ export function buildBody(document: Document, path: string): Body {
  *  relationship Target → part name → the loaded part tree (in `MarginalsView`),
  *  and reads the part text with fields as tokens. One entry per reference, so a
  *  document-wide marginal (one part, referenced from each section) appears once
- *  per section. Locators `hdr0`/`ftr0` are positional in document order. */
-function readMarginals(document: Document): {
+ *  per section. Locators `hdr0`/`ftr0` are positional in document order. Each
+ *  entry lists the pending revisions inside its part (every entry of a shared
+ *  part lists the same ones — it is one part). */
+function readMarginals(
+	refs: MarginalRef[],
+	changesByPart: Map<XmlNode[], TrackedChange[]>,
+): {
 	headers: Marginal[];
 	footers: Marginal[];
 } {
 	const headers: Marginal[] = [];
 	const footers: Marginal[] = [];
-	for (const ref of enumerateMarginalRefs(document)) {
+	for (const ref of refs) {
 		const marginal: Marginal = {
 			id: ref.id,
 			kind: ref.kind,
@@ -131,6 +149,8 @@ function readMarginals(document: Document): {
 			sectionId: ref.sectionId,
 			text: marginalText(ref.tree),
 		};
+		const trackedChanges = changesByPart.get(ref.tree) ?? [];
+		if (trackedChanges.length > 0) marginal.trackedChanges = trackedChanges;
 		(ref.kind === "header" ? headers : footers).push(marginal);
 	}
 	return { headers, footers };
@@ -400,22 +420,92 @@ function registerNotePartChanges(
 		if (note.getAttribute("w:type")) continue;
 		const noteId = note.getAttribute("w:id");
 		if (noteId && paired.has(`${kind}:${noteId}`)) continue;
+		// The note's own locator (`fn1`/`en2`) — `read`'s head hint names the
+		// note a pending revision sits in; the change's blockId stays "".
+		const scope: RevisionScope = {
+			document,
+			state,
+			blockId: "",
+			...(noteId && { noteId: `${config.idPrefix}${noteId}` }),
+		};
 		for (const paragraph of note.children) {
 			if (paragraph.tag !== "w:p") continue;
-			registerNoteRunChanges(document, paragraph, state);
+			registerStandaloneRunChanges(scope, paragraph);
 		}
 	}
 }
 
-/** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
- * inside a standalone note paragraph (footnote/endnote edits). blockId is ""
- * — note bodies have no pN. Skips `<w:pPr>` (paragraph-mark trackings on a
- * standalone note don't occur — those only arise on paired deletes, which are
- * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. */
-function registerNoteRunChanges(
+/** After the note parts, register tracked changes living in header/footer
+ * parts, continuing the shared tcN counter. A part referenced from several
+ * sections registers once, under its first reference's `hdrN`/`ftrN` — that id
+ * is the change's blockId, so `list` names the marginal it sits in. */
+function readMarginalTrackedChanges(
 	document: Document,
-	container: XmlNode,
+	refs: MarginalRef[],
 	state: WalkState,
+): Map<XmlNode[], TrackedChange[]> {
+	const byPart = new Map<XmlNode[], TrackedChange[]>();
+	for (const ref of refs) {
+		if (byPart.has(ref.tree)) continue;
+		const registered: TrackedChange[] = [];
+		byPart.set(ref.tree, registered);
+		const root = XmlNode.findRoot(ref.tree, marginalConfig(ref.kind).rootTag);
+		if (root)
+			registerMarginalBlockChanges(
+				{ document, state, blockId: ref.id, registered },
+				root,
+			);
+	}
+	return byPart;
+}
+
+/** Walk a header/footer part's blocks down to its paragraphs. Unlike a note
+ *  body, a marginal holds more than bare paragraphs: Word's page-number gallery
+ *  wraps the footer paragraph in a block-level `<w:sdt>`, letterheads use
+ *  tables, and a block may sit in an `<mc:AlternateContent>` (its chosen branch
+ *  only, so a Choice/Fallback twin isn't registered twice). */
+function registerMarginalBlockChanges(
+	scope: RevisionScope,
+	container: XmlNode,
+): void {
+	for (const child of container.children) {
+		if (child.tag === "w:p") {
+			registerStandaloneRunChanges(scope, child);
+			continue;
+		}
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch) registerMarginalBlockChanges(scope, branch);
+			continue;
+		}
+		if (MARGINAL_BLOCK_CONTAINERS.has(child.tag)) {
+			registerMarginalBlockChanges(scope, child);
+		}
+	}
+}
+
+const MARGINAL_BLOCK_CONTAINERS = new Set([
+	"w:tbl",
+	"w:tr",
+	"w:tc",
+	"w:sdt",
+	"w:sdtContent",
+]);
+
+/** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
+ * inside a standalone note or header/footer paragraph. blockId is "" for a
+ * note (note bodies have no pN) and the `hdrN`/`ftrN` for a marginal. Skips `<w:pPr>` (paragraph-mark trackings on a
+ * standalone note don't occur — those only arise on paired deletes, which are
+ * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. An
+ * `<mc:AlternateContent>` (a text box's shape) descends into its chosen branch
+ * only: Choice and Fallback carry the same story, so walking both listed every
+ * revision in it twice, and the save-time Choice→Fallback mirror would undo a
+ * decision made on the Fallback copy. An equation registers through
+ * `registerMathRevisions`, as in the body, so Word's per-math-run markers are
+ * one revision rather than one per symbol. */
+function registerStandaloneRunChanges(
+	scope: RevisionScope,
+	container: XmlNode,
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
@@ -426,17 +516,25 @@ function registerNoteRunChanges(
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const id = `tc${state.trackedChangeIndex++}`;
-			document.trackedChangeReferences.set(id, {
-				node: child,
-				parent: container.children,
-				blockId: "",
-			});
-			registerNoteRunChanges(document, child, state);
+			registerTrackedChange(
+				scope,
+				TRACKED_CHANGE_KIND_BY_TAG[child.tag],
+				{ node: child, parent: container.children },
+				undefined,
+			);
+			registerStandaloneRunChanges(scope, child);
 			continue;
 		}
-		if (child.children.length > 0)
-			registerNoteRunChanges(document, child, state);
+		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
+			registerMathRevisions(scope, child, undefined);
+			continue;
+		}
+		if (isAlternateContent(child)) {
+			const branch = alternateContentBranch(child);
+			if (branch) registerStandaloneRunChanges(scope, branch);
+			continue;
+		}
+		if (child.children.length > 0) registerStandaloneRunChanges(scope, child);
 	}
 }
 
@@ -525,6 +623,18 @@ type WalkContext = {
 	skipNodes: Set<XmlNode>;
 };
 
+/** What registering a revision needs from a walk: the document whose inventory
+ *  it lands in, the shared tcN counter, and the block it's reported under. A
+ *  body paragraph's `WalkContext` is one; a note or header/footer paragraph,
+ *  which has no AST paragraph to fill, passes just these. */
+type RevisionScope = Pick<WalkContext, "document" | "state" | "blockId"> & {
+	/** The note (`fn1`/`en2`) a note-body revision sits in. */
+	noteId?: string;
+	/** Collects every revision registered under this scope — a header/footer
+	 *  part's, for `Marginal.trackedChanges`. */
+	registered?: TrackedChange[];
+};
+
 function walkRunContainer(
 	context: WalkContext,
 	container: XmlNode,
@@ -597,7 +707,18 @@ function walkRunContainer(
 			if (text.length > 0) {
 				const display = child.tag === "m:oMathPara";
 				const id = `eq${context.state.equationIndex++}`;
-				const latex = ommlToLatex(child);
+				const revisions = registerMathRevisions(
+					context,
+					child,
+					trackedChange,
+					id,
+				);
+				// A partly revised equation has no run-level revision to hide it by,
+				// so its LaTeX is the accepted view `read` defaults to — what
+				// `accept --all` leaves — not the deleted symbols beside the kept ones.
+				const latex = ommlToLatex(
+					revisions.partial ? withoutMathDeletions(child) : child,
+				);
 				const run: EquationRun = {
 					type: "equation",
 					id,
@@ -608,6 +729,8 @@ function walkRunContainer(
 				if (context.activeComments.size > 0) {
 					run.comments = [...context.activeComments];
 				}
+				const change = revisions.whole ?? trackedChange;
+				if (change) run.trackedChange = change;
 				context.paragraph.runs.push(run);
 				context.document.body.equationReferences.set(id, {
 					node: child,
@@ -626,34 +749,12 @@ function walkRunContainer(
 			child.tag === "w:moveFrom" ||
 			child.tag === "w:moveTo"
 		) {
-			const trackedChangeId = `tc${context.state.trackedChangeIndex++}`;
-			const change: TrackedChange = {
-				id: trackedChangeId,
-				kind: TRACKED_CHANGE_KIND_BY_TAG[child.tag],
-				author: child.getAttribute("w:author") ?? "",
-				date: child.getAttribute("w:date") ?? "",
-				revisionId: child.getAttribute("w:id") ?? "",
-			};
-			// A wrapper nested inside another (Word's `<w:ins><w:del>…` for a
-			// deletion inside a pending insertion) records its enclosing chain,
-			// outermost first, so every view consumer can apply the
-			// all-ancestors rule (`isRevisionVisible`). Top-level wrappers carry
-			// no `within`, so the AST of an un-nested document is unchanged.
-			if (trackedChange) {
-				change.within = [
-					...(trackedChange.within ?? []),
-					{
-						id: trackedChange.id,
-						kind: trackedChange.kind,
-						author: trackedChange.author,
-					},
-				];
-			}
-			context.document.trackedChangeReferences.set(trackedChangeId, {
-				node: child,
-				parent: container.children,
-				blockId: context.blockId,
-			});
+			const change = registerTrackedChange(
+				context,
+				TRACKED_CHANGE_KIND_BY_TAG[child.tag],
+				{ node: child, parent: container.children },
+				trackedChange,
+			);
 			walkRunContainer(context, child, change, hyperlink);
 			continue;
 		}
@@ -688,6 +789,126 @@ function walkRunContainer(
 			walkRunContainer(context, child, trackedChange, hyperlink);
 		}
 	}
+}
+
+/** Mint the next `tcN` for a revision marker and record where it lives in
+ *  `document.trackedChangeReferences` — the one place ids are assigned. A marker
+ *  nested inside another wrapper (Word's `<w:ins><w:del>…` for a deletion inside
+ *  a pending insertion) records its enclosing chain, outermost first, so every
+ *  view consumer can apply the all-ancestors rule (`isRevisionVisible`).
+ *  Top-level markers carry no `within`, so the AST of an un-nested document is
+ *  unchanged. `markers` lists every element of a revision Word spread over
+ *  several (see `registerMathRevisions`); `marker` is the first of them. */
+function registerTrackedChange(
+	context: RevisionScope,
+	kind: TrackedChange["kind"],
+	marker: TrackedChangeMarker,
+	outer: TrackedChange | undefined,
+	markers?: TrackedChangeMarker[],
+	equation?: TrackedEquation,
+): TrackedChange {
+	const id = `tc${context.state.trackedChangeIndex++}`;
+	const change: TrackedChange = {
+		id,
+		kind,
+		author: marker.node.getAttribute("w:author") ?? "",
+		date: marker.node.getAttribute("w:date") ?? "",
+		revisionId: marker.node.getAttribute("w:id") ?? "",
+	};
+	if (outer) {
+		change.within = [
+			...(outer.within ?? []),
+			{ id: outer.id, kind: outer.kind, author: outer.author },
+		];
+	}
+	context.document.trackedChangeReferences.set(id, {
+		...marker,
+		blockId: context.blockId,
+		...(markers && { markers }),
+		...(equation && { equation }),
+		...(context.noteId && { noteId: context.noteId }),
+	});
+	context.registered?.push(change);
+	return change;
+}
+
+/** Word records a tracked edit of an equation INSIDE it: a `<w:del>`/`<w:ins>`
+ *  in every math run it touched and in each structure's `<m:ctrlPr>` — six
+ *  markers for one deleted `E=mc^2`. Register them as ONE revision per kind and
+ *  author, so the equation lists, accepts and rejects as a unit (apply runs the
+ *  ordinary per-marker operation on each — see `ChangeFound.markers`). `whole`
+ *  is the revision when it covers the whole equation, so it rides the run the
+ *  way an enclosing `<w:del>` does; `partial` says the equation holds revisions
+ *  that don't. Each revision records the equation (and its `eqN`, for a body
+ *  equation) so `list` can render the marked part as LaTeX. */
+function registerMathRevisions(
+	context: RevisionScope,
+	equation: XmlNode,
+	outer: TrackedChange | undefined,
+	equationId?: string,
+): { whole?: TrackedChange; partial: boolean } {
+	const groups = new Map<string, TrackedChangeMarker[]>();
+	collectMathRevisionMarkers(equation, groups);
+	if (groups.size === 0) return { partial: false };
+	const coversEquation = groups.size === 1 && !hasUnmarkedMathText(equation);
+	let whole: TrackedChange | undefined;
+	for (const markers of groups.values()) {
+		const [first] = markers;
+		if (!first) continue;
+		const change = registerTrackedChange(
+			context,
+			first.node.tag === "w:ins" ? "ins" : "del",
+			first,
+			outer,
+			markers,
+			{
+				node: equation,
+				whole: coversEquation,
+				...(equationId && { id: equationId }),
+			},
+		);
+		if (coversEquation) whole = change;
+	}
+	return coversEquation ? { whole, partial: false } : { partial: true };
+}
+
+function collectMathRevisionMarkers(
+	node: XmlNode,
+	groups: Map<string, TrackedChangeMarker[]>,
+): void {
+	for (const child of node.children) {
+		if (!MATH_REVISION_TAGS.has(child.tag)) {
+			collectMathRevisionMarkers(child, groups);
+			continue;
+		}
+		const key = `${child.tag} ${child.getAttribute("w:author") ?? ""}`;
+		const markers = groups.get(key) ?? [];
+		markers.push({ node: child, parent: node.children });
+		groups.set(key, markers);
+	}
+}
+
+/** Whether any of the equation's text sits outside a revision marker. */
+function hasUnmarkedMathText(node: XmlNode): boolean {
+	return node.children.some((child) => {
+		if (MATH_REVISION_TAGS.has(child.tag)) return false;
+		if (child.tag === "m:t") return child.collectText().length > 0;
+		return hasUnmarkedMathText(child);
+	});
+}
+
+/** A copy of `node` as it reads once its tracked deletions are accepted — a
+ *  copy, so the live tree keeps every marker for `accept`/`reject`. */
+function withoutMathDeletions(node: XmlNode): XmlNode {
+	const copy = new XmlNode(
+		node.tag,
+		node.attributes,
+		node.children
+			.filter((child) => child.tag !== "w:del")
+			.map(withoutMathDeletions),
+	);
+	if (node.text !== undefined) copy.text = node.text;
+	return copy;
 }
 
 const TRACKED_CHANGE_KIND_BY_TAG: Record<

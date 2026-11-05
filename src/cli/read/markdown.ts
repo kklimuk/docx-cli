@@ -38,6 +38,7 @@ import { inlineEscapeMask } from "@core/markdown";
 import {
 	isRevisionVisible,
 	type RevisionView,
+	runRevision,
 } from "@core/track-changes/revision-visibility";
 import {
 	deviatingCellMargins,
@@ -72,11 +73,26 @@ export type MarkdownOptions = {
 	 *  hiding as "matches `docx:base`". Undefined = unknown, never marked. */
 	resolveFont?: FontResolver;
 	/** Whether the document's global track-changes toggle is on. ALWAYS surfaced as
-	 *  a head `<!-- docx:track-changes on|off -->` hint — the one `docx:` note that
+	 *  a head `<!-- docx:track-changes on|off pending=N -->` hint — the one `docx:` note that
 	 *  states its default too (weak agents can't read "no hint" as "off," and a
 	 *  wrong tracking guess is high-cost), so an agent sees the state on the first
 	 *  read instead of spending a `track-changes list` call to learn it. */
 	trackChangesOn?: boolean;
+	/** Pending revisions — the total tcN count and the per-container count of
+	 *  those outside the body (`hdr0`, `fn1`, …) — stated on the same head hint
+	 *  ALWAYS, `pending=0` included: the default accepted view hides a pending
+	 *  deletion outright (a wholly deleted paragraph loses its locator too), so
+	 *  `off` alone read as "nothing to review." Undefined = not stated. */
+	pendingChanges?: { total: number; outsideBody: Map<string, number> };
+	/** A header/footer's text in `view`, with `mark` wrapping each pending
+	 *  revision — `Marginal.text` is the accepted view only, so `--baseline` and
+	 *  `--current` (CriticMarkup) need the part itself. Undefined = use
+	 *  `Marginal.text` in every view. */
+	marginalText?: (
+		marginal: Marginal,
+		view: MarkdownView,
+		mark: (text: string, change: TrackedChange) => string,
+	) => string;
 };
 
 /** The canonical create-template `docDefaults` (Calibri 11pt) — the universal
@@ -200,7 +216,6 @@ export function renderMarkdown(
 	const sectionCount = blocks.filter(
 		(block) => block.type === "sectionBreak",
 	).length;
-	const marginal = formatMarginalNotes(doc.headers, doc.footers, sectionCount);
 	const ctx: RenderContext = {
 		options,
 		baseline,
@@ -214,8 +229,15 @@ export function renderMarkdown(
 		contentWidthEmu: contentWidthEmu(documentGeometry(blocks)?.geometry),
 		governingColumns: computeGoverningColumns(blocks),
 		wrappingTabLines: [],
-		marginalsBySection: marginal.bySection,
+		marginalsBySection: new Map(),
 	};
+	const marginal = formatMarginalNotes(
+		doc.headers,
+		doc.footers,
+		sectionCount,
+		ctx,
+	);
+	ctx.marginalsBySection = marginal.bySection;
 
 	// Sections render at their START (where their content begins), not at the
 	// sectPr's physical end, so each section's `docx:section` + header/footer
@@ -298,12 +320,15 @@ export function renderMarkdown(
 	// section): weak agents can't reliably read "no hint" as "off," and getting the
 	// tracking state wrong is high-cost (a silent redline, or edits that skip the
 	// journal). So we state it outright rather than make them infer it from absence.
+	// The pending count rides the same line for the same reason: the default
+	// accepted view hides a pending deletion outright, so `off` alone read as
+	// "nothing to review."
 	// Still an own-`docx:` metadata hint, dropped on import — it just orients the
 	// agent so edits/`--track` decisions don't need a separate `track-changes list`.
 	const trackNote = formatNote(
 		"track-changes",
 		[],
-		[options.trackChangesOn ? "on" : "off"],
+		trackChangesTokens(options),
 	);
 	// One consolidated, actionable summary for every line that WILL wrap in render —
 	// the per-line hints alone got ignored by both Haiku and Sonnet across repeated
@@ -323,6 +348,20 @@ export function renderMarkdown(
 	].filter((line) => line.length > 0);
 	const head = headLines.length > 0 ? `${headLines.join("\n")}\n\n` : "";
 	return `${head}${parts.join("\n\n")}\n`;
+}
+
+/** `on|off`, then `pending=N`, then — only when some pending revisions live
+ *  outside the body — where: `(hdr0: 1, fn2: 2)`. One line, bare tokens. */
+function trackChangesTokens(options: MarkdownOptions): string[] {
+	const tokens = [options.trackChangesOn ? "on" : "off"];
+	const pending = options.pendingChanges;
+	if (!pending) return tokens;
+	tokens.push(`pending=${pending.total}`);
+	const outside = [...pending.outsideBody].map(
+		([container, count]) => `${container}: ${count}`,
+	);
+	if (outside.length > 0) tokens.push(`(${outside.join(", ")})`);
+	return tokens;
 }
 
 /** The `<!-- docx:base … -->` line, or "" when there's no baseline to declare —
@@ -346,14 +385,13 @@ function emptyCommentIndex(): CommentIndex {
 	};
 }
 
-/** Whether a text run renders in `view` — the shared all-ancestors rule, so a
+/** Whether a run renders in `view` — the shared all-ancestors rule, so a
  * `<w:del>` nested inside another author's `<w:ins>` is hidden in BOTH
- * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it. */
-function isRunVisible(
-	run: Pick<TextRun, "trackedChange">,
-	view: MarkdownView,
-): boolean {
-	return isRevisionVisible(run.trackedChange, view);
+ * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it.
+ * Every tracked run type follows it: a deleted image, equation or line break
+ * leaves the accepted view just as deleted text does. */
+function isRunVisible(run: Run, view: MarkdownView): boolean {
+	return isRevisionVisible(runRevision(run), view);
 }
 
 function buildCommentIndex(
@@ -372,7 +410,7 @@ function buildCommentIndex(
 			// edits anchors comment ranges on the `<m:oMath>` itself).
 			const comments = runComments(run);
 			if (!comments) return;
-			if (run.type === "text" && !isRunVisible(run, view)) return;
+			if (!isRunVisible(run, view)) return;
 			const spanContribution =
 				run.type === "text"
 					? run.text
@@ -870,13 +908,24 @@ function formatPageNote(
 /** Build the `<!-- docx:header … -->` / `<!-- docx:footer … -->` hints, split into
  *  UNIFORM (identical across every section — head block, no section token) and
  *  PER-SECTION (text differs by section — co-located with each section break,
- *  keyed by `sN`). Deviation-only: the `type` attr is omitted when `default`.
- *  Content rides the `text` attribute so the importer's `docx:`-comment drop can't
- *  re-inject it into the body. */
+ *  keyed by `sN`). Deviation-only: the `type` attr is omitted when `default`, the
+ *  `pending` attr when the part holds no tracked change. Content rides the `text`
+ *  attribute so the importer's `docx:`-comment drop can't re-inject it into the
+ *  body.
+ *
+ *  Pending revisions inside the part are visible two ways: in EVERY view a
+ *  `pending="tc1 tc2"` attr names their ids (the handles `track-changes
+ *  accept/reject --at` take — the accepted-view text alone hides that anything
+ *  is pending), and the `text` follows the view, so `--current` shows them as
+ *  the body's CriticMarkup (`{++new++}[^tc1]`, `{--old--}[^tc2]`). The `--` of a deletion inside the
+ *  `<!-- … -->` is safe: HTML (and CommonMark's comment block) only ends a
+ *  comment at `-->` (or `--!>`), and `htmlAttr` escapes every `>` in the value,
+ *  so no `--` in the text can close it; the importer drops the line whole. */
 function formatMarginalNotes(
 	headers: Marginal[],
 	footers: Marginal[],
 	sectionCount: number,
+	ctx: RenderContext,
 ): { uniform: string[]; bySection: Map<string, string[]> } {
 	const uniform: string[] = [];
 	const bySection = new Map<string, string[]>();
@@ -889,25 +938,56 @@ function formatMarginalNotes(
 		group.push(line);
 		bySection.set(sectionId, group);
 	};
-	collectMarginalNotes("header", headers, sectionCount, emit);
-	collectMarginalNotes("footer", footers, sectionCount, emit);
+	const shown = (marginal: Marginal): MarginalHint => ({
+		marginal,
+		pairs: marginalHintPairs(marginal, ctx),
+	});
+	collectMarginalNotes("header", headers.map(shown), sectionCount, emit);
+	collectMarginalNotes("footer", footers.map(shown), sectionCount, emit);
 	return { uniform, bySection };
+}
+
+type MarginalHint = { marginal: Marginal; pairs: NotePair[] };
+
+/** A marginal's `pending` + `text` attrs in the render view. Under `--current`
+ *  each revision reads as `{++…++}[^tcN]` / `{--…--}[^tcN]` like the body's, but
+ *  WITHOUT a `[^tcN]:` appendix definition: the reference sits in a comment no
+ *  renderer shows, and the importer would turn an orphan definition into a
+ *  footnote on a `read → create` rebuild. The author/date are in
+ *  `track-changes list`. */
+function marginalHintPairs(marginal: Marginal, ctx: RenderContext): NotePair[] {
+	const view = ctx.options.view ?? "accepted";
+	const text =
+		view === "accepted" || !ctx.options.marginalText
+			? marginal.text
+			: ctx.options.marginalText(marginal, view, (rendered, change) =>
+					view === "current" ? criticMarkup(rendered, change) : rendered,
+				);
+	const pending = (marginal.trackedChanges ?? []).map((change) => change.id);
+	return [
+		...(pending.length > 0 ? [["pending", pending.join(" ")] as const] : []),
+		["text", text],
+	];
 }
 
 function collectMarginalNotes(
 	noteType: "header" | "footer",
-	marginals: Marginal[],
+	hints: MarginalHint[],
 	sectionCount: number,
 	emit: (sectionId: string | null, line: string) => void,
 ): void {
-	const byType = new Map<string, Marginal[]>();
-	for (const marginal of marginals) {
-		const group = byType.get(marginal.type) ?? [];
-		group.push(marginal);
-		byType.set(marginal.type, group);
+	const byType = new Map<string, MarginalHint[]>();
+	for (const hint of hints) {
+		const group = byType.get(hint.marginal.type) ?? [];
+		group.push(hint);
+		byType.set(hint.marginal.type, group);
 	}
 	for (const [placement, group] of byType) {
-		const distinctText = new Set(group.map((marginal) => marginal.text));
+		// Same text AND same pending ids — two parts reading alike can still hold
+		// different revisions, and each must keep its own `pending` attr.
+		const distinctContent = new Set(
+			group.map((hint) => JSON.stringify(hint.pairs)),
+		);
 		const typePairs: NotePair[] =
 			placement === "default" ? [] : [["type", placement]];
 		// Document chrome (ONE head line, no sN) ONLY when the marginal is identical
@@ -916,7 +996,7 @@ function collectMarginalNotes(
 		// mislabeled as covering sections it doesn't (e.g. a header only on the
 		// trailing section would otherwise imply the earlier sections carry it too).
 		const coversEverySection = group.length >= sectionCount;
-		if (distinctText.size === 1 && coversEverySection) {
+		if (distinctContent.size === 1 && coversEverySection) {
 			const first = group[0];
 			if (!first) continue;
 			// Leading token is the marginal id (`hdr0`/`ftr0`) — the handle
@@ -925,7 +1005,11 @@ function collectMarginalNotes(
 			// id addresses it. Rides the head block (no section placement).
 			emit(
 				null,
-				formatNote(noteType, [...typePairs, ["text", first.text]], [first.id]),
+				formatNote(
+					noteType,
+					[...typePairs, ...first.pairs],
+					[first.marginal.id],
+				),
 			);
 			continue;
 		}
@@ -934,12 +1018,12 @@ function collectMarginalNotes(
 		// `raw get`/`--at` take) AND the section `sN` (which section it governs, and
 		// the `--at sN` scope). The `sN` also marks it per-section (a uniform marginal
 		// rides the head with the id ALONE), so read stays unambiguous.
-		for (const marginal of group) {
+		for (const { marginal, pairs } of group) {
 			emit(
 				marginal.sectionId,
 				formatNote(
 					noteType,
-					[...typePairs, ["text", marginal.text]],
+					[...typePairs, ...pairs],
 					[marginal.id, marginal.sectionId],
 				),
 			);
@@ -973,12 +1057,8 @@ function renderCodeBlockGroup(
 		// still render in the footnote appendix.
 		for (const paragraph of paragraphs) {
 			for (const run of paragraph.runs) {
-				if (run.type === "text" && run.trackedChange) {
-					ctx.referencedTrackedChanges.set(
-						run.trackedChange.id,
-						run.trackedChange,
-					);
-				}
+				const change = runRevision(run);
+				if (change) ctx.referencedTrackedChanges.set(change.id, change);
 			}
 		}
 	}
@@ -1382,7 +1462,7 @@ function renderRuns(
 	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
-		if (run.type === "text" && !isRunVisible(run, view)) return;
+		if (!isRunVisible(run, view)) return;
 		visibleEntries.push({ run, originalIndex: index });
 	});
 
@@ -1486,18 +1566,24 @@ function renderRuns(
 			// mapping the walker queries. Mirrors the on-disk naming
 			// convention used by `docx images extract`.
 			const extension = extensionForImageMime(run.contentType) ?? "bin";
-			out += `![${alt}](${run.hash}.${extension})`;
 			// Size (always) + float/wrap/align/overflow (deviation-only): the
 			// `![](hash)` proves existence, not "6.2in wide, past the margin".
-			out += formatImageNote(run, ctx.contentWidthEmu);
+			out += markRevision(
+				`![${alt}](${run.hash}.${extension})${formatImageNote(run, ctx.contentWidthEmu)}`,
+				run.trackedChange,
+				view,
+				ctx,
+			);
 		} else if (run.type === "break") {
 			// A line break renders as a real newline so verse/line-structured
 			// text round-trips (import maps a soft newline back to <w:br/>). In
 			// table cells, escapeCell converts these newlines to <br> so the
 			// markdown table stays one row per record.
-			if (run.kind === "line") out += "\n";
+			if (run.kind === "line") {
+				out += markRevision("\n", run.trackedChange, view, ctx);
+			}
 		} else if (run.type === "tab") {
-			out += "\t";
+			out += markRevision("\t", run.trackedChange, view, ctx);
 		} else if (run.type === "equation") {
 			// `$…$` for inline, `$$…$$` for display. The walker in
 			// `@core/equation` reconstructed `run.latex` from the OMML subtree;
@@ -1505,14 +1591,16 @@ function renderRuns(
 			// (unrecognized) equations — use it only when the LaTeX walker
 			// returned empty.
 			const body = run.latex.length > 0 ? run.latex : run.text;
-			out += run.display ? `$$${body}$$` : `$${body}$`;
-			// Append any comment endings that close on this equation run
-			// (audit comments from tracked equation edits anchor here).
-			out += commentEndingsFor(
-				paragraphId,
-				[{ originalIndex: cursor }],
-				ctx.commentIndex,
+			out += markRevision(
+				run.display ? `$$${body}$$` : `$${body}$`,
+				run.trackedChange,
+				view,
+				ctx,
 			);
+			// Append any comment endings that close on this equation run
+			// (audit comments from tracked equation edits anchor here). Slots are
+			// keyed by the run's index in the paragraph, not among visible runs.
+			out += commentEndingsFor(paragraphId, [entry], ctx.commentIndex);
 		} else if (run.type === "noteRef") {
 			if (run.kind === "footnote") ctx.referencedFootnoteIds.add(run.id);
 			else ctx.referencedEndnoteIds.add(run.id);
@@ -1634,10 +1722,29 @@ function renderTextSegment(
 		out = `[${out}](${target})`;
 	}
 	if (view === "current" && first.trackedChange) {
-		const marker = criticMarkerFor(first.trackedChange.kind);
-		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
+		out = criticMarkup(out, first.trackedChange);
 	}
 	return out;
+}
+
+/** CriticMarkup for a tracked non-text run (image, equation, line break, tab)
+ * in the current view, registering its footnote the way a text segment's
+ * caller does — so a deleted equation reads `{--$E=mc^2$--}[^tc0]`. */
+function markRevision(
+	rendered: string,
+	change: TrackedChange | undefined,
+	view: MarkdownView,
+	ctx: RenderContext,
+): string {
+	if (view !== "current" || !change) return rendered;
+	ctx.referencedTrackedChanges.set(change.id, change);
+	return criticMarkup(rendered, change);
+}
+
+/** `{--…--}[^tcN]` for a deletion, `{++…++}[^tcN]` for an insertion. */
+function criticMarkup(rendered: string, change: TrackedChange): string {
+	const marker = criticMarkerFor(change.kind);
+	return `{${marker}${rendered}${marker}}[^${change.id}]`;
 }
 
 /** `text` is the segment's runs concatenated — passed in rather than re-joined

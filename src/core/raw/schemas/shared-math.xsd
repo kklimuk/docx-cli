@@ -162,9 +162,21 @@
       <xsd:choice minOccurs="0" maxOccurs="unbounded">
         <xsd:group ref="w:EG_RunInnerContent"/>
         <xsd:element name="t" type="CT_Text" minOccurs="0"/>
+        <!-- docx-cli: MS-OI29500 Part 1 §22.1.2.87(e) — Word allows w:ins/w:del inside a math run -->
+        <xsd:group ref="w:EG_MathRunRevision"/>
       </xsd:choice>
     </xsd:sequence>
   </xsd:complexType>
+  <!-- docx-cli: MS-OI29500 Part 1 §22.1.2.87(e) — Word allows w:ins/w:del inside a math run: what one mark holds, as Word writes it —
+       <m:r><w:del w:id="…" w:author="…" w:date="…"><m:rPr/><w:rPr/><m:t>x</m:t></w:del></m:r>.
+       A group here (not in wml.xsd) because m:rPr/m:t are math-namespace elements. -->
+  <xsd:group name="EG_MathRunRevisionContent">
+    <xsd:sequence>
+      <xsd:element name="rPr" type="CT_RPR" minOccurs="0"/>
+      <xsd:group ref="w:EG_RPr" minOccurs="0"/>
+      <xsd:element name="t" type="CT_Text"/>
+    </xsd:sequence>
+  </xsd:group>
   <xsd:complexType name="CT_CtrlPr">
     <xsd:sequence>
       <xsd:group ref="w:EG_RPrMath" minOccurs="0"/>

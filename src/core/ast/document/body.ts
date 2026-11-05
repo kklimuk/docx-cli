@@ -287,4 +287,22 @@ export type TrackedChangeReference = {
 	/** Set for cellIns/cellDel: the owning `<w:tc>` and the row's children. */
 	tableCell?: XmlNode;
 	tableCellParent?: XmlNode[];
+	/** Every element of a revision Word spreads over several markers — an
+	 * equation edit puts a `<w:del>`/`<w:ins>` in each math run it touched.
+	 * `node`/`parent` are the first of them; accept/reject act on each. */
+	markers?: TrackedChangeMarker[];
+	/** Set alongside `markers` for a revision INSIDE an equation: the
+	 *  `<m:oMath>`/`<m:oMathPara>` it marks, its `eqN` (body equations only —
+	 *  note and header equations have none), and whether it covers the whole
+	 *  equation. `list` renders the marked part as LaTeX from it. */
+	equation?: TrackedEquation;
+	/** The note (`fn1`/`en2`) a note-body revision lives in — its `blockId` is
+	 *  "" (note bodies have no `pN`). */
+	noteId?: string;
 };
+
+/** One revision marker element and the child list that holds it. */
+export type TrackedChangeMarker = { node: XmlNode; parent: XmlNode[] };
+
+/** The equation a revision lives inside (see `TrackedChangeReference.equation`). */
+export type TrackedEquation = { node: XmlNode; id?: string; whole: boolean };

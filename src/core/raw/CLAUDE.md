@@ -70,7 +70,9 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   invariant pointed the other way. No `dcx:raw` marker (the rels part has no
   MCE) and no schema gate (document.xml is untouched); rels never surface in
   `read` — they're plumbing, and `raw get --at rels` is the discovery path.
-- [namespaces.ts](namespaces.ts) — prefix table + auto-declare on the doc root,
+- [namespaces.ts](namespaces.ts) — auto-declare on the doc root (the standard
+  prefix table lives in [core/namespaces.ts](../namespaces.ts), shared with the
+  save-time `declareUsedNamespaces`),
   and the `dcx:raw="1"` marker stamp. `dcx` is registered in `mc:Ignorable`, so
   Word AND the validator skip it (verified), while `read` surfaces it as the
   `raw` note token / `rawXml` AST field. A resave by Word may drop the marker —
@@ -88,7 +90,11 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   `validationXmlFor` applies **MCE preprocessing to a CLONE** first — strip
   `mc:Ignorable`-declared attrs/elements, resolve `mc:AlternateContent` →
   `mc:Fallback` — because real Word markup (`w14:paraId` on every `w:p`) is
-  valid OOXML that the base schema doesn't know. Gate 6 is a **baseline diff**
+  valid OOXML that the base schema doesn't know. MCE is the standard's own
+  extension mechanism, so it's the ONLY preprocessing; Word behavior outside it
+  is a schema patch (see "Schema provenance"), never a clone rewrite — an
+  unwrap of Word's math-run `<w:del>` left the mark's own attributes unchecked
+  and turned two marks in one `<m:r>` into a `rPr t rPr t` CT_R rejects. Gate 6 is a **baseline diff**
   (`diffValidationIssues`, multiset on message text): a third of real documents
   carry pre-existing violations, so a raw edit is judged only on errors it
   ADDS. `docx validate` reuses the engine standalone, per WML part (parts are
@@ -130,8 +136,24 @@ The XSDs come from the freely published ECMA-376 5th-edition Part 4
 closure, with two mechanical patches: the W3C `xml.xsd` is bundled and the
 `xsd:import`s that referenced it by URL (or with no `schemaLocation` at all)
 point at the local copy. Word writes transitional markup, so transitional —
-not strict — is the profile real documents validate against. Don't edit the
-schemas; re-derive from the ECMA zip if they ever need updating.
+not strict — is the profile real documents validate against.
+
+**The schemas follow ECMA-376 transitional, except for Word behavior documented
+in [MS-OI29500]; each patch carries a `docx-cli:` comment citing the section**,
+so `grep -rn "docx-cli:" src/core/raw/schemas` lists every deviation from ECMA's content models (the mechanical `xml.xsd` import paths above aside)
+(re-apply them if the schemas are ever re-derived from the ECMA zip). Today:
+
+- **MS-OI29500 Part 1 §22.1.2.87(e) — `w:ins`/`w:del` inside a math run.** Word
+  records a tracked equation edit inside each math run it touched,
+  `<m:r><w:del w:id w:author w:date><m:rPr/>?<w:rPr/>?<m:t>x</m:t></w:del></m:r>`,
+  which ECMA's `m:CT_R` has no slot for. `shared-math.xsd`'s `CT_R` choice
+  references `w:EG_MathRunRevision` (declared in `wml.xsd`, because the
+  `w:ins`/`w:del` elements must be in the `w` namespace — type
+  `CT_MathRunTrackChange`, extending `CT_TrackChange` so `w:id`/`w:author` stay
+  required), whose content is `m:EG_MathRunRevisionContent` (back in
+  `shared-math.xsd`, because `m:rPr`/`m:t` are math-namespace elements). Several
+  marks per run validate; a bogus child, or a mark missing `w:id`/`w:author`,
+  is reported.
 
 ## Things that look wrong but aren't
 

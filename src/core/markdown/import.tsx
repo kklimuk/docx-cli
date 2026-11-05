@@ -30,6 +30,7 @@ import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
 import { MarkdownImportError } from "./errors";
 import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
 import { remarkInlineSurgery } from "./inline-surgery";
+import { remarkReadHintLabels } from "./read-hint-labels";
 import { walkRoot } from "./walker";
 
 /** Cross-cutting lens over "import this markdown source into the document."
@@ -113,10 +114,13 @@ function parseToMdast(source: string): Root {
 		.use(remarkParse)
 		.use(remarkGfm)
 		.use(remarkMath)
+		// Before inline surgery: the `[^tcN]`/`[^cN]` read-annotation labels are
+		// dropped first, so CriticMarkup beside one tokenizes as if it weren't there.
+		.use(remarkReadHintLabels)
 		.use(remarkInlineSurgery);
 	const tree = processor.parse(source);
-	// `runSync` applies the transformer plugins (remarkInlineSurgery is the only
-	// transformer in our pipeline; remarkParse/Gfm/Math register parser
+	// `runSync` applies the transformer plugins (remarkReadHintLabels's drop,
+	// then remarkInlineSurgery; remarkParse/Gfm/Math register parser
 	// extensions that already ran during `.parse`). It returns the same tree
 	// mutated in place; we cast back to `Root` because unified's typing keeps
 	// it generic.
