@@ -2063,10 +2063,22 @@ describe("docx replace over an inline equation", () => {
 			expect(result.parsed).toMatchObject({ code: "UNSUPPORTED" });
 			const { error, hint } = result.parsed as { error: string; hint: string };
 			expect(error).toStartWith("p0:7-12: the span cuts eq0 ($E=mc^2$)");
-			expect(hint).toContain("--batch subs.jsonl");
-			expect(hint).toContain("<<'EOF'");
+			expect(hint).toContain("Match the whole token ($E=mc^2$)");
+			// Nothing here looks shell-gutted, so no batch-file detour.
+			expect(hint).not.toContain("--batch");
 		}
 		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
+	test("a pattern the shell gutted gets the batch line it meant", async () => {
+		// bash turns "$E=mc^2$ in" into "=mc^2$ in", which cuts eq0.
+		const result = await runCli("replace", docPath, "=mc^2$ in", "X");
+		expect(result.exitCode).toBe(1);
+		const { hint } = result.parsed as { hint: string };
+		expect(hint).toContain(
+			'--batch subs.jsonl` with the line {"pattern":"$E=mc^2$ in","replacement":"X"}',
+		);
+		expect(hint).toContain("<<'EOF'");
 	});
 
 	test("LaTeX the rewrite leaves unparsable is refused before anything changes", async () => {

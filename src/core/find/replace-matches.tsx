@@ -211,12 +211,21 @@ export function equationSpanRefusal(
 	const cut = overlaps.find((overlap) => overlap.relation === "cut");
 	if (cut) {
 		const token = tokenOf(cut);
+		// A pattern bash gutted (`"$E=mc^2$ in"` → `=mc^2$ in`) matches from
+		// inside the token out past its closer: show the line it meant.
+		const restored =
+			pattern === undefined
+				? undefined
+				: shellMangledEquationLoss(pattern, [cut])?.repaired;
+		const shellNote = restored
+			? ` The pattern looks like the shell expanded its "$" away: ${surfaceBatchHint(command, cut, { pattern: restored, replacement })}`
+			: "";
 		return {
 			code: "UNSUPPORTED",
 			message: `${locator}: the span cuts ${cut.id} (${token}) — it crosses the equation's ${cut.display ? "$$" : "$"} delimiter, so it is neither the whole equation nor text inside it. Nothing was changed.`,
 			hint:
 				command === "replace"
-					? `In find/replace text an equation is its token exactly as \`docx read\` shows it. Match the whole token (${token}) to delete the equation, only text inside it (e.g. ${cut.latex}) to rewrite its LaTeX, or only the text beside it. A pattern that lost its leading "$" was probably expanded by the shell: ${surfaceBatchHint(command, cut, { pattern, replacement })}`
+					? `In find/replace text an equation is its token exactly as \`docx read\` shows it. Match the whole token (${token}) to delete the equation, only text inside it (e.g. ${cut.latex}) to rewrite its LaTeX, or only the text beside it.${shellNote}`
 					: `In span offsets an equation is its token exactly as \`docx read\` shows it (${token} is ${cut.end - cut.start} characters, ${cut.blockId}:${cut.start}-${cut.end}). Cover the whole token to delete the equation, stay strictly inside it to rewrite its LaTeX, or stay beside it — \`docx find FILE "TEXT"\` gives exact offsets.`,
 		};
 	}
