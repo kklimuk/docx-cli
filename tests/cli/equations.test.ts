@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { runCli, tempWorkspace } from "./harness";
+import { runCli, spawnCli, tempWorkspace } from "./harness";
 import { buildRawDoc, readDocumentXml } from "./helpers";
 
 /** Canonical equations fixture — see `tests/fixtures/setup/equations.ts`.
@@ -933,16 +933,22 @@ describe("tracked equations — Word's per-run markers", () => {
 		expect(await readDocumentXml(rejectPath)).not.toContain("<w:del");
 	});
 
-	test("a partly deleted equation lists the deleted symbols, the rest stays", async () => {
+	test("a partly deleted equation lists the deleted part as LaTeX, the rest stays", async () => {
 		const docPath = await buildRawDoc(
 			wordEquation([false, false, true, true]),
 			"eq-word-partial",
 		);
 		const list = (await runCli("track-changes", "list", docPath))
 			.parsed as ListEntry[];
+		// The marked part keeps its superscript (`c^2`, not the joined `c2`) and
+		// names the equation it belongs to.
 		expect(list).toEqual([
-			expect.objectContaining({ kind: "del", text: "$c2$" }),
+			expect.objectContaining({ kind: "del", text: "$c^2$", equation: "eq0" }),
 		]);
+		// The text-first table (spawned: the harness injects --json in-process).
+		const table = (await spawnCli("track-changes", "list", docPath)).stdout;
+		expect(table).toContain('"$c^2$" (part of eq0');
+		expect(table).toContain("docx equations edit --at eq0");
 		// Not the whole equation, so the equation itself carries no deletion.
 		const current = await runCli("read", docPath, "--current");
 		expect(current.stdout).not.toContain("{--$$");
@@ -952,6 +958,28 @@ describe("tracked equations — Word's per-run markers", () => {
 		const [equation] = await equationsOf(docPath);
 		// The emptied superscript stays behind as a skeleton, as it does in Word.
 		expect(equation?.latex).toBe("E={}^{}");
+	});
+
+	test("a deleted exponent alone keeps the script shape it belongs to", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([false, false, false, true]),
+			"eq-word-exponent",
+		);
+		const list = (await runCli("track-changes", "list", docPath))
+			.parsed as ListEntry[];
+		expect(list).toEqual([
+			expect.objectContaining({ text: "$" + "{}^2$", equation: "eq0" }),
+		]);
+	});
+
+	test("a whole-equation revision names no eqN — it is the equation", async () => {
+		const docPath = await buildRawDoc(
+			wordEquation([true, true, true, true]),
+			"eq-word-whole-no-part",
+		);
+		const [entry] = (await runCli("track-changes", "list", docPath))
+			.parsed as Record<string, unknown>[];
+		expect(entry?.equation).toBeUndefined();
 	});
 
 	test("the schema's shape — a marker wrapping whole math elements — keeps its structure", async () => {

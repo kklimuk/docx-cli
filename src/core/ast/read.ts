@@ -17,7 +17,11 @@ import { readSectionProperties } from "../sections";
 import { detectTaskListState } from "../task-list";
 import { readCellMargins } from "./cell-margins";
 import type { Document } from "./document";
-import { Body, type TrackedChangeMarker } from "./document/body";
+import {
+	Body,
+	type TrackedChangeMarker,
+	type TrackedEquation,
+} from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
 import { decodeSym } from "./sym";
 import type {
@@ -680,7 +684,12 @@ function walkRunContainer(
 			if (text.length > 0) {
 				const display = child.tag === "m:oMathPara";
 				const id = `eq${context.state.equationIndex++}`;
-				const revisions = registerMathRevisions(context, child, trackedChange);
+				const revisions = registerMathRevisions(
+					context,
+					child,
+					trackedChange,
+					id,
+				);
 				// A partly revised equation has no run-level revision to hide it by,
 				// so its LaTeX is the accepted view `read` defaults to — what
 				// `accept --all` leaves — not the deleted symbols beside the kept ones.
@@ -773,6 +782,7 @@ function registerTrackedChange(
 	marker: TrackedChangeMarker,
 	outer: TrackedChange | undefined,
 	markers?: TrackedChangeMarker[],
+	equation?: TrackedEquation,
 ): TrackedChange {
 	const id = `tc${context.state.trackedChangeIndex++}`;
 	const change: TrackedChange = {
@@ -792,6 +802,7 @@ function registerTrackedChange(
 		...marker,
 		blockId: context.blockId,
 		...(markers && { markers }),
+		...(equation && { equation }),
 	});
 	return change;
 }
@@ -803,11 +814,13 @@ function registerTrackedChange(
  *  ordinary per-marker operation on each — see `ChangeFound.markers`). `whole`
  *  is the revision when it covers the whole equation, so it rides the run the
  *  way an enclosing `<w:del>` does; `partial` says the equation holds revisions
- *  that don't. */
+ *  that don't. Each revision records the equation (and its `eqN`, for a body
+ *  equation) so `list` can render the marked part as LaTeX. */
 function registerMathRevisions(
 	context: RevisionScope,
 	equation: XmlNode,
 	outer: TrackedChange | undefined,
+	equationId?: string,
 ): { whole?: TrackedChange; partial: boolean } {
 	const groups = new Map<string, TrackedChangeMarker[]>();
 	collectMathRevisionMarkers(equation, groups);
@@ -823,6 +836,11 @@ function registerMathRevisions(
 			first,
 			outer,
 			markers,
+			{
+				node: equation,
+				whole: coversEquation,
+				...(equationId && { id: equationId }),
+			},
 		);
 		if (coversEquation) whole = change;
 	}

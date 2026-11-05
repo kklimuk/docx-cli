@@ -586,7 +586,12 @@ describe("headers/footers — tracked changes", () => {
 			wordDeletedEquation(),
 		);
 		expect(await listed(path)).toEqual([
-			expect.objectContaining({ kind: "del", blockId: "hdr0", text: "$E=c2$" }),
+			// LaTeX, as the body lists it — not the joined symbols `E=c2`.
+			expect.objectContaining({
+				kind: "del",
+				blockId: "hdr0",
+				text: "$E=c^2$",
+			}),
 		]);
 		await runCli("track-changes", "reject", path, "--at", "tc0");
 		const header = await partText(path, "word/header1.xml");

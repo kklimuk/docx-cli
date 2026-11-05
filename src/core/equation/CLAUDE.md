@@ -1,9 +1,12 @@
 # src/core/equation — OMML ↔ LaTeX
 
-Five files behind the `@core/equation` barrel ([index.ts](index.ts)):
+Six files behind the `@core/equation` barrel ([index.ts](index.ts)):
 
 **Read side** (OMML → LaTeX):
 - [read.ts](read.ts) — entry (`ommlToLatex`) + dispatcher
+- [marked-latex.ts](marked-latex.ts) — `markedLatex(equation, markers)`: the
+  LaTeX of just the part of an equation one revision's markers cover (Word's
+  per-math-run `<w:del>`/`<w:ins>`), for `track-changes list`
 - [handlers.ts](handlers.ts) — per-element handlers + the small chr-to-command
   tables tightly coupled to them (NARY_OP_BY_CHR, ACCENT_CMD_BY_CHR,
   GROUP_CHR_CMD_BY_CHR), plus the `<m:d>` matrix-shorthand /
@@ -228,7 +231,12 @@ accepted view (what `accept --all` leaves), and the
 reader registers all of an equation's markers as ONE `tcN` per kind and author
 (`registerMathRevisions` in [ast/read.ts](../ast/read.ts)); when it covers the
 whole equation it becomes the `EquationRun.trackedChange`, exactly like an
-enclosing `<w:del>`. Accept/reject apply the ordinary per-node operation to
+enclosing `<w:del>`. Each such revision's reference also records the equation
+(`TrackedChangeReference.equation`), so `list` reads it as LaTeX — the whole
+equation, or for a part `markedLatex` over a pruned copy: unmarked symbols
+drop, a structure left with no marked symbol drops, argument slots
+(`m:e`/`m:sup`/…) and `*Pr` elements stay, so `c^2` deleted from `E=mc^2`
+lists `c^2` and a deleted exponent alone `{}^2`. Accept/reject apply the ordinary per-node operation to
 each marker (`ChangeFound.markers`), leaving the same empty-run skeleton Word
 does on accept; the reader skips an equation with no text.
 

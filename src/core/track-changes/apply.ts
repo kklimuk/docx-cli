@@ -2,6 +2,7 @@ import type { Document } from "../ast/document";
 import type {
 	TrackedChangeMarker,
 	TrackedChangeReference,
+	TrackedEquation,
 } from "../ast/document/body";
 import type { TrackedChangeKind } from "../ast/types";
 import { type NoteKind, noteConfig } from "../notes";
@@ -222,6 +223,7 @@ function changeFoundFromReference(
 	if (reference.tableRow) found.tableRow = reference.tableRow;
 	if (reference.tableRowParent) found.tableRowParent = reference.tableRowParent;
 	if (reference.markers) found.markers = reference.markers;
+	if (reference.equation) found.equation = reference.equation;
 	if (reference.tableCell) found.tableCell = reference.tableCell;
 	if (reference.tableCellParent)
 		found.tableCellParent = reference.tableCellParent;
@@ -772,6 +774,9 @@ export type ChangeFound = {
 	/** Set when one revision spans several markers (Word's equation edits — see
 	 * `TrackedChangeReference.markers`); `node`/`parent` are the first. */
 	markers?: TrackedChangeMarker[];
+	/** The equation a marker-spread revision lives in (see
+	 * `TrackedChangeReference.equation`). Carried for `track-changes list`. */
+	equation?: TrackedEquation;
 };
 
 type ChangeAction =

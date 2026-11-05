@@ -329,6 +329,10 @@ docx track-changes apply  FILE [--accept H ...] [--reject H ...]
 # `list` defaults to a text table, one LOGICAL change per line (revN collapses a del+ins
 # pair onto one line); `--json` for the raw array. A del+ins REPLACE pair shares a
 # "group": "revN"; `--at revN` accepts/rejects both halves in one call.
+# A tracked equation lists as LaTeX (`$E=mc^{2}$`). A change to PART of an equation (Word marks
+# the symbols it touched) lists only the marked part, still as LaTeX (`$c^2$`), plus
+# "equation": "eqN" in --json and "(part of eqN — …)" in the table: rewrite it precisely with
+# `docx equations edit --at eqN`.
 # To FINALIZE a review (accept some, reject the rest), use `apply` — it takes both decision
 # lists in ONE call, resolved against the original ids, so nothing renumbers mid-operation
 # and the file is never left half-finalized. Doing it as separate accept then reject calls
