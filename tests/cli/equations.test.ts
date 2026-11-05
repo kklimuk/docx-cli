@@ -1206,3 +1206,61 @@ describe("tracked equations — our own wrapper around <m:oMath>", () => {
 		expect(list.map((entry) => entry.text)).toContain("$E=mc^2$");
 	});
 });
+
+// Release-merge cross-check: #30 promotes a lone `$$…$$` line back to display
+// math, and the revisions work reads a tracked display-equation replace as
+// `{--$$old$$--}{++$$new$$++}`. That line is CriticMarkup, not a lone `$$…$$`,
+// so pasting it back (edit, or create --from a `--current` read) demoted the
+// block to an inline equation.
+describe("a tracked display equation's --current line keeps it display", () => {
+	async function trackedDisplayDoc(label: string): Promise<{
+		docPath: string;
+		workspace: string;
+		line: string;
+	}> {
+		const workspace = tempWorkspace(label);
+		const docPath = join(workspace, "display.docx");
+		const source = join(workspace, "display.md");
+		await Bun.write(source, "Intro.\n\n$$a^2+b^2=c^2$$\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli("track-changes", "on", docPath);
+		await runCli("replace", docPath, "b^2", "d^2");
+		const current = (await runCli("read", docPath, "--current")).stdout;
+		const line =
+			current
+				.split("\n")
+				.find((text) => text.endsWith("<!-- p1 -->"))
+				?.replace(/ *<!-- p1 -->$/, "") ?? "";
+		expect(line).toBe("{--$$a^2+b^2=c^2$$--}[^tc0]{++$$a^2+d^2=c^2$$++}[^tc1]");
+		return { docPath, workspace, line };
+	}
+
+	test("create --from the --current read rebuilds a display equation", async () => {
+		const { docPath, workspace } = await trackedDisplayDoc("eq-display-create");
+		const readPath = join(workspace, "current.md");
+		await Bun.write(
+			readPath,
+			(await runCli("read", docPath, "--current")).stdout,
+		);
+		const rebuilt = join(workspace, "rebuilt.docx");
+		expect((await runCli("create", rebuilt, "--from", readPath)).exitCode).toBe(
+			0,
+		);
+		const equations = await equationsOf(rebuilt);
+		expect(equations.map((eq) => [eq.latex, eq.display])).toEqual([
+			["a^2+d^2=c^2", true],
+		]);
+	});
+
+	test("edit with the pasted line keeps both sides display under tracking", async () => {
+		const { docPath, line } = await trackedDisplayDoc("eq-display-edit");
+		expect((await runCli("edit", docPath, "--at", "p1", line)).exitCode).toBe(
+			0,
+		);
+		await runCli("track-changes", "accept", docPath, "--all");
+		const equations = await equationsOf(docPath);
+		expect(equations.map((eq) => [eq.latex, eq.display])).toEqual([
+			["a^2+d^2=c^2", true],
+		]);
+	});
+});

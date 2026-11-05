@@ -434,7 +434,8 @@ function footnoteReferenceRun(identifier: string, ctx: WalkContext): XmlNode {
 
 function inlineMathElement(node: InlineMath): XmlNode {
 	try {
-		return latexToOmml(node.value, false);
+		// `data.display`: a lone `$$…$$` inside CriticMarkup (`promoteDisplayMath`).
+		return latexToOmml(node.value, node.data?.display === true);
 	} catch (error) {
 		throw new MarkdownImportError(
 			"USAGE",

@@ -884,4 +884,38 @@ describe("find over an inline equation", () => {
 		// Accepted: "Energy is X in physics." — the deleted token takes nothing.
 		expect(await locatorLines(docPath, "physics")).toEqual(["p0:15-22"]);
 	});
+
+	// #27 (Word's per-math-run markers) × #29 (the token width): Word deletes an
+	// equation by marking every run INSIDE it, with no wrapper for the walker to
+	// skip, so the token decides — nothing when one deletion covers it, the
+	// accepted LaTeX when it covers only part.
+	const MATH_NS =
+		'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
+	const mark = (text: string) =>
+		`<m:r><w:del w:id="9" w:author="Word User" w:date="2026-01-01T00:00:00Z"><m:t>${text}</m:t></w:del></m:r>`;
+	const plain = (text: string) => `<m:r><m:t>${text}</m:t></m:r>`;
+	const wordShaped = (math: string) =>
+		`<w:p><w:r><w:t xml:space="preserve">Energy is </w:t></w:r><m:oMath ${MATH_NS}>${math}</m:oMath><w:r><w:t xml:space="preserve"> in physics.</w:t></w:r></w:p>`;
+
+	test("Word's per-run deletion of a whole equation takes zero width when accepted", async () => {
+		const docPath = await buildRawDoc(
+			wordShaped(mark("E") + mark("=") + mark("x")),
+			"find-equation-word-whole",
+		);
+		expect(await locatorLines(docPath, "physics")).toEqual(["p0:14-21"]);
+		expect(await locatorLines(docPath, "physics", "--current")).toEqual([
+			"p0:19-26",
+		]);
+		expect(await locatorLines(docPath, "$E=x$")).toEqual([]);
+	});
+
+	test("Word's per-run deletion of part of an equation measures the accepted LaTeX", async () => {
+		const docPath = await buildRawDoc(
+			wordShaped(plain("E") + plain("=") + mark("x")),
+			"find-equation-word-part",
+		);
+		// Accepted: "Energy is $E=$ in physics." — the token is `$E=$`.
+		expect(await locatorLines(docPath, "$E=$")).toEqual(["p0:10-14"]);
+		expect(await locatorLines(docPath, "physics")).toEqual(["p0:18-25"]);
+	});
 });
