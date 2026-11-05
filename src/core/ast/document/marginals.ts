@@ -4,6 +4,7 @@ import {
 	marginalConfig,
 } from "../../marginals/config";
 import { syncTextBoxFallbacks } from "../../mc";
+import { declareUsedNamespaces } from "../../namespaces";
 import { XmlNode } from "../../parser";
 import type { Pkg } from "./package";
 import { RelationshipsView, relsPartNameFor } from "./relationships";
@@ -49,6 +50,7 @@ export class MarginalsView {
 
 	writeTo(pkg: Pkg): void {
 		for (const [name, part] of this.parts) {
+			declareUsedNamespaces(part.tree);
 			pkg.writeText(name, XmlNode.serialize(part.tree));
 			if (part.rels?.hasAny()) part.rels.writeTo(pkg);
 		}

@@ -1,15 +1,17 @@
+import { isWrapperVisibleInView } from "../find/replace-span";
 import {
 	alternateContentBranch,
 	collectTextBoxContents,
 	isAlternateContent,
 } from "../mc";
-import { XmlNode } from "../parser";
+import { wrapperContent, XmlNode } from "../parser";
 
 /** Extract a header/footer part's text for the AST `Marginal.text`, with
  *  `<w:fldSimple>` fields rendered as readable tokens (`{page}`, `{date}`,
  *  `{styleref:Heading 1}`, …) rather than their cached value. Paragraphs join
- *  with newlines; an inter-zone `<w:tab/>` becomes a literal tab. Pure read
- *  helper (no JSX), shared by the AST reader. */
+ *  with newlines; an inter-zone `<w:tab/>` becomes a literal tab. Tracked
+ *  changes read in the accepted view (insertions shown, deletions hidden).
+ *  Pure read helper (no JSX), shared by the AST reader. */
 export function marginalText(tree: XmlNode[]): string {
 	const root =
 		XmlNode.findRoot(tree, "w:hdr") ?? XmlNode.findRoot(tree, "w:ftr");
@@ -56,10 +58,11 @@ function nodeText(node: XmlNode): string {
 		const branch = alternateContentBranch(node);
 		return branch ? paragraphText(branch) : "";
 	}
-	// Run-bearing wrappers (a future header hyperlink) — descend.
-	if (node.tag === "w:hyperlink") {
+	// Run-bearing wrappers (a hyperlink, a tracked insertion) — descend into
+	// those the accepted view shows; a tracked deletion contributes nothing.
+	if (isWrapperVisibleInView(node.tag, "accepted")) {
 		let out = "";
-		for (const child of node.children) out += nodeText(child);
+		for (const child of wrapperContent(node)) out += nodeText(child);
 		return out;
 	}
 	return "";

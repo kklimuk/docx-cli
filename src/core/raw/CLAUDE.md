@@ -70,7 +70,9 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   invariant pointed the other way. No `dcx:raw` marker (the rels part has no
   MCE) and no schema gate (document.xml is untouched); rels never surface in
   `read` — they're plumbing, and `raw get --at rels` is the discovery path.
-- [namespaces.ts](namespaces.ts) — prefix table + auto-declare on the doc root,
+- [namespaces.ts](namespaces.ts) — auto-declare on the doc root (the standard
+  prefix table lives in [core/namespaces.ts](../namespaces.ts), shared with the
+  save-time `declareUsedNamespaces`),
   and the `dcx:raw="1"` marker stamp. `dcx` is registered in `mc:Ignorable`, so
   Word AND the validator skip it (verified), while `read` surfaces it as the
   `raw` note token / `rawXml` AST field. A resave by Word may drop the marker —
@@ -88,7 +90,11 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   `validationXmlFor` applies **MCE preprocessing to a CLONE** first — strip
   `mc:Ignorable`-declared attrs/elements, resolve `mc:AlternateContent` →
   `mc:Fallback` — because real Word markup (`w14:paraId` on every `w:p`) is
-  valid OOXML that the base schema doesn't know. Gate 6 is a **baseline diff**
+  valid OOXML that the base schema doesn't know. The same clone also unwraps
+  the `<w:ins>`/`<w:del>` Word writes INSIDE a math run (`<m:r><w:del>…`),
+  its documented extension for a tracked equation edit ([MS-OI29500] Part 1
+  §22.1.2.87 (e)) that `CT_R` has no slot for; what the mark wraps is still
+  checked. Gate 6 is a **baseline diff**
   (`diffValidationIssues`, multiset on message text): a third of real documents
   carry pre-existing violations, so a raw edit is judged only on errors it
   ADDS. `docx validate` reuses the engine standalone, per WML part (parts are

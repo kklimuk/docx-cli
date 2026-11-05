@@ -91,10 +91,12 @@ export const WML_ROOT_TAGS = new Set([
 	"w:glossaryDocument",
 ]);
 
-/** Serialize a part root for validation: clone, apply MCE preprocessing, emit. */
+/** Serialize a part root for validation: clone, apply MCE preprocessing and
+ *  Word's math-run revision unwrap, emit. */
 export function validationXmlFor(root: XmlNode): string {
 	const cleaned = root.clone();
 	mceStrip(cleaned, new Set());
+	unwrapMathRunRevisions(cleaned);
 	return XmlNode.serialize([cleaned]);
 }
 
@@ -183,6 +185,21 @@ function mceStrip(node: XmlNode, ignorableAbove: Set<string>): void {
 		kept.push(child);
 	}
 	node.children = kept;
+}
+
+/** Word records a tracked equation edit INSIDE each math run —
+ *  `<m:r><w:del …><m:t>x</m:t></w:del></m:r>` — and documents that it does,
+ *  though ECMA-376's `CT_R` has no slot for it ([MS-OI29500] Part 1
+ *  §22.1.2.87 (e)). Every file Word saved with such an edit failed validation,
+ *  including docx-cli's own `<w:del><m:oMath>` edits once Word re-saved them.
+ *  Unwrapping the mark in the clone keeps what it wraps checked against
+ *  `CT_R`. */
+function unwrapMathRunRevisions(node: XmlNode): void {
+	for (const child of node.children) unwrapMathRunRevisions(child);
+	if (node.tag !== "m:r") return;
+	node.children = node.children.flatMap((child) =>
+		child.tag === "w:ins" || child.tag === "w:del" ? child.children : [child],
+	);
 }
 
 /** Compile the schema once per process and keep it (libxml2 objects need

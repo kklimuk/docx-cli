@@ -18,7 +18,7 @@ Word nests one author's `<w:del>` inside another author's still-pending `<w:ins>
 
 `new TrackChanges(document).…`:
 - `mintMeta(authorFlag?)` — one-shot `TrackedMeta`. For multi-revision operations call `createAllocator()` instead.
-- `createAllocator()` — `{ next(): number }` seeded from `computeMaxRevisionId` (scans document.xml + footnotes.xml + endnotes.xml so a new id can't collide with one already in a note body).
+- `createAllocator()` — `{ next(): number }` seeded from `computeMaxRevisionId` (scans document.xml + footnotes.xml + endnotes.xml + the header/footer parts so a new id can't collide with one already in a note body or header).
 - `setEnabled(on)` — toggles `<w:trackRevisions/>` in settings.xml; turning on materializes the part.
 - `list()` — `collectTrackedChanges(document)`; reads `document.trackedChangeReferences` (the reader's map), never re-walks.
 - `preview(target, verb)` — accept/reject preview for `--dry-run`. Throws `TrackedChangeNotFoundError` on unknown id.
@@ -30,7 +30,7 @@ Word nests one author's `<w:del>` inside another author's still-pending `<w:ins>
 
 ## The reader is the single source of `tcN` ids
 
-`document.trackedChangeReferences` (a `Map<string, TrackedChangeReference>` on Document) is populated **exclusively** by [core/ast/read.ts](../ast/read.ts) in one walk over the body, then `readNoteTrackedChanges` appends standalone note-body revisions. `apply.ts::collectTrackedChanges` reconstructs `ChangeFound` records from the map (via `changeFoundFromReference`) — it never re-walks. So `list` and `accept`/`reject --at tcN` can't disagree on what `tcN` means.
+`document.trackedChangeReferences` (a `Map<string, TrackedChangeReference>` on Document) is populated **exclusively** by [core/ast/read.ts](../ast/read.ts) in one walk over the body, then `readNoteTrackedChanges` appends standalone note-body revisions and `readMarginalTrackedChanges` the header/footer-part ones. `apply.ts::collectTrackedChanges` reconstructs `ChangeFound` records from the map (via `changeFoundFromReference`) — it never re-walks. So `list` and `accept`/`reject --at tcN` can't disagree on what `tcN` means.
 
 ## actionFor — the dispatch table
 
@@ -53,7 +53,7 @@ Footnotes/endnotes added or deleted under tracking have a body-side `<w:ins>` / 
 - If no live `<w:footnoteReference>`/`<w:endnoteReference>` remains for that id → GC the entire `<w:footnote>` / `<w:endnote>` from the part. Word does the same.
 - Otherwise → `normalizeNoteBody`: unwrap any remaining `<w:ins>` / `<w:del>` in the note's paragraphs (with `<w:delText>` → `<w:t>` rename on del), and strip any paragraph-mark ins/del markers.
 
-`computeMaxRevisionId` scans all three parts (document + footnotes + endnotes) so allocated ids never collide with one already living in a note body.
+`computeMaxRevisionId` scans document + footnotes + endnotes + every header/footer part so allocated ids never collide with one already living in a note body or header.
 
 ## Table-grid resync
 

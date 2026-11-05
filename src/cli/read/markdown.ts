@@ -38,6 +38,7 @@ import { inlineEscapeMask } from "@core/markdown";
 import {
 	isRevisionVisible,
 	type RevisionView,
+	runRevision,
 } from "@core/track-changes/revision-visibility";
 import {
 	deviatingCellMargins,
@@ -346,14 +347,13 @@ function emptyCommentIndex(): CommentIndex {
 	};
 }
 
-/** Whether a text run renders in `view` — the shared all-ancestors rule, so a
+/** Whether a run renders in `view` — the shared all-ancestors rule, so a
  * `<w:del>` nested inside another author's `<w:ins>` is hidden in BOTH
- * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it. */
-function isRunVisible(
-	run: Pick<TextRun, "trackedChange">,
-	view: MarkdownView,
-): boolean {
-	return isRevisionVisible(run.trackedChange, view);
+ * resolved views, exactly as `wc`/`find` and `accept`/`reject --all` treat it.
+ * Every tracked run type follows it: a deleted image, equation or line break
+ * leaves the accepted view just as deleted text does. */
+function isRunVisible(run: Run, view: MarkdownView): boolean {
+	return isRevisionVisible(runRevision(run), view);
 }
 
 function buildCommentIndex(
@@ -372,7 +372,7 @@ function buildCommentIndex(
 			// edits anchors comment ranges on the `<m:oMath>` itself).
 			const comments = runComments(run);
 			if (!comments) return;
-			if (run.type === "text" && !isRunVisible(run, view)) return;
+			if (!isRunVisible(run, view)) return;
 			const spanContribution =
 				run.type === "text"
 					? run.text
@@ -973,12 +973,8 @@ function renderCodeBlockGroup(
 		// still render in the footnote appendix.
 		for (const paragraph of paragraphs) {
 			for (const run of paragraph.runs) {
-				if (run.type === "text" && run.trackedChange) {
-					ctx.referencedTrackedChanges.set(
-						run.trackedChange.id,
-						run.trackedChange,
-					);
-				}
+				const change = runRevision(run);
+				if (change) ctx.referencedTrackedChanges.set(change.id, change);
 			}
 		}
 	}
@@ -1382,7 +1378,7 @@ function renderRuns(
 	const view = ctx.options.view ?? "accepted";
 	const visibleEntries: { run: Run; originalIndex: number }[] = [];
 	runs.forEach((run, index) => {
-		if (run.type === "text" && !isRunVisible(run, view)) return;
+		if (!isRunVisible(run, view)) return;
 		visibleEntries.push({ run, originalIndex: index });
 	});
 
@@ -1486,18 +1482,24 @@ function renderRuns(
 			// mapping the walker queries. Mirrors the on-disk naming
 			// convention used by `docx images extract`.
 			const extension = extensionForImageMime(run.contentType) ?? "bin";
-			out += `![${alt}](${run.hash}.${extension})`;
 			// Size (always) + float/wrap/align/overflow (deviation-only): the
 			// `![](hash)` proves existence, not "6.2in wide, past the margin".
-			out += formatImageNote(run, ctx.contentWidthEmu);
+			out += markRevision(
+				`![${alt}](${run.hash}.${extension})${formatImageNote(run, ctx.contentWidthEmu)}`,
+				run.trackedChange,
+				view,
+				ctx,
+			);
 		} else if (run.type === "break") {
 			// A line break renders as a real newline so verse/line-structured
 			// text round-trips (import maps a soft newline back to <w:br/>). In
 			// table cells, escapeCell converts these newlines to <br> so the
 			// markdown table stays one row per record.
-			if (run.kind === "line") out += "\n";
+			if (run.kind === "line") {
+				out += markRevision("\n", run.trackedChange, view, ctx);
+			}
 		} else if (run.type === "tab") {
-			out += "\t";
+			out += markRevision("\t", run.trackedChange, view, ctx);
 		} else if (run.type === "equation") {
 			// `$…$` for inline, `$$…$$` for display. The walker in
 			// `@core/equation` reconstructed `run.latex` from the OMML subtree;
@@ -1505,14 +1507,16 @@ function renderRuns(
 			// (unrecognized) equations — use it only when the LaTeX walker
 			// returned empty.
 			const body = run.latex.length > 0 ? run.latex : run.text;
-			out += run.display ? `$$${body}$$` : `$${body}$`;
-			// Append any comment endings that close on this equation run
-			// (audit comments from tracked equation edits anchor here).
-			out += commentEndingsFor(
-				paragraphId,
-				[{ originalIndex: cursor }],
-				ctx.commentIndex,
+			out += markRevision(
+				run.display ? `$$${body}$$` : `$${body}$`,
+				run.trackedChange,
+				view,
+				ctx,
 			);
+			// Append any comment endings that close on this equation run
+			// (audit comments from tracked equation edits anchor here). Slots are
+			// keyed by the run's index in the paragraph, not among visible runs.
+			out += commentEndingsFor(paragraphId, [entry], ctx.commentIndex);
 		} else if (run.type === "noteRef") {
 			if (run.kind === "footnote") ctx.referencedFootnoteIds.add(run.id);
 			else ctx.referencedEndnoteIds.add(run.id);
@@ -1634,10 +1638,29 @@ function renderTextSegment(
 		out = `[${out}](${target})`;
 	}
 	if (view === "current" && first.trackedChange) {
-		const marker = criticMarkerFor(first.trackedChange.kind);
-		out = `{${marker}${out}${marker}}[^${first.trackedChange.id}]`;
+		out = criticMarkup(out, first.trackedChange);
 	}
 	return out;
+}
+
+/** CriticMarkup for a tracked non-text run (image, equation, line break, tab)
+ * in the current view, registering its footnote the way a text segment's
+ * caller does — so a deleted equation reads `{--$E=mc^2$--}[^tc0]`. */
+function markRevision(
+	rendered: string,
+	change: TrackedChange | undefined,
+	view: MarkdownView,
+	ctx: RenderContext,
+): string {
+	if (view !== "current" || !change) return rendered;
+	ctx.referencedTrackedChanges.set(change.id, change);
+	return criticMarkup(rendered, change);
+}
+
+/** `{--…--}[^tcN]` for a deletion, `{++…++}[^tcN]` for an insertion. */
+function criticMarkup(rendered: string, change: TrackedChange): string {
+	const marker = criticMarkerFor(change.kind);
+	return `{${marker}${rendered}${marker}}[^${change.id}]`;
 }
 
 /** `text` is the segment's runs concatenated — passed in rather than re-joined

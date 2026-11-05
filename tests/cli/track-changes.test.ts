@@ -2100,3 +2100,57 @@ describe("docx track-changes — several handles after one flag", () => {
 		expect(await Bun.file(docPath).bytes()).toEqual(before);
 	});
 });
+
+describe("tracked non-text runs follow the same view rule as text", () => {
+	// Only text runs used to be filtered by view and listed with their content:
+	// a deleted image or line break still showed in the accepted view, carried
+	// no CriticMarkup in the current one, and listed as "¶ paragraph mark".
+	test("a deleted line break is hidden, marked, and listed as a break", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>line one</w:t></w:r><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:br/></w:r></w:del><w:r><w:t>line two</w:t></w:r></w:p>',
+			"tracked-break",
+		);
+		expect((await runCli("read", docPath)).stdout).toContain(
+			"line oneline two",
+		);
+		expect((await runCli("read", docPath, "--current")).stdout).toContain(
+			"line one{--\n--}[^tc0]line two",
+		);
+		const list = (await runCli("track-changes", "list", docPath)).parsed as {
+			text: string;
+		}[];
+		expect(list.map((entry) => entry.text)).toEqual(["[line break]"]);
+	});
+
+	test("a hidden run before a commented equation keeps the comment's marker", async () => {
+		const docPath = await buildRawDoc(
+			'<w:p><w:r><w:t>a</w:t></w:r><w:del w:id="1" w:author="Ed" w:date="2026-01-01T00:00:00Z"><w:r><w:br/></w:r></w:del>' +
+				'<w:commentRangeStart w:id="0"/><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>y</m:t></m:r></m:oMath><w:commentRangeEnd w:id="0"/>' +
+				"<w:r><w:t>b</w:t></w:r></w:p>",
+			"tracked-break-comment",
+		);
+		expect((await runCli("read", docPath, "--comments")).stdout).toContain(
+			"a$y$[^c0]b",
+		);
+	});
+
+	test("a tracked image delete is hidden, marked, and listed as an image", async () => {
+		const docPath = await copyFixture(
+			"tracked-image-delete",
+			"tests/fixtures/images.docx",
+		);
+		await runCli("track-changes", docPath, "on");
+		expect(
+			(await runCli("images", "delete", docPath, "--at", "img0")).exitCode,
+		).toBe(0);
+
+		expect((await runCli("read", docPath)).stdout).not.toContain("img0");
+		expect((await runCli("read", docPath, "--current")).stdout).toMatch(
+			/\{--!\[[^\]]*\]\([^)]*\)[^}]*--\}\[\^tc\d+\]/,
+		);
+		const list = (await runCli("track-changes", "list", docPath)).parsed as {
+			text: string;
+		}[];
+		expect(list.map((entry) => entry.text)).toContain("[image img0]");
+	});
+});

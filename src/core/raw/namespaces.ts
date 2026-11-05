@@ -1,5 +1,6 @@
 import type { Document } from "../ast/document";
-import { ensureIgnorable, NS_MC, prefixOf } from "../mc";
+import { ensureIgnorable, prefixOf } from "../mc";
+import { declareKnownNamespace } from "../namespaces";
 import { XmlNode } from "../parser";
 import { RawError } from "./error";
 
@@ -70,11 +71,11 @@ function checkPrefixes(
 		if (!prefix || prefix === "xml") continue;
 		if (declaredHere.has(prefix)) continue;
 		if (documentRoot.getAttribute(`xmlns:${prefix}`)) continue;
-		const uri = KNOWN_OOXML_NAMESPACES[prefix];
-		if (uri) {
-			documentRoot.setAttribute(`xmlns:${prefix}`, uri);
+		if (prefix === RAW_MARKER_PREFIX) {
+			declareNamespace(documentRoot, RAW_MARKER_PREFIX, RAW_MARKER_NAMESPACE);
 			continue;
 		}
+		if (declareKnownNamespace(documentRoot, prefix)) continue;
 		throw new RawError(
 			"INVALID_XML",
 			`Fragment uses undeclared namespace prefix "${prefix}:"`,
@@ -85,36 +86,3 @@ function checkPrefixes(
 		checkPrefixes(child, documentRoot, declaredHere);
 	}
 }
-
-/** The standard OOXML prefix → URI table (what Word declares on its own doc
- *  roots). A fragment using one of these without a declaration gets it added
- *  to `<w:document>` automatically. */
-const KNOWN_OOXML_NAMESPACES: Record<string, string> = {
-	w: "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
-	r: "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-	m: "http://schemas.openxmlformats.org/officeDocument/2006/math",
-	mc: NS_MC,
-	a: "http://schemas.openxmlformats.org/drawingml/2006/main",
-	pic: "http://schemas.openxmlformats.org/drawingml/2006/picture",
-	wp: "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
-	c: "http://schemas.openxmlformats.org/drawingml/2006/chart",
-	dgm: "http://schemas.openxmlformats.org/drawingml/2006/diagram",
-	v: "urn:schemas-microsoft-com:vml",
-	o: "urn:schemas-microsoft-com:office:office",
-	w10: "urn:schemas-microsoft-com:office:word",
-	w14: "http://schemas.microsoft.com/office/word/2010/wordml",
-	w15: "http://schemas.microsoft.com/office/word/2012/wordml",
-	w16: "http://schemas.microsoft.com/office/word/2018/wordml",
-	w16se: "http://schemas.microsoft.com/office/word/2015/wordml/symex",
-	w16cid: "http://schemas.microsoft.com/office/word/2016/wordml/cid",
-	w16cex: "http://schemas.microsoft.com/office/word/2018/wordml/cex",
-	w16du: "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
-	w16sdtdh: "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash",
-	wp14: "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
-	wps: "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
-	wpg: "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
-	wpc: "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
-	wpi: "http://schemas.microsoft.com/office/word/2010/wordprocessingInk",
-	cx: "http://schemas.microsoft.com/office/drawing/2014/chartex",
-	[RAW_MARKER_PREFIX]: RAW_MARKER_NAMESPACE,
-};

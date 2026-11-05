@@ -1,4 +1,4 @@
-import type { TrackedChange, TrackedChangeKind } from "../ast/types";
+import type { Run, TrackedChange, TrackedChangeKind } from "../ast/types";
 
 /** Whether a run carrying `change` is visible in `view` — the ONE rule every
  *  view consumer shares (`paragraphTextAccepted`/`paragraphTextBaseline`, so
@@ -22,6 +22,12 @@ export function isRevisionVisible(
 		if (!isKindVisible(outer.kind, view)) return false;
 	}
 	return true;
+}
+
+/** The revision a run sits in, whatever its type — text, image, equation,
+ *  line break, tab and text-box runs can all be tracked; the rest never are. */
+export function runRevision(run: Run): TrackedChange | undefined {
+	return "trackedChange" in run ? run.trackedChange : undefined;
 }
 
 export type RevisionView = "current" | "accepted" | "baseline";

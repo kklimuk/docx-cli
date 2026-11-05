@@ -61,7 +61,7 @@ export class TrackChanges {
 	}
 
 	/** Build a revision-id allocator seeded from a max-id scan over
-	 * document.xml + footnotes.xml + endnotes.xml. The scan runs lazily on the
+	 * document.xml + footnotes.xml + endnotes.xml + header/footer parts. The scan runs lazily on the
 	 * first `.next()` — commands create the allocator unconditionally but only
 	 * draw from it under tracking, and an untracked run shouldn't pay a
 	 * full-tree walk for ids it never mints. Monotonic after that; safe for
@@ -298,14 +298,18 @@ function computeMaxRevisionId(document: Document): number {
 		const value = Number(idAttr);
 		if (Number.isFinite(value) && value > max) max = value;
 	};
-	// Tracked changes can live in document.xml, footnotes.xml, AND endnotes.xml
-	// — Word emits body-side <w:ins>/<w:del> inside <w:footnote>/<w:endnote>
-	// when a footnote is added/deleted under tracking (see `TrackedNoteBody`
-	// in `core/notes/emit.tsx`). Allocate across all three parts so a
-	// new revision never collides with one that's already in a note body.
+	// Tracked changes can live in document.xml, footnotes.xml, endnotes.xml AND
+	// the header/footer parts — Word emits body-side <w:ins>/<w:del> inside
+	// <w:footnote>/<w:endnote> when a footnote is added/deleted under tracking
+	// (see `TrackedNoteBody` in `core/notes/emit.tsx`), and keeps a header
+	// edit's revisions in the header part. Allocate across all of them so a
+	// new revision never collides with one that's already there.
 	walkXml(document.documentTree, visit);
 	if (document.footnotes?.tree) walkXml(document.footnotes?.tree, visit);
 	if (document.endnotes?.tree) walkXml(document.endnotes?.tree, visit);
+	for (const part of document.marginals?.parts.values() ?? []) {
+		walkXml(part.tree, visit);
+	}
 	return max;
 }
 

@@ -1,8 +1,10 @@
-import type { SectionProperties, TrackedChange } from "@core";
+import type { Run, SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
+import { markedLatex, ommlToLatex } from "@core/equation";
 import type { XmlNode } from "@core/parser";
-import { TrackChanges } from "@core/track-changes";
+import { type ChangeFound, TrackChanges } from "@core/track-changes";
+import { runRevision } from "@core/track-changes/revision-visibility";
 import { revisionGroups } from "./groups";
 
 /** Compact prior/current summary for a `pPrChange`: the direct paragraph
@@ -23,6 +25,9 @@ export type TrackedChangeRecord = Omit<TrackedChange, "within"> & {
 	 *  every del/ins of a replace spanning several runs); absent for solo changes.
 	 *  `accept/reject --at revN` acts on every member at once. */
 	group?: string;
+	/** The `eqN` a revision marks PART of (a Word-style edit inside one
+	 *  equation); `text` is then the LaTeX of just the marked part. */
+	equation?: string;
 };
 
 /** Walk a document's tracked changes into the enriched, `revN`-grouped records
@@ -34,11 +39,12 @@ export function collectTrackedChangeRecords(
 	const byId = new Map<string, TrackedChangeRecord>();
 	for (const paragraph of flattenParagraphs(document.body.blocks)) {
 		for (const run of paragraph.runs) {
-			if (run.type !== "text" || !run.trackedChange) continue;
-			const change = run.trackedChange;
+			const change = runRevision(run);
+			if (!change) continue;
+			const text = recordText(run);
 			const existing = byId.get(change.id);
 			if (existing) {
-				existing.text += run.text;
+				existing.text += text;
 				continue;
 			}
 			// Explicit fields, not a spread: `TrackedChange.within` (the enclosing
@@ -51,17 +57,20 @@ export function collectTrackedChangeRecords(
 				date: change.date,
 				revisionId: change.revisionId,
 				blockId: paragraph.id,
-				text: run.text,
+				text,
 			});
 		}
 	}
 
-	// The AST loop above only sees text-bearing run-level changes. Everything
-	// else — empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
-	// table-property revisions, checkbox toggles, and standalone note-body
-	// edits — comes from the single tracked-change inventory the reader built
-	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
-	// author, date and revisionId are already resolved on each record.
+	// The AST loop above only sees body run-level changes. Everything else —
+	// part of an equation (Word marks each edited math run; the whole-equation
+	// case rides the equation run above), empty wrappers (e.g. <w:ins> wrapping
+	// only <w:del>), section / table-property revisions, checkbox toggles,
+	// standalone note-body edits and header/footer revisions — comes from the
+	// single tracked-change inventory the reader built (TrackChanges.list reads
+	// document.trackedChangeReferences; no re-walk). kind, author, date and
+	// revisionId are already resolved on each record; a note or marginal
+	// wrapper's text is read off its own runs (`wrapperRecordText`).
 	const inventory = new TrackChanges(document).list();
 	for (const change of inventory) {
 		if (byId.has(change.id)) continue;
@@ -72,8 +81,17 @@ export function collectTrackedChangeRecords(
 			date: change.date,
 			revisionId: change.revisionId,
 			blockId: change.blockId,
-			text: "",
+			// A revision inside an equation reads as LaTeX (the equation, or just
+			// the part it marks); a note or marginal wrapper's text is read off
+			// its own runs.
+			text: change.markers
+				? equationRevisionText(change)
+				: wrapperRecordText(change.node),
 		};
+		// A PART of a body equation names it, so the agent can reach for
+		// `equations edit --at eqN` to fix the result precisely.
+		if (change.equation?.id && !change.equation.whole)
+			record.equation = change.equation.id;
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the
 			// snapshot inside the change marker carries the prior values.
@@ -115,6 +133,85 @@ export function collectTrackedChangeRecords(
 	return sorted;
 }
 
+/** A revision spread over an equation's math runs (Word's shape), as LaTeX:
+ *  the whole equation when it covers it, else the marked part (`c^{2}` from
+ *  `E=mc^2`, never the joined `c2`, which loses the structure and can't be
+ *  pasted back). Falls back to the markers' symbols when the marked part has
+ *  no LaTeX (a marker on formatting alone). */
+function equationRevisionText(change: ChangeFound): string {
+	const markers = change.markers ?? [];
+	const equation = change.equation;
+	const latex = equation
+		? equation.whole
+			? ommlToLatex(equation.node)
+			: markedLatex(
+					equation.node,
+					new Set(markers.map((marker) => marker.node)),
+				)
+		: "";
+	const text =
+		latex || markers.map((marker) => marker.node.collectText()).join("");
+	return `$${text}$`;
+}
+
+/** What a tracked run contributes to its change's `text`: an equation as the
+ *  `$…$` `read` prints, a non-text run as a bracketed token — so a deleted
+ *  equation or image no longer lists as an empty, paragraph-mark-looking change. */
+function recordText(run: Run): string {
+	switch (run.type) {
+		case "text":
+			return run.text;
+		case "equation":
+			return `$${run.latex || run.text}$`;
+		case "image":
+			return `[image ${run.id}]`;
+		case "break":
+			return `[${run.kind} break]`;
+		case "tab":
+			return "[tab]";
+		case "textBox":
+			return `[text box ${run.id}]`;
+		default:
+			return "";
+	}
+}
+
+/** `recordText` for a wrapper with no AST runs (a note body, a header/footer
+ *  part): its runs' text, with a break, tab, drawing or equation described by
+ *  the same token — so a deleted header line break doesn't list as an empty,
+ *  paragraph-mark-looking change either. */
+function wrapperRecordText(wrapper: XmlNode): string {
+	let text = "";
+	for (const child of wrapper.children) {
+		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
+			text += `$${ommlToLatex(child)}$`;
+			continue;
+		}
+		if (child.tag !== "w:r") continue;
+		for (const part of child.children) text += runChildText(part);
+	}
+	return text;
+}
+
+function runChildText(node: XmlNode): string {
+	switch (node.tag) {
+		case "w:t":
+		case "w:delText":
+			return node.collectText();
+		case "w:cr":
+			return "[line break]";
+		case "w:br":
+			return `[${node.getAttribute("w:type") ?? "line"} break]`;
+		case "w:tab":
+			return "[tab]";
+		case "w:drawing":
+		case "w:pict":
+			return "[drawing]";
+		default:
+			return "";
+	}
+}
+
 /** Text-first view: one LOGICAL change per line, keyed by the handle an agent
  *  passes to `accept`/`reject --at`. A del+ins replace pair collapses onto one
  *  `revN` line (the whole point — it pushes weak agents toward the atomic handle
@@ -149,7 +246,7 @@ export function renderTrackedChangeTable(
 				handle: record.group,
 				verb: "replace",
 				block: record.blockId,
-				desc: `${quote(textOf("del"))} → ${quote(textOf("ins"))}`,
+				desc: `${quote(textOf("del"))} → ${quote(textOf("ins"))}${partOfEquation(members)}`,
 			});
 			continue;
 		}
@@ -236,6 +333,14 @@ function verbLabel(kind: TrackedChange["kind"]): string {
 
 /** Human description for a non-grouped change. Text runs show their content;
  *  property revisions show the changed keys; structural changes a short note. */
+/** ` (part of eqN …)` when a change edits part of a body equation: its text is
+ *  only the marked fragment, so point at the verb that rewrites it whole. */
+function partOfEquation(records: TrackedChangeRecord[]): string {
+	const equation = records.find((record) => record.equation)?.equation;
+	if (!equation) return "";
+	return ` (part of ${equation} — to fix it precisely: docx equations edit --at ${equation})`;
+}
+
 function describeSolo(record: TrackedChangeRecord): string {
 	// ins/del AND moveFrom/moveTo all carry the affected run text — show it.
 	// (moveFrom/moveTo are the only other kinds with non-empty text; every
@@ -246,7 +351,8 @@ function describeSolo(record: TrackedChangeRecord): string {
 		record.kind === "moveFrom" ||
 		record.kind === "moveTo"
 	) {
-		return record.text === "" ? "¶ paragraph mark" : quote(record.text);
+		if (record.text === "") return "¶ paragraph mark";
+		return `${quote(record.text)}${partOfEquation([record])}`;
 	}
 	if (record.kind === "pPrChange" || record.kind === "sectPrChange") {
 		const diff = propDiff(record.prior, record.current);

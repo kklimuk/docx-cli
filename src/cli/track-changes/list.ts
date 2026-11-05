@@ -53,7 +53,8 @@ handle; paired halves additionally carry "group": "revN". kind is one of: "ins",
 their blockId is the owning paragraph's pN. Table-structural entries
 (rowIns/rowDel/cellIns/cellDel and the property revisions
 tblGridChange/tblPrChange/tcPrChange) have text "" and blockId set to the
-owning table's tN. checkboxToggle entries surface a tracked checkbox toggle
+owning table's tN. Revisions inside a page header/footer have blockId set to
+its hdrN/ftrN. checkboxToggle entries surface a tracked checkbox toggle
 (☐↔☒); reject restores the prior state. (Structural inserts/deletes of a
 whole checkbox aren't yet enumerated as their own kind.)
 

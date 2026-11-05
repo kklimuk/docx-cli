@@ -1,5 +1,6 @@
 import { w, w15 } from "../../jsx";
 import { ensureIgnorable, NS_MC } from "../../mc";
+import { declareUsedNamespaces } from "../../namespaces";
 import { XmlNode } from "../../parser";
 import type { Comment, CommentAnchor } from "../types";
 import type { CommentReference } from "./body";
@@ -67,6 +68,7 @@ export class CommentsView {
 	/** Serialize this view's tree (and the extended sidecar if present) into
 	 * the package's `word/comments.xml` and `word/commentsExtended.xml`. */
 	writeTo(pkg: Pkg): void {
+		declareUsedNamespaces(this.tree);
 		pkg.writeText(COMMENTS_PART_NAME, XmlNode.serialize(this.tree));
 		if (this.extendedTree) {
 			pkg.writeText(
