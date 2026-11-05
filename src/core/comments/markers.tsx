@@ -597,13 +597,21 @@ function spliceAfter(target: FoundNode, ...nodes: XmlNode[]): void {
 	target.siblings.splice(index + 1, 0, ...nodes);
 }
 
+/** Strip comment `numericId`'s range markers and reference runs from EVERY
+ *  story part passed in — the body, and the footnote/endnote/header/footer
+ *  parts, where Word can anchor a comment too (a footnote comment is ordinary
+ *  Word authoring). Pruning only document.xml left a deleted footnote
+ *  comment's `<w:commentReference>` pointing at nothing. */
 export function removeCommentMarkers(
-	documentTree: XmlNode[],
+	storyTrees: XmlNode[][],
 	numericId: string,
 ): void {
-	const document = XmlNode.findRoot(documentTree, "w:document");
-	if (!document) return;
-	walkAndPruneCommentReferences(document, numericId);
+	for (const tree of storyTrees) {
+		for (const root of tree) {
+			if (root.isText) continue;
+			walkAndPruneCommentReferences(root, numericId);
+		}
+	}
 }
 
 function walkAndPruneCommentReferences(node: XmlNode, numericId: string): void {

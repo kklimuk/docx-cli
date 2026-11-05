@@ -320,6 +320,7 @@ export class Comments {
 		const root = XmlNode.findRoot(view.tree, "w:comments");
 		if (!root) return;
 
+		const storyTrees = this.#storyTrees();
 		for (const commentId of cascaded) {
 			const numericId = commentId.slice(1);
 			const node = view.findById(numericId);
@@ -331,7 +332,7 @@ export class Comments {
 
 			if (paraId) view.removeSidecarEntries(paraId);
 
-			removeCommentMarkers(this.document.documentTree, numericId);
+			removeCommentMarkers(storyTrees, numericId);
 		}
 	}
 
@@ -393,6 +394,18 @@ export class Comments {
 			return;
 		}
 		commentsRoot.children.push(comment);
+	}
+
+	/** Every part that can carry comment markers: the body, both note parts,
+	 * and each header/footer part. */
+	#storyTrees(): XmlNode[][] {
+		const { documentTree, footnotes, endnotes, marginals } = this.document;
+		return [
+			documentTree,
+			...(footnotes ? [footnotes.tree] : []),
+			...(endnotes ? [endnotes.tree] : []),
+			...[...(marginals?.parts.values() ?? [])].map((part) => part.tree),
+		];
 	}
 
 	#resolveBlock(blockId: string): { node: XmlNode; parent: XmlNode[] } {

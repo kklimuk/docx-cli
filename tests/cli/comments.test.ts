@@ -1576,3 +1576,42 @@ describe("docx comments — a commentsExtended part we materialize covers every 
 		expect((await runCli("validate", docPath)).exitCode).toBe(0);
 	});
 });
+
+describe("docx comments delete — markers in note parts", () => {
+	test("deleting a comment anchored in a footnote strips its footnote markers", async () => {
+		// Word lets a reviewer comment inside a footnote; the markers then live in
+		// footnotes.xml. `delete` used to prune document.xml only, leaving a
+		// `<w:commentReference>` that names no comment.
+		const workspace = tempWorkspace("comments-delete-footnote");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Body clause.");
+		await runCli("footnotes", "add", docPath, "--at", "p0", "--text", "Note.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		// Move c0's markers from the body into the footnote, as Word writes them.
+		const pkg = await Pkg.open(docPath);
+		const body = (await pkg.readText("word/document.xml"))
+			.replace(/<w:commentRange(Start|End) w:id="0"\/>/g, "")
+			.replace(
+				/<w:r>(?:(?!<w:r>).)*?<w:commentReference w:id="0"\/><\/w:r>/,
+				"",
+			);
+		expect(body).not.toContain('w:id="0"/><w:r');
+		const notes = (await pkg.readText("word/footnotes.xml")).replace(
+			/(<w:r>(?:(?!<w:r>).)*?Note\.<\/w:t><\/w:r>)/,
+			'<w:commentRangeStart w:id="0"/>$1<w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>',
+		);
+		expect(notes).toContain('<w:commentReference w:id="0"/>');
+		pkg.writeText("word/document.xml", body);
+		pkg.writeText("word/footnotes.xml", notes);
+		await pkg.save();
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		expect(
+			(await runCli("comments", "delete", docPath, "--at", "c0")).exitCode,
+		).toBe(0);
+		expect(await readPart(docPath, "word/footnotes.xml")).not.toContain(
+			"comment",
+		);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+});
