@@ -49,23 +49,27 @@ export const wordMacEngine: RenderEngine = {
 			// suppresses the "Save changes?" prompt (we already wrote the
 			// PDF; the docx itself isn't being modified).
 			//
-			// `set display alerts to none` makes Word AUTO-DECLINE the modal
-			// "Word found unreadable content — recover?" dialog a corrupt .docx
-			// pops on open. Without it that dialog is MODAL and blocks the
-			// AppleScript until the AppleEvent times out (-1712), wedging every
-			// later render in a batch behind one bad file; and a human clicking
-			// "Yes" to clear it makes Word REPAIR the file, so the exported PDF
-			// then reflects recovered content, not the artifact under test
-			// (silently inflating a render-fidelity comparison). With alerts off,
-			// a corrupt file instead fails to open — no PDF — an honest
-			// RENDER_FAILED, the correct outcome for "this .docx doesn't open in
-			// Word." Verified empirically against a namespace-corrupted docx:
-			// good files still render, the bad file fails without leaving a
-			// modal, Word stays responsive for the next render. We apply it ONLY
-			// to a Word we cold-launched ourselves (reaped after, so it can't
-			// leak) and skip it when sharing the user's instance -- see the
-			// `suppressAlerts` decision inside the lock below. `with timeout`
-			// bounds any unexpected modal so a wedge can never outlast one render.
+			// `set display alerts to none` does NOT stop a corrupt .docx from
+			// popping a modal on open. Observed on Word for Mac 16.114.4 with a
+			// namespace-corrupt document.xml and alerts set to none: Word still
+			// put up "Word experienced an error trying to open the file … Open
+			// the file with the Text Recovery converter" ON SCREEN, and that
+			// modal blocked the `open` AppleEvent until our `with timeout` fired
+			// (-1712). What actually bounds and clears the wedge is the 60s open
+			// leash below plus `reapRenderWord` in `finally`, which SIGKILLs the
+			// Word instance this render cold-launched — the modal dies with it,
+			// so the next render starts on a fresh instance. The outcome for a
+			// corrupt file is still an honest RENDER_FAILED (no PDF), but only
+			// because nobody answered the dialog: a human who clicks through it
+			// during that window makes Word REPAIR the file, and the exported PDF
+			// then reflects recovered content, not the artifact under test. And
+			// when the render SHARES the user's instance (no cold launch, so no
+			// reap and no alerts change), the modal stays on their Word until
+			// they dismiss it. We still set alerts to none on a Word we
+			// cold-launched ourselves (the instance is reaped after, so the
+			// setting can't leak) — it just isn't the corrupt-file guard — and
+			// skip it when sharing the user's instance -- see the
+			// `suppressAlerts` decision inside the lock below.
 			//
 			// The document is bound BY STAGED FILENAME, never `active document`.
 			// This is a safety invariant, empirically earned: when the render
@@ -76,8 +80,9 @@ export const wordMacEngine: RenderEngine = {
 			// can only ever resolve to our staged copy; a failed open makes the
 			// `document "name"` lookup throw instead, surfacing RENDER_FAILED.
 			// Timeouts are split: a corrupt file blocks the `open` AE on its
-			// (auto-declined but still displayed) error dialog until the timeout
-			// fires — measured at the full window, unattended — so open+bind get
+			// on-screen error dialog (alerts-none doesn't decline it, see above)
+			// until the timeout fires — measured at the full window, unattended —
+			// and the reap then kills the instance holding it, so open+bind get
 			// a bounded leash to fail fast, while save-as/close keep 90s. The open
 			// leash is 60s, not tighter: a corrupt file wedges for the WHOLE leash,
 			// so a short one is tempting, but a legitimately large/complex .docx on
