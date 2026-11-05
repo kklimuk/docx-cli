@@ -346,6 +346,38 @@ describe("gate 6 — XSD engine", () => {
 		);
 		expect(fresh).toEqual([]);
 	});
+
+	// Word marks a tracked equation edit inside each math run (MS-OI29500,
+	// Part 1 §22.1.2.87 (e)); the transitional XSD has no slot for it, so every
+	// such file Word saved used to fail `validate`. Shape copied from Word 365.
+	function mathDocument(run: string): XmlNode {
+		const root = XmlNode.findRoot(
+			XmlNode.parse(
+				`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body><w:p><m:oMath>${run}</m:oMath></w:p></w:body></w:document>`,
+			),
+			"w:document",
+		);
+		if (!root) throw new Error("no document root");
+		return root;
+	}
+
+	test("Word's revision marks inside a math run validate clean", () => {
+		for (const tag of ["w:del", "w:ins"]) {
+			const root = mathDocument(
+				`<m:r><${tag} w:id="0" w:author="Word User" w:date="2026-10-28T11:55:00Z"><m:rPr><m:sty m:val="p"/></m:rPr><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><m:t>=</m:t></${tag}></m:r>`,
+			);
+			expect(validateWmlXml(validationXmlFor(root))).toEqual([]);
+		}
+	});
+
+	test("what a math-run revision mark wraps is still checked", () => {
+		const root = mathDocument(
+			`<m:r><w:del w:id="0" w:author="Word User"><w:bogusElement/></w:del></m:r>`,
+		);
+		const issues = validateWmlXml(validationXmlFor(root));
+		expect(issues).toHaveLength(1);
+		expect(issues[0]?.message).toContain("bogusElement");
+	});
 });
 
 describe("diffValidationIssues", () => {

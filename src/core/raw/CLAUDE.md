@@ -88,7 +88,11 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   `validationXmlFor` applies **MCE preprocessing to a CLONE** first — strip
   `mc:Ignorable`-declared attrs/elements, resolve `mc:AlternateContent` →
   `mc:Fallback` — because real Word markup (`w14:paraId` on every `w:p`) is
-  valid OOXML that the base schema doesn't know. Gate 6 is a **baseline diff**
+  valid OOXML that the base schema doesn't know. The same clone also unwraps
+  the `<w:ins>`/`<w:del>` Word writes INSIDE a math run (`<m:r><w:del>…`),
+  its documented extension for a tracked equation edit ([MS-OI29500] Part 1
+  §22.1.2.87 (e)) that `CT_R` has no slot for; what the mark wraps is still
+  checked. Gate 6 is a **baseline diff**
   (`diffValidationIssues`, multiset on message text): a third of real documents
   carry pre-existing violations, so a raw edit is judged only on errors it
   ADDS. `docx validate` reuses the engine standalone, per WML part (parts are
