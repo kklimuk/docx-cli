@@ -70,7 +70,9 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   invariant pointed the other way. No `dcx:raw` marker (the rels part has no
   MCE) and no schema gate (document.xml is untouched); rels never surface in
   `read` — they're plumbing, and `raw get --at rels` is the discovery path.
-- [namespaces.ts](namespaces.ts) — prefix table + auto-declare on the doc root,
+- [namespaces.ts](namespaces.ts) — auto-declare on the doc root (the standard
+  prefix table lives in [core/namespaces.ts](../namespaces.ts), shared with the
+  save-time `declareUsedNamespaces`),
   and the `dcx:raw="1"` marker stamp. `dcx` is registered in `mc:Ignorable`, so
   Word AND the validator skip it (verified), while `read` surfaces it as the
   `raw` note token / `rawXml` AST field. A resave by Word may drop the marker —

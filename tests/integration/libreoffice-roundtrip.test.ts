@@ -31,7 +31,7 @@ const CORE_FIXTURES = [
 	"markdown-import.docx", // S8 markdown walker end-to-end (`create --from`) + CodeBlock/Code rStyle/lowlight colors (incl. 6E7781 comment token, formerly code-blocks.docx)
 	"word-formatted.docx", // run-level rPr (color/themeColor, shd, u@color, vertAlign, smallCaps, caps; p4) + bold/italic edit-preservation layout (p0-p3); absorbed run-formatting.docx
 	"letter.docx", // paragraph pPr: <w:spacing> (before/after/line) + <w:ind> (left/right/firstLine/hanging), authored via insert/edit
-	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields
+	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields; root starts as xmlns:w only, so every r:id re-declares xmlns:r on save
 	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
 	"raw-ooxml.docx", // `docx raw` escape hatch: drop-cap framePr, nested table, sectPr patch loop (lnNumType) + dcx:raw markers
 	"text-boxes.docx", // Word-shaped text box (mc:AlternateContent wps Choice + VML Fallback) edited through tbxN:pK, Fallback re-synced on save

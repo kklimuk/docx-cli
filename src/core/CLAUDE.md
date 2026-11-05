@@ -24,6 +24,10 @@ Defined in [parser/run-ops.ts](parser/run-ops.ts). AST text and `find`'s offsets
 
 **Adding a run-bearing wrapper:** add to `RUN_BEARING_WRAPPER_TAGS` in `parser/run-ops.ts` and recurse into it in `walkRunContainer` in `ast/read.ts` — that's the only edit (every offset-aware walker reads the predicate and descends via `wrapperContent`). Add a regression test in `tests/cli/invariants.test.ts` (unmodeled-XML survival + transparent wrappers).
 
+## Namespace prefixes are declared at save
+
+Emitters write `r:id`, `r:embed`, `wp:`, `m:`, `w14:` … assuming the part root declares them, as Word's and our `create` template's roots do. A docx from another producer may declare only `xmlns:w`, and an undeclared prefix is malformed XML (Word: "unreadable content"; `validate`: "Namespace prefix r … not defined"). So `Document.save` and the notes/comments/marginals `writeTo`s run `declareUsedNamespaces(tree)` ([namespaces.ts](namespaces.ts)) before serializing: every standard prefix a part uses but nothing above it declares is added to the root (Microsoft extension prefixes — `w14`, `wp14`, … — also join `mc:Ignorable`). An emitter never needs its own declaration step; an unknown prefix is left alone. The raw gate's auto-declare reads the same prefix table.
+
 ## fast-xml-builder owns escaping
 
 On the JSX path, never manually escape — the builder handles entities (uses `&apos;` for `'`, which fast-xml-parser decodes back).

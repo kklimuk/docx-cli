@@ -63,6 +63,11 @@ so `set` with no `--at` reuses a single part across every section.
 
 - Part root declares `xmlns:w` AND `xmlns:r` (a future header-body hyperlink uses
   `r:id`; an undeclared prefix is malformed XML) — like the notes parts.
+- The `<w:headerReference r:id=…>` lands in `document.xml`, whose root another
+  producer may not have given `xmlns:r` — `Document.save` declares every
+  standard prefix a part uses (`declareUsedNamespaces` in
+  [core/namespaces.ts](../namespaces.ts)), so `set` never writes an undeclared
+  `r:`.
 - Each part needs a content-type `<Override>` + a `<Relationship>`, or Word reports
   "unreadable content."
 - `<w:fldSimple>` is already a `RUN_BEARING_WRAPPER_TAG`, so no offset-bridge change.

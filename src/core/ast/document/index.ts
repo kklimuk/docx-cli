@@ -1,4 +1,5 @@
 import { syncTextBoxFallbacks } from "../../mc";
+import { declareUsedNamespaces } from "../../namespaces";
 import { XmlNode } from "../../parser";
 import { buildBody } from "../read";
 import type { Body, TrackedChangeReference } from "./body";
@@ -146,6 +147,9 @@ export class Document {
 		// `syncTextBoxFallbacks`). Headers/footers hold text boxes too.
 		syncTextBoxFallbacks(this.documentTree);
 		this.marginals?.syncTextBoxFallbacks();
+		// Our emitters write `r:id`/`wp:`/`m:`/`w14:` assuming the root declares
+		// them; a docx from another producer may declare only `xmlns:w`.
+		declareUsedNamespaces(this.documentTree);
 		this.pkg.writeText(
 			"word/document.xml",
 			XmlNode.serialize(this.documentTree),

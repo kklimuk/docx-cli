@@ -1,3 +1,4 @@
+import { declareUsedNamespaces } from "../../namespaces";
 import { type NoteKind, noteConfig } from "../../notes/config";
 import { buildEmptyNotesTree } from "../../notes/empty";
 import { XmlNode } from "../../parser";
@@ -65,6 +66,7 @@ export class NotesView {
 	/** Serialize this view's tree into the package's `word/${kind}s.xml`, plus
 	 *  its rels part when any note-body relationships were minted. */
 	writeTo(pkg: Pkg): void {
+		declareUsedNamespaces(this.tree);
 		pkg.writeText(noteConfig(this.kind).partName, XmlNode.serialize(this.tree));
 		if (this.relationships?.hasAny()) this.relationships.writeTo(pkg);
 	}
