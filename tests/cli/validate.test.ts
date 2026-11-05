@@ -614,3 +614,60 @@ describe("justified alignment emits ST_Jc `both`", () => {
 		expect(markdown.match(/align="justify"/g)).toHaveLength(3);
 	});
 });
+
+// Release-merge cross-check: a Word-authored paper (with commentsExtended +
+// commentsIds sidecars) after a round of comment edits that touch every
+// merged surface — a comment over an equation token, a reply, a resolve, a
+// delete, removing the paragraph that holds a whole comment, and a tracked
+// rewrite rejected — leaves `validate --fix` nothing to do and the file clean.
+describe("validate --fix on academic-paper after comment edits", () => {
+	test("nothing to fix, nothing reported", async () => {
+		const paper = await freshFixture(
+			"fix-paper-comment-edits",
+			"tests/fixtures/academic-paper.docx",
+		);
+		await runCli(
+			"insert",
+			paper,
+			"--at",
+			"p17",
+			"The effect size is $d=\\frac{a}{b}$ across studies.",
+		);
+		expect(
+			(
+				await runCli(
+					"comments",
+					"add",
+					paper,
+					"--anchor",
+					"$d=\\frac{a}{b}$",
+					"--text",
+					"Define a and b.",
+				)
+			).exitCode,
+		).toBe(0);
+		await runCli("comments", "add", paper, "--at", "p2", "--text", "Whole.");
+		await runCli(
+			"comments",
+			"add",
+			paper,
+			"--at",
+			"p16:0-p17:5",
+			"--text",
+			"Across.",
+		);
+		await runCli("comments", "reply", paper, "--at", "c0", "--text", "Fixed.");
+		await runCli("comments", "resolve", paper, "--at", "c0");
+		await runCli("comments", "delete", paper, "--at", "c3");
+		await runCli("delete", paper, "--at", "p2");
+		await runCli("track-changes", "on", paper);
+		await runCli("edit", paper, "--at", "p16", "--text", "Rewritten.");
+		await runCli("track-changes", "reject", paper, "--all");
+
+		const fix = await runCli("validate", paper, "--fix");
+		expect(fix.exitCode).toBe(0);
+		expect(fix.stdout).toContain("nothing to fix");
+		const after = await runCli("validate", paper);
+		expect(after.stdout.trim()).toMatch(/^valid — \d+ parts checked$/);
+	});
+});
