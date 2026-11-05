@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readMarkdown } from "./helpers";
+import { freshFixture, readMarkdown, wordTextBoxParagraphXml } from "./helpers";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 
@@ -414,6 +414,155 @@ describe("headers/footers — tracked changes", () => {
 		expect(await partText(path, "word/document.xml")).not.toContain(
 			"<w:sectPrChange",
 		);
+	});
+
+	// A reviewer's edit INSIDE the header part (Word keeps it there): the
+	// header text reads in the accepted view, and the revisions are tcN ids
+	// `list`/`accept`/`reject` reach like body ones.
+	async function docWithHeaderRevisions(label: string): Promise<string> {
+		const path = await newDoc(label);
+		await runCli("headers", "set", path, "--text", "Header text");
+		const revision = 'w:author="Ann" w:date="2026-01-01T00:00:00Z"';
+		const result = await runCli(
+			"raw",
+			"part",
+			"edit",
+			path,
+			"--name",
+			"word/header1.xml",
+			"--find",
+			"Header text</w:t></w:r>",
+			"--with",
+			`Header text</w:t></w:r><w:ins w:id="901" ${revision}><w:r><w:t xml:space="preserve"> edited</w:t></w:r></w:ins><w:del w:id="902" ${revision}><w:r><w:delText xml:space="preserve"> old</w:delText></w:r></w:del>`,
+		);
+		expect(result.exitCode).toBe(0);
+		return path;
+	}
+
+	test("header text shows a tracked insertion and hides a tracked deletion", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-read");
+		expect((await list("headers", path))[0]?.text).toBe("Header text edited");
+		expect(await readMarkdown(path)).toContain(
+			'<!-- docx:header hdr0 text="Header text edited" -->',
+		);
+	});
+
+	test("track-changes list reports header revisions under the hdrN id", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-list");
+		const listed = (await runCli("track-changes", "list", path, "--json"))
+			.parsed as Array<{ kind: string; blockId: string; text: string }>;
+		expect(listed).toMatchObject([
+			{ kind: "ins", blockId: "hdr0", text: " edited" },
+			{ kind: "del", blockId: "hdr0", text: " old" },
+		]);
+	});
+
+	test("accept --all applies header revisions in the header part", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-accept");
+		await runCli("track-changes", "accept", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:ins");
+		expect(header).not.toContain("<w:del");
+		expect((await list("headers", path))[0]?.text).toBe("Header text edited");
+	});
+
+	test("reject --all restores the header's original text", async () => {
+		const path = await docWithHeaderRevisions("hf-rev-reject");
+		await runCli("track-changes", "reject", path, "--all");
+		expect((await list("headers", path))[0]?.text).toBe("Header text old");
+	});
+
+	// Header parts hold more than bare paragraphs. These build the part body
+	// directly (no CLI verb authors these shapes) and check every revision is
+	// listed exactly once and reachable by accept/reject.
+	const REVISION = 'w:author="Ann" w:date="2026-01-01T00:00:00Z"';
+	const insertion = (id: number, text: string) =>
+		`<w:ins w:id="${id}" ${REVISION}><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:ins>`;
+	const deletion = (id: number, text: string) =>
+		`<w:del w:id="${id}" ${REVISION}><w:r><w:delText xml:space="preserve">${text}</w:delText></w:r></w:del>`;
+
+	async function docWithHeaderBody(
+		label: string,
+		body: string,
+	): Promise<string> {
+		const path = await newDoc(label);
+		await runCli("headers", "set", path, "--text", "Header text");
+		const result = await runCli(
+			"raw",
+			"part",
+			"replace",
+			path,
+			"--name",
+			"word/header1.xml",
+			"--xml",
+			`<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:v="urn:schemas-microsoft-com:vml">${body}</w:hdr>`,
+			"--no-validate",
+		);
+		expect(result.exitCode).toBe(0);
+		return path;
+	}
+
+	type Listed = {
+		id: string;
+		kind: string;
+		blockId: string;
+		text: string;
+		group?: string;
+	};
+	const listed = async (path: string) =>
+		(await runCli("track-changes", "list", path, "--json")).parsed as Listed[];
+
+	test("a revision in a header text box is listed once, and reject sticks", async () => {
+		const box = wordTextBoxParagraphXml(["Boxed"])
+			.replace(/^<w:p [^>]*>/, "<w:p>")
+			.replace(
+				/Boxed<\/w:t><\/w:r>/g,
+				`Boxed</w:t></w:r>${insertion(950, " new")}`,
+			);
+		const path = await docWithHeaderBody("hf-rev-textbox", box);
+		expect(await listed(path)).toMatchObject([
+			{ kind: "ins", blockId: "hdr0", text: " new" },
+		]);
+		await runCli("track-changes", "reject", path, "--at", "tc0");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain(" new");
+		expect(header).not.toContain("<w:ins");
+	});
+
+	test("revisions inside a block-level content control and a table are listed and applied", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-sdt-table",
+			`<w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>${insertion(960, "X")}</w:p></w:sdtContent></w:sdt>` +
+				`<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">Cell </w:t></w:r>${insertion(970, "Y")}</w:p></w:tc></w:tr></w:tbl><w:p/>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{ kind: "ins", blockId: "hdr0", text: "X" },
+			{ kind: "ins", blockId: "hdr0", text: "Y" },
+		]);
+		await runCli("track-changes", "accept", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:ins");
+		expect(header).toContain(">X<");
+		expect(header).toContain(">Y<");
+	});
+
+	test("a deletion in one header line and an insertion in the next are two decisions", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-two-lines",
+			`<w:p><w:r><w:t>One</w:t></w:r>${deletion(980, " gone")}</w:p><w:p><w:r><w:t>Two</w:t></w:r>${insertion(981, " added")}</w:p>`,
+		);
+		const changes = await listed(path);
+		expect(changes).toHaveLength(2);
+		expect(changes.every((change) => change.group === undefined)).toBe(true);
+	});
+
+	test("a replace inside one header line still pairs as one revN", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-one-line",
+			`<w:p><w:r><w:t xml:space="preserve">Net </w:t></w:r>${deletion(990, "90")}${insertion(991, "30")}</w:p>`,
+		);
+		const changes = await listed(path);
+		expect(changes.map((change) => change.group)).toEqual(["rev0", "rev0"]);
 	});
 });
 

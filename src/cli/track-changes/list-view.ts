@@ -1,7 +1,7 @@
 import type { Run, SectionProperties, TrackedChange } from "@core";
 import { Document, flattenParagraphs, readSectionProperties } from "@core";
 import { alignmentFromJc } from "@core/blocks";
-import type { XmlNode } from "@core/parser";
+import { wrapperRunText, type XmlNode } from "@core/parser";
 import { TrackChanges } from "@core/track-changes";
 import { runRevision } from "@core/track-changes/revision-visibility";
 import { revisionGroups } from "./groups";
@@ -58,13 +58,15 @@ export function collectTrackedChangeRecords(
 		}
 	}
 
-	// The AST loop above only sees run-level changes. Everything else — part
-	// of an equation (Word marks each edited math run; the whole-equation case
-	// rides the equation run above), empty wrappers (e.g. <w:ins> wrapping only <w:del>), section /
-	// table-property revisions, checkbox toggles, and standalone note-body
-	// edits — comes from the single tracked-change inventory the reader built
-	// (TrackChanges.list reads document.trackedChangeReferences; no re-walk). kind,
-	// author, date and revisionId are already resolved on each record.
+	// The AST loop above only sees body run-level changes. Everything else —
+	// part of an equation (Word marks each edited math run; the whole-equation
+	// case rides the equation run above), empty wrappers (e.g. <w:ins> wrapping
+	// only <w:del>), section / table-property revisions, checkbox toggles,
+	// standalone note-body edits and header/footer revisions — comes from the
+	// single tracked-change inventory the reader built (TrackChanges.list reads
+	// document.trackedChangeReferences; no re-walk). kind, author, date and
+	// revisionId are already resolved on each record; a note or marginal
+	// wrapper's text is read off its own runs (`wrapperRunText`).
 	const inventory = new TrackChanges(document).list();
 	for (const change of inventory) {
 		if (byId.has(change.id)) continue;
@@ -75,9 +77,11 @@ export function collectTrackedChangeRecords(
 			date: change.date,
 			revisionId: change.revisionId,
 			blockId: change.blockId,
+			// Part of an equation reads as its markers' math text; a note or
+			// marginal wrapper's text is read off its own runs.
 			text: change.markers
 				? `$${change.markers.map((marker) => marker.node.collectText()).join("")}$`
-				: "",
+				: wrapperRunText(change.node),
 		};
 		if (change.kind === "sectPrChange") {
 			// Live siblings (parent array) carry the post-edit values; the

@@ -25,7 +25,8 @@ word, hence the coinage). Three files behind the `@core` barrel:
   extraction that turns a `<w:hdr>`/`<w:ftr>` tree into `Marginal.text`, rendering
   `<w:fldSimple>` fields as `{page}` / `{pages}` / `{date}` / `{time}` /
   `{styleref:NAME}` / `{filename}` / `{title}` / `{author}` tokens (not the cached
-  value). `{time}` is read-only (no authoring flag mints it). Pure, no JSX.
+  value). Tracked changes inside the part read in the accepted view
+  (`isWrapperVisibleInView`): an insertion shows, a deletion doesn't. `{time}` is read-only (no authoring flag mints it). Pure, no JSX.
 - [index.tsx](index.tsx) — the **`Marginals` lens** (`new Marginals(document).set(…)`
   / `.clear(…)`) + the part-body emitters (`<w:hdr>`/`<w:ftr>` root, the content
   paragraph incl. the two-zone right-tab path, and the `fldSimple` field vocabulary).
