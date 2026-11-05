@@ -285,7 +285,8 @@ export class Comments {
 	}
 
 	/** Remove every id in `ids`: splice the `<w:comment>` body, prune any
-	 * `<w15:commentEx>` entry keyed to its paraId, and strip
+	 * sidecar entry keyed to its paraId (`commentsExtended`/`commentsIds`/
+	 * `commentsExtensible`), and strip
 	 * `<w:commentRangeStart>` / `<w:commentRangeEnd>` /
 	 * `<w:commentReference>` markers from the body. Deleting a thread parent
 	 * cascades through its replies so none is left with dangling body markers
@@ -325,18 +326,7 @@ export class Comments {
 			const index = root.children.indexOf(node);
 			if (index !== -1) root.children.splice(index, 1);
 
-			if (paraId && view.extendedTree) {
-				const extRoot = XmlNode.findRoot(view.extendedTree, "w15:commentsEx");
-				if (extRoot) {
-					extRoot.children = extRoot.children.filter(
-						(child) =>
-							!(
-								child.tag === "w15:commentEx" &&
-								child.getAttribute("w15:paraId") === paraId
-							),
-					);
-				}
-			}
+			if (paraId) view.removeSidecarEntries(paraId);
 
 			removeCommentMarkers(this.document.documentTree, numericId);
 		}
@@ -392,6 +382,9 @@ export class Comments {
 				}}
 			/>
 		);
+		commentsView.registerSidecarEntries(paraId, date, {
+			threaded: Boolean(options?.threadParentNumericId),
+		});
 		if (options?.threadParentNumericId) {
 			commentsView.insertReplyAfter(options.threadParentNumericId, comment);
 			return;
