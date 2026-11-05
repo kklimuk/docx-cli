@@ -889,6 +889,104 @@ describe("emitters on a document whose root declares only xmlns:w", () => {
 	});
 });
 
+// Release-merge cross-check: the namespace sweep (theme/revisions) must see
+// what the comment-sidecar reconcile (theme/comments) writes on the same save.
+// The reconcile mints `w14:paraId` on comment paragraphs and new
+// `w15:commentEx` / `w16cid:commentId` entries — into parts whose roots, from
+// another producer, may declare none of those prefixes. `CommentsView.writeTo`
+// reconciles FIRST, then sweeps each part (`declareUsedNamespaces`), so every
+// prefix it wrote is declared — and the view already declares `w14` on a loaded
+// comments.xml (`declareW14`), so either layer alone keeps this file valid.
+describe("sidecar reconcile on a package whose roots declare only their own prefix", () => {
+	const W =
+		'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+
+	async function bareRootedCommentedDoc(): Promise<string> {
+		const workspace = tempWorkspace("ns-sidecar-reconcile");
+		const docPath = join(workspace, "bare.docx");
+		await runCli("create", docPath, "--text", "First clause. Second clause.");
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"First",
+			"--text",
+			"A",
+		);
+		const pkg = await Pkg.open(docPath);
+		const document = await pkg.readText("word/document.xml");
+		pkg.writeText(
+			"word/document.xml",
+			document.replace(/<w:document [^>]*>/, `<w:document ${W}>`),
+		);
+		// comments.xml as another producer writes it: only xmlns:w, no paraIds.
+		const comments = await pkg.readText("word/comments.xml");
+		pkg.writeText(
+			"word/comments.xml",
+			comments
+				.replace(/<w:comments [^>]*>/, `<w:comments ${W}>`)
+				.replace(/ w14:(paraId|textId)="[0-9A-F]{8}"/g, ""),
+		);
+		// Empty sidecars whose roots declare only their own namespace.
+		pkg.writeText(
+			"word/commentsExtended.xml",
+			'<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/>',
+		);
+		pkg.writeText(
+			"word/commentsIds.xml",
+			'<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"/>',
+		);
+		await pkg.save();
+		return docPath;
+	}
+
+	test("the next save reconciles every sidecar AND declares what it wrote", async () => {
+		const docPath = await bareRootedCommentedDoc();
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"Second",
+			"--text",
+			"B",
+		);
+		expect(result.exitCode).toBe(0);
+		await assertValidDocx(docPath);
+
+		const pkg = await Pkg.open(docPath);
+		const comments = await pkg.readText("word/comments.xml");
+		const commentsRoot = comments.match(/<w:comments [^>]*>/)?.[0] ?? "";
+		expect(commentsRoot).toContain('xmlns:w14="');
+		expect(commentsRoot).toMatch(/mc:Ignorable="[^"]*\bw14\b/);
+		expect(comments.match(/w14:paraId="[0-9A-F]{8}"/g)).toHaveLength(2);
+		const extended = await pkg.readText("word/commentsExtended.xml");
+		expect(extended.match(/<w15:commentEx /g)).toHaveLength(2);
+		const ids = await pkg.readText("word/commentsIds.xml");
+		expect(ids.match(/<w16cid:commentId /g)).toHaveLength(2);
+		// The sweep only adds what a part USES: the w:-only body root gains nothing.
+		const documentRoot =
+			(await pkg.readText("word/document.xml")).match(
+				/<w:document [^>]*>/,
+			)?.[0] ?? "";
+		expect(documentRoot).not.toContain("xmlns:w15");
+
+		const validate = await runCli("validate", docPath);
+		expect(validate.stdout.trim()).toMatch(/^valid — \d+ parts? checked$/);
+	});
+
+	test("validate --fix on the untouched file cures it the same way", async () => {
+		const docPath = await bareRootedCommentedDoc();
+		const before = await runCli("validate", docPath);
+		expect(before.stdout).toContain("warning");
+		expect((await runCli("validate", docPath, "--fix")).exitCode).toBe(0);
+		await assertValidDocx(docPath);
+		const after = await runCli("validate", docPath);
+		expect(after.stdout.trim()).toMatch(/^valid — \d+ parts? checked$/);
+	});
+});
+
 /** Assert every XML part of `docPath` is namespace-well-formed and every
  *  relationship reference resolves. */
 async function assertValidDocx(docPath: string): Promise<void> {
