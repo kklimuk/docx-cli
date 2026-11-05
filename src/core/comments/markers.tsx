@@ -1,4 +1,4 @@
-import { generateParaId } from "../ast/document/comments";
+import { generateParaId } from "../ast/document/comments/para-id";
 import { textToRunElements } from "../blocks";
 import type { FindView } from "../find";
 import { w } from "../jsx";

@@ -1,21 +1,29 @@
-import { w, w15 } from "../../jsx";
-import { ensureIgnorable, NS_MC } from "../../mc";
-import { XmlNode } from "../../parser";
-import type { Comment, CommentAnchor } from "../types";
-import type { CommentReference } from "./body";
-import type { ContentTypesView } from "./content-types";
-import type { Pkg } from "./package";
-import type { RelationshipsView } from "./relationships";
+import { w, w15 } from "../../../jsx";
+import { ensureIgnorable, NS_MC } from "../../../mc";
+import { XmlNode } from "../../../parser";
+import type { Comment, CommentAnchor } from "../../types";
+import type { CommentReference } from "../body";
+import type { ContentTypesView } from "../content-types";
+import type { Pkg } from "../package";
+import type { RelationshipsView } from "../relationships";
+import { generateParaId, mintDurableId } from "./para-id";
+import {
+	COMMENTS_EXT_PART_NAME,
+	COMMENTS_EXTENSIBLE_PART_NAME,
+	COMMENTS_IDS_PART_NAME,
+	COMMENTS_PART_NAME,
+	type CommentFinding,
+	lastParagraph,
+	reconcileSidecars,
+	threadRootsOf,
+	toDateUtc,
+} from "./reconcile-sidecars";
 
-const COMMENTS_PART_NAME = "word/comments.xml";
-const COMMENTS_EXT_PART_NAME = "word/commentsExtended.xml";
 // Word 2016+/2018+ sidecars keyed to each comment's `w14:paraId`
 // (`commentsIds`) and to the `durableId` it mints there (`commentsExtensible`).
 // We never create them — a package without them is consistent — but when a
-// Word-saved input carries them, every comment we add or delete must be
-// mirrored, or Word reports unreadable content and renumbers every comment.
-const COMMENTS_IDS_PART_NAME = "word/commentsIds.xml";
-const COMMENTS_EXTENSIBLE_PART_NAME = "word/commentsExtensible.xml";
+// Word-saved input carries them, every comment we add or delete is mirrored,
+// and every save reconciles them (`reconcileSidecars`).
 const COMMENTS_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const COMMENTS_EXT_RELATIONSHIP_TYPE =
@@ -36,15 +44,25 @@ export class CommentsView {
 	extensibleTree?: XmlNode[];
 	commentReferences: Map<string, CommentReference> = new Map();
 
+	/** The XML each part was loaded from, so `writeTo` re-writes only a part
+	 * whose tree actually changed (an unchanged sidecar keeps its original
+	 * bytes instead of a re-serialization). Absent for a part we minted. */
+	#sourceXml: Map<string, string>;
+
 	constructor(
 		tree: XmlNode[] = [<CommentsRoot />],
 		extendedTree?: XmlNode[],
-		durableSidecars: { idsTree?: XmlNode[]; extensibleTree?: XmlNode[] } = {},
+		sidecars: {
+			idsTree?: XmlNode[];
+			extensibleTree?: XmlNode[];
+			sourceXml?: Map<string, string>;
+		} = {},
 	) {
 		this.tree = tree;
 		this.extendedTree = extendedTree;
-		this.idsTree = durableSidecars.idsTree;
-		this.extensibleTree = durableSidecars.extensibleTree;
+		this.idsTree = sidecars.idsTree;
+		this.extensibleTree = sidecars.extensibleTree;
+		this.#sourceXml = sidecars.sourceXml ?? new Map();
 		// `w14:paraId`/`w14:textId` (Word's threading keys, written on every comment
 		// body) are valid only when `w14` rides the root's `mc:Ignorable`. A part
 		// that came WITH the document — from Word, which often omits it here, or an
@@ -59,14 +77,26 @@ export class CommentsView {
 	/** Load this view (and its extended/ids/extensible sidecars) from a
 	 * package; returns undefined if the base comments part is absent. */
 	static async fromPackage(pkg: Pkg): Promise<CommentsView | undefined> {
-		const tree = await pkg.readPart(COMMENTS_PART_NAME);
-		if (!tree) return undefined;
-		const [extendedTree, idsTree, extensibleTree] = await Promise.all([
-			pkg.readPart(COMMENTS_EXT_PART_NAME),
-			pkg.readPart(COMMENTS_IDS_PART_NAME),
-			pkg.readPart(COMMENTS_EXTENSIBLE_PART_NAME),
-		]);
-		return new CommentsView(tree, extendedTree, { idsTree, extensibleTree });
+		if (!pkg.hasPart(COMMENTS_PART_NAME)) return undefined;
+		const sourceXml = new Map<string, string>();
+		const [tree, extendedTree, idsTree, extensibleTree] = await Promise.all(
+			[
+				COMMENTS_PART_NAME,
+				COMMENTS_EXT_PART_NAME,
+				COMMENTS_IDS_PART_NAME,
+				COMMENTS_EXTENSIBLE_PART_NAME,
+			].map(async (partName) => {
+				if (!pkg.hasPart(partName)) return undefined;
+				const xml = await pkg.readText(partName);
+				sourceXml.set(partName, xml);
+				return XmlNode.parse(xml);
+			}),
+		);
+		return new CommentsView(tree, extendedTree, {
+			idsTree,
+			extensibleTree,
+			sourceXml,
+		});
 	}
 
 	/** Parse a view from raw XML; returns undefined if the base input is
@@ -83,19 +113,57 @@ export class CommentsView {
 		);
 	}
 
-	/** Serialize this view's tree (and each sidecar that is present) into
-	 * the package's `word/comments.xml`, `commentsExtended.xml`,
-	 * `commentsIds.xml` and `commentsExtensible.xml`. */
+	/** Reconcile the sidecars (`reconcileSidecars`), then serialize each part
+	 * that is present AND changed into the package's `word/comments.xml`,
+	 * `commentsExtended.xml`, `commentsIds.xml` and `commentsExtensible.xml`.
+	 * Reconciling on every save is what makes ANY mutation cure a file an
+	 * older producer (docx-cli ≤ 0.28 included) left inconsistent. */
 	writeTo(pkg: Pkg): void {
-		pkg.writeText(COMMENTS_PART_NAME, XmlNode.serialize(this.tree));
-		const sidecars: [string, XmlNode[] | undefined][] = [
+		this.reconcileSidecars();
+		const parts: [string, XmlNode[] | undefined][] = [
+			[COMMENTS_PART_NAME, this.tree],
 			[COMMENTS_EXT_PART_NAME, this.extendedTree],
 			[COMMENTS_IDS_PART_NAME, this.idsTree],
 			[COMMENTS_EXTENSIBLE_PART_NAME, this.extensibleTree],
 		];
-		for (const [partName, sidecarTree] of sidecars) {
-			if (sidecarTree) pkg.writeText(partName, XmlNode.serialize(sidecarTree));
+		for (const [partName, partTree] of parts) {
+			if (!partTree) continue;
+			const xml = XmlNode.serialize(partTree);
+			if (this.#isUnchanged(partName, xml)) continue;
+			pkg.writeText(partName, xml);
 		}
+	}
+
+	/** Repair every sidecar inconsistency in place and return what was done
+	 * (see `reconcileSidecars` for the rules). Idempotent — a second call
+	 * returns `[]`. `writeTo` runs it on every save; `validate --fix` calls it
+	 * first to report the repairs. */
+	reconcileSidecars(): CommentFinding[] {
+		const comments = XmlNode.findRoot(this.tree, "w:comments");
+		if (!comments) return [];
+		return reconcileSidecars({
+			comments,
+			extended: sidecarRoot(this.extendedTree, "w15:commentsEx"),
+			ids: sidecarRoot(this.idsTree, "w16cid:commentsIds"),
+			extensible: sidecarRoot(this.extensibleTree, "w16cex:commentsExtensible"),
+		});
+	}
+
+	/** Reply id → thread-root id for every threaded comment (see
+	 * `threadRootsOf`). */
+	threadRoots(): Map<string, string> {
+		const comments = XmlNode.findRoot(this.tree, "w:comments");
+		if (!comments) return new Map();
+		return threadRootsOf({
+			comments,
+			extended: sidecarRoot(this.extendedTree, "w15:commentsEx"),
+		});
+	}
+
+	#isUnchanged(partName: string, xml: string): boolean {
+		const source = this.#sourceXml.get(partName);
+		if (source === undefined) return false;
+		return XmlNode.serialize(XmlNode.parse(source)) === xml;
 	}
 
 	/** Mint the comments relationship + content-type override on the
@@ -339,7 +407,14 @@ export class CommentsView {
 		}
 		const idsRoot = sidecarRoot(this.idsTree, "w16cid:commentsIds");
 		if (!idsRoot) return;
-		const durableId = mintDurableId(idsRoot);
+		const durableId = mintDurableId(
+			new Set(
+				idsRoot.children.map(
+					(child) =>
+						child.getAttribute("w16cid:durableId")?.toUpperCase() ?? "",
+				),
+			),
+		);
 		idsRoot.children.push(
 			new XmlNode("w16cid:commentId", {
 				"w16cid:paraId": paraId,
@@ -542,71 +617,12 @@ function CommentsRoot(): XmlNode {
 	);
 }
 
-/** A comment's threading identity is its LAST `<w:p>` — that's the paragraph
- * Word keys `<w15:commentEx>` and a reply's `w15:paraIdParent` to. */
-function lastParagraph(comment: XmlNode | undefined): XmlNode | undefined {
-	return comment?.findChildren("w:p").at(-1);
-}
-
 function sidecarRoot(
 	tree: XmlNode[] | undefined,
 	rootTag: string,
 ): XmlNode | undefined {
 	return tree ? XmlNode.findRoot(tree, rootTag) : undefined;
 }
-
-/** Mint a `w16cid:durableId` unique within the part. MS-DOCX bounds it to
- * (0, 0x7FFFFFFF) — the paraId range minus its top value — so reuse the
- * paraId minter (and its `DOCX_CLI_PARA_ID_SEED` determinism seam). */
-function mintDurableId(idsRoot: XmlNode): string {
-	const taken = new Set(
-		idsRoot.children.map((child) =>
-			child.getAttribute("w16cid:durableId")?.toUpperCase(),
-		),
-	);
-	for (;;) {
-		const candidate = generateParaId();
-		if (candidate !== "7FFFFFFF" && !taken.has(candidate)) return candidate;
-	}
-}
-
-/** Word's `w16cex:dateUtc` is a whole-second UTC `xsd:dateTime`. Undefined
- * (attribute omitted — it's optional) when `date` doesn't parse. */
-function toDateUtc(date: string): string | undefined {
-	const parsed = new Date(date);
-	if (Number.isNaN(parsed.getTime())) return undefined;
-	return parsed.toISOString().replace(/\.\d{3}Z$/, "Z");
-}
-
-/** Mint a fresh `w14:paraId` value. Word writes 8-char uppercase hex; we
- * match. Per MS-DOCX, a paraId MUST be greater than 0x00000000 and less
- * than 0x80000000 — Word silently re-keys out-of-range ids on open, which
- * orphans every sidecar entry (`w15:commentEx` resolved flags, reply
- * `w15:paraIdParent` links) keyed to the old value. Used both by
- * `CommentsView.ensureParaId` and by the comments lens for replies + audit
- * comments.
- *
- * `DOCX_CLI_PARA_ID_SEED` (8-char hex) switches to sequential minting from
- * that base — the byte-determinism seam for fixture rebuilds, mirroring
- * `DOCX_CLI_NOW`. The counter is per-process: a builder that invokes the CLI
- * multiple times must set a DISTINCT seed per invocation or ids collide. */
-export function generateParaId(): string {
-	const seed = Bun.env.DOCX_CLI_PARA_ID_SEED;
-	if (seed) {
-		const minted = (Number.parseInt(seed, 16) + seededParaIds++) % 0x80000000;
-		return (minted || 1).toString(16).padStart(8, "0").toUpperCase();
-	}
-	const bytes = new Uint8Array(4);
-	crypto.getRandomValues(bytes);
-	bytes[0] = (bytes[0] ?? 0) & 0x7f;
-	const hex = [...bytes]
-		.map((byte) => byte.toString(16).padStart(2, "0"))
-		.join("");
-	if (hex === "00000000") return "00000001";
-	return hex.toUpperCase();
-}
-
-let seededParaIds = 0;
 
 function CommentsExRoot(): XmlNode {
 	return (
