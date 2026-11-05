@@ -1511,3 +1511,68 @@ describe("docx comments — Word's durable-id sidecars (issue #33)", () => {
 		}
 	});
 });
+
+describe("docx comments — a commentsExtended part we materialize covers every comment", () => {
+	// A `create`d doc has no commentsExtended.xml until the first reply/resolve
+	// mints it. It used to register only that thread, so `add` → `add` →
+	// `reply c0` left c1 without an entry — the inconsistency `validate` reports
+	// (Word writes one entry per comment once the part exists).
+	async function commentedDoc(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "out.docx");
+		const source = join(workspace, "source.md");
+		writeFileSync(source, "Clause one.\n\nClause two.\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		await runCli("comments", "add", docPath, "--at", "p1", "--text", "B");
+		return docPath;
+	}
+
+	async function extendedEntries(docPath: string) {
+		const xml = await readPart(docPath, "word/commentsExtended.xml");
+		return [...xml.matchAll(/<w15:commentEx [^>]*\/>/g)].map((match) => ({
+			paraId: match[0].match(/w15:paraId="([0-9A-F]{8})"/)?.[1],
+			parent: match[0].match(/w15:paraIdParent="([0-9A-F]{8})"/)?.[1],
+		}));
+	}
+
+	async function commentParaIds(docPath: string) {
+		const xml = await readPart(docPath, "word/comments.xml");
+		return [...xml.matchAll(/w14:paraId="([0-9A-F]{8})"/g)].map(
+			(match) => match[1],
+		);
+	}
+
+	test("the first reply registers the earlier unrelated comment too", async () => {
+		const docPath = await commentedDoc("comments-ext-backfill-reply");
+		expect(
+			(await runCli("comments", "reply", docPath, "--at", "c0", "--text", "R"))
+				.exitCode,
+		).toBe(0);
+		const entries = await extendedEntries(docPath);
+		const paraIds = await commentParaIds(docPath);
+		expect(entries.map((entry) => entry.paraId).sort()).toEqual(
+			[...paraIds].sort(),
+		);
+		// Exactly one entry per comment — the reply isn't registered twice.
+		expect(entries).toHaveLength(3);
+		// comments.xml groups the reply under its thread: c0, reply, c1.
+		expect(entries.filter((entry) => entry.parent)).toEqual([
+			{ paraId: paraIds[1], parent: paraIds[0] },
+		]);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+
+		await runCli("comments", "add", docPath, "--at", "p1", "--text", "C");
+		expect(await extendedEntries(docPath)).toHaveLength(4);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+
+	test("the first resolve registers every comment, resolving only its target", async () => {
+		const docPath = await commentedDoc("comments-ext-backfill-resolve");
+		await runCli("comments", "resolve", docPath, "--at", "c1");
+		const xml = await readPart(docPath, "word/commentsExtended.xml");
+		expect(xml.match(/<w15:commentEx /g)).toHaveLength(2);
+		expect(xml.match(/w15:done="1"/g)).toHaveLength(1);
+		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+	});
+});

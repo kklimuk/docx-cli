@@ -487,10 +487,27 @@ export class CommentsView {
 
 	/** Materialize the extended-comments tree if absent. Caller is responsible
 	 * for minting the rel + registering the content-type via Document — this just
-	 * allocates the in-memory tree. */
+	 * allocates the in-memory tree. A part materialized mid-life (the first
+	 * reply/resolve on a doc whose comments predate it — every `create`d doc)
+	 * gets a `<w15:commentEx done="0">` for EVERY comment already there, the
+	 * shape Word writes: once the part exists, a comment with no entry is the
+	 * inconsistency `validate` reports (`comments add` → `add` → `reply` used
+	 * to leave the second comment unregistered). Replies must therefore call
+	 * this BEFORE appending their own body, which registers itself threaded. */
 	ensureExtended(): XmlNode[] {
 		if (this.extendedTree) return this.extendedTree;
-		this.extendedTree = [<CommentsExRoot />];
+		const extendedRoot = <CommentsExRoot />;
+		for (const commentId of this.listIds()) {
+			const paraId = this.ensureParaId(commentId);
+			if (!paraId) continue;
+			extendedRoot.children.push(
+				new XmlNode("w15:commentEx", {
+					"w15:paraId": paraId,
+					"w15:done": "0",
+				}),
+			);
+		}
+		this.extendedTree = [extendedRoot];
 		return this.extendedTree;
 	}
 }

@@ -176,6 +176,10 @@ export class Comments {
 			);
 		}
 
+		// Materialize the sidecar BEFORE appending the reply: a freshly created
+		// part backfills an entry for every comment already in the part, and the
+		// reply's own entry (with `paraIdParent`) is placed below.
+		const extView = this.document.ensureCommentsExtended();
 		this.#appendCommentBody(
 			numericId,
 			replyParaId,
@@ -187,7 +191,6 @@ export class Comments {
 			},
 		);
 
-		const extView = this.document.ensureCommentsExtended();
 		const extRoot = extView.extendedTree
 			? XmlNode.findRoot(extView.extendedTree, "w15:commentsEx")
 			: undefined;
