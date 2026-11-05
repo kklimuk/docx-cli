@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	expectValidClean,
 	freshFixture,
 	readDocumentXml,
 	readMarkdown,
@@ -376,7 +377,7 @@ describe("text boxes — the anchor paragraph and the box survive each other", (
 		expect(current).toContain("docx:textbox tbx0");
 		const found = JSON.parse((await runCli("find", docPath, "Acme")).stdout);
 		expect(found.matches).toHaveLength(0);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 
 		const rejected = await runCli("track-changes", "reject", docPath, "--all");
 		expect(rejected.exitCode).toBe(0);
@@ -486,7 +487,7 @@ describe("text boxes — whole-paragraph replacement of the ANCHOR keeps the box
 		);
 		const xml = await readDocumentXml(docPath);
 		expect(xml.match(/<mc:AlternateContent>/g)).toHaveLength(1);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("edit --runs on the anchor paragraph keeps tbx0 too", async () => {
@@ -591,7 +592,7 @@ describe("text boxes — deleting the ANCHOR paragraph re-anchors the box, never
 		expect(md).not.toContain("Anchor line to remove.");
 		expect(md).toContain('docx:textbox tbx0 anchor="p1"');
 		expect(md).toContain("CONFIDENTIAL <!-- tbx0:p0 -->");
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test('edit --text "" on the anchor (the line-removal idiom) does the same', async () => {

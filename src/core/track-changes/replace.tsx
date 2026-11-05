@@ -6,6 +6,7 @@ import {
 	type ParagraphOptions,
 	wrapPprChange,
 } from "../blocks";
+import { straddlingCommentMarkers } from "../comments/straddling-markers";
 import { hasTextBox, isAlternateContent } from "../mc";
 import {
 	isRunBearingWrapper,
@@ -485,6 +486,7 @@ export function removeParagraphLine(
 	const index = parent.indexOf(node);
 	if (index < 0) return;
 	relocateTextBoxes(node, parent, index);
+	relocateStraddlingCommentMarkers(node, parent, index);
 	parent.splice(index, 1);
 }
 
@@ -495,8 +497,9 @@ export function removeParagraphLine(
  *  with the rest of it. */
 function blankParagraphInPlace(paragraph: XmlNode): void {
 	const boxes = liftObjectRuns(paragraph, (object) => !hasTextBox(object));
+	const commentMarkers = straddlingCommentMarkers(paragraph.children);
 	const pPr = paragraph.findChild("w:pPr");
-	paragraph.children = pPr ? [pPr] : [];
+	paragraph.children = pPr ? [pPr, ...commentMarkers] : commentMarkers;
 	reattachObjectRuns(paragraph, boxes);
 }
 
@@ -528,6 +531,35 @@ function relocateTextBoxes(
 		const next = parent[cursor];
 		if (next?.tag !== "w:p") continue;
 		reattachObjectRuns(next, { leading: carriers, trailing: [] });
+		return;
+	}
+}
+
+/** Before an untracked paragraph removal, move the comment markers that
+ *  STRADDLE it — one half of a comment whose other half lives in another
+ *  paragraph — onto the neighboring paragraph, previous (appended) else next
+ *  (leading), the same rule as `relocateTextBoxes`. `delete --at pN` on the
+ *  paragraph where a cross-paragraph comment started left its end and
+ *  reference pointing back at nothing (and the mirror). A comment wholly
+ *  inside the paragraph goes with it. */
+function relocateStraddlingCommentMarkers(
+	node: XmlNode,
+	parent: XmlNode[],
+	index: number,
+): void {
+	const markers = straddlingCommentMarkers(node.children);
+	if (markers.length === 0) return;
+	for (let cursor = index - 1; cursor >= 0; cursor--) {
+		const previous = parent[cursor];
+		if (previous?.tag !== "w:p") continue;
+		previous.children.push(...markers);
+		return;
+	}
+	for (let cursor = index + 1; cursor < parent.length; cursor++) {
+		const next = parent[cursor];
+		if (next?.tag !== "w:p") continue;
+		const pPrIndex = next.children.findIndex((child) => child.tag === "w:pPr");
+		next.children.splice(pPrIndex + 1, 0, ...markers);
 		return;
 	}
 }

@@ -49,7 +49,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"
   track-changes …  Toggle (on|off FILE); list / accept / reject; "apply" finalizes a whole review (accept some + reject the rest) in ONE call; redline many clauses with ONE "edit --batch" while tracking is on; "read --current" shows changes inline
   raw       …     LAST-RESORT escape hatch for OOXML no verb above covers. DO NOT USE THIS unless you've tried everything else.
-  validate  FILE  Schema-check the document against the bundled ECMA-376 transitional XSDs (per-part errors; exit 0 = clean)
+  validate  FILE  Schema-check against the bundled ECMA-376 XSDs + comment consistency (errors exit 1, warnings exit 0); --fix cures what Word would repair
   info      …     Reference material, no FILE needed (schema for read --ast, locator grammar)
   upgrade   —     Update the installed docx binary to the latest release (no FILE). Pinned + SHA-256 verified; --to TAG, --dry-run. On an npm/bun install it prints the package-manager command instead
 

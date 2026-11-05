@@ -4,6 +4,7 @@ import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	expectValidClean,
 	readDocumentXml,
 	wordTextBoxParagraphXml,
 } from "./helpers";
@@ -1242,7 +1243,7 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 		);
 		expect(result.exitCode).toBe(0);
 		// Every emitted shape must pass the ECMA-376 schema gate Word applies.
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 		return docPath;
 	}
 
@@ -1544,7 +1545,7 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 			"Reviewer",
 		);
 		expect(result.exitCode).toBe(0);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 
 		const xml = (await readDocumentXml(docPath)).replaceAll(
 			/ w:date="[^"]*"/g,
@@ -1601,7 +1602,7 @@ describe("docx replace --track inside another author's insertion (#13)", () => {
 			"Editor",
 		);
 		expect(result.exitCode).toBe(0);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 
 		// The tail (comment range end + reference run) is pure markers: it stays
 		// in Reviewer A's ins after the cut — no fresh <w:ins> around zero
@@ -1805,7 +1806,7 @@ describe("docx replace across a wrapper nested in another author's insertion (#1
 		);
 		expect(result.exitCode).toBe(0);
 		if (body !== INS_LINK) {
-			expect((await runCli("validate", docPath)).exitCode).toBe(0);
+			await expectValidClean(docPath);
 		}
 		return docPath;
 	}

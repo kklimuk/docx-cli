@@ -21,7 +21,7 @@ docx info skill        # this skill, regenerated from the binary
 | `outline FILE`      | Headings as a locator tree.                                                                                                                                                 |
 | `render FILE`       | Render each page to PNG/JPG via Word or LibreOffice — for verifying LAYOUT only.                                                                                            |
 | `styles FILE`       | List/describe styles (`--used`, `--at ID`).                                                                                                                                 |
-| `validate FILE`     | Schema-check every WML part against the bundled ECMA-376 transitional XSDs (exit 0 = clean).                                                                                |
+| `validate FILE`     | Schema-check every WML part against the bundled ECMA-376 transitional XSDs, plus cross-part comment consistency. Errors (schema, or a comment reference Word refuses to open) exit 1; warnings (what Word repairs or drops) exit 0. `--fix` cures every finding marked `(fixable)`. |
 | `info <topic>`      | `schema` / `locators` / `skill` — reference material, no FILE.                                                                                                              |
 
 ## Mutate (overwrite FILE in place; `-o PATH` writes a copy; `--dry-run` previews)

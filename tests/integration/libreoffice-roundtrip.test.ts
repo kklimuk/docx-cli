@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { runCli } from "../cli/harness";
 
 const SOFFICE = await detectSoffice();
@@ -230,6 +231,65 @@ describe("LibreOffice round-trip", () => {
 		).length;
 		expect(insAfter).toBeGreaterThan(0);
 		expect(delAfter).toBeGreaterThan(0);
+	}, 30_000);
+
+	test("reconciled + --fix-cured comment parts on academic-paper round-trip through LibreOffice", async () => {
+		// The Word-authored paper carries commentsExtended + commentsIds. Damage
+		// it the ways older producers (docx-cli ≤ 0.28 included) left files:
+		// missing sidecar entries, a stale ids entry, a duplicate durableId, a
+		// half-open range, and a dangling reference — then cure with
+		// `validate --fix` and prove LibreOffice still accepts the package.
+		const docPath = join(workspace, "reconcile-paper.docx");
+		await Bun.write(docPath, Bun.file("tests/fixtures/academic-paper.docx"));
+		await runCli("comments", "reply", docPath, "--at", "c2", "--text", "r");
+		await runCli("comments", "resolve", docPath, "--at", "c1");
+		const pkg = await Pkg.open(docPath);
+		const ids = await pkg.readText("word/commentsIds.xml");
+		const durableIds = [...ids.matchAll(/w16cid:durableId="([0-9A-F]+)"/g)];
+		pkg.writeText(
+			"word/commentsIds.xml",
+			ids
+				.replace(/<w16cid:commentId [^>]*\/>/, "")
+				.replace(
+					`w16cid:durableId="${durableIds[2]?.[1]}"`,
+					`w16cid:durableId="${durableIds[3]?.[1]}"`,
+				)
+				.replace(
+					"</w16cid:commentsIds>",
+					'<w16cid:commentId w16cid:paraId="0BADF00D" w16cid:durableId="0BADF00D"/></w16cid:commentsIds>',
+				),
+		);
+		const extended = await pkg.readText("word/commentsExtended.xml");
+		pkg.writeText(
+			"word/commentsExtended.xml",
+			extended.replace(/<w15:commentEx [^>]*\/>/, ""),
+		);
+		const documentXml = await pkg.readText("word/document.xml");
+		pkg.writeText(
+			"word/document.xml",
+			documentXml
+				.replace('<w:commentRangeEnd w:id="5"/>', "")
+				.replace(
+					'<w:commentRangeEnd w:id="6"/>',
+					'<w:commentRangeEnd w:id="6"/><w:r><w:commentReference w:id="999"/></w:r>',
+				),
+		);
+		await pkg.save();
+		expect((await runCli("validate", docPath)).exitCode).toBe(1);
+
+		const fixed = await runCli("validate", docPath, "--fix");
+		expect(fixed.exitCode).toBe(0);
+		const after = await runCli("validate", docPath);
+		expect(after.stdout.trim()).toMatch(/^valid — \d+ parts? checked$/);
+
+		const outDir = join(workspace, "lo-reconcile");
+		mkdirSync(outDir, { recursive: true });
+		const { exitCode } = await runSoffice(docPath, outDir, newProfile());
+		expect(exitCode).toBe(0);
+		const converted = join(outDir, "reconcile-paper.docx");
+		const comments = (await runCli("comments", "list", converted))
+			.parsed as unknown[];
+		expect(comments.length).toBe(45);
 	}, 30_000);
 });
 

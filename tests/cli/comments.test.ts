@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, spawnCli, tempWorkspace } from "./harness";
-import { readDocumentXml } from "./helpers";
+import { expectValidClean, readDocumentXml } from "./helpers";
 
 async function readPart(docPath: string, partName: string): Promise<string> {
 	const pkg = await Pkg.open(docPath);
@@ -1390,4 +1390,328 @@ describe("docx comments reply --batch", () => {
 		);
 		expect(result.exitCode).toBe(2);
 	});
+});
+
+describe("docx comments — Word's durable-id sidecars (issue #33)", () => {
+	// Word 365 writes three sidecars beside comments.xml, each with ONE entry per
+	// comment: commentsExtended (`w15:commentEx`, keyed by the comment's
+	// `w14:paraId`), commentsIds (`w16cid:commentId`, paraId → durableId) and
+	// commentsExtensible (`w16cex:commentExtensible`, keyed by durableId). A
+	// comment missing from them makes Word offer to repair the file — and the
+	// repair renumbers every comment.
+	const NS_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+
+	async function wordShapedDocument(): Promise<string> {
+		const workspace = tempWorkspace("comments-sidecars");
+		const docPath = join(workspace, "word-shaped.docx");
+		await runCli("create", docPath, "--text", "First clause. Second clause.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "Seed");
+		const pkg = await Pkg.open(docPath);
+		const paraId = (await pkg.readText("word/comments.xml")).match(
+			/w14:paraId="([0-9A-F]{8})"/,
+		)?.[1];
+		expect(paraId).toBeDefined();
+		pkg.writeText(
+			"word/commentsExtended.xml",
+			`<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:mc="${NS_MC}" mc:Ignorable="w15"><w15:commentEx w15:paraId="${paraId}" w15:done="0"/></w15:commentsEx>`,
+		);
+		pkg.writeText(
+			"word/commentsIds.xml",
+			`<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" xmlns:mc="${NS_MC}" mc:Ignorable="w16cid"><w16cid:commentId w16cid:paraId="${paraId}" w16cid:durableId="1A2B3C4D"/></w16cid:commentsIds>`,
+		);
+		pkg.writeText(
+			"word/commentsExtensible.xml",
+			`<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" xmlns:mc="${NS_MC}" mc:Ignorable="w16cex"><w16cex:commentExtensible w16cex:durableId="1A2B3C4D" w16cex:dateUtc="2024-01-01T00:00:00Z"/></w16cex:commentsExtensible>`,
+		);
+		await pkg.save();
+		return docPath;
+	}
+
+	async function sidecarState(docPath: string) {
+		const all = (xml: string, pattern: RegExp) =>
+			[...xml.matchAll(pattern)].map((match) => match[1]);
+		const comments = await readPart(docPath, "word/comments.xml");
+		const ids = await readPart(docPath, "word/commentsIds.xml");
+		return {
+			commentParaIds: all(
+				comments,
+				/<w:comment [^>]*>.*?w14:paraId="([0-9A-F]{8})"/gs,
+			),
+			extendedParaIds: all(
+				await readPart(docPath, "word/commentsExtended.xml"),
+				/<w15:commentEx [^>]*w15:paraId="([0-9A-F]{8})"/g,
+			),
+			idsParaIds: all(ids, /w16cid:paraId="([0-9A-F]{8})"/g),
+			idsDurableIds: all(ids, /w16cid:durableId="([0-9A-F]{8})"/g),
+			extensibleDurableIds: all(
+				await readPart(docPath, "word/commentsExtensible.xml"),
+				/w16cex:durableId="([0-9A-F]{8})"/g,
+			),
+		};
+	}
+
+	function expectConsistent(state: Awaited<ReturnType<typeof sidecarState>>) {
+		const sorted = (values: (string | undefined)[]) => [...values].sort();
+		expect(sorted(state.extendedParaIds)).toEqual(sorted(state.commentParaIds));
+		expect(sorted(state.idsParaIds)).toEqual(sorted(state.commentParaIds));
+		expect(sorted(state.extensibleDurableIds)).toEqual(
+			sorted(state.idsDurableIds),
+		);
+		expect(new Set(state.idsDurableIds).size).toBe(state.idsDurableIds.length);
+	}
+
+	test("add, reply and delete keep every sidecar 1:1 with comments.xml", async () => {
+		const docPath = await wordShapedDocument();
+
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--anchor",
+			"First",
+			"--text",
+			"A",
+		);
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "B");
+		let state = await sidecarState(docPath);
+		expect(state.commentParaIds).toHaveLength(3);
+		expectConsistent(state);
+		expect(state.idsDurableIds).toContain("1A2B3C4D");
+
+		await runCli("comments", "reply", docPath, "--at", "c1", "--text", "R");
+		state = await sidecarState(docPath);
+		expect(state.commentParaIds).toHaveLength(4);
+		expectConsistent(state);
+
+		// Deleting the thread root cascades to its reply — both leave every part.
+		await runCli("comments", "delete", docPath, "--at", "c1");
+		state = await sidecarState(docPath);
+		expect(state.commentParaIds).toHaveLength(2);
+		expectConsistent(state);
+
+		await runCli("comments", "delete", docPath, "--at", "c0");
+		state = await sidecarState(docPath);
+		expect(state.idsDurableIds).not.toContain("1A2B3C4D");
+		expectConsistent(state);
+		await expectValidClean(docPath);
+	});
+
+	test("a package without the sidecars stays without them", async () => {
+		const workspace = tempWorkspace("comments-no-sidecars");
+		const docPath = join(workspace, "plain.docx");
+		await runCli("create", docPath, "--text", "Clause.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		const pkg = await Pkg.open(docPath);
+		for (const part of [
+			"word/commentsExtended.xml",
+			"word/commentsIds.xml",
+			"word/commentsExtensible.xml",
+		]) {
+			expect(await pkg.readPart(part)).toBeUndefined();
+		}
+	});
+});
+
+describe("docx comments — a commentsExtended part we materialize covers every comment", () => {
+	// A `create`d doc has no commentsExtended.xml until the first reply/resolve
+	// mints it. It used to register only that thread, so `add` → `add` →
+	// `reply c0` left c1 without an entry — the inconsistency `validate` reports
+	// (Word writes one entry per comment once the part exists).
+	async function commentedDoc(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "out.docx");
+		const source = join(workspace, "source.md");
+		writeFileSync(source, "Clause one.\n\nClause two.\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		await runCli("comments", "add", docPath, "--at", "p1", "--text", "B");
+		return docPath;
+	}
+
+	async function extendedEntries(docPath: string) {
+		const xml = await readPart(docPath, "word/commentsExtended.xml");
+		return [...xml.matchAll(/<w15:commentEx [^>]*\/>/g)].map((match) => ({
+			paraId: match[0].match(/w15:paraId="([0-9A-F]{8})"/)?.[1],
+			parent: match[0].match(/w15:paraIdParent="([0-9A-F]{8})"/)?.[1],
+		}));
+	}
+
+	async function commentParaIds(docPath: string) {
+		const xml = await readPart(docPath, "word/comments.xml");
+		return [...xml.matchAll(/w14:paraId="([0-9A-F]{8})"/g)].map(
+			(match) => match[1],
+		);
+	}
+
+	test("the first reply registers the earlier unrelated comment too", async () => {
+		const docPath = await commentedDoc("comments-ext-backfill-reply");
+		expect(
+			(await runCli("comments", "reply", docPath, "--at", "c0", "--text", "R"))
+				.exitCode,
+		).toBe(0);
+		const entries = await extendedEntries(docPath);
+		const paraIds = await commentParaIds(docPath);
+		expect(entries.map((entry) => entry.paraId).sort()).toEqual(
+			[...paraIds].sort(),
+		);
+		// Exactly one entry per comment — the reply isn't registered twice.
+		expect(entries).toHaveLength(3);
+		// comments.xml groups the reply under its thread: c0, reply, c1.
+		expect(entries.filter((entry) => entry.parent)).toEqual([
+			{ paraId: paraIds[1], parent: paraIds[0] },
+		]);
+		await expectValidClean(docPath);
+
+		await runCli("comments", "add", docPath, "--at", "p1", "--text", "C");
+		expect(await extendedEntries(docPath)).toHaveLength(4);
+		await expectValidClean(docPath);
+	});
+
+	test("the first resolve registers every comment, resolving only its target", async () => {
+		const docPath = await commentedDoc("comments-ext-backfill-resolve");
+		await runCli("comments", "resolve", docPath, "--at", "c1");
+		const xml = await readPart(docPath, "word/commentsExtended.xml");
+		expect(xml.match(/<w15:commentEx /g)).toHaveLength(2);
+		expect(xml.match(/w15:done="1"/g)).toHaveLength(1);
+		await expectValidClean(docPath);
+	});
+});
+
+describe("docx comments delete — markers in note parts", () => {
+	test("deleting a comment anchored in a footnote strips its footnote markers", async () => {
+		// Word lets a reviewer comment inside a footnote; the markers then live in
+		// footnotes.xml. `delete` used to prune document.xml only, leaving a
+		// `<w:commentReference>` that names no comment.
+		const workspace = tempWorkspace("comments-delete-footnote");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Body clause.");
+		await runCli("footnotes", "add", docPath, "--at", "p0", "--text", "Note.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		// Move c0's markers from the body into the footnote, as Word writes them.
+		const pkg = await Pkg.open(docPath);
+		const body = (await pkg.readText("word/document.xml"))
+			.replace(/<w:commentRange(Start|End) w:id="0"\/>/g, "")
+			.replace(
+				/<w:r>(?:(?!<w:r>).)*?<w:commentReference w:id="0"\/><\/w:r>/,
+				"",
+			);
+		expect(body).not.toContain('w:id="0"/><w:r');
+		const notes = (await pkg.readText("word/footnotes.xml")).replace(
+			/(<w:r>(?:(?!<w:r>).)*?Note\.<\/w:t><\/w:r>)/,
+			'<w:commentRangeStart w:id="0"/>$1<w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>',
+		);
+		expect(notes).toContain('<w:commentReference w:id="0"/>');
+		pkg.writeText("word/document.xml", body);
+		pkg.writeText("word/footnotes.xml", notes);
+		await pkg.save();
+		await expectValidClean(docPath);
+
+		expect(
+			(await runCli("comments", "delete", docPath, "--at", "c0")).exitCode,
+		).toBe(0);
+		expect(await readPart(docPath, "word/footnotes.xml")).not.toContain(
+			"comment",
+		);
+		await expectValidClean(docPath);
+	});
+});
+
+describe("docx comments — removing one paragraph of a cross-paragraph comment", () => {
+	// A comment spanning p0..p1 has its start in p0 and its end + reference in
+	// p1. Removing either paragraph used to take its half along, leaving the
+	// other half unbalanced — the inconsistency `validate` reports.
+	async function spanningComment(name: string): Promise<string> {
+		const workspace = tempWorkspace(name);
+		const docPath = join(workspace, "out.docx");
+		const source = join(workspace, "source.md");
+		writeFileSync(source, "First clause.\n\nSecond clause.\n\nThird clause.\n");
+		await runCli("create", docPath, "--from", source);
+		await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p0:6-p1:6",
+			"--text",
+			"A",
+		);
+		const comments = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		);
+		expect(comments[0].anchor).toMatchObject({
+			startBlockId: "p0",
+			endBlockId: "p1",
+		});
+		return docPath;
+	}
+
+	async function markerCounts(docPath: string) {
+		const xml = await readDocumentXml(docPath);
+		const count = (tag: string) =>
+			xml.match(new RegExp(`<w:${tag} w:id="0"/>`, "g"))?.length ?? 0;
+		return [
+			count("commentRangeStart"),
+			count("commentRangeEnd"),
+			count("commentReference"),
+		];
+	}
+
+	for (const [label, args] of [
+		["delete the start paragraph", ["delete", "--at", "p0"]],
+		["delete the end paragraph", ["delete", "--at", "p1"]],
+		[
+			"edit --text '' on the start paragraph",
+			["edit", "--at", "p0", "--text", ""],
+		],
+		[
+			"edit --text '' on the end paragraph",
+			["edit", "--at", "p1", "--text", ""],
+		],
+		[
+			"edit --runs '[]' on the end paragraph",
+			["edit", "--at", "p1", "--runs", "[]"],
+		],
+	] as const) {
+		test(`${label} keeps the comment's markers balanced`, async () => {
+			const docPath = await spanningComment(
+				`comments-straddle-${label.replace(/\W+/g, "-")}`,
+			);
+			const [verb, ...rest] = args;
+			expect((await runCli(verb, docPath, ...rest)).exitCode).toBe(0);
+			expect(await markerCounts(docPath)).toEqual([1, 1, 1]);
+			await expectValidClean(docPath);
+		});
+	}
+});
+
+describe("docx comments delete — malformed threading", () => {
+	test("a paraIdParent cycle in commentsExtended.xml doesn't hang the reply cascade", async () => {
+		const workspace = tempWorkspace("comments-thread-cycle");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Clause.");
+		await runCli("comments", "add", docPath, "--at", "p0", "--text", "A");
+		await runCli("comments", "reply", docPath, "--at", "c0", "--text", "R");
+		// Point the root back at its own reply: root → reply → root → …
+		const pkg = await Pkg.open(docPath);
+		const extended = await pkg.readText("word/commentsExtended.xml");
+		const [, replyParaId, rootParaId] =
+			extended.match(
+				/w15:paraId="([0-9A-F]+)" w15:paraIdParent="([0-9A-F]+)"/,
+			) ?? [];
+		expect(rootParaId).toBeDefined();
+		pkg.writeText(
+			"word/commentsExtended.xml",
+			extended.replace(
+				`w15:paraId="${rootParaId}" w15:done`,
+				`w15:paraId="${rootParaId}" w15:paraIdParent="${replyParaId}" w15:done`,
+			),
+		);
+		await pkg.save();
+
+		const deleted = await runCli("comments", "delete", docPath, "--at", "c0");
+		expect(deleted.exitCode).toBe(0);
+		expect(
+			JSON.parse((await runCli("comments", "list", docPath)).stdout),
+		).toEqual([]);
+	}, 10_000);
 });

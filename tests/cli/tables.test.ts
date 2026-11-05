@@ -4,6 +4,7 @@ import { Pkg } from "@core/ast/document/package";
 import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
 import {
+	expectValidClean,
 	newTableDoc,
 	readDocumentXml,
 	readMarkdown,
@@ -1310,7 +1311,7 @@ describe("docx tables format", () => {
 		expect(
 			(table as unknown as { cellMargins: Record<string, number> }).cellMargins,
 		).toEqual({ top: 15, right: 15, bottom: 15, left: 15 });
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("--cell-margins on a cell takes top,right,bottom,left and 0", async () => {
@@ -1333,7 +1334,7 @@ describe("docx tables format", () => {
 			// Top/bottom 0 restate the inherited 0, so they read as `-`.
 			'docx:cell t0:r1c1 margins="-,5.4pt,-,7.2pt"',
 		);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("--cell-margins none clears the table default", async () => {

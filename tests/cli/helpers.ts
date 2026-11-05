@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,15 @@ export async function readMarkdown(path: string): Promise<string> {
 export async function readDocumentXml(path: string): Promise<string> {
 	const pkg = await Pkg.open(path);
 	return await pkg.readText("word/document.xml");
+}
+
+/** `docx validate` reports nothing — no schema error AND no consistency
+ *  warning (warnings exit 0, so an exit-code check alone would miss the
+ *  comment-sidecar/marker regressions these gates exist for). */
+export async function expectValidClean(path: string): Promise<void> {
+	const result = await runCli("validate", path);
+	expect(result.stdout.trim()).toMatch(/^valid — \d+ parts? checked$/);
+	expect(result.exitCode).toBe(0);
 }
 
 /** The `kind`s reported by `track-changes list`, in order. */

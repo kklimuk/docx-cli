@@ -1,6 +1,7 @@
 import type { Document } from "../ast/document";
 import type { TrackedChangeReference } from "../ast/document/body";
 import type { TrackedChangeKind } from "../ast/types";
+import { straddlingCommentMarkers } from "../comments/straddling-markers";
 import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
 import { acceptCheckboxToggle, rejectCheckboxToggle } from "../task-list";
@@ -314,7 +315,7 @@ function applyAccept(target: ChangeFound): void {
 		deleteNode(target.node, target.parent);
 		return;
 	}
-	deleteNode(target.node, target.parent);
+	removeRevisionContent(target.node, target.parent);
 }
 
 function applyReject(target: ChangeFound): void {
@@ -352,7 +353,7 @@ function applyReject(target: ChangeFound): void {
 		}
 	}
 	if (target.node.tag === "w:ins" || target.node.tag === "w:moveTo") {
-		deleteNode(target.node, target.parent);
+		removeRevisionContent(target.node, target.parent);
 		return;
 	}
 	if (target.node.tag === "w:sectPrChange") {
@@ -592,6 +593,23 @@ function unwrapNode(node: XmlNode, parent: XmlNode[]): void {
 	const index = parent.indexOf(node);
 	if (index === -1) return;
 	parent.splice(index, 1, ...node.children);
+}
+
+/** Remove a run-level revision's content (reject an insertion, accept a
+ * deletion) but leave behind the comment markers that STRADDLE it — range
+ * starts/ends and reference runs whose comment also has a marker outside the
+ * revision — in document order, where the wrapper stood. `edit --text` on a
+ * commented paragraph under tracking re-anchors the range ENDS after the new
+ * words (inside the `<w:ins>`) while the starts stay ahead of the `<w:del>`,
+ * and a tracked `delete` wraps the reference runs in its `<w:del>`; dropping
+ * them with the content stranded the other half — a start with no end, a
+ * range with no reference — which `validate` reports and Word drops. A
+ * comment wholly inside the revision (start, end AND reference) goes with
+ * its text, as before. */
+function removeRevisionContent(node: XmlNode, parent: XmlNode[]): void {
+	const index = parent.indexOf(node);
+	if (index === -1) return;
+	parent.splice(index, 1, ...straddlingCommentMarkers(node.children));
 }
 
 function deleteNode(node: XmlNode, parent: XmlNode[]): void {

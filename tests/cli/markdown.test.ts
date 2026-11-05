@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { readDocumentXml, readMarkdown } from "./helpers";
+import { expectValidClean, readDocumentXml, readMarkdown } from "./helpers";
 
 type Block = {
 	id: string;
@@ -2502,7 +2502,7 @@ describe("new content blends in without importing a neighbor's quirks", () => {
 		// adds nothing, and no mark carries two <w:ins> (schema-invalid).
 		const listed = await runCli("track-changes", "list", docPath, "--json");
 		expect((listed.parsed as unknown[]).length).toBe(4);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("the host's own list style and spacing come across (ListBullet)", async () => {

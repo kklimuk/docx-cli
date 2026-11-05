@@ -97,6 +97,31 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   WASM at import, so the CLI imports it LAZILY (`cli/raw/commit.ts`
   dynamic-imports it only when the gate will actually run) — keep it out of
   static import chains that non-validating paths load.
+- [package-consistency.ts](package-consistency.ts) — the cross-part audit
+  `docx validate` runs beside the schema pass (`checkPackageConsistency` over
+  the same parsed parts): invariants that are schema-valid per part but that
+  Word repairs, drops, or refuses on open. It does NOT re-implement the rules:
+  it runs the very functions the cure runs — `auditCommentMarkers`
+  ([core/comments/marker-audit.tsx](../comments/marker-audit.tsx), with
+  `repair: false`) over every story part, `reconcileSidecars`
+  ([core/ast/document/comments/reconcile-sidecars.ts](../ast/document/comments/reconcile-sidecars.ts))
+  on a CLONE of the comment parts, plus the report-only `auditThreadLinks` —
+  and maps their `CommentFinding`s to issues, so a finding is `fixable`
+  exactly when `validate --fix` cures it. **Severity is graded by live Word
+  for Mac 16.114** (probed case by case): `error` ONLY for a
+  `commentReference` naming no comment (the one state Word refused to open);
+  `warning` for what Word repairs or drops — missing side-part entries /
+  paraIds (worded as data loss for commentsExtended: Word re-adds an OPEN,
+  TOP-LEVEL entry), out-of-range paraIds (Word re-keys them WITHOUT their
+  entries and every reply in the file loses its thread — the cure re-keys and
+  carries the entries), half-open ranges (Word collapses them to the reference),
+  reference-less ranges, orphan comments (Word deletes them), dangling
+  `paraIdParent` (Word drops the thread); `silent` (cured, never reported)
+  for what Word handles harmlessly — stale entries, duplicate durableIds. Ids
+  compare as SETS (an `mc:AlternateContent` story repeats its markers under
+  Choice and Fallback). The "every fixture validates clean" test (no warnings
+  either) is the false-positive pin. Pure (no WASM), and NOT a raw gate: a raw
+  edit is still judged on schema errors only.
 
 ## Schema provenance
 

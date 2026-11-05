@@ -6,6 +6,7 @@ import { XmlNode } from "@core/parser";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	expectValidClean,
 	freshFixture,
 	readDocumentXml,
 	trackedKinds,
@@ -4367,7 +4368,7 @@ describe("tracked delete keeps the paragraph-mark rPr schema-valid", () => {
 		expect(await readDocumentXml(docPath)).toMatch(
 			/<w:pPr><w:rPr><w:del [^>]*\/><w:b\/><\/w:rPr><\/w:pPr>/,
 		);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 });
 
@@ -4598,7 +4599,7 @@ describe("docx edit — ride-along and measure edge cases", () => {
 			"1constructor",
 		);
 		expect(result.exitCode).toBe(2);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 	});
 
 	test("--runs folds the documented flag spellings (size/caps/smallcaps/underline) and rejects a bad break kind", async () => {
@@ -4912,7 +4913,7 @@ describe("docx edit --text — hyperlinks survive a whole-paragraph rewrite", ()
 				group: "rev0",
 			}),
 		]);
-		expect((await runCli("validate", docPath)).exitCode).toBe(0);
+		await expectValidClean(docPath);
 		expect((await runCli("read", docPath)).stdout).toContain(
 			"[praman@college.harvard.edu](mailto:youremail@college.harvard.edu)",
 		);

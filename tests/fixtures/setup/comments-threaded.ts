@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { $ } from "bun";
+import { Pkg } from "../../../src/core/ast/document/package";
 
 // Pin core.xml timestamps + comment w:date so rebuilds are byte-deterministic
 // (honored by `core/create::buildBlankPackage` and the comments lens via
@@ -27,7 +28,9 @@ process.env.DOCX_CLI_NOW ??= "2026-06-12T00:00:00Z";
  * links live only in word/commentsExtended.xml.
  *
  * Built by dogfooding the CLI; doubles as the round-trip guard that
- * `comments add` + `comments reply` compose into a Word-valid thread.
+ * `comments add` + `comments reply` compose into a Word-valid thread, and that
+ * `validate --fix` re-anchors a legacy marker-less reply (c3) in exactly that
+ * layout.
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -102,6 +105,35 @@ await cliWithStdin(
 	"--batch",
 	"-",
 );
+
+// Dogfood `validate --fix` on the legacy reply shape: docx-cli before 0.14.1
+// wrote replies with NO body markers (Word silently deletes those). Strip
+// Dave's reply (c3) back to that shape, then let `--fix` re-anchor it in its
+// thread — it must land in the same Word thread layout `comments reply`
+// writes, and `validate` must come back clean.
+const legacy = await Pkg.open(out);
+const legacyXml = await legacy.readText("word/document.xml");
+const stripped = legacyXml
+	.replace(/<w:commentRange(?:Start|End) w:id="3"\/>/g, "")
+	.replace(
+		/<w:r><w:rPr><w:rStyle w:val="CommentReference"\/><\/w:rPr><w:commentReference w:id="3"\/><\/w:r>/,
+		"",
+	);
+if (stripped === legacyXml) throw new Error("c3's markers were not found");
+legacy.writeText("word/document.xml", stripped);
+await legacy.save();
+const fixed = await cli("validate", out, "--fix");
+if (!fixed.includes("anchored reply c3 in c0's thread")) {
+	throw new Error(`validate --fix did not re-anchor c3:\n${fixed}`);
+}
+const recheck = (await cli("validate", out)).trim();
+if (!/^valid — \d+ parts? checked$/.test(recheck)) {
+	throw new Error(`validate not clean after --fix:\n${recheck}`);
+}
+const reanchored = await (await Pkg.open(out)).readText("word/document.xml");
+if (reanchored !== legacyXml) {
+	throw new Error("--fix re-anchored c3 in a different layout than reply");
+}
 
 const verifyJson = await cli("comments", "list", out);
 const comments = JSON.parse(verifyJson) as Array<{

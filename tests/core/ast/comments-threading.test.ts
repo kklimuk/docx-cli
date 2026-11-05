@@ -40,7 +40,9 @@ describe("comment threading identity keys off the last paragraph", () => {
 	});
 
 	test("generateParaId stays inside Word's valid range (top bit clear)", async () => {
-		const { generateParaId } = await import("@core/ast/document/comments");
+		const { generateParaId } = await import(
+			"@core/ast/document/comments/para-id"
+		);
 		for (let attempt = 0; attempt < 256; attempt++) {
 			const minted = Number.parseInt(generateParaId(), 16);
 			expect(minted).toBeGreaterThan(0);
