@@ -46,7 +46,21 @@ over the same engine on a bare `Pkg` (no `Document` — it validates parts,
 so building the body AST would be pure waste), plus the cross-part
 `checkPackageConsistency` audit (`@core/raw/package-consistency`) over the
 same parsed parts; its findings file under the part they concern, tagged
-`kind: "consistency"`, and count toward exit 1.
+`kind: "consistency"`, each with a `severity` graded by live Word's behavior
+(`error` only for a dangling `commentReference` — the one state Word refuses
+to open — and for schema errors; everything Word repairs or drops is a
+`warning`, exit 0). [validate/report.ts](validate/report.ts) builds and
+prints the report (verdict line FIRST, so `^valid` means "no errors" and
+`^valid — N parts checked$` means "nothing at all"); a fixable finding carries
+the `--fix` command as its hint. `validate --fix` ([validate/fix.ts](validate/fix.ts))
+is the one path that DOES build a `Document` — over the same `Pkg`
+(`Document.fromPackage`) — runs `new Comments(document).repair()`, `stage()`s
+the views, re-validates the staged package, and only then writes (honoring
+`-o`/`--dry-run`). Its exit follows the POST-fix verdict; "nothing to fix" on a
+clean file is exit 0 (validate is a check, so the no-op-mutation-is-an-error
+rule doesn't apply). The report and the cure call the SAME core functions
+(`auditCommentMarkers` / `reconcileSidecars`), so "fixable" in the report can't
+drift from what `--fix` does — keep it that way when adding a finding.
 
 ## `info` subcommands & the generated Agent Skill
 

@@ -100,16 +100,26 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
 - [package-consistency.ts](package-consistency.ts) — the cross-part audit
   `docx validate` runs beside the schema pass (`checkPackageConsistency` over
   the same parsed parts): invariants that are schema-valid per part but that
-  Word repairs or drops on open. Today: every comment keyed (by its LAST
-  paragraph's `w14:paraId`) in each PRESENT side-part (`commentsExtended.xml`,
-  `commentsIds.xml` — an absent one is legal), and comment marker balance
-  across every story part (range start↔end, range→reference,
-  reference→existing comment). Ids compare as SETS (an `mc:AlternateContent`
-  story repeats its markers under Choice and Fallback). It reports only what
-  Word actually repairs — orphan side-part entries and marker-less comments are
-  deliberately silent, and the "every fixture validates clean" test is the
-  false-positive pin. Pure (no WASM), not a raw gate: a raw edit is still
-  judged on schema errors only.
+  Word repairs, drops, or refuses on open. It does NOT re-implement the rules:
+  it runs the very functions the cure runs — `auditCommentMarkers`
+  ([core/comments/marker-audit.tsx](../comments/marker-audit.tsx), with
+  `repair: false`) over every story part, `reconcileSidecars`
+  ([core/ast/document/comments/reconcile-sidecars.ts](../ast/document/comments/reconcile-sidecars.ts))
+  on a CLONE of the comment parts, plus the report-only `auditThreadLinks` —
+  and maps their `CommentFinding`s to issues, so a finding is `fixable`
+  exactly when `validate --fix` cures it. **Severity is graded by live Word
+  for Mac 16.114** (probed case by case): `error` ONLY for a
+  `commentReference` naming no comment (the one state Word refused to open);
+  `warning` for what Word repairs or drops — missing side-part entries /
+  paraIds (worded as data loss for commentsExtended: Word re-adds an OPEN,
+  TOP-LEVEL entry), half-open ranges (Word collapses them to the reference),
+  reference-less ranges, orphan comments (Word deletes them), dangling
+  `paraIdParent` (Word drops the thread); `silent` (cured, never reported)
+  for what Word handles harmlessly — stale entries, duplicate durableIds. Ids
+  compare as SETS (an `mc:AlternateContent` story repeats its markers under
+  Choice and Fallback). The "every fixture validates clean" test (no warnings
+  either) is the false-positive pin. Pure (no WASM), and NOT a raw gate: a raw
+  edit is still judged on schema errors only.
 
 ## Schema provenance
 

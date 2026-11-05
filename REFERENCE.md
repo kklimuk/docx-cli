@@ -24,7 +24,8 @@ docx find    FILE --batch queries.jsonl [--json]   # many independent text/forma
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
 docx diff    FILE --against SRC [--from LOC] [--to LOC] [--comments] [--json]   # what changed vs another version
-docx validate FILE [--json]              # ECMA-376 schema check per WML part + cross-part comment consistency (exit 0 = clean)
+docx validate FILE [--json]              # ECMA-376 schema check per WML part + cross-part comment consistency (errors exit 1; warnings exit 0)
+docx validate FILE --fix [-o PATH] [--dry-run]   # cure every finding marked (fixable), then re-validate
 docx raw get FILE --at LOCATOR [--json]  # a block's exact XML — the read half of the raw patch loop
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
@@ -345,6 +346,7 @@ docx raw replace FILE --at LOCATOR --xml '…'       # swap it wholesale (also -
 docx raw insert FILE --after pN --xml '…'          # splice new block XML (or a <Relationship/>)
 docx raw part list|get|add|replace|edit FILE …     # OPC parts, addressed by --name
 docx validate FILE [--json]                        # schema-check against ECMA-376 (transitional) + cross-part consistency
+docx validate FILE --fix [-o PATH] [--dry-run]     # cure the comment inconsistencies Word would repair (or refuse)
 ```
 
 For constructs no modeled verb covers — drop caps, TOC field codes, embedded
@@ -354,6 +356,36 @@ against the bundled transitional XSDs — a change may not ADD errors) and
 **nothing is written when any gate fails**. Inline `--xml`/`--find`/`--with`
 are verbatim; raw changes are never tracked. Details and examples:
 `docx raw --help`.
+
+#### `docx validate` — severities and `--fix`
+
+`validate` prints a verdict line first (`valid — N parts checked[, W warnings]`
+or `invalid — E errors …`), then each part's findings as `error: …` /
+`warning: …`; `--json` gives `{valid, errors, warnings, parts:[{part,
+issues:[{message, severity, kind?, line?, fixable?, hint?}]}]}`. **Exit 1 only
+for errors** — schema violations, and the one comment state live Word refuses to
+open: a `commentReference` naming no comment. Everything else in the
+cross-part comment audit is a **warning** (exit 0), graded by what Word does on
+open:
+
+| Finding | Severity | What Word does | `--fix` |
+| --- | --- | --- | --- |
+| `commentReference` names no comment | error | refuses to open the file | removes that id's markers |
+| comment missing from `commentsExtended.xml` (or no `w14:paraId`) | warning | re-adds it **open and top-level** — a reply loses its thread, a resolved comment reopens | adds the entry (`done="0"`, no parent) |
+| comment missing from `commentsIds.xml` | warning | mints one | adds it (durableId = paraId when valid) |
+| `commentRangeStart` without `commentRangeEnd` (or the reverse) | warning | collapses the range to the reference mark | does the same collapse |
+| range with no `commentReference` | warning | drops the comment | closes the range, adds the reference |
+| comment with no marker anywhere (orphan) | warning | silently deletes it | re-anchors it only when it is a reply in an anchored thread; otherwise reported, never deleted |
+| reply whose `w15:paraIdParent` names no comment | warning | drops the thread link | none (reported) |
+| stale ids entry, duplicate durableId, stale extensible entry | not reported | handles it harmlessly | cleaned up |
+
+Every save of a document with comments already runs the sidecar half of this
+(entries, paraIds, stale entries, durableIds — never touching an existing
+`paraIdParent`/`done`, and rewriting a sidecar only when it changed), so any
+`docx-cli` mutation cures a file an older producer — including docx-cli ≤ 0.28
+— left inconsistent. `validate --fix` adds the marker cures, saves (honoring
+`-o`/`--dry-run`), prints what it fixed (`nothing to fix` on a clean file, exit
+0), then the post-fix report; it exits 1 only if errors remain.
 
 > **One rule to memorize: addressing an existing thing is always `--at`.**
 > `comments reply/resolve/delete`, `footnotes/endnotes edit/delete`, `images extract/replace/delete`, `hyperlinks replace/delete`, `tables *`, `track-changes accept/reject`, `edit`, `delete`, and `insert` all take `--at LOCATOR`. For insert, `--at` means after an ordinary block and into a bare cell; use `--before`/`--after` when the side matters, or `--at-start`/`--at-end` for document boundaries. The remaining exceptions are positional by nature: `read` slices with `--from`/`--to LOCATOR`; `wc` takes a positional `[LOCATOR]`; `find`/`replace` take a positional `QUERY`/`PATTERN` (and `replace` accepts an optional `--at pN` to _confine_ the substitution to one paragraph). `images extract --to DIR` is an _output directory_, not a locator.
