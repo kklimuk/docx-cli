@@ -91,6 +91,109 @@ describe("every fixture validates clean", () => {
 	});
 });
 
+describe("cross-part consistency (issue #34)", () => {
+	// Schema-valid packages Word still repairs on open: the per-part XSD check
+	// can't see a comment missing from its paraId-keyed side-part, or comment
+	// markers that don't pair up. `validate` reports them beside schema errors.
+	let commented: string;
+
+	beforeEach(async () => {
+		commented = join(workspace, "commented.docx");
+		await runCli("create", commented, "--text", "hello world");
+		await runCli("comments", "add", commented, "--at", "p0", "--text", "n");
+	});
+
+	async function patchPart(
+		name: string,
+		patch: (xml: string) => string,
+	): Promise<void> {
+		const pkg = await Pkg.open(commented);
+		pkg.writeText(name, patch(await pkg.readText(name)));
+		await pkg.save();
+	}
+
+	test("a consistent commented document validates clean", async () => {
+		const result = await runCli("validate", commented);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toMatch(/^valid/);
+	});
+
+	test("a comment missing from a present commentsIds.xml is an error", async () => {
+		const pkg = await Pkg.open(commented);
+		pkg.writeText(
+			"word/commentsIds.xml",
+			'<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"/>',
+		);
+		await pkg.save();
+		const result = await runCli("validate", commented);
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("word/commentsIds.xml: 1 error");
+		expect(result.stdout).toMatch(
+			/comment c0 \(paraId [0-9A-F]{8}\) has no entry in word\/commentsIds\.xml \(consistency\)/,
+		);
+	});
+
+	test("a present commentsIds.xml that keys the comment passes", async () => {
+		const comments = await (await Pkg.open(commented)).readText(
+			"word/comments.xml",
+		);
+		const paraId = comments.match(/w14:paraId="([0-9A-F]{8})"/)?.[1];
+		expect(paraId).toBeDefined();
+		const pkg = await Pkg.open(commented);
+		pkg.writeText(
+			"word/commentsIds.xml",
+			`<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"><w16cid:commentId w16cid:paraId="${paraId}" w16cid:durableId="1A2B3C4D"/></w16cid:commentsIds>`,
+		);
+		await pkg.save();
+		expect((await runCli("validate", commented)).exitCode).toBe(0);
+	});
+
+	test("a comment range whose reference run was deleted is an error", async () => {
+		await patchPart("word/document.xml", (xml) =>
+			xml.replace(
+				/<w:r><w:rPr><w:rStyle w:val="CommentReference"\/><\/w:rPr><w:commentReference w:id="0"\/><\/w:r>/,
+				"",
+			),
+		);
+		const result = await runCli("validate", commented);
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain(
+			"comment range 0 has no matching commentReference (consistency)",
+		);
+	});
+
+	test("an unpaired commentRangeStart is an error", async () => {
+		await patchPart("word/document.xml", (xml) =>
+			xml.replace('<w:commentRangeEnd w:id="0"/>', ""),
+		);
+		const result = await runCli("validate", commented);
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain(
+			"commentRangeStart 0 has no matching commentRangeEnd",
+		);
+	});
+
+	test("a commentReference to a missing comment is an error, filed under its story part", async () => {
+		await patchPart("word/comments.xml", (xml) =>
+			xml.replace(/<w:comment [\s\S]*<\/w:comment>/, ""),
+		);
+		const result = await runCli("validate", commented, "--json");
+		expect(result.exitCode).toBe(1);
+		const parsed = result.parsed as {
+			valid: boolean;
+			parts: { part: string; issues: { message: string; kind?: string }[] }[];
+		};
+		expect(parsed.valid).toBe(false);
+		const documentPart = parsed.parts.find(
+			(part) => part.part === "word/document.xml",
+		);
+		expect(documentPart?.issues).toContainEqual({
+			message: "commentReference 0 points at no comment in word/comments.xml",
+			kind: "consistency",
+		});
+	});
+});
+
 describe("legacy schema noise self-heals on any save", () => {
 	test("a misnamed <w:trackChanges> and an undeclared w14 comments part are repaired by an unrelated edit", async () => {
 		// Documents produced by earlier docx-cli versions (and some Word files)

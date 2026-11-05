@@ -24,7 +24,7 @@ docx find    FILE --batch queries.jsonl [--json]   # many independent text/forma
 docx wc      FILE [LOCATOR] [--accepted | --baseline | --current] [--json]
 docx outline FILE [--style-prefix S] [--json]
 docx diff    FILE --against SRC [--from LOC] [--to LOC] [--comments] [--json]   # what changed vs another version
-docx validate FILE [--json]              # ECMA-376 schema check, per WML part (exit 0 = clean)
+docx validate FILE [--json]              # ECMA-376 schema check per WML part + cross-part comment consistency (exit 0 = clean)
 docx raw get FILE --at LOCATOR [--json]  # a block's exact XML — the read half of the raw patch loop
 docx styles  FILE [--used] [--at STYLEID] [--json]   # the style catalog (not in the body) — what --style NAMEs exist
 docx styles  --catalog [--json]                      # built-in styles you can apply on demand (Title, Heading1–9, Quote, …), no FILE needed
@@ -344,7 +344,7 @@ docx raw edit FILE --at LOCATOR --find S --with S  # patch it in place, one gate
 docx raw replace FILE --at LOCATOR --xml '…'       # swap it wholesale (also --batch)
 docx raw insert FILE --after pN --xml '…'          # splice new block XML (or a <Relationship/>)
 docx raw part list|get|add|replace|edit FILE …     # OPC parts, addressed by --name
-docx validate FILE [--json]                        # schema-check against ECMA-376 (transitional)
+docx validate FILE [--json]                        # schema-check against ECMA-376 (transitional) + cross-part consistency
 ```
 
 For constructs no modeled verb covers — drop caps, TOC field codes, embedded

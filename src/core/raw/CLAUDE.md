@@ -97,6 +97,19 @@ mutation is in-memory until `cli/raw/commit.ts` saves after the last gate.
   WASM at import, so the CLI imports it LAZILY (`cli/raw/commit.ts`
   dynamic-imports it only when the gate will actually run) — keep it out of
   static import chains that non-validating paths load.
+- [package-consistency.ts](package-consistency.ts) — the cross-part audit
+  `docx validate` runs beside the schema pass (`checkPackageConsistency` over
+  the same parsed parts): invariants that are schema-valid per part but that
+  Word repairs or drops on open. Today: every comment keyed (by its LAST
+  paragraph's `w14:paraId`) in each PRESENT side-part (`commentsExtended.xml`,
+  `commentsIds.xml` — an absent one is legal), and comment marker balance
+  across every story part (range start↔end, range→reference,
+  reference→existing comment). Ids compare as SETS (an `mc:AlternateContent`
+  story repeats its markers under Choice and Fallback). It reports only what
+  Word actually repairs — orphan side-part entries and marker-less comments are
+  deliberately silent, and the "every fixture validates clean" test is the
+  false-positive pin. Pure (no WASM), not a raw gate: a raw edit is still
+  judged on schema errors only.
 
 ## Schema provenance
 

@@ -1,6 +1,11 @@
 import type { Pkg } from "@core/ast/document/package";
-import type { XmlNode } from "@core/parser";
 import {
+	type ConsistencyIssue,
+	checkPackageConsistency,
+	type PackagePart,
+} from "@core/raw/package-consistency";
+import {
+	type ValidationIssue,
 	validateWmlXml,
 	validationXmlFor,
 	WML_ROOT_TAGS,
@@ -27,6 +32,14 @@ itself writes) after markup-compatibility preprocessing (mc:Ignorable
 extension markup is skipped, exactly as a consumer would). Exit 0 = clean;
 exit 1 = errors, listed per part.
 
+Also checks the cross-part invariants a per-part schema can't see — each one
+schema-valid but repaired or dropped by Word on open:
+  - every comment has its entry in commentsExtended.xml / commentsIds.xml
+    (when that part is present)
+  - every commentRangeStart has its commentRangeEnd and commentReference,
+    and every commentReference names a comment that exists
+These list under the part they concern, tagged "(consistency)".
+
 Useful before/after hand-made XML changes (docx raw, or edits made outside
 docx-cli) and as a "will Word open this?" first check — note Word TOLERATES
 some schema violations, so a finding here is "invalid OOXML," not always
@@ -49,7 +62,8 @@ export async function run(args: string[]): Promise<number> {
 	const pkg = await openPkgOrFail(filePath);
 	if (typeof pkg === "number") return pkg;
 
-	const parts = await collectWmlParts(pkg);
+	const xmlParts = await collectXmlParts(pkg);
+	const parts = xmlParts.filter((part) => WML_ROOT_TAGS.has(part.root.tag));
 
 	if (isStrictProfile(parts)) {
 		const note =
@@ -62,10 +76,13 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	const results = parts.map((part) => ({
-		name: part.name,
-		issues: validateWmlXml(validationXmlFor(part.root)),
-	}));
+	const results: { name: string; issues: ReportedIssue[] }[] = parts.map(
+		(part) => ({
+			name: part.name,
+			issues: validateWmlXml(validationXmlFor(part.root)),
+		}),
+	);
+	mergeConsistencyIssues(results, checkPackageConsistency(xmlParts));
 	const errorCount = results.reduce((sum, part) => sum + part.issues.length, 0);
 
 	if (values.json) {
@@ -95,7 +112,7 @@ export async function run(args: string[]): Promise<number> {
 		);
 		for (const issue of part.issues) {
 			lines.push(
-				`  ${issue.message}${issue.line !== undefined ? ` (line ${issue.line})` : ""}`,
+				`  ${issue.message}${issue.line !== undefined ? ` (line ${issue.line})` : ""}${issue.kind ? ` (${issue.kind})` : ""}`,
 			);
 		}
 	}
@@ -103,12 +120,11 @@ export async function run(args: string[]): Promise<number> {
 	return EXIT.GENERAL_ERROR;
 }
 
-/** Every package part whose root is a WML root, parsed once — the parse
- *  feeds both the strict-profile sniff and validation. Sorted with
+/** Every XML package part, parsed once — the parse feeds the strict-profile
+ *  sniff, schema validation (WML roots only), and the consistency audit (which
+ *  also reads non-WML side-parts like commentsIds.xml). Sorted with
  *  word/document.xml first (the part a reader looks for), the rest by name. */
-async function collectWmlParts(
-	pkg: Pkg,
-): Promise<{ name: string; root: XmlNode }[]> {
+async function collectXmlParts(pkg: Pkg): Promise<PackagePart[]> {
 	const names = pkg
 		.listParts()
 		.filter((name) => name.endsWith(".xml"))
@@ -117,19 +133,35 @@ async function collectWmlParts(
 			if (b === "word/document.xml") return 1;
 			return a.localeCompare(b);
 		});
-	const parts: { name: string; root: XmlNode }[] = [];
+	const parts: PackagePart[] = [];
 	for (const name of names) {
 		const tree = await pkg.readPart(name);
 		const root = tree?.find((node) => !node.isText && node.tag !== "?xml");
-		if (!root || !WML_ROOT_TAGS.has(root.tag)) continue;
-		parts.push({ name, root });
+		if (root) parts.push({ name, root });
 	}
 	return parts;
 }
 
+/** File each consistency finding under the part it concerns — appended to
+ *  that part's schema entry, or a new entry for a part the schema pass skips
+ *  (commentsIds.xml has no wml.xsd root). */
+function mergeConsistencyIssues(
+	results: { name: string; issues: ReportedIssue[] }[],
+	issues: ConsistencyIssue[],
+): void {
+	for (const issue of issues) {
+		let entry = results.find((result) => result.name === issue.part);
+		if (!entry) {
+			entry = { name: issue.part, issues: [] };
+			results.push(entry);
+		}
+		entry.issues.push({ message: issue.message, kind: "consistency" });
+	}
+}
+
 /** ISO Strict re-namespaces every part (`http://purl.oclc.org/ooxml/…`), so the
  *  transitional schemas see unknown content and every finding would be noise. */
-function isStrictProfile(parts: { name: string; root: XmlNode }[]): boolean {
+function isStrictProfile(parts: PackagePart[]): boolean {
 	const documentPart = parts.find((part) => part.name === "word/document.xml");
 	return (
 		documentPart?.root
@@ -137,3 +169,5 @@ function isStrictProfile(parts: { name: string; root: XmlNode }[]): boolean {
 			?.startsWith("http://purl.oclc.org/ooxml") ?? false
 	);
 }
+
+type ReportedIssue = ValidationIssue & { kind?: "consistency" };
