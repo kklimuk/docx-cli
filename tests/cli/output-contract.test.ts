@@ -248,8 +248,25 @@ describe("binary smoke (real subprocess)", () => {
 	});
 });
 
-// Use real OS pipes, bounded in both time and bytes: the old BunFile.write
-// path could repeat a prefix forever after process.stdout was materialized.
+// Use real OS pipes, bounded in both PROGRESS and bytes: the old BunFile.write
+// path could repeat a prefix forever after process.stdout was materialized
+// (the byte bound + exact-equality assertions catch that, deterministically),
+// or block forever mid-write (the stall watchdog below catches that).
+//
+// The hang bound is deliberately NOT a wall-clock deadline on the whole run.
+// A fixed 3s budget for "boot Bun, compile the script, push ~300 KB through a
+// consumer that pauses" failed once on a healthy build at load ~11: load makes
+// every step slower, but it doesn't stop them. A hang is the opposite — the
+// pipeline makes NO progress, forever. So the watchdog fires only after
+// PIPE_STALL_LIMIT_MS with no new byte from the pipeline and no exit, and
+// restarts on every chunk. That still fails a regressed producer (a blocked
+// writer stops producing; a spinning one trips the byte bound first), while a
+// slow-but-progressing one finishes. Bun's own per-test timeout (5s default)
+// is a second wall-clock limit on the same work, so the pipe tests pass
+// PIPE_TEST_TIMEOUT_MS: a backstop that must exceed the watchdog's own
+// detection time, not a tighter bound of its own.
+const PIPE_STALL_LIMIT_MS = 20_000;
+const PIPE_TEST_TIMEOUT_MS = 120_000;
 const RESPOND_MODULE = join(import.meta.dir, "../../src/cli/respond.ts");
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
 const PIPE_PAYLOAD = pipePayload();
@@ -338,12 +355,23 @@ async function runPipeCommand(
 			}
 		}
 	}
-	const timer = setTimeout(
-		() => stop(new Error("Pipe producer timed out")),
-		3000,
-	);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	function armStallWatchdog() {
+		clearTimeout(timer);
+		timer = setTimeout(
+			() =>
+				stop(
+					new Error(
+						`Pipe producer stalled: no output and no exit for ${PIPE_STALL_LIMIT_MS}ms`,
+					),
+				),
+			PIPE_STALL_LIMIT_MS,
+		);
+	}
+	armStallWatchdog();
 	for (const stream of ["stdout", "stderr"] as const) {
 		producer[stream]?.on("data", (chunk: Buffer) => {
+			armStallWatchdog();
 			size += chunk.length;
 			if (size > 2 * 1024 * 1024) {
 				stop(new Error("Pipe producer exceeded output limit"));
@@ -376,63 +404,77 @@ async function runPipeCommand(
 describe.skipIf(process.platform === "win32")(
 	"output sinks through OS pipes",
 	() => {
-		test("large CLI Markdown and AST match captured output through a slow pipe", async () => {
-			const docPath = await createLargeDocument();
-			for (const flags of [[], ["--ast"]]) {
-				const args = ["read", docPath, ...flags];
-				const expected = await runCli(...args);
-				expect(expected.exitCode).toBe(0);
-				expect(Buffer.byteLength(expected.stdout)).toBeGreaterThan(65536);
-				const result = await runPipeCommand([
-					process.execPath,
-					CLI_ENTRY,
-					...args,
-				]);
-				expect(result.error).toBeUndefined();
-				expect(result.status).toBe(0);
-				expect(result.stdout === expected.stdout).toBe(true);
-				expect(result.stderr).toBe("");
-			}
-		});
+		test(
+			"large CLI Markdown and AST match captured output through a slow pipe",
+			async () => {
+				const docPath = await createLargeDocument();
+				for (const flags of [[], ["--ast"]]) {
+					const args = ["read", docPath, ...flags];
+					const expected = await runCli(...args);
+					expect(expected.exitCode).toBe(0);
+					expect(Buffer.byteLength(expected.stdout)).toBeGreaterThan(65536);
+					const result = await runPipeCommand([
+						process.execPath,
+						CLI_ENTRY,
+						...args,
+					]);
+					expect(result.error).toBeUndefined();
+					expect(result.status).toBe(0);
+					expect(result.stdout === expected.stdout).toBe(true);
+					expect(result.stderr).toBe("");
+				}
+			},
+			PIPE_TEST_TIMEOUT_MS,
+		);
 
 		for (const materialize of [false, true]) {
 			for (const stream of ["stdout", "stderr"] as const) {
-				test(`${stream} delivers large UTF-8 writes exactly (process streams touched: ${materialize})`, async () => {
-					const write = stream === "stdout" ? "writeStdout" : "writeStderr";
-					const result = await runPipeScript(
-						`
+				test(
+					`${stream} delivers large UTF-8 writes exactly (process streams touched: ${materialize})`,
+					async () => {
+						const write = stream === "stdout" ? "writeStdout" : "writeStderr";
+						const result = await runPipeScript(
+							`
 					${materialize ? "void process.stdout; void process.stderr;" : ""}
 					await ${write}("start\\n");
 					await ${write}(text);
 					await ${write}("end\\n");
 					process.exit(0);
 				`,
-						stream,
-					);
-					expect(result.error).toBeUndefined();
-					expect(result.status, result.stderr.slice(0, 1000)).toBe(0);
-					expect(result[stream].length).toBe(PIPE_PAYLOAD.length + 10);
-					expect(result[stream] === `start\n${PIPE_PAYLOAD}end\n`).toBe(true);
-					expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
-				});
+							stream,
+						);
+						expect(result.error).toBeUndefined();
+						expect(result.status, result.stderr.slice(0, 1000)).toBe(0);
+						expect(result[stream].length).toBe(PIPE_PAYLOAD.length + 10);
+						expect(result[stream] === `start\n${PIPE_PAYLOAD}end\n`).toBe(true);
+						expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
+					},
+					PIPE_TEST_TIMEOUT_MS,
+				);
 			}
 		}
 
-		test("respond flushes large JSON before immediate exit", async () => {
-			const result = await runPipeScript(`
+		test(
+			"respond flushes large JSON before immediate exit",
+			async () => {
+				const result = await runPipeScript(`
 			void process.stdout;
 			await respond({ text });
 			process.exit(0);
 		`);
-			expect(result.error).toBeUndefined();
-			expect(result.status).toBe(0);
-			expect(
-				result.stdout === `${JSON.stringify({ text: PIPE_PAYLOAD })}\n`,
-			).toBe(true);
-		});
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(0);
+				expect(
+					result.stdout === `${JSON.stringify({ text: PIPE_PAYLOAD })}\n`,
+				).toBe(true);
+			},
+			PIPE_TEST_TIMEOUT_MS,
+		);
 
-		test("captureOutput can restore real sinks and allow natural exit", async () => {
-			const result = await runPipeScript(`
+		test(
+			"captureOutput can restore real sinks and allow natural exit",
+			async () => {
+				const result = await runPipeScript(`
 			let captured = "";
 			captureOutput(async value => { captured += value; }, async value => { captured += value; });
 			await writeStdout("captured-out");
@@ -442,58 +484,72 @@ describe.skipIf(process.platform === "win32")(
 			await writeStdout(text);
 			await writeStderr("restored");
 		`);
-			expect(result.error).toBeUndefined();
-			expect(result.status).toBe(0);
-			expect(result.stdout === PIPE_PAYLOAD).toBe(true);
-			expect(result.stderr).toBe("restored");
-		});
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(0);
+				expect(result.stdout === PIPE_PAYLOAD).toBe(true);
+				expect(result.stderr).toBe("restored");
+			},
+			PIPE_TEST_TIMEOUT_MS,
+		);
 
 		for (const stream of ["stdout", "stderr"] as const) {
-			test(`a consumer closing ${stream} early stops the producer quietly (no hang, no EPIPE crash)`, async () => {
-				const write = stream === "stdout" ? "writeStdout" : "writeStderr";
-				const result = await runPipeScript(
-					`
+			test(
+				`a consumer closing ${stream} early stops the producer quietly (no hang, no EPIPE crash)`,
+				async () => {
+					const write = stream === "stdout" ? "writeStdout" : "writeStderr";
+					const result = await runPipeScript(
+						`
 				void process.stdout; void process.stderr;
 				for (let index = 0; index < 100; index++) await ${write}(text);
 				process.exit(0);
 			`,
-					stream,
-					"head -c 1 > /dev/null",
-				);
-				expect(result.error).toBeUndefined();
-				expect(result.status).toBe(0);
-				expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
-			});
+						stream,
+						"head -c 1 > /dev/null",
+					);
+					expect(result.error).toBeUndefined();
+					expect(result.status).toBe(0);
+					expect(result[stream === "stdout" ? "stderr" : "stdout"]).toBe("");
+				},
+				PIPE_TEST_TIMEOUT_MS,
+			);
 		}
 
-		test("a dead pipe keeps the command's own nonzero exit code", async () => {
-			// Fill the pipe until the reader is gone, then fail: the error JSON
-			// hits the dead pipe too, but the exit code must still say "failed".
-			const result = await runPipeScript(
-				`
+		test(
+			"a dead pipe keeps the command's own nonzero exit code",
+			async () => {
+				// Fill the pipe until the reader is gone, then fail: the error JSON
+				// hits the dead pipe too, but the exit code must still say "failed".
+				const result = await runPipeScript(
+					`
 			void process.stdout;
 			for (let index = 0; index < 4; index++) await writeStdout(text);
 			process.exit(await fail("MATCH_NOT_FOUND", "nothing matched"));
 		`,
-				"stdout",
-				"true",
-			);
-			expect(result.error).toBeUndefined();
-			expect(result.status).toBe(3);
-			expect(result.stderr).toBe("");
-		});
+					"stdout",
+					"true",
+				);
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(3);
+				expect(result.stderr).toBe("");
+			},
+			PIPE_TEST_TIMEOUT_MS,
+		);
 
-		test("a real command piped into a consumer that never reads exits cleanly", async () => {
-			const docPath = await createLargeDocument();
-			const result = await runPipeCommand(
-				[process.execPath, CLI_ENTRY, "read", docPath],
-				"stdout",
-				"true",
-			);
-			expect(result.error).toBeUndefined();
-			expect(result.status).toBe(0);
-			expect(result.stderr).toBe("");
-		});
+		test(
+			"a real command piped into a consumer that never reads exits cleanly",
+			async () => {
+				const docPath = await createLargeDocument();
+				const result = await runPipeCommand(
+					[process.execPath, CLI_ENTRY, "read", docPath],
+					"stdout",
+					"true",
+				);
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(0);
+				expect(result.stderr).toBe("");
+			},
+			PIPE_TEST_TIMEOUT_MS,
+		);
 	},
 );
 
