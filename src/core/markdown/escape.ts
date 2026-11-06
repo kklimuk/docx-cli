@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+import { remarkNoteReferenceLabels } from "./note-reference-labels";
 import { remarkReadHintLabels } from "./read-hint-labels";
 
 // A node's source-offset span. Every mdast node carries this, but the union also
@@ -20,11 +21,14 @@ type Positioned = {
 // `remarkReadHintLabels` IS included: its parser construct claims a literal
 // `[^tcN]`/`[^cN]` in run text (the importer would drop it as a read
 // annotation), so the mask escapes it and the text survives the round-trip.
+// `remarkNoteReferenceLabels` likewise claims a literal `[^fn1]`/`[^en1]` (the
+// importer would resolve it to the document's note), so it's escaped too.
 const rawParser = unified()
 	.use(remarkParse)
 	.use(remarkGfm)
 	.use(remarkMath)
-	.use(remarkReadHintLabels);
+	.use(remarkReadHintLabels)
+	.use(remarkNoteReferenceLabels);
 
 // Every char CommonMark lets a backslash escape. A `\` before one of these is an
 // escape; escaping anything else (a letter, a space) is a no-op the parser drops.

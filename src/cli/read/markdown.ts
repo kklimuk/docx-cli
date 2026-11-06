@@ -1608,7 +1608,14 @@ function renderRuns(
 			else ctx.referencedEndnoteIds.add(run.id);
 			out += `[^${run.id}]`;
 		} else if (run.type === "chart") {
-			out += `\`[${run.kind}]\``;
+			// A chart / SmartArt / shape has no Markdown form. Its marker is a
+			// `docx:` HINT, not content: it used to print as inline code
+			// (`` `[chart]` ``), so a read line copied back into `edit` kept the
+			// chart (lifted and re-attached) AND wrote the literal text "[chart]"
+			// — and its 9 characters skewed every span read off the line, since the
+			// object is zero-width in the offset model. The importer drops the
+			// comment (a leading one is split off by `reparseHintLedLines`).
+			out += formatNote(run.kind, []);
 		}
 		// A text box contributes nothing inline: its story renders as its own
 		// block right after the anchor (see `renderTextBoxes`).
