@@ -7,32 +7,56 @@ import type { TrackedMeta } from "./track-changes";
 const EMU_PER_TWIP = 635;
 /** US Letter (12240 twip) with 1″ (1440 twip) margins → 6.5″ content width. */
 const DEFAULT_CONTENT_WIDTH_EMU = (12240 - 1440 - 1440) * EMU_PER_TWIP;
+/** US Letter (15840 twip) with 1″ margins → 9″ content height. */
+const DEFAULT_CONTENT_HEIGHT_EMU = (15840 - 1440 - 1440) * EMU_PER_TWIP;
 
 /** Page content width in EMU (page width − left/right margins), read from the
  *  document's trailing `<w:sectPr>` (`<w:pgSz>`/`<w:pgMar>`, in twips). Falls
  *  back to US-Letter-with-1″-margins when section properties are absent or
  *  malformed. Used to clamp inserted images so they don't spill into margins. */
 export function getPageContentWidthEmu(document: Document): number {
+	return pageContentSpanEmu(
+		document,
+		["w:w", "w:left", "w:right"],
+		DEFAULT_CONTENT_WIDTH_EMU,
+	);
+}
+
+/** Page content height in EMU (page height − top/bottom margins), the vertical
+ *  twin of `getPageContentWidthEmu`. A negative top/bottom margin (content may
+ *  not overlap the header) still bounds the text area by its magnitude. Used to
+ *  keep a replaced image from growing taller than the page. */
+export function getPageContentHeightEmu(document: Document): number {
+	return pageContentSpanEmu(
+		document,
+		["w:h", "w:top", "w:bottom"],
+		DEFAULT_CONTENT_HEIGHT_EMU,
+	);
+}
+
+function pageContentSpanEmu(
+	document: Document,
+	[sizeAttribute, startMargin, endMargin]: [string, string, string],
+	fallbackEmu: number,
+): number {
 	const root = XmlNode.findRoot(document.documentTree, "w:document");
 	const body = root?.findChild("w:body");
 	const sectPr = body?.children
 		.filter((child) => child.tag === "w:sectPr")
 		.pop();
-	const width = Number(sectPr?.findChild("w:pgSz")?.getAttribute("w:w"));
+	const size = Number(sectPr?.findChild("w:pgSz")?.getAttribute(sizeAttribute));
 	const pgMar = sectPr?.findChild("w:pgMar");
-	const left = Number(pgMar?.getAttribute("w:left"));
-	const right = Number(pgMar?.getAttribute("w:right"));
+	const start = Math.abs(Number(pgMar?.getAttribute(startMargin)));
+	const end = Math.abs(Number(pgMar?.getAttribute(endMargin)));
 	if (
-		!Number.isFinite(width) ||
-		!Number.isFinite(left) ||
-		!Number.isFinite(right)
+		!Number.isFinite(size) ||
+		!Number.isFinite(start) ||
+		!Number.isFinite(end)
 	) {
-		return DEFAULT_CONTENT_WIDTH_EMU;
+		return fallbackEmu;
 	}
-	const contentTwips = width - left - right;
-	return contentTwips > 0
-		? contentTwips * EMU_PER_TWIP
-		: DEFAULT_CONTENT_WIDTH_EMU;
+	const contentTwips = size - start - end;
+	return contentTwips > 0 ? contentTwips * EMU_PER_TWIP : fallbackEmu;
 }
 
 export type SectionProperties = {

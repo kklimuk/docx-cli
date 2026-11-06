@@ -133,6 +133,7 @@ export {
 } from "./render";
 export {
 	applyPageGeometry,
+	getPageContentHeightEmu,
 	getPageContentWidthEmu,
 	inheritGoverningSection,
 	isSectionType,

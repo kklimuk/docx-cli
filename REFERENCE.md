@@ -293,7 +293,7 @@ docx footers clear FILE …
 docx images add     FILE (--after | --before) LOCATOR --image SRC [--alt T] [--width LENGTH] [--height LENGTH] [--caption "..."]   # bare = inches; 5cm, 300px, … (see "Lengths and units")
 docx images add     FILE (--at-start | --at-end) --image SRC [options]   # SRC = path, data: URI, or http(s) URL
 docx images extract FILE --to DIR [--at imgN]            # --to = output directory; --at picks one image
-docx images replace FILE --at imgN --with ./new.png
+docx images replace FILE --at imgN --with ./new.png [--width LENGTH | --height LENGTH | --keep-size]   # keeps the displayed width, height follows the new aspect (fit to the text area); crop dropped; ack names the size
 docx images delete  FILE --at imgN
 
 docx hyperlinks add     FILE --at pN:S-E --url URL

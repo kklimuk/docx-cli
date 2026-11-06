@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Document, XmlNode } from "@core";
 import { Pkg } from "@core/ast/document/package";
-import { runCli, tempWorkspace } from "./harness";
+import { runCli, spawnCli, tempWorkspace } from "./harness";
 import { readMarkdown, trackedKinds } from "./helpers";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
@@ -1157,5 +1157,209 @@ describe("docx images add — size units", () => {
 		}
 		const height = await addSized("img-junk-h", "--height", "4ems");
 		expect(height.result.exitCode).toBe(2);
+	});
+});
+
+// Issue #46: replace used to keep the old <wp:extent>, stretching the new
+// picture into the old picture's box. The frame is now refitted.
+describe("docx images replace — refits the frame to the new picture", () => {
+	const TALL_PATH = join(ASSETS, "tall.png"); // 48×144, 1:3
+
+	async function docWithWideImage(label: string, width = "2"): Promise<string> {
+		const docPath = await newDoc(label);
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+			"--width",
+			width,
+		);
+		return docPath;
+	}
+
+	async function replace(docPath: string, ...flags: string[]) {
+		// spawnCli: the default text confirmation (runCli injects --verbose).
+		const result = await spawnCli(
+			"images",
+			"replace",
+			docPath,
+			"--at",
+			"img0",
+			...flags,
+		);
+		return { ...result, stdout: result.stdout.trim() };
+	}
+
+	async function sizeHint(docPath: string): Promise<string | undefined> {
+		const markdown = await readMarkdown(docPath);
+		return markdown.match(/docx:image img0 size="([^"]+)in"/)?.[1];
+	}
+
+	test("keeps the displayed width and recomputes the height (wide → tall)", async () => {
+		const docPath = await docWithWideImage("refit-default");
+		expect(await sizeHint(docPath)).toBe("2x1.33");
+
+		const result = await replace(docPath, "--with", TALL_PATH);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("images.replace img0 (2x6in)");
+		expect(await sizeHint(docPath)).toBe("2x6");
+
+		// <wp:extent> and the shape's <a:ext> agree.
+		const xml = await (await Pkg.open(docPath)).readText("word/document.xml");
+		const cx = 2 * EMU_PER_INCH;
+		const cy = 6 * EMU_PER_INCH;
+		expect(xml).toContain(`<wp:extent cx="${cx}" cy="${cy}"/>`);
+		expect(xml).toContain(`<a:ext cx="${cx}" cy="${cy}"/>`);
+	});
+
+	test("never grows past the text area", async () => {
+		// 4in wide at 1:3 would be 12in tall on a 9in-tall text area.
+		const tallDoc = await docWithWideImage("refit-clamp-height", "4");
+		await replace(tallDoc, "--with", TALL_PATH);
+		expect(await sizeHint(tallDoc)).toBe("3x9");
+
+		// An already-overflowing 8in image is brought inside the 6.5in column.
+		const wideDoc = await docWithWideImage("refit-clamp-width", "8");
+		await replace(wideDoc, "--with", JPG_PATH);
+		expect(await sizeHint(wideDoc)).toBe("6.5x4.33");
+		expect(await readMarkdown(wideDoc)).not.toContain('overflow="yes"');
+	});
+
+	test("--width or --height alone keeps the new aspect; both are honored", async () => {
+		const docPath = await docWithWideImage("refit-explicit");
+		expect(
+			(await replace(docPath, "--with", TALL_PATH, "--width", "1in")).stdout,
+		).toBe("images.replace img0 (1x3in)");
+		expect(
+			(await replace(docPath, "--with", TALL_PATH, "--height", "1.5")).stdout,
+		).toBe("images.replace img0 (0.5x1.5in)");
+		expect(
+			(
+				await replace(
+					docPath,
+					"--with",
+					TALL_PATH,
+					"--width",
+					"2",
+					"--height",
+					"1",
+				)
+			).stdout,
+		).toBe("images.replace img0 (2x1in)");
+	});
+
+	test("--keep-size keeps the old box; it can't be combined with --width", async () => {
+		const docPath = await docWithWideImage("refit-keep");
+		expect(
+			(await replace(docPath, "--with", JPG_PATH, "--keep-size")).stdout,
+		).toBe("images.replace img0 (2x1.33in)");
+		const conflict = await replace(
+			docPath,
+			"--with",
+			TALL_PATH,
+			"--keep-size",
+			"--width",
+			"1",
+		);
+		expect(conflict.exitCode).toBe(2);
+		expect(await sizeHint(docPath)).toBe("2x1.33");
+	});
+
+	test("a format with no parsed pixel size keeps the box and says so", async () => {
+		const docPath = await docWithWideImage("refit-emf");
+		const emfPath = join(tempWorkspace("refit-emf-src"), "logo.emf");
+		await Bun.write(emfPath, new Uint8Array([1, 0, 0, 0, 0x6c, 0, 0, 0]));
+
+		const kept = await replace(docPath, "--with", emfPath);
+		expect(kept.exitCode).toBe(0);
+		expect(kept.stdout).toContain("images.replace img0 (2x1.33in)");
+		expect(kept.stdout).toContain("size unknown for .emf");
+
+		// One axis needs an aspect ratio the emf doesn't expose: refuse, write nothing.
+		const before = await Bun.file(docPath).bytes();
+		const oneAxis = await replace(docPath, "--with", emfPath, "--width", "1");
+		expect(oneAxis.exitCode).toBe(2);
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+
+		const both = await replace(
+			docPath,
+			"--with",
+			emfPath,
+			"--width",
+			"1",
+			"--height",
+			"2",
+		);
+		expect(both.stdout).toBe("images.replace img0 (1x2in)");
+	});
+
+	test("a cropped floating image loses its crop and takes the new aspect", async () => {
+		const docPath = join(tempWorkspace("refit-anchor"), "doc.docx");
+		await Bun.write(docPath, Bun.file(join(FIXTURES, "large-mixed.docx")));
+		const imageId = "img10"; // <wp:anchor> with an <a:srcRect> crop
+		const drawingXml = async (): Promise<string> => {
+			const document = await Document.open(docPath);
+			const ordinal = Number(imageId.slice(3));
+			const { Images } = await import("@core/image");
+			const run = new Images(document).list()[ordinal]?.run;
+			return run ? XmlNode.serialize([run]) : "";
+		};
+		const before = await drawingXml();
+		expect(before).toContain("<wp:anchor");
+		expect(before).toContain("<a:srcRect");
+
+		const result = await runCli(
+			"images",
+			"replace",
+			docPath,
+			"--at",
+			imageId,
+			"--with",
+			TALL_PATH,
+		);
+		expect(result.exitCode).toBe(0);
+
+		const after = await drawingXml();
+		expect(after).toContain("<wp:anchor");
+		expect(after).not.toContain("<a:srcRect");
+		// 6.45in wide at 1:3 would be ~19in tall: fitted to the 9in text height.
+		const [, cx, cy] =
+			after.match(/<wp:extent cx="(\d+)" cy="(\d+)"/)?.map(Number) ?? [];
+		expect(cy).toBe(9 * EMU_PER_INCH);
+		expect(cx).toBe(3 * EMU_PER_INCH);
+	});
+
+	test("every drawing sharing the picture is refitted, each from its own width", async () => {
+		const docPath = await docWithWideImage("refit-shared");
+		// Duplicate the drawing run (same rId) into p0 at a different width.
+		const document = await Document.open(docPath);
+		const { Images } = await import("@core/image");
+		const [hit] = new Images(document).list();
+		if (!hit) throw new Error("no image");
+		const [copy] = XmlNode.parse(
+			XmlNode.serialize([hit.run]).replaceAll(
+				String(2 * EMU_PER_INCH),
+				String(EMU_PER_INCH),
+			),
+		);
+		const firstParagraph = XmlNode.findRoot(
+			document.documentTree,
+			"w:document",
+		)?.findDescendant("w:p");
+		if (!copy || !firstParagraph) throw new Error("setup failed");
+		firstParagraph.children.push(copy);
+		await document.save();
+
+		const result = await replace(docPath, "--with", TALL_PATH);
+		expect(result.exitCode).toBe(0);
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toMatch(/docx:image img0 size="1x3in"/);
+		expect(markdown).toMatch(/docx:image img1 size="2x6in"/);
+		// img0 is the 1in copy in p0 (document order); the ack names it.
+		expect(result.stdout).toBe("images.replace img0 (1x3in)");
 	});
 });

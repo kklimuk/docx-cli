@@ -1,12 +1,19 @@
+import { getPageContentHeightEmu, getPageContentWidthEmu } from "@core";
 import { findContainingParagraph } from "@core/comments";
 import {
+	applyReplacementExtent,
+	fitReplacementExtent,
+	type ImageSource,
 	ImageSourceError,
 	Images,
 	imageFormatForExtension,
 	loadImageSource,
+	type ReplacementSizing,
 	SUPPORTED_IMAGE_FORMATS,
 } from "@core/image";
 import { addAuditComment } from "../audit-comment";
+import type { RawValues } from "../insert/index";
+import { formatImageSize } from "../read/annotations";
 import {
 	EXIT,
 	fail,
@@ -18,8 +25,9 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { parseImageSize } from "./add";
 
-const HELP = `docx images replace — swap an image's bytes
+const HELP = `docx images replace — swap an image's picture, refitting its frame
 
 Usage:
   docx images replace FILE --at imgN --with PATH [options]
@@ -27,11 +35,22 @@ Usage:
 Examples:
   docx images replace doc.docx --at img2 --with ./new-photo.png
   docx images replace doc.docx --at img0 --with ./diagram.jpg
+  docx images replace doc.docx --at img0 --with ./logo.png --width 1.5in
 
 Required:
   --at imgN         image id to replace (e.g. img0)
   --with PATH       New image file (format keyed off the file extension:
                     png/jpg/gif/webp/bmp/tiff/svg/emf/wmf/ico)
+
+Sizing (default: keep the displayed WIDTH, recompute the height from the new
+image's aspect ratio, scaled down to fit the text area if needed — the new
+picture is never stretched into the old one's box):
+  --width LENGTH    Display width: bare inches (2) or in/cm/mm/pt/px/tw.
+                    Alone, the height follows the new image's aspect ratio.
+  --height LENGTH   Display height, same units. Alone, the width follows.
+                    Both given: honored as-is.
+  --keep-size       Keep the old box exactly (only when the new image has the
+                    same shape)
 
 Optional:
   --author NAME     Author for the audit comment when track-changes is on
@@ -42,15 +61,20 @@ Optional:
   -h, --help        Show this help
 
 The replacement may use a different format from the original — the embedded
-part is renamed and re-registered automatically.
+part is renamed and re-registered automatically. Any crop on the old picture
+is dropped (it was cut for the old image). Every place that shows the same
+picture (a shared media part) is refitted, each from its own width. A format
+whose pixel size isn't read (emf/wmf/webp/bmp/tiff/ico) keeps the old box —
+the confirmation says so; pass --width and --height to size it.
 
 Image swaps can't be recorded as tracked changes, so when track-changes is on
 an audit comment is anchored to each place the swapped image appears.
 
 Output:
-  Prints a one-line confirmation on success (exit 0) — replace mints no new
-  id (the image keeps its imgN). --verbose prints {ok:true, operation, path,
-  imageId, partName, mimeType, bytes}. Errors print {code, error, hint?} with
+  Prints a one-line confirmation naming the new size on success (exit 0),
+  e.g. "images.replace img0 (1x4in)" — replace mints no new id (the image
+  keeps its imgN). --verbose prints {ok:true, operation, path, imageId, size,
+  partName, mimeType, bytes}. Errors print {code, error, hint?} with
   a nonzero exit. Discover ids with \`docx images list FILE\`.
 `;
 
@@ -60,6 +84,9 @@ export async function run(args: string[]): Promise<number> {
 		{
 			at: { type: "string" },
 			with: { type: "string" },
+			width: { type: "string" },
+			height: { type: "string" },
+			"keep-size": { type: "boolean" },
 			author: { type: "string" },
 			...SAVE_FLAGS,
 		},
@@ -83,6 +110,9 @@ export async function run(args: string[]): Promise<number> {
 	const sourcePath = parsed.values.with as string | undefined;
 	if (!sourcePath) return fail("USAGE", "Missing --with PATH", HELP);
 
+	const sizing = await parseSizing(parsed.values);
+	if (typeof sizing === "number") return sizing;
+
 	const sourceFile = Bun.file(sourcePath);
 	if (!(await sourceFile.exists())) {
 		return fail("FILE_NOT_FOUND", `Replacement file not found: ${sourcePath}`);
@@ -104,6 +134,22 @@ export async function run(args: string[]): Promise<number> {
 	const newMimeType = format.mimeType;
 	const newExtension = format.extension;
 
+	// Route the replacement through the shared resolver (same as `docx images add`)
+	// so it gets the same safety: SVG sanitization (scripts/handlers/animation
+	// stripped), HEIC→JPEG transcode, and the SSRF guard on remote srcs. We keep
+	// the extension/MIME resolved above for part naming; the bytes and pixel
+	// dimensions come back.
+	let source: ImageSource;
+	try {
+		source = await loadImageSource(sourcePath);
+	} catch (error) {
+		if (error instanceof ImageSourceError) {
+			return fail("IMAGE_SOURCE", error.message);
+		}
+		throw error;
+	}
+	const bytes = source.bytes;
+
 	const document = await openOrFail(path);
 	if (typeof document === "number") return document;
 
@@ -111,6 +157,44 @@ export async function run(args: string[]): Promise<number> {
 	if (!reference) {
 		return fail("IMAGE_NOT_FOUND", `Image not found: ${targetId}`);
 	}
+
+	// The bytes are shared by every drawing on this relationship, so every one
+	// of them is refitted (each from its own displayed width). Plan all fits
+	// BEFORE any mutation, so a sizing error writes nothing.
+	const occurrences = new Images(document).list();
+	const textArea = {
+		widthEmu: getPageContentWidthEmu(document),
+		heightEmu: getPageContentHeightEmu(document),
+	};
+	const fits = [];
+	for (const [index, occurrence] of occurrences.entries()) {
+		if (occurrence.relationshipId !== reference.relationshipId) continue;
+		const drawing = occurrence.run.findChild("w:drawing");
+		if (!drawing) continue;
+		const extent = fitReplacementExtent(drawing, source, sizing, textArea);
+		if (!extent) {
+			return fail(
+				"USAGE",
+				`Can't keep the aspect ratio: no pixel size could be read from .${sourceExtension}`,
+				"Pass both --width and --height to size it explicitly.",
+			);
+		}
+		fits.push({ id: `img${index}`, occurrence, drawing, extent });
+	}
+	const targetFit = fits.find((fit) => fit.id === targetId);
+	if (!targetFit) {
+		return fail(
+			"IMAGE_NOT_FOUND",
+			`Image reference is stale (no drawing for ${targetId})`,
+		);
+	}
+	const size = formatImageSize(
+		targetFit.extent.widthEmu,
+		targetFit.extent.heightEmu,
+	);
+	const sizeNote = targetFit.extent.sizeKnown
+		? undefined
+		: `kept ${size}: size unknown for .${sourceExtension} — pass --width and --height if it's a different shape`;
 
 	const originalPartName = reference.partName;
 	const newPartName = renameExtension(originalPartName, newExtension);
@@ -122,6 +206,7 @@ export async function run(args: string[]): Promise<number> {
 			dryRun: true,
 			path,
 			imageId: targetId,
+			size,
 			from: { partName: originalPartName, mimeType: reference.contentType },
 			to: { partName: newPartName, mimeType: newMimeType },
 			...(outputPath ? { output: outputPath } : {}),
@@ -129,19 +214,8 @@ export async function run(args: string[]): Promise<number> {
 		return EXIT.OK;
 	}
 
-	// Route the replacement through the shared resolver (same as `docx images add`)
-	// so it gets the same safety: SVG sanitization (scripts/handlers/animation
-	// stripped), HEIC→JPEG transcode, and the SSRF guard on remote srcs. We keep
-	// the extension/MIME resolved above for part naming; only the bytes come back.
-	let bytes: Uint8Array;
-	try {
-		bytes = (await loadImageSource(sourcePath)).bytes;
-	} catch (error) {
-		if (error instanceof ImageSourceError) {
-			return fail("IMAGE_SOURCE", error.message);
-		}
-		throw error;
-	}
+	for (const fit of fits) applyReplacementExtent(fit.drawing, fit.extent);
+
 	const originalMimeType = reference.contentType;
 
 	if (newPartName === originalPartName) {
@@ -171,12 +245,9 @@ export async function run(args: string[]): Promise<number> {
 
 	if (document.isTrackChangesEnabled()) {
 		const authorFlag = parsed.values.author as string | undefined;
-		const message = `image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes)`;
-		const drawingRuns = new Images(document)
-			.list()
-			.filter((hit) => hit.relationshipId === reference.relationshipId)
-			.map((hit) => hit.run);
-		for (const drawingRun of drawingRuns) {
+		const message = `image replaced: ${originalPartName} (${originalMimeType}) → ${newPartName} (${newMimeType}, ${bytes.length} bytes), now ${size}`;
+		for (const { occurrence } of fits) {
+			const drawingRun = occurrence.run;
 			const paragraph = findContainingParagraph(
 				document.documentTree,
 				drawingRun,
@@ -193,16 +264,39 @@ export async function run(args: string[]): Promise<number> {
 
 	await document.save(outputPath);
 
-	await respondAck({
-		ok: true,
-		operation: "images.replace",
-		path: outputPath ?? path,
-		imageId: targetId,
-		partName: newPartName,
-		mimeType: newMimeType,
-		bytes: bytes.length,
-	});
+	await respondAck(
+		{
+			ok: true,
+			operation: "images.replace",
+			path: outputPath ?? path,
+			imageId: targetId,
+			size,
+			...(sizeNote ? { note: sizeNote } : {}),
+			partName: newPartName,
+			mimeType: newMimeType,
+			bytes: bytes.length,
+		},
+		sizeNote && `↳ ${sizeNote}`,
+	);
 	return EXIT.OK;
+}
+
+/** `--width`/`--height` (shared grammar with `images add`) or `--keep-size`,
+ *  which can't be combined — it would silently win over an explicit size. */
+async function parseSizing(
+	values: RawValues,
+): Promise<ReplacementSizing | number> {
+	const size = await parseImageSize(values);
+	if (typeof size === "number") return size;
+	if (!values["keep-size"]) return size;
+	if (size.widthInches !== undefined || size.heightInches !== undefined) {
+		return fail(
+			"USAGE",
+			"--keep-size can't be combined with --width/--height",
+			"Use --keep-size to keep the old box, or --width/--height to set a new one.",
+		);
+	}
+	return { keepSize: true };
 }
 
 function renameExtension(partName: string, newExtension: string): string {

@@ -10,6 +10,11 @@ export {
 	SUPPORTED_IMAGE_FORMATS,
 } from "./formats";
 export {
+	applyReplacementExtent,
+	fitReplacementExtent,
+	type ReplacementSizing,
+} from "./refit";
+export {
 	computeExtentEmu,
 	type ImageSource,
 	ImageSourceError,
