@@ -71,6 +71,14 @@ jobs:
     # the Windows job's libreoffice-fresh; 24.04 would test against 24.2.
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    env:
+      LIBREOFFICE_PACKAGES: libreoffice-core libreoffice-writer fontconfig
+    defaults:
+      run:
+        # Explicit bash adds pipefail (the implicit default is `bash -e`), so a
+        # failed `apt-get --print-uris` fails its step instead of keying the
+        # cache on an empty package list.
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -79,13 +87,86 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
-      - name: Install LibreOffice
-        # Normally ~15s. A stalled Azure apt mirror once trickled this for 15+
-        # minutes (2026-11-06); fail fast and re-run instead of waiting it out.
-        timeout-minutes: 5
+      # LibreOffice's ~100 MB of .debs come from the runner's Azure apt mirror,
+      # which intermittently trickles at ~35 KB/s (2026-11-06: three PRs timed
+      # out mid-download). Acquire::Retries can't help — a slow transfer never
+      # errors. So the .debs ride actions/cache: metadata (`apt-get update`,
+      # fast even when the mirror is slow) resolves the exact package set, its
+      # filenames key the cache, and apt only downloads what the cache lacks.
+      # apt verifies every cached .deb against the signed index's SHA256, so a
+      # stale or corrupt cache entry is re-fetched, never installed.
+      - name: Resolve LibreOffice packages
+        id: libreoffice-debs
+        timeout-minutes: 2
         run: |
           sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libreoffice-core libreoffice-writer fontconfig
+          # Key on .deb filenames (name_version_arch), not URIs: the URI carries
+          # the mirror host, which the fallback below may change.
+          packages=$(sudo apt-get install -y --no-install-recommends --print-uris -qq $LIBREOFFICE_PACKAGES | awk '{ print $2 }' | sort)
+          echo "$packages"
+          . /etc/os-release
+          prefix="libreoffice-debs-$ID-$VERSION_ID-${{ runner.arch }}-"
+          echo "key=$prefix$(echo "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "restore-key=$prefix" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v5
+        id: libreoffice-cache
+        with:
+          path: ~/apt-debs
+          key: ${{ steps.libreoffice-debs.outputs.key }}
+          # A partial hit (Ubuntu shipped a new build of some packages) still
+          # saves most of the download: apt fetches only the changed .debs.
+          restore-keys: ${{ steps.libreoffice-debs.outputs.restore-key }}
+      - name: Download LibreOffice packages
+        # Download-only so a timeout can never interrupt dpkg mid-unpack. On a
+        # cache miss through a stalled Azure mirror, the first attempt gives up
+        # and the second goes straight to archive.ubuntu.com. The cap leaves
+        # the fallback's `apt-get update` two minutes between the two attempts.
+        timeout-minutes: 7
+        run: |
+          mkdir -p ~/apt-debs/partial
+          download() {
+            sudo timeout "$1" apt-get install -y --no-install-recommends --download-only \
+              -o Acquire::Retries=3 -o Dir::Cache::Archives="$HOME/apt-debs" $LIBREOFFICE_PACKAGES
+          }
+          if download 120; then exit 0; fi
+          echo "::warning::LibreOffice download stalled or failed on the runner's apt mirror; retrying from archive.ubuntu.com"
+          # Runner images route every pocket through this mirrorlist (Azure first).
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+          fi
+          sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+          sudo apt-get update -o Acquire::Retries=3
+          download 180
+      - name: Stage LibreOffice packages for the cache
+        id: libreoffice-stage
+        if: steps.libreoffice-cache.outputs.cache-hit != 'true'
+        # A restore-keys hit carried the previous set's .debs forward; autoclean
+        # drops the ones no index still lists, so the entry doesn't grow ~100 MB
+        # with every LibreOffice update. apt downloaded as root and left its
+        # lock + partial/ behind; the cache action runs as the runner user and
+        # should store only the .debs.
+        run: |
+          sudo apt-get autoclean -o Dir::Cache::Archives="$HOME/apt-debs"
+          sudo rm -rf ~/apt-debs/partial ~/apt-debs/lock
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-debs
+          # Re-key from the lists the .debs were downloaded against: the mirror
+          # fallback can land newer versions than the restore key resolved.
+          packages=$(sudo apt-get install -y --no-install-recommends --print-uris -qq $LIBREOFFICE_PACKAGES | awk '{ print $2 }' | sort)
+          echo "key=${{ steps.libreoffice-debs.outputs.restore-key }}$(echo "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/save@v5
+        # Saved now, not in a post-job step, so a red test run still warms the
+        # cache for the next one.
+        if: steps.libreoffice-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/apt-debs
+          key: ${{ steps.libreoffice-stage.outputs.key }}
+      - name: Install LibreOffice
+        # Every .deb is local by now; this is dpkg unpack + configure only.
+        timeout-minutes: 3
+        run: |
+          mkdir -p ~/apt-debs/partial
+          sudo apt-get install -y --no-install-recommends --no-download \
+            -o Dir::Cache::Archives="$HOME/apt-debs" $LIBREOFFICE_PACKAGES
       - name: Pre-warm fontconfig cache
         # Parallel soffice workers race to populate ~/.cache/fontconfig and the
         # losers print "Fontconfig error: No writable cache directories" to
