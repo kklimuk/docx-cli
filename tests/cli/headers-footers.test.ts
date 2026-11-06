@@ -677,6 +677,136 @@ describe("headers/footers — tracked changes", () => {
 		const table = (await runCli("track-changes", "list", path)).stdout;
 		expect(table).not.toContain("paragraph mark");
 	});
+
+	// Issue #37: every revision kind the body registers must register in a
+	// header too, or `accept --all` reports "no tracked changes" and leaves
+	// pending markup behind.
+	const paragraphMark = (tag: "ins" | "del", id: number) =>
+		`<w:pPr><w:rPr><w:${tag} w:id="${id}" ${REVISION}/></w:rPr></w:pPr>`;
+
+	test("a deleted header paragraph mark is listed; accept merges the lines", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-mark-del",
+			`<w:p>${paragraphMark("del", 1001)}<w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{ id: "tc0", kind: "del", blockId: "hdr0", text: "" },
+		]);
+		expect(await readMarkdown(path)).toContain('pending="tc0"');
+		await runCli("track-changes", "accept", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:del");
+		expect((await list("headers", path))[0]?.text).toBe("OneTwo");
+		expect(await listed(path)).toEqual([]);
+	});
+
+	test("rejecting an inserted header paragraph mark removes the inserted line", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-mark-ins",
+			`<w:p><w:r><w:t>Keep</w:t></w:r></w:p><w:p>${paragraphMark("ins", 1002)}${insertion(1003, "Added")}</w:p>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{ id: "tc0", kind: "ins", text: "Added" },
+			{ id: "tc1", kind: "ins", text: "" },
+		]);
+		await runCli("track-changes", "reject", path, "--all");
+		expect((await list("headers", path))[0]?.text).toBe("Keep");
+		expect(await partText(path, "word/header1.xml")).not.toContain("<w:ins");
+	});
+
+	test("rejecting the inserted mark of a header's only paragraph keeps one paragraph", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-mark-only",
+			`<w:p>${paragraphMark("ins", 1006)}${insertion(1007, "New")}</w:p>`,
+		);
+		await runCli("track-changes", "reject", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:ins");
+		expect(header).not.toContain("New");
+		expect(header).toContain("<w:p>");
+	});
+
+	test("a header paragraph-property change is listed and reject restores it", async () => {
+		const path = await docWithHeaderBody(
+			"hf-rev-ppr",
+			`<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="1004" ${REVISION}><w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{
+				kind: "pPrChange",
+				blockId: "hdr0",
+				prior: { alignment: "right" },
+				current: { alignment: "center" },
+			},
+		]);
+		await runCli("track-changes", "reject", path, "--at", "tc0");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("pPrChange");
+		expect(header).toContain('<w:jc w:val="right"/>');
+	});
+
+	test("a paragraph mark in a header text box story is listed once and accepted in both branches", async () => {
+		const box = wordTextBoxParagraphXml(["One", "Two"])
+			.replace(/^<w:p [^>]*>/, "<w:p>")
+			.replace(
+				/<w:p><w:r><w:t xml:space="preserve">One/g,
+				`<w:p>${paragraphMark("del", 1005)}<w:r><w:t xml:space="preserve">One`,
+			);
+		const path = await docWithHeaderBody("hf-rev-textbox-mark", box);
+		expect(await listed(path)).toMatchObject([
+			{ id: "tc0", kind: "del", blockId: "hdr0", text: "" },
+		]);
+		await runCli("track-changes", "accept", path, "--all");
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("<w:del");
+		expect(
+			header.match(/OneTwo|One<\/w:t><\/w:r><w:r><w:t[^>]*>Two/g),
+		).toHaveLength(2);
+	});
+
+	test("table revisions in a header are listed in body order and applied", async () => {
+		const cell = (text: string, tcPr = "") =>
+			`<w:tc>${tcPr}<w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc>`;
+		const path = await docWithHeaderBody(
+			"hf-rev-table",
+			`<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/><w:tblPrChange w:id="1010" ${REVISION}><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr></w:tblPrChange></w:tblPr>` +
+				`<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:tblGridChange w:id="1011"><w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/></w:tblGrid></w:tblGridChange></w:tblGrid>` +
+				`<w:tr>${cell("Logo")}${cell("Old col", `<w:tcPr><w:cellDel w:id="1012" ${REVISION}/></w:tcPr>`)}</w:tr>` +
+				`<w:tr><w:trPr><w:ins w:id="1013" ${REVISION}/></w:trPr>${cell("New row", `<w:tcPr><w:shd w:val="clear" w:fill="FF0000"/><w:tcPrChange w:id="1014" ${REVISION}><w:tcPr/></w:tcPrChange></w:tcPr>`)}${cell("B")}</w:tr>` +
+				`</w:tbl><w:p/>`,
+		);
+		expect(await listed(path)).toMatchObject([
+			{ id: "tc0", kind: "tblPrChange", blockId: "hdr0" },
+			{ id: "tc1", kind: "tblGridChange", blockId: "hdr0" },
+			{ id: "tc2", kind: "cellDel", blockId: "hdr0" },
+			{ id: "tc3", kind: "rowIns", blockId: "hdr0" },
+			{ id: "tc4", kind: "tcPrChange", blockId: "hdr0" },
+		]);
+		expect(await readMarkdown(path)).toContain('pending="tc0 tc1 tc2 tc3 tc4"');
+
+		// Reject the row insertion; accept the column deletion (the grid resyncs).
+		await runCli(
+			"track-changes",
+			"apply",
+			path,
+			"--accept",
+			"tc0",
+			"tc1",
+			"tc2",
+			"--reject",
+			"tc3",
+			"tc4",
+		);
+		const header = await partText(path, "word/header1.xml");
+		expect(header).not.toContain("Change");
+		expect(header).not.toContain("cellDel");
+		expect(header).not.toContain("New row");
+		expect(header).not.toContain("Old col");
+		expect(header).toContain('<w:tblW w:w="4000" w:type="dxa"/>');
+		expect(header.match(/<w:gridCol /g)).toHaveLength(1);
+		expect(await listed(path)).toEqual([]);
+		expect((await runCli("validate", path)).exitCode).toBe(0);
+	});
 });
 
 describe("headers/footers — validation", () => {

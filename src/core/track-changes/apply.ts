@@ -111,8 +111,11 @@ function applyResolvedTargets(
 
 	// Cell removals (accept-cellDel / reject-cellIns) shrink rows without
 	// touching <w:tblGrid>; bring the grid back in line with the widest row.
-	resyncTableGrids(document.documentTree);
-	pruneEmptyHyperlinks(document.documentTree);
+	// Header/footer parts hold tables and hyperlinks too.
+	for (const tree of [document.documentTree, ...marginalTrees(document)]) {
+		resyncTableGrids(tree);
+		pruneEmptyHyperlinks(tree);
+	}
 
 	// Pair body-side note revisions with the reference-side targets we just
 	// applied. For each affected (kind, noteId): if no live reference to it
@@ -123,6 +126,12 @@ function applyResolvedTargets(
 	applyNotePairing(document, affectedNotes);
 
 	return records;
+}
+
+function marginalTrees(document: Document): XmlNode[][] {
+	return [...(document.marginals?.parts.values() ?? [])].map(
+		(part) => part.tree,
+	);
 }
 
 /** A revision spread over several markers resolves as each marker would on its
@@ -228,6 +237,13 @@ function changeFoundFromReference(
 	if (reference.tableCell) found.tableCell = reference.tableCell;
 	if (reference.tableCellParent)
 		found.tableCellParent = reference.tableCellParent;
+	// A header/footer paragraph isn't in `Body.blockReferences`; the reader
+	// stored its paragraph-mark scope on the reference instead.
+	if (reference.paragraph && reference.paragraphParent) {
+		found.paragraph = reference.paragraph;
+		found.paragraphParent = reference.paragraphParent;
+		return found;
+	}
 	// A run-level <w:ins>/<w:del> whose parent is the owning paragraph's
 	// <w:pPr><w:rPr> children is a paragraph-mark tracking — recover the owning
 	// paragraph + its parent so accept-del (merge with next) / reject-ins
@@ -355,7 +371,10 @@ function applyReject(target: ChangeFound): void {
 			// following purely-inserted paragraphs splice themselves out, so it
 			// simply re-absorbs its restored content. Keying on "any non-ins child"
 			// instead would wrongly KEEP a fresh insert's hyperlink as an orphan.
-			if (paragraphHasRestorableContent(target.paragraph)) {
+			if (
+				paragraphHasRestorableContent(target.paragraph) ||
+				isOnlyBlock(target.paragraph, target.paragraphParent)
+			) {
 				deleteNode(target.node, target.parent);
 			} else {
 				const idx = target.paragraphParent.indexOf(target.paragraph);
@@ -589,6 +608,18 @@ function mergeParagraphWithNext(
 function paragraphHasRestorableContent(paragraph: XmlNode): boolean {
 	return paragraph.children.some(
 		(child) => child.tag === "w:del" || child.tag === "w:moveFrom",
+	);
+}
+
+/** A story (a header/footer part, a table cell, a text box) must keep at least
+ * one block — `<w:hdr/>` or a paragraph-less `<w:tc>` is not a valid story —
+ * so rejecting the inserted mark of its only paragraph strips the marker and
+ * keeps the (now empty) paragraph, as Word keeps a story's final mark. */
+function isOnlyBlock(paragraph: XmlNode, parent: XmlNode[]): boolean {
+	return !parent.some(
+		(sibling) =>
+			sibling !== paragraph &&
+			(sibling.tag === "w:p" || sibling.tag === "w:tbl"),
 	);
 }
 
