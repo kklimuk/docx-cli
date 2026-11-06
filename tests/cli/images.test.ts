@@ -1225,12 +1225,8 @@ describe("HEIC/HEIF input is refused on every image ingress", () => {
 			code: "IMAGE_SOURCE",
 			hint: expect.stringContaining("sips -s format jpeg"),
 		});
-		// `create` stages the blank package before its markdown pass (a
-		// pre-existing trait of every --from failure), so assert no image landed.
-		const pkg = await Pkg.open(docPath);
-		expect(pkg.listParts().some((part) => part.startsWith("word/media/"))).toBe(
-			false,
-		);
+		// `create` is atomic: the refused image means no file at all.
+		expect(await Bun.file(docPath).exists()).toBe(false);
 	});
 
 	test("images replace refuses a .heic file or HEIC behind a .jpg label", async () => {

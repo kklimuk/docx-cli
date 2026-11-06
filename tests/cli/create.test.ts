@@ -467,3 +467,124 @@ describe("docx create — inline escape decoding (--text)", () => {
 		expect(paragraph?.runs).toEqual([{ type: "text", text: "Hello world" }]);
 	});
 });
+
+describe("docx create — atomic: a failure writes nothing", () => {
+	// create builds the whole document in memory and writes it once. A failure
+	// anywhere (unreadable --from, a refused image, a missing --text-file) must
+	// leave no half-built .docx behind, and must not touch a file --force would
+	// have replaced.
+	async function badImageMarkdown(workspace: string): Promise<string> {
+		const source = join(workspace, "source.md");
+		await Bun.write(
+			source,
+			`# Report\n\nIntro.\n\n![Chart](${join(workspace, "missing.png")})\n`,
+		);
+		return source;
+	}
+
+	test("a failing markdown import leaves no file at the output path", async () => {
+		const workspace = tempWorkspace("create-atomic-new");
+		const docPath = join(workspace, "out.docx");
+		const result = await runCli(
+			"create",
+			docPath,
+			"--from",
+			await badImageMarkdown(workspace),
+			"--margins",
+			"1in",
+			"--page-numbers",
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({ code: "IMAGE_SOURCE" });
+		expect(await Bun.file(docPath).exists()).toBe(false);
+	});
+
+	test("an unreadable --from or --text-file leaves no file", async () => {
+		const workspace = tempWorkspace("create-atomic-missing-source");
+		for (const flag of ["--from", "--text-file"]) {
+			const docPath = join(workspace, `out${flag}.docx`);
+			const result = await runCli(
+				"create",
+				docPath,
+				flag,
+				join(workspace, "does-not-exist.md"),
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect(await Bun.file(docPath).exists()).toBe(false);
+		}
+	});
+
+	test("a failing --force create leaves the existing file byte-identical", async () => {
+		const workspace = tempWorkspace("create-atomic-force");
+		const docPath = join(workspace, "out.docx");
+		await runCli("create", docPath, "--text", "Keep me");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"create",
+			docPath,
+			"--force",
+			"--from",
+			await badImageMarkdown(workspace),
+		);
+		expect(result.exitCode).toBe(1);
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("Keep me");
+	});
+
+	test("--dry-run runs the import (so it fails the same way) and writes nothing", async () => {
+		const workspace = tempWorkspace("create-atomic-dry-run");
+		const docPath = join(workspace, "out.docx");
+		const failing = await runCli(
+			"create",
+			docPath,
+			"--dry-run",
+			"--from",
+			await badImageMarkdown(workspace),
+		);
+		expect(failing.exitCode).toBe(1);
+		expect(failing.parsed).toMatchObject({ code: "IMAGE_SOURCE" });
+		expect(await Bun.file(docPath).exists()).toBe(false);
+
+		const source = join(workspace, "ok.md");
+		await Bun.write(source, "# Title\n\nOne.\n\nTwo.\n");
+		const preview = await runCli(
+			"create",
+			docPath,
+			"--dry-run",
+			"--from",
+			source,
+		);
+		expect(preview.exitCode).toBe(0);
+		expect(preview.parsed).toMatchObject({
+			operation: "create",
+			dryRun: true,
+			blocks: 3,
+		});
+		expect(await Bun.file(docPath).exists()).toBe(false);
+	});
+
+	test("a successful create still writes every step: markdown, geometry, footer", async () => {
+		const workspace = tempWorkspace("create-atomic-success");
+		const source = join(workspace, "ok.md");
+		await Bun.write(source, "# Title\n\nBody text.\n");
+		const docPath = join(workspace, "out.docx");
+		const result = await runCli(
+			"create",
+			docPath,
+			"--from",
+			source,
+			"--orientation",
+			"landscape",
+			"--footer",
+			"Confidential",
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.parsed).toMatchObject({ operation: "create", blocks: 2 });
+		const read = await runCli("read", docPath);
+		expect(read.stdout).toContain("# Title");
+		expect(read.stdout).toContain("Body text.");
+		expect(read.stdout).toContain('orientation="landscape"');
+		expect(read.stdout).toContain('text="Confidential"');
+	});
+});
