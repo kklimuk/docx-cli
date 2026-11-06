@@ -18,6 +18,7 @@ import {
 	resolveCellParagraphReference,
 } from "@core";
 import type { ParagraphOptions } from "@core/blocks";
+import { fieldRemovalRefusal } from "@core/fields";
 import type { XmlNode } from "@core/parser";
 import { ensureCellEndsWithParagraph, type Grid } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
@@ -126,6 +127,14 @@ export async function runEditBatch(
 			return fail(error.code, error.message, error.hint);
 		}
 		throw error;
+	}
+
+	const fieldRefusal = fieldRemovalRefusal(
+		document.body,
+		resolved.filter((entry) => entry.removesLine).map((entry) => entry.node),
+	);
+	if (fieldRefusal) {
+		return fail(fieldRefusal.code, fieldRefusal.message, fieldRefusal.hint);
 	}
 
 	// Entries apply in memory even on --dry-run (only the save is skipped), so
@@ -285,6 +294,9 @@ type ResolvedEntry = {
 	paragraphLocator: string;
 	/** Performs the mutation via the `Edit` lens. Throws `EditError`. */
 	apply: () => void;
+	/** A line removal (empty `text` / `delete: true`) — checked as one set
+	 *  against fields that span paragraphs before anything applies. */
+	removesLine?: true;
 	/** Filled by `apply` for a whole-paragraph content edit: the other authors
 	 *  whose pending revisions it resolved (warned after the save, issue #17). */
 	resolvedAuthors: string[];
@@ -453,6 +465,7 @@ async function resolveEntry(
 			...(cellParent ? { cellParent } : {}),
 			paragraphLocator,
 			apply,
+			removesLine: true,
 			resolvedAuthors: [],
 		};
 	}

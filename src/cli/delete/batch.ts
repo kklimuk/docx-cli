@@ -4,6 +4,7 @@ import {
 	LocatorResolveError,
 	type XmlNode,
 } from "@core";
+import { fieldRemovalRefusal } from "@core/fields";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import { readJsonlObjects } from "../parse-helpers";
 import {
@@ -122,6 +123,14 @@ export async function runDeleteBatch(
 		seenNodes.add(blockRef.node);
 		refs.push({ locator: at, ref: blockRef });
 	}
+
+	// Judged against the whole set, so a batch removing every paragraph a
+	// field spans (both of its ends) goes through.
+	const refusal = fieldRemovalRefusal(
+		document.body,
+		refs.map((entry) => entry.ref.node),
+	);
+	if (refusal) return fail(refusal.code, refusal.message, refusal.hint);
 
 	if (dryRun) {
 		await respond({

@@ -483,6 +483,7 @@ function wrapTracked(
 function renameTextToDelText(nodes: XmlNode[]): void {
 	for (const node of nodes) {
 		if (node.tag === "w:t") node.tag = "w:delText";
+		if (node.tag === "w:instrText") node.tag = "w:delInstrText";
 		if (node.children.length > 0) renameTextToDelText(node.children);
 	}
 }

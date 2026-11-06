@@ -6,6 +6,7 @@ import {
 	threadRootsOf,
 } from "../ast/document/comments/reconcile-sidecars";
 import { auditCommentMarkers, type StoryPart } from "../comments/marker-audit";
+import { auditFieldBalance } from "../fields/audit";
 import type { XmlNode } from "../parser";
 
 /** Package-level consistency audit — the cross-part invariants no per-part
@@ -26,6 +27,10 @@ import type { XmlNode } from "../parser";
  *    handles them harmlessly).
  *  - **Thread links** — `auditThreadLinks`: a `w15:paraIdParent` naming no
  *    comment (warning; Word drops the thread).
+ *  - **Field balance** — `auditFieldBalance`: a `<w:fldChar>` the begin/
+ *    separate/end stack can't pair (an orphan `end`, a field never closed) is
+ *    an ERROR — the XSDs can't see it, and an unclosed field swallows the text
+ *    after it as instruction.
  *
  *  Because the reports come from the very functions `validate --fix` (and
  *  every save) applies, a finding is marked fixable exactly when the fix cures
@@ -62,19 +67,26 @@ export function checkPackageConsistency(
 		findings.push(...reconcileSidecars(cloneRoots(roots)));
 		findings.push(...auditThreadLinks(roots));
 	}
-	return findings.flatMap((finding) =>
-		finding.severity === "silent"
-			? []
-			: [
-					{
-						part: finding.part,
-						message: finding.message,
-						severity: finding.severity,
-						fixable: finding.fix !== undefined,
-						...(finding.hint ? { hint: finding.hint } : {}),
-					},
-				],
-	);
+	const fieldIssues = auditFieldBalance([
+		...stories,
+		...parts.filter((part) => part.root.tag === "w:comments"),
+	]);
+	return [
+		...fieldIssues,
+		...findings.flatMap((finding) =>
+			finding.severity === "silent"
+				? []
+				: [
+						{
+							part: finding.part,
+							message: finding.message,
+							severity: finding.severity,
+							fixable: finding.fix !== undefined,
+							...(finding.hint ? { hint: finding.hint } : {}),
+						},
+					],
+		),
+	];
 }
 
 const STORY_ROOTS = new Set([

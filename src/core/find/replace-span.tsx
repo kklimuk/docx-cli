@@ -814,6 +814,7 @@ function mintMeta(tracked: TrackedReplaceOptions): TrackedMeta {
 function convertRunTextToDelText(run: XmlNode): void {
 	for (const child of run.children) {
 		if (child.tag === "w:t") child.tag = "w:delText";
+		if (child.tag === "w:instrText") child.tag = "w:delInstrText";
 	}
 }
 

@@ -365,7 +365,9 @@ function walkXml(nodes: XmlNode[], visit: (node: XmlNode) => void): void {
 	}
 }
 
-/** Rewrite `<w:t>` → `<w:delText>` under a tracked deletion. A text box's
+/** Rewrite `<w:t>` → `<w:delText>` (and a field's `<w:instrText>` →
+ *  `<w:delInstrText>`, its deleted-instruction twin) under a tracked
+ *  deletion. A text box's
  *  story (`<w:txbxContent>`) is NOT descended: the anchor run's `<w:del>`
  *  already deletes the whole shape as one unit (what Word records), and
  *  rewriting the story would leave bare delText outside any `<w:del>` that
@@ -374,6 +376,7 @@ function mutateTextToDelText(nodes: XmlNode[]): void {
 	for (const node of nodes) {
 		if (node.tag === "w:txbxContent") continue;
 		if (node.tag === "w:t") node.tag = "w:delText";
+		if (node.tag === "w:instrText") node.tag = "w:delInstrText";
 		mutateTextToDelText(node.children);
 	}
 }
