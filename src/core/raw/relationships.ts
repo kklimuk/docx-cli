@@ -1,4 +1,5 @@
 import type { Document } from "../ast/document";
+import { resolveRelationshipTarget } from "../ast/document/relationships";
 import { XmlNode } from "../parser";
 import { RawError } from "./error";
 import { assertWellFormed, parseRoots } from "./parse";
@@ -160,31 +161,13 @@ function checkInternalTarget(document: Document, node: XmlNode): void {
 	if (node.getAttribute("TargetMode") === "External") return;
 	const target = node.getAttribute("Target");
 	if (!target) return;
-	const partName = resolveRelativePart(target);
+	const partName = resolveRelationshipTarget("word/document.xml", target);
 	if (document.pkg.hasPart(partName)) return;
 	throw new RawError(
 		"INVALID_XML",
 		`Target "${target}" resolves to part "${partName}", which does not exist in the package — a relationship to a missing part corrupts the file the same way a dangling rId does`,
 		`For a URL, add TargetMode="External". Create the part first: docx raw part add FILE --name ${partName} (--from bytes | --xml '…') — or docx images add for pictures.`,
 	);
-}
-
-/** Resolve a rels Target against its base (`word/`, since this is the
- *  document part's rels): `media/image1.png` → `word/media/image1.png`,
- *  `../customXml/item1.xml` → `customXml/item1.xml`, a leading `/` is
- *  package-absolute. */
-function resolveRelativePart(target: string): string {
-	const base = target.startsWith("/") ? target.slice(1) : `word/${target}`;
-	const segments: string[] = [];
-	for (const segment of base.split("/")) {
-		if (segment === "" || segment === ".") continue;
-		if (segment === "..") {
-			segments.pop();
-			continue;
-		}
-		segments.push(segment);
-	}
-	return segments.join("/");
 }
 
 /** Insert: every explicit Id must be free (in the part AND the fragment);

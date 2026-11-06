@@ -26,6 +26,7 @@ export type ErrorCode =
 	| "BLOCK_NOT_FOUND"
 	| "COMMENT_NOT_FOUND"
 	| "IMAGE_NOT_FOUND"
+	| "CHART_NOT_FOUND"
 	| "IMAGE_SOURCE"
 	| "HYPERLINK_NOT_FOUND"
 	| "RELATIONSHIP_NOT_FOUND"
@@ -281,6 +282,7 @@ function exitCodeFor(code: ErrorCode): number {
 		case "BLOCK_NOT_FOUND":
 		case "COMMENT_NOT_FOUND":
 		case "IMAGE_NOT_FOUND":
+		case "CHART_NOT_FOUND":
 		case "HYPERLINK_NOT_FOUND":
 		case "RELATIONSHIP_NOT_FOUND":
 		case "TRACKED_CHANGE_NOT_FOUND":

@@ -240,6 +240,15 @@ Full contract in [src/core/markdown/CLAUDE.md](../core/markdown/CLAUDE.md). New
 structural annotation? Use `formatNote`, keep it deviation-only, and remember the
 importer won't reconstruct it — NO comment is parse-back, not even `docx:base`.
 
+## `charts` — read-only chart surface
+
+`docx charts list` / `charts extract --at chartN [--json]` are thin shells over
+the `Charts` lens in [`@core/chart`](../core/chart/CLAUDE.md); `read` prints
+each native chart as `` `[chart]` `` + `<!-- docx:chart chartN type=… title=…
+series=N points=N size=… -->` (`formatChartNote` in `read/markdown.ts`, sharing
+`chartTypeName`/`chartPointCount` with `list` so they can't disagree). An
+unknown id fails `CHART_NOT_FOUND` (exit 3). No chart verb mutates yet.
+
 ## Help leads with markdown; `--text` is the literal escape hatch
 
 The read view is Markdown, so the natural write-back is markdown — and it's the DEFAULT: `edit`/`insert` take the content as a POSITIONAL argument after the flags (`docx edit FILE --at p3 "Net **30** days"`), which `adoptPositionalMarkdown` (`cli/parse-helpers.ts`) folds into `values.markdown` before validation so every downstream check sees one path; `--markdown` stays as an alias. A second content positional is REFUSED (an unquoted phrase would otherwise silently truncate to its first word), as is positional + `--markdown` or positional + `--batch`. The `edit`/`insert` help (and the top-level one-liners) show the positional form FIRST, in the usage line and the examples, and describe `--text` as the LITERAL channel (`--text "**bold**"` writes the asterisks) for values Markdown would mangle or for a character span. Weak agents copy `**…**` from the read view straight into `--text`/`replace` and ship literal asterisks (the résumé b2-r3 run); three of five agents also read `edit --help` through `head -50`/`head -80`, so the contract sits in the first ten lines. Alignment/spacing/indent/tabs ride along with `--markdown` on both verbs (applied to every paragraph the source produces); only `--style` (and insert's `--list`) is refused next to it, because a `# heading` or list item owns those. `insert` also blends a new paragraph into its neighbor like Word's Enter key — font/size plus tabs, indent, alignment and spacing (`inheritParagraphLayout` in `core/insert/inherit.ts`) — unless the caller sets them; a heading anchor lends nothing, a list anchor lends no layout.
