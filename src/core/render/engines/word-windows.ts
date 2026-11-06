@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stageForWord } from "./stage-for-word";
 import { type RenderEngine, RenderEngineError } from "./types";
 
 /** Word for Windows engine. Drives Microsoft Word via PowerShell's COM
@@ -39,7 +40,8 @@ export const wordWindowsEngine: RenderEngine = {
 		const stagedDocx = `${stage}.docx`;
 		const stagedPdf = `${stage}.pdf`;
 		try {
-			await Bun.write(stagedDocx, Bun.file(inputDocx));
+			// Staged WITHOUT "update fields on open" — see stageForWord.
+			await stageForWord(inputDocx, stagedDocx);
 			const script = [
 				"$ErrorActionPreference = 'Stop'",
 				"$word = New-Object -ComObject Word.Application",

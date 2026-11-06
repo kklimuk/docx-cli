@@ -16,6 +16,11 @@ src/core/render/
                          Word sandbox Container
     word-windows.ts    — Microsoft Word via PowerShell COM
                          (`ExportAsFixedFormat`)
+    stage-for-word.ts  — `stageForWord`: the staged copy both Word engines
+                         open, minus `w:dirty` field flags and
+                         `<w:updateFields>` — either makes Word block on open
+                         with "update the fields?" (alerts-none doesn't
+                         suppress it), hanging unattended renders
     libreoffice.ts     — `soffice --headless --convert-to pdf`
                          (cross-platform)
   split-pdf.ts         — PDF → PNG/JPG via @hyzyla/pdfium (WASM) + pngjs /

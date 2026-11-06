@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { stageForWord } from "./stage-for-word";
 import { type RenderEngine, RenderEngineError } from "./types";
 
 /** Word for Mac engine. Drives Microsoft Word via `osascript` to open the
@@ -43,7 +44,8 @@ export const wordMacEngine: RenderEngine = {
 		const stagedDocx = join(stageDir, stagedName);
 		const stagedPdf = join(stageDir, `.docx-cli-render-${tag}.pdf`);
 		try {
-			await Bun.write(stagedDocx, Bun.file(inputDocx));
+			// Staged WITHOUT "update fields on open" — see stageForWord.
+			await stageForWord(inputDocx, stagedDocx);
 			// Word's AppleScript `save as` with `format PDF` is the canonical
 			// way to export a PDF from Word for Mac. `close ... saving no`
 			// suppresses the "Save changes?" prompt (we already wrote the
