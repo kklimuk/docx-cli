@@ -27,6 +27,24 @@ mix, and `positive` is checked AFTER rounding (`0.01pt` is a 0-twip value). A ne
 (`--widths 25%,…`, `--table-width 50%`) are handled by the caller before the
 length parse. Font `--size` and `--border-size` are not lengths — leave them.
 
+## `move` — relocate, never re-author
+
+[move/](move/) is a thin parser over the `Move` lens in
+[`core/move`](../core/move/index.ts): `plan()` resolves every source and
+destination to LIVE `XmlNode` refs and runs every refusal against the document
+as read (no mutation), `apply()` detaches each source and splices it at its
+destination by live `indexOf`. Because the nodes themselves move, everything
+inside them — comment ranges, note references, bookmarks, fields, drawings,
+text boxes, `dcx:raw` blocks — rides along with no per-construct code; resist
+adding any (a copy-then-delete path is exactly what issue #38 replaced). Every
+refusal is a nonzero exit with nothing written, including a move that lands
+where the blocks already are (no-op rule) and a range marker with one end inside
+the source (comment/bookmark/perm/move ranges, `RANGE_PAIRS` in
+`core/move/guards.ts`). **Untracked only for now**: `move` refuses while
+tracking is on rather than silently skipping the journal — the tracked shape
+(`<w:moveFrom>`/`<w:moveTo>` + range markers, paired by `w:name` in review)
+must be captured from the Word oracle before it is written.
+
 ## `raw` — the verbatim `--xml` channel
 
 `docx raw insert/replace` takes `--xml` VERBATIM — never route it through

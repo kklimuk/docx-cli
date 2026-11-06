@@ -177,6 +177,7 @@ docx insert FILE (--after | --before) LOCATOR <content>   # explicit block side 
 docx insert FILE (--at-start | --at-end) <content>        # no locator — prepend / append to the document
 docx edit   FILE --at LOCATOR <content>                   # LOCATOR = pN | pN:S-E | pN-pM | tN:rRcC | tN:rRcC:pK[:S-E]; bare CELL requires one direct paragraph
 docx delete FILE --at LOCATOR                             # LOCATOR = pN | pN-pM | tN | sN | tN:rRcC:pK (cell paragraph)
+docx move   FILE --at LOCATOR (--after | --before) LOCATOR [--subtree]   # relocate blocks in place (see below)
 docx sections FILE [--at LOCATOR] [--columns N] [--type T] [--orientation O] [--size SIZE] [--margins M]   # LOCATOR = pN-pM | pN (wrap a range in N columns) | sN (edit one section's columns/type/page geometry). Multi-column layout AND page setup live HERE. PAGE GEOMETRY (margins/orientation/size) with NO --at applies to the WHOLE document (every section); --at sN targets one. Columns/type need --at.
 docx styles set-default-font FILE "Font Name" [--size N] [--all]   # document-wide font: sets styles.xml docDefaults + theme major/minor; --all also repoints styles/runs that pin their own font
 docx replace FILE PATTERN REPLACEMENT [--at pN] [--regex] [--ignore-case] [--all] [--limit N] [--current | --baseline] [--exact] [--clear ATTRS] [run-formatting] [--track] [--dry-run]
@@ -206,6 +207,7 @@ docx edit    FILE --batch fills.jsonl       # { at, <one of: text|clear|markdown
 docx insert  FILE --batch additions.jsonl   # { at|after|before, <content>, style?, color?, … }
 docx replace FILE --batch script.jsonl      # { pattern, replacement, at?, regex?, all?, limit?, clear?, bold?, color?, … } applied in order
 docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (pN/tN/cell), resolved live-first
+docx move    FILE --batch moves.jsonl       # { at, after|before, subtree? } — applied in order; several after one anchor keep entry order
 
 # All four of insert/edit/delete/replace accept --track to record that one
 # invocation as a tracked change even when the doc's track-changes toggle is off.
@@ -544,6 +546,17 @@ docx edit doc.docx --at p3 --markdown-file revised.md   # multi-block source exp
 ```
 
 A source starting with `-` (a bullet) works inline too — `docx insert doc.docx --after p3 "- item"`; `--markdown-file` is for long or multi-block sources.
+
+**move a clause, section, or table.** `move` splices the blocks themselves — no copy, no Markdown round-trip — so comment ranges, footnote references, bookmarks, fields, images, text boxes and every paragraph property come along untouched. Don't read → `insert` a copy → `delete` the original: that orphans the comment and turns `[^fn1]` into literal text.
+
+```sh
+docx move doc.docx --at p7 --before p2              # one paragraph
+docx move doc.docx --at p4-p9 --after p20           # a range (tables between come too)
+docx move doc.docx --at p12 --subtree --before p3   # a heading + everything under it (next same-or-higher heading ends it)
+docx move doc.docx --at p5 --after t0:r1c2          # into a bare cell (fills an empty cell's blank paragraph)
+```
+
+`--at` takes `pN`, `pN-pM`, `tN`, a cell paragraph `tN:rRcC:pK`, or a text-box paragraph `tbxN:pK`; `--after`/`--before` take a block or a bare cell (end/start), exactly like `insert`. It prints the moved blocks' NEW locators. Refused with a nonzero exit and nothing written: a destination inside the source, a move that lands where the blocks already are, a source paragraph carrying a section break, a comment/bookmark range with only one end inside the source, a move between the body and a text box, and any move while track changes is on — tracked moves (`<w:moveFrom>`/`<w:moveTo>`) aren't written yet. A moved list item keeps its own numbering (`numPr`), as in Word. A cell or text box left without a paragraph gets Word's mandatory empty one.
 
 **track-changes review loop.** Toggle tracking on, make edits (they auto-emit `<w:ins>`/`<w:del>`), then inventory and resolve:
 

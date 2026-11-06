@@ -134,6 +134,17 @@ export class Body {
 		return { parent: start.parent, startIndex, endIndex };
 	}
 
+	/** The current locators of `nodes`, in document order — how a structural
+	 *  mutator (insert, move) reports where its blocks landed. Call after
+	 *  `document.reread()`: positional ids shift on every structural edit. */
+	locatorsOf(nodes: ReadonlySet<XmlNode>): string[] {
+		const locators: string[] = [];
+		for (const [blockId, reference] of this.blockReferences) {
+			if (nodes.has(reference.node)) locators.push(blockId);
+		}
+		return locators;
+	}
+
 	findBodyChildren(): XmlNode[] {
 		return this.body.children;
 	}

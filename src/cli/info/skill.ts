@@ -106,6 +106,7 @@ it if you use \`--ast\`.
 | leave notes on clauses | \`comments add FILE --batch -\` with lines like \`{"anchor":"limitation of liability","text":"Cap is too low."}\` |
 | finalize a returned redline | \`track-changes list\` → \`track-changes apply FILE --accept rev0 rev2 --reject rev1\` → \`comments reply FILE --batch -\` with \`{"at":"c0","text":"Done.","resolve":true}\` |
 | fill out a contract, NDA, form, or template | \`replace FILE --batch -\` with \`{"pattern":"[Client]","replacement":"Acme, Inc."}\` (keeps each field's formatting) |
+| reorder / move a clause, section, or table | \`move FILE --at p12 --before p3\` (\`--subtree\` on a heading takes its whole section) — never re-insert a copy and delete the original |
 | restyle headings, fonts, spacing, margins | \`styles set\`, \`styles set-default-font\`, \`sections --margins\` |
 | write a new document | \`create out.docx --from draft.md\` |
 
@@ -195,7 +196,7 @@ docx render FILE --out pages/             # PNG per page — only when LAYOUT is
 
 ## 4. Apply many changes from one read — \`--batch\`
 
-\`edit\`, \`insert\`, \`replace\`, \`delete\`, and the \`comments\` verbs take
+\`edit\`, \`insert\`, \`replace\`, \`delete\`, \`move\`, and the \`comments\` verbs take
 \`--batch FILE.jsonl\` (one JSON change per line; \`-\` reads stdin). Every locator
 in the batch addresses the document **as read**, so ids stay valid across the whole
 batch — one read, one write, no re-reading between changes. Keys mirror the
@@ -208,7 +209,7 @@ command's flags. This is the right tool for filling a form or applying a review.
   have to re-read just to learn whether a mutation landed.
 - Mutators overwrite \`FILE\` **in place** (git is your history). \`-o/--output PATH\`
   writes a copy instead; \`--dry-run\` previews without writing.
-- A command that mints a new handle (\`comments add\`→\`cN\`, \`insert\`→\`pN\`,
+- A command that mints a new handle (\`comments add\`→\`cN\`, \`insert\`/\`move\`→\`pN\`,
   \`footnotes add\`→\`fnN\`, …) prints the bare locator(s), one per line.
 - Re-read after structural edits (ids shift), or batch from one read.
 - Need exact literal text in (a URL, prose GFM would mangle)? \`insert\` and

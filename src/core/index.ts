@@ -67,6 +67,7 @@ export {
 	resolveClearTags,
 } from "./edit";
 export { Fonts, type SetDefaultFontResult } from "./fonts";
+export { headingLevel } from "./heading-level";
 export {
 	Insert,
 	InsertError,
@@ -121,6 +122,12 @@ export {
 	MarkdownImportError,
 	type MarkdownImportErrorCode,
 } from "./markdown";
+export {
+	Move,
+	MoveError,
+	type MoveRequest,
+	type PlannedMove,
+} from "./move";
 export { XmlNode } from "./parser";
 export {
 	detectEngine,

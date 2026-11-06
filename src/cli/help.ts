@@ -29,6 +29,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   replace   FILE PATTERN REPL  Replace the FIRST match sed-style (--all for every match). KEEPS formatting/tabs and can format the replacement (--bold/--color/--clear; --track; --batch).
   edit      FILE  Replace content at a locator — pass the new markdown after the locator (the dialect \`read\` prints; --text is literal). --clear strips formatting, --track redlines, --batch does many edits in one read. ${NOUN_REDIRECTS}
   delete    FILE  Remove content at a locator (--at LOCATOR; --track for tracked deletion; --batch to remove many in one read)
+  move      FILE  Relocate blocks in place — "move FILE --at p7 --before p2"; pN-pM / tN / cell paragraphs; --subtree moves a heading with its section; comments, footnotes & formatting ride along (never re-insert a copy + delete); --batch.
   outline   FILE  List headings as a locator tree (pN feeds --at / read --from; --style-prefix, --json)
   wc        FILE [LOCATOR]  Count words in the doc or a slice (--accepted/--baseline/--current tracked view, --json)
   sections  FILE  Multi-column layout, section breaks & PAGE SETUP — columns on a range (--at pN-pM --columns N); page margins/orientation/size for the WHOLE document ("--margins 0.5" with NO --at sets every section) or one section (--at sN). The ONLY way to do columns; insert does not.

@@ -1,4 +1,10 @@
-import { type Block, type Body, type Paragraph, paragraphText } from "@core";
+import {
+	type Block,
+	type Body,
+	headingLevel,
+	type Paragraph,
+	paragraphText,
+} from "@core";
 
 export type OutlineEntry = {
 	id: string;
@@ -46,19 +52,6 @@ export function buildOutline(
 	}
 
 	return root.children;
-}
-
-function headingLevel(
-	style: string | undefined,
-	stylePrefix: string,
-): number | null {
-	if (!style) return null;
-	if (!style.startsWith(stylePrefix)) return null;
-	const remainder = style.slice(stylePrefix.length).trim();
-	if (remainder === "") return 1;
-	const parsed = Number(remainder);
-	if (!Number.isInteger(parsed) || parsed < 1) return null;
-	return parsed;
 }
 
 function* headingParagraphs(
