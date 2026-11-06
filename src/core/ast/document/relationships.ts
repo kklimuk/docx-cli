@@ -15,6 +15,35 @@ export function relsPartNameFor(partName: string): string {
 	return `${dir}/_rels/${base}.rels`;
 }
 
+/** Resolve a relationship `Target` to a package part name, against the
+ *  directory of the part whose rels declare it: from `word/document.xml`,
+ *  `media/image1.png` → `word/media/image1.png` and `../customXml/item1.xml` →
+ *  `customXml/item1.xml`; from `word/charts/chart1.xml`,
+ *  `../embeddings/Book1.xlsx` → `word/embeddings/Book1.xlsx`. A leading `/` is
+ *  package-absolute. */
+export function resolveRelationshipTarget(
+	sourcePartName: string,
+	target: string,
+): string {
+	const sourceDirectory = sourcePartName.slice(
+		0,
+		sourcePartName.lastIndexOf("/") + 1,
+	);
+	const base = target.startsWith("/")
+		? target.slice(1)
+		: `${sourceDirectory}${target}`;
+	const segments: string[] = [];
+	for (const segment of base.split("/")) {
+		if (segment === "" || segment === ".") continue;
+		if (segment === "..") {
+			segments.pop();
+			continue;
+		}
+		segments.push(segment);
+	}
+	return segments.join("/");
+}
+
 const HYPERLINK_RELATIONSHIP_TYPE =
 	"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 

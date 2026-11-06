@@ -44,6 +44,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   headers   …     Set/list/clear page headers — --text, page numbers, date, fields; --first-page/--even; default = whole document
   footers   …     Set/list/clear page footers — e.g. "footers set FILE --page-number --of-pages" for "Page X of Y"
   images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
+  charts    …     Inspect native Word charts — list (chartN, type, title, series), extract a chart's data as CSV (--at chartN); read shows each as \`[chart]\` + a docx:chart hint
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Create a table (create --after pN --rows N --cols M), then restructure — insert/delete rows & columns, merge/unmerge, set widths, borders, format
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"

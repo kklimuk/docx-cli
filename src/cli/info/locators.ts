@@ -137,6 +137,7 @@ Discovering ids:
                    default Markdown render)
   cN               docx comments list FILE
   imgN             docx images list FILE
+  chartN           docx charts list FILE
   linkN            docx hyperlinks list FILE
   fnN / enN        docx footnotes list FILE / docx endnotes list FILE
   hdrN / ftrN      docx headers list FILE / docx footers list FILE
@@ -186,6 +187,7 @@ function renderJson(): unknown {
 			"pN/tN/sN": "docx read FILE --ast",
 			cN: "docx comments list FILE",
 			imgN: "docx images list FILE",
+			chartN: "docx charts list FILE",
 			linkN: "docx hyperlinks list FILE",
 			"fnN/enN": "docx footnotes list FILE / docx endnotes list FILE",
 			"hdrN/ftrN": "docx headers list FILE / docx footers list FILE",

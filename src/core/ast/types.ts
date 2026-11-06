@@ -382,12 +382,67 @@ export type NoteRefRun = {
 	id: string;
 };
 
-/** Placeholder for a non-picture drawing (chart, shape, SmartArt, etc.). The
- * full content is preserved in the underlying XML; the run is a marker so
- * callers can know "something visual lives here." */
-export type ChartRun = {
+/** A non-picture drawing. A native Word chart (`kind: "chart"`) is a
+ * `NativeChartRun` with its own `chartN` handle and the data parsed from its
+ * chart part; a shape, SmartArt diagram or anything else is a bare
+ * `DrawingPlaceholderRun`. Either way the full content is preserved in the
+ * underlying XML — the run only says what lives there. */
+export type ChartRun = NativeChartRun | DrawingPlaceholderRun;
+
+/** Placeholder for a shape / SmartArt / unknown drawing: a marker so callers
+ * know "something visual lives here." */
+type DrawingPlaceholderRun = {
 	type: "chart";
-	kind: "chart" | "shape" | "smartart" | "drawing";
+	kind: "shape" | "smartart" | "drawing";
+};
+
+/** A native chart (`<c:chart r:id>` under a `<w:drawing>`), read from its
+ * `word/charts/chartN.xml` part. `id` (`chartN`) is positional in document
+ * order across the body, table cells and text boxes (headers/footers aren't
+ * walked yet). The series data is the chart part's CACHE — what Word and
+ * LibreOffice actually draw — not the embedded workbook behind Word's Edit
+ * Data. Nothing here is written back; the chart part stays byte-identical. */
+export type NativeChartRun = {
+	type: "chart";
+	kind: "chart";
+	id: string;
+	/** One label per chart group in the plot area, in order — a combo chart
+	 * has several (`["column", "line"]`). The `<c:…Chart>` element's name minus
+	 * `Chart` (`pie3D`, `area`, `scatter`, …), except a `barChart` /
+	 * `bar3DChart` whose bars stand upright (`barDir="col"`), which is
+	 * `column` / `column3D` — the name Word's Insert Chart dialog uses. Empty
+	 * when the chart part can't be resolved. */
+	chartTypes: string[];
+	/** The chart title's text (rich-text paragraphs joined by a space). */
+	title?: string;
+	series: ChartSeries[];
+	/** Where Word's Edit Data reads from: an `embedded` workbook part, an
+	 * `external` (linked) workbook, or `none` (cache-only chart). */
+	dataSource: "embedded" | "external" | "none";
+	/** The embedded workbook's part name (`word/embeddings/….xlsx`) when
+	 * `dataSource` is `embedded`. */
+	workbook?: string;
+	widthEmu?: number;
+	heightEmu?: number;
+	/** Placement of a `<wp:anchor>` chart — same fields as `ImageRun`. */
+	floating?: boolean;
+	wrap?: string;
+	align?: string;
+	trackedChange?: TrackedChange;
+};
+
+/** One `<c:ser>`, from its caches. Point arrays are indexed by `c:pt/@idx`; a
+ * missing point (a gap) is `null`. `*Ref` fields are the series' workbook
+ * formulas (`Sheet1!$B$2:$B$5`) when it has them. */
+export type ChartSeries = {
+	name?: string;
+	nameRef?: string;
+	categories: (string | null)[];
+	categoriesRef?: string;
+	values: (number | null)[];
+	valuesRef?: string;
+	/** The value cache's number format (`0.0%`, `General`, …). */
+	formatCode?: string;
 };
 
 /** A text box — a shape whose `<w:txbxContent>` holds its own paragraph story,

@@ -3,6 +3,7 @@ import { declareUsedNamespaces } from "../../namespaces";
 import { XmlNode } from "../../parser";
 import { buildBody } from "../read";
 import type { Body, TrackedChangeReference } from "./body";
+import { ChartsView } from "./charts";
 import { CommentsView } from "./comments";
 import { ContentTypesView } from "./content-types";
 import { CorePropertiesView } from "./core-properties";
@@ -27,6 +28,7 @@ export class Document {
 	settings?: SettingsView;
 	styles?: StylesView;
 	marginals?: MarginalsView;
+	charts?: ChartsView;
 
 	body!: Body;
 	trackedChangeReferences: Map<string, TrackedChangeReference> = new Map();
@@ -44,6 +46,7 @@ export class Document {
 		settings?: SettingsView;
 		styles?: StylesView;
 		marginals?: MarginalsView;
+		charts?: ChartsView;
 	}) {
 		this.pkg = init.pkg;
 		this.documentTree = init.documentTree;
@@ -57,6 +60,7 @@ export class Document {
 		this.settings = init.settings;
 		this.styles = init.styles;
 		this.marginals = init.marginals;
+		this.charts = init.charts;
 	}
 
 	static async open(path: string): Promise<Document> {
@@ -76,10 +80,11 @@ export class Document {
 	 * audits the raw parts first, then repairs through the views of the SAME
 	 * package rather than reading the file twice. */
 	static async fromPackage(pkg: Pkg): Promise<Document> {
+		const relationships = await RelationshipsView.fromPackage(pkg);
 		const view = new Document({
 			pkg,
 			documentTree: await pkg.ensurePart("word/document.xml"),
-			relationships: await RelationshipsView.fromPackage(pkg),
+			relationships,
 			contentTypes: await ContentTypesView.fromPackage(pkg),
 			coreProperties: await CorePropertiesView.fromPackage(pkg),
 			settings: await SettingsView.fromPackage(pkg),
@@ -89,6 +94,7 @@ export class Document {
 			endnotes: await NotesView.fromPackage(pkg, "endnote"),
 			comments: await CommentsView.fromPackage(pkg),
 			marginals: await MarginalsView.fromPackage(pkg),
+			charts: await ChartsView.fromPackage(pkg, relationships),
 		});
 
 		view.body = buildBody(view, pkg.path);
@@ -113,6 +119,9 @@ export class Document {
 		commentsXml?: string;
 		commentsExtendedXml?: string;
 		corePropertiesXml?: string;
+		/** Chart parts keyed by part name (`word/charts/chart1.xml`), each with
+		 * its optional rels XML. */
+		chartParts?: Record<string, { xml: string; relsXml?: string }>;
 		path?: string;
 	}): Document {
 		const path = parts.path ?? "synthetic.docx";
@@ -131,6 +140,7 @@ export class Document {
 				parts.commentsXml,
 				parts.commentsExtendedXml,
 			),
+			charts: ChartsView.fromXml(parts.chartParts),
 		});
 		view.body = buildBody(view, path);
 		return view;

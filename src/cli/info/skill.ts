@@ -116,8 +116,8 @@ it if you use \`--ast\`.
   text box N (a floating stamp / pull quote / letterhead box — \`read\` prints its
   story right after the anchor paragraph between \`docx:textbox tbxN\` hints, and
   \`find\` / \`replace --all\` include it).
-- Entities: \`cN\` comment, \`imgN\` image, \`linkN\` hyperlink, \`fnN\`/\`enN\`
-  foot/endnote, \`tcN\` tracked change, \`eqN\` equation.
+- Entities: \`cN\` comment, \`imgN\` image, \`chartN\` chart, \`linkN\` hyperlink,
+  \`fnN\`/\`enN\` foot/endnote, \`tcN\` tracked change, \`eqN\` equation.
 - Get them from \`docx read FILE\` (locators ride the Markdown as \`<!-- pN -->\`
   comments; a plain empty cell appears as \`<!-- tN:rRcC -->\`) or \`docx read
   FILE --ast\` (lossless JSON).

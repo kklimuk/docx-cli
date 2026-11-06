@@ -1,4 +1,5 @@
 import { alignmentFromJc, normalizeTabAlign } from "../blocks";
+import { readChartContent } from "../chart/read";
 import {
 	equationLatex,
 	formatEquationToken,
@@ -28,6 +29,7 @@ import {
 	type TrackedEquation,
 } from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
+import { resolveRelationshipTarget } from "./document/relationships";
 import { decodeSym } from "./sym";
 import type {
 	Block,
@@ -40,6 +42,7 @@ import type {
 	Hyperlink,
 	ImageRun,
 	Marginal,
+	NativeChartRun,
 	Paragraph,
 	Run,
 	SectionBreak,
@@ -59,6 +62,7 @@ type WalkState = {
 	trackedChangeIndex: number;
 	equationIndex: number;
 	textBoxIndex: number;
+	chartIndex: number;
 	/** The paragraph being walked — what a text box read from one of its runs
 	 * records as its anchor. Saved/restored around a story walk, since the
 	 * story's own paragraphs re-enter `readParagraph`. */
@@ -103,6 +107,7 @@ export function buildBody(document: Document, path: string): Body {
 		trackedChangeIndex: 0,
 		equationIndex: 0,
 		textBoxIndex: 0,
+		chartIndex: 0,
 		currentBlockId: "",
 		commentAnchors: new Map(),
 		openComments: new Map(),
@@ -1143,7 +1148,8 @@ function readRun(
 					out.push(image);
 				}
 				out.push(...textBoxes);
-				if (!image && textBoxes.length === 0) out.push(classifyDrawing(child));
+				if (!image && textBoxes.length === 0)
+					out.push(classifyDrawing(document, child, state, trackedChange));
 				continue;
 			}
 			// Legacy embeds — a VML text box surfaces as its story; anything else
@@ -1249,16 +1255,56 @@ function readTextBoxes(
 	});
 }
 
-/** The placeholder for a <w:drawing> that is neither a picture nor a text
- * box: chart / SmartArt / plain shape / anything else. */
-function classifyDrawing(drawing: XmlNode): ChartRun {
-	if (drawing.findDescendant("c:chart"))
-		return { type: "chart", kind: "chart" };
+/** The run for a <w:drawing> that is neither a picture nor a text box: a
+ * native chart (its own `chartN`, data read from the chart part), or a
+ * SmartArt / shape / anything-else placeholder. */
+function classifyDrawing(
+	document: Document,
+	drawing: XmlNode,
+	state: WalkState,
+	trackedChange: TrackedChange | undefined,
+): ChartRun {
+	const chart = drawing.findDescendant("c:chart");
+	if (chart) return readChart(document, drawing, chart, state, trackedChange);
 	if (drawing.findDescendant("dgm:relIds"))
 		return { type: "chart", kind: "smartart" };
 	if (drawing.findDescendant("wps:wsp"))
 		return { type: "chart", kind: "shape" };
 	return { type: "chart", kind: "drawing" };
+}
+
+/** `<c:chart r:id>` → the document rel → the chart part (preloaded by
+ * `ChartsView`) → its cached series. The id is minted even when the part
+ * can't be resolved, so `chartN` stays positional over every chart drawing. */
+function readChart(
+	document: Document,
+	drawing: XmlNode,
+	chart: XmlNode,
+	state: WalkState,
+	trackedChange: TrackedChange | undefined,
+): NativeChartRun {
+	const id = `chart${state.chartIndex++}`;
+	const relationshipId = chart.getAttribute("r:id");
+	const target = relationshipId
+		? document.relationships.findByRid(relationshipId)?.getAttribute("Target")
+		: undefined;
+	const partName = target
+		? resolveRelationshipTarget("word/document.xml", target)
+		: "";
+	const run: NativeChartRun = {
+		type: "chart",
+		kind: "chart",
+		id,
+		...readChartContent(document.charts?.get(partName), partName),
+	};
+	const extent = drawing.findDescendant("wp:extent");
+	if (extent) {
+		run.widthEmu = Number(extent.getAttribute("cx") ?? "0");
+		run.heightEmu = Number(extent.getAttribute("cy") ?? "0");
+	}
+	applyFloatingPlacement(run, drawing);
+	if (trackedChange) run.trackedChange = trackedChange;
+	return run;
 }
 
 function applyRunProperties(run: TextRun, runProperties: XmlNode): void {
@@ -1400,17 +1446,24 @@ function readImageFromDrawing(
 		heightEmu,
 		alt: alt || undefined,
 	};
-	// `<wp:anchor>` = floating (out of flow, with wrap); `<wp:inline>` = the
-	// default in-flow shape. Only floating images carry wrap + horizontal align.
-	const anchor = drawing.findDescendant("wp:anchor");
-	if (anchor) {
-		run.floating = true;
-		const wrap = readImageWrap(anchor);
-		if (wrap) run.wrap = wrap;
-		const align = readImageAlign(anchor);
-		if (align) run.align = align;
-	}
+	applyFloatingPlacement(run, drawing);
 	return run;
+}
+
+/** `<wp:anchor>` = floating (out of flow, with wrap); `<wp:inline>` = the
+ * default in-flow shape. Only a floating image/chart carries wrap + horizontal
+ * align. */
+function applyFloatingPlacement(
+	run: { floating?: boolean; wrap?: string; align?: string },
+	drawing: XmlNode,
+): void {
+	const anchor = drawing.findDescendant("wp:anchor");
+	if (!anchor) return;
+	run.floating = true;
+	const wrap = readImageWrap(anchor);
+	if (wrap) run.wrap = wrap;
+	const align = readImageAlign(anchor);
+	if (align) run.align = align;
 }
 
 const WRAP_TAGS: ReadonlyArray<[tag: string, label: string]> = [

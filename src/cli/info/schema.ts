@@ -258,10 +258,50 @@ const JSON_SCHEMA = {
 		},
 		ChartRun: {
 			type: "object",
+			description:
+				'A non-picture drawing. kind "chart" is a native chart with its chartN id and cached data; other kinds are bare placeholders.',
 			required: ["type", "kind"],
 			properties: {
 				type: { const: "chart" },
 				kind: { enum: ["chart", "shape", "smartart", "drawing"] },
+				id: { type: "string", description: "chartN (kind chart only)" },
+				chartTypes: {
+					type: "array",
+					items: { type: "string" },
+					description:
+						'One per chart group: "column", "bar", "line", "pie", "pie3D", "area", "scatter", … (several for a combo chart)',
+				},
+				title: { type: "string" },
+				series: { type: "array", items: { $ref: "#/$defs/ChartSeries" } },
+				dataSource: { enum: ["embedded", "external", "none"] },
+				workbook: {
+					type: "string",
+					description: "Embedded workbook part name (dataSource embedded)",
+				},
+				widthEmu: { type: "number" },
+				heightEmu: { type: "number" },
+				floating: { type: "boolean" },
+				wrap: { type: "string" },
+				align: { type: "string" },
+				trackedChange: { $ref: "#/$defs/RunTrackedChange" },
+			},
+		},
+		ChartSeries: {
+			type: "object",
+			description:
+				"One chart series from the chart part's caches; a null point is a gap.",
+			required: ["categories", "values"],
+			properties: {
+				name: { type: "string" },
+				nameRef: { type: "string" },
+				categories: {
+					type: "array",
+					items: { type: ["string", "null"] },
+				},
+				categoriesRef: { type: "string" },
+				values: { type: "array", items: { type: ["number", "null"] } },
+				valuesRef: { type: "string" },
+				formatCode: { type: "string" },
 			},
 		},
 		TextBoxRun: {

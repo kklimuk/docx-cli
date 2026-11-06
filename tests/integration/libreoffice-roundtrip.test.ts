@@ -35,6 +35,7 @@ const CORE_FIXTURES = [
 	"headers-footers.docx", // header/footer parts: default two-zone (text+date), first-page (titlePg, + a <w:br/> from an inline-escape \n), footer PAGE/NUMPAGES fields; root starts as xmlns:w only, so every r:id re-declares xmlns:r on save
 	"normalize-query.docx", // find normalization coverage + cross-paragraph replace (merged + split paragraph XML)
 	"raw-ooxml.docx", // `docx raw` escape hatch: drop-cap framePr, nested table, sectPr patch loop (lnNumType) + dcx:raw markers
+	"charts.docx", // native c:chart drawings (cache-only, wired via raw part add + rel + drawing): a column chart in the body, a column+line combo in a table cell
 	"text-boxes.docx", // Word-shaped text box (mc:AlternateContent wps Choice + VML Fallback) edited through tbxN:pK, Fallback re-synced on save
 ] as const;
 

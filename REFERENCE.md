@@ -40,6 +40,7 @@ docx endnotes      list FILE
 docx headers       list FILE
 docx footers       list FILE
 docx images        list FILE
+docx charts        list FILE
 docx hyperlinks    list FILE
 docx track-changes list FILE
 
@@ -133,6 +134,15 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds
   image shows just its size). `overflow` flags an image wider than the usable text
   column (`ImageRun.floating`/`wrap`/`align` + EMU extents in `read --ast`).
+- **Charts** (native Word charts) keep a `` `[chart]` `` token followed by a
+  `<!-- docx:chart chart0 type="column" title="Revenue" series="2" points="4" size="6x3.5in" -->`
+  note: `chartN` (the `charts extract --at` handle), `type` (a combo chart joins
+  its types: `column+line`), the series/points counts and `size` always; `title`
+  when there is one; `data="external"` / `data="none"` only when the chart isn't
+  backed by an embedded workbook; `float`/`wrap`/`align` as for images. The data
+  itself is `docx charts extract` (CSV) or `read --ast` (`ChartRun.series`, read
+  from the chart part's caches — what Word draws). Charts are read-only for now:
+  editing the paragraph around one keeps the chart part and its workbook intact.
 - **Headers / footers** surface as `<!-- docx:header hdr0 text="Quarterly Report" -->`
   / `<!-- docx:footer ftr0 text="Page {page} of {pages}" -->` notes — led by the
   marginal's `hdrN`/`ftrN` id, the handle `raw get --at` and `headers`/`footers
@@ -296,6 +306,9 @@ docx images extract FILE --to DIR [--at imgN]            # --to = output directo
 docx images replace FILE --at imgN --with ./new.png
 docx images delete  FILE --at imgN
 
+docx charts list    FILE                                 # JSON array: {id, at, type, title?, series, points, data, workbook?}
+docx charts extract FILE --at chartN [--json]            # the chart's cached data as CSV (category,<series…>); --json = full series objects
+
 docx hyperlinks add     FILE --at pN:S-E --url URL
 docx hyperlinks replace FILE --at linkN --with URL
 docx hyperlinks delete  FILE --at linkN
@@ -445,7 +458,7 @@ The CLI is built for non-interactive agents. **Exit code is the success signal**
 
 ## Discovering ids
 
-Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are derived from document order and **shift after structural edits** — re-read between non-trivial mutations. **Entity ids** (`cN`, `imgN`, `linkN`, `fnN`, `enN`, `tcN`, `eqN`, `hdrN`, `ftrN`) are surfaced by a `list` verb (or `read --ast`) and are what you pass to `--at`:
+Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are derived from document order and **shift after structural edits** — re-read between non-trivial mutations. **Entity ids** (`cN`, `imgN`, `chartN`, `linkN`, `fnN`, `enN`, `tcN`, `eqN`, `hdrN`, `ftrN`) are surfaced by a `list` verb (or `read --ast`) and are what you pass to `--at`:
 
 | Id                              | Discover with                                                                                                                            | Used by                                                                       |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -454,6 +467,7 @@ Locators come in two flavors. **Positional block ids** (`pN`, `tN`, `sN`) are de
 | `fnN` / `enN` (foot/endnote)    | `docx footnotes list FILE` / `docx endnotes list FILE`                                                                                   | `footnotes/endnotes edit/delete --at`                                         |
 | `hdrN` / `ftrN` (header/footer) | `docx headers list FILE` / `docx footers list FILE` (or `read --ast` / the `docx:header`/`docx:footer` note)                              | `raw get --at`, `headers/footers set/clear --at` (or scope by section: `--at sN --type T`) |
 | `imgN` (image)                  | `docx images list FILE`                                                                                                                  | `images extract/replace/delete --at`                                          |
+| `chartN` (chart)                | `docx charts list FILE` (or the `<!-- docx:chart chartN … -->` note / `read --ast`)                                                      | `charts extract --at`                                                         |
 | `linkN` (hyperlink)             | `docx hyperlinks list FILE`                                                                                                              | `hyperlinks replace/delete --at`                                              |
 | `tcN` (tracked change)          | `docx track-changes list FILE`                                                                                                           | `track-changes accept/reject --at`                                            |
 | `eqN` (equation)                | `docx read FILE --ast` (run `latex` field)                                                                                               | `equations edit --at eqN`                                                     |

@@ -11,6 +11,7 @@ import {
 	type Locator,
 	LocatorParseError,
 	type Marginal,
+	type NativeChartRun,
 	type Paragraph,
 	parseLocator,
 	type Run,
@@ -22,6 +23,7 @@ import {
 	type TextRun,
 	type TrackedChange,
 } from "@core";
+import { chartPointCount, chartTypeName } from "@core/chart";
 import {
 	codeBlockLanguageFromStyleId,
 	isCodeBlockStyleId,
@@ -778,20 +780,50 @@ function contentWidthEmu(geometry: SectionBreak | undefined): number {
  * decision-relevant); `overflow`/`float`/`wrap`/`align` are deviation-only
  * (an inline, in-bounds image emits just its size). A DROPPED read-time hint. */
 function formatImageNote(run: ImageRun, contentEmu: number): string {
-	const pairs: NotePair[] = [];
-	if (run.widthEmu && run.heightEmu) {
-		pairs.push([
-			"size",
-			`${emuToInches(run.widthEmu)}x${emuToInches(run.heightEmu)}in`,
-		]);
-	}
-	if (run.floating) pairs.push(["float", "yes"]);
-	if (run.wrap) pairs.push(["wrap", run.wrap]);
-	if (run.align) pairs.push(["align", run.align]);
+	const pairs: NotePair[] = [...sizePairs(run)];
+	pairs.push(...placementPairs(run));
 	if (run.widthEmu && run.widthEmu > contentEmu)
 		pairs.push(["overflow", "yes"]);
 	if (pairs.length === 0) return "";
 	return ` ${formatNote("image", pairs, [run.id])}`;
+}
+
+/** The `<!-- docx:chart chartN type="column" title="…" series="2" points="4"
+ * size="6x3.5in" -->` annotation for a native chart. `type`, the series/points
+ * counts and `size` always show (they're what an agent decides on); `title`
+ * when there is one; `data` only when it deviates from an embedded workbook
+ * (`external` / `none`); `float`/`wrap`/`align` as for images. A DROPPED
+ * read-time hint — the data itself is `docx charts extract`. */
+function formatChartNote(run: NativeChartRun): string {
+	const pairs: NotePair[] = [["type", chartTypeName(run)]];
+	if (run.title) pairs.push(["title", run.title]);
+	pairs.push(["series", run.series.length]);
+	pairs.push(["points", chartPointCount(run)]);
+	pairs.push(...sizePairs(run));
+	if (run.dataSource !== "embedded") pairs.push(["data", run.dataSource]);
+	pairs.push(...placementPairs(run));
+	return formatNote("chart", pairs, [run.id]);
+}
+
+/** `size="WxHin"` for a drawing with both extents. */
+function sizePairs(run: { widthEmu?: number; heightEmu?: number }): NotePair[] {
+	if (!run.widthEmu || !run.heightEmu) return [];
+	return [
+		["size", `${emuToInches(run.widthEmu)}x${emuToInches(run.heightEmu)}in`],
+	];
+}
+
+/** Deviation-only placement of a floating drawing: `float`/`wrap`/`align`. */
+function placementPairs(run: {
+	floating?: boolean;
+	wrap?: string;
+	align?: string;
+}): NotePair[] {
+	const pairs: NotePair[] = [];
+	if (run.floating) pairs.push(["float", "yes"]);
+	if (run.wrap) pairs.push(["wrap", run.wrap]);
+	if (run.align) pairs.push(["align", run.align]);
+	return pairs;
 }
 
 /** The section break carrying the document-wide geometry — the trailing
@@ -1608,7 +1640,17 @@ function renderRuns(
 			else ctx.referencedEndnoteIds.add(run.id);
 			out += `[^${run.id}]`;
 		} else if (run.type === "chart") {
-			out += `\`[${run.kind}]\``;
+			// A native chart keeps the placeholder token and adds its `chartN` +
+			// type/title/series hint; it rides its revision like an image does.
+			out +=
+				run.kind === "chart"
+					? markRevision(
+							`\`[chart]\` ${formatChartNote(run)}`,
+							run.trackedChange,
+							view,
+							ctx,
+						)
+					: `\`[${run.kind}]\``;
 		}
 		// A text box contributes nothing inline: its story renders as its own
 		// block right after the anchor (see `renderTextBoxes`).

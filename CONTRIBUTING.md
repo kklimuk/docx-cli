@@ -41,6 +41,7 @@ src/
     diff/                     # docx diff FILE --against SRC (markers.ts: locator normalization; renders read view, diffs via @core/diff)
     comments/                 # add | reply | resolve | delete | list (helpers.tsx: paraId, run-splitting)
     images/                   # list | extract | replace | delete
+    charts/                   # list | extract (read-only; thin shell over @core/chart)
     hyperlinks/               # add | list | replace | delete (wrap.tsx: run-splitting)
     tables/                   # row/column insert+delete | set-widths | merge | unmerge | borders (grid.ts: merge-aware model)
     track-changes/            # on|off | list | accept | reject (apply.ts holds the unwrap/delete logic)
@@ -55,6 +56,7 @@ src/
     ast/                      # types + DocView + XML→AST reader; text.ts (paragraph helpers), sym.ts (<w:sym> decode)
     locators/                 # parse "p3:5-20" → Locator + resolve to refs
     image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http + HEIC→JPEG), formats.ts (one mime↔ext table)
+    chart/                    # native charts: read.ts (chart part → cached series), charts.ts (Charts lens), csv.ts
     equation/                 # latexToOmml / ommlToLatex bidirectional (temml + own MathML↔OMML adapter)
     markdown/                 # MarkdownImport lens: remark-parse + remark-gfm + remark-math + CriticMarkup plugin → walker → emitters
     raw/                      # Raw lens: fragment gate pipeline (element-order, namespaces+dcx:raw marker, reference audit) + libxml2-wasm XSD engine over bundled ECMA-376 schemas (schemas/)
