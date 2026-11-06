@@ -25,6 +25,7 @@ import type { Document } from "./document";
 import {
 	Body,
 	type TrackedChangeMarker,
+	type TrackedChangeReference,
 	type TrackedEquation,
 } from "./document/body";
 import { numFmtToFormat } from "./document/numbering";
@@ -464,11 +465,14 @@ function readMarginalTrackedChanges(
 	return byPart;
 }
 
-/** Walk a header/footer part's blocks down to its paragraphs. Unlike a note
- *  body, a marginal holds more than bare paragraphs: Word's page-number gallery
- *  wraps the footer paragraph in a block-level `<w:sdt>`, letterheads use
- *  tables, and a block may sit in an `<mc:AlternateContent>` (its chosen branch
- *  only, so a Choice/Fallback twin isn't registered twice). */
+/** Walk a header/footer part's blocks, registering every revision kind the
+ *  body walk does, in the body's order: per paragraph run-level → `pPrChange`
+ *  → paragraph mark; per table tblPr → tblGrid → per row: row marker → per
+ *  cell: cell marker → `tcPrChange` → content. Unlike a note body, a marginal
+ *  holds more than bare paragraphs: Word's page-number gallery wraps the
+ *  footer paragraph in a block-level `<w:sdt>`, letterheads use tables, and a
+ *  block may sit in an `<mc:AlternateContent>` (its chosen branch only, so a
+ *  Choice/Fallback twin isn't registered twice). */
 function registerMarginalBlockChanges(
 	scope: RevisionScope,
 	container: XmlNode,
@@ -476,6 +480,11 @@ function registerMarginalBlockChanges(
 	for (const child of container.children) {
 		if (child.tag === "w:p") {
 			registerStandaloneRunChanges(scope, child);
+			registerMarginalParagraphProperties(scope, child, container.children);
+			continue;
+		}
+		if (child.tag === "w:tbl") {
+			registerMarginalTableChanges(scope, child);
 			continue;
 		}
 		if (isAlternateContent(child)) {
@@ -483,25 +492,72 @@ function registerMarginalBlockChanges(
 			if (branch) registerMarginalBlockChanges(scope, branch);
 			continue;
 		}
-		if (MARGINAL_BLOCK_CONTAINERS.has(child.tag)) {
+		if (child.tag === "w:sdt" || child.tag === "w:sdtContent") {
 			registerMarginalBlockChanges(scope, child);
 		}
 	}
 }
 
-const MARGINAL_BLOCK_CONTAINERS = new Set([
-	"w:tbl",
-	"w:tr",
-	"w:tc",
-	"w:sdt",
-	"w:sdtContent",
-]);
+/** A marginal paragraph's `<w:pPrChange>`, then its paragraph-mark
+ *  `<w:ins>`/`<w:del>` (in `<w:pPr><w:rPr>`) — the body's per-paragraph order.
+ *  A header paragraph isn't in `Body.blockReferences`, so a paragraph mark
+ *  carries its owning paragraph on the reference, for accept-del (merge with
+ *  the next line) and reject-ins (remove the inserted line). */
+function registerMarginalParagraphProperties(
+	scope: RevisionScope,
+	paragraph: XmlNode,
+	paragraphParent: XmlNode[],
+): void {
+	const pPr = paragraph.findChild("w:pPr");
+	if (!pPr) return;
+	const change = pPr.findChild("w:pPrChange");
+	if (change)
+		registerTrackedChange(
+			scope,
+			"pPrChange",
+			{ node: change, parent: pPr.children },
+			undefined,
+		);
+	const rPr = pPr.findChild("w:rPr");
+	if (!rPr) return;
+	for (const mark of rPr.children) {
+		if (mark.tag !== "w:ins" && mark.tag !== "w:del") continue;
+		registerTrackedChange(
+			scope,
+			TRACKED_CHANGE_KIND_BY_TAG[mark.tag],
+			{ node: mark, parent: rPr.children, paragraph, paragraphParent },
+			undefined,
+		);
+	}
+}
+
+/** A marginal table's revisions, through the body's `readTable` helpers and
+ *  in its order: tblPr → tblGrid → per row: row marker → per cell: cell
+ *  marker → `tcPrChange` → content. */
+function registerMarginalTableChanges(
+	scope: RevisionScope,
+	table: XmlNode,
+): void {
+	readTablePropertyRevision(scope, table);
+	readGridRevision(scope, table);
+	for (const row of table.children) {
+		if (row.tag !== "w:tr") continue;
+		readRowRevision(scope, row, table.children);
+		for (const cell of row.children) {
+			if (cell.tag !== "w:tc") continue;
+			readCellRevision(scope, cell, row.children);
+			readCellPropertyRevision(scope, cell);
+			registerMarginalBlockChanges(scope, cell);
+		}
+	}
+}
 
 /** Register run-level `<w:ins>`/`<w:del>`/`<w:moveFrom>`/`<w:moveTo>` wrappers
  * inside a standalone note or header/footer paragraph. blockId is "" for a
  * note (note bodies have no pN) and the `hdrN`/`ftrN` for a marginal. Skips `<w:pPr>` (paragraph-mark trackings on a
  * standalone note don't occur — those only arise on paired deletes, which are
- * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. An
+ * hidden; a marginal's are registered by `registerMarginalParagraphProperties`)
+ * and `<w:sdt>`, mirroring the body's `walkRunContainer`. An
  * `<mc:AlternateContent>` (a text box's shape) descends into its chosen branch
  * only: Choice and Fallback carry the same story, so walking both listed every
  * revision in it twice, and the save-time Choice→Fallback mirror would undo a
@@ -537,6 +593,12 @@ function registerStandaloneRunChanges(
 		if (isAlternateContent(child)) {
 			const branch = alternateContentBranch(child);
 			if (branch) registerStandaloneRunChanges(scope, branch);
+			continue;
+		}
+		// A text box's story is a block container of its own: its paragraph
+		// marks, pPrChanges and tables register as a header's do.
+		if (child.tag === "w:txbxContent") {
+			registerMarginalBlockChanges(scope, child);
 			continue;
 		}
 		if (child.children.length > 0) registerStandaloneRunChanges(scope, child);
@@ -639,6 +701,20 @@ type RevisionScope = Pick<WalkContext, "document" | "state" | "blockId"> & {
 	 *  part's, for `Marginal.trackedChanges`. */
 	registered?: TrackedChange[];
 };
+
+/** What a revision's reference records beyond its marker: an explicit `kind`
+ *  for an ambiguous tag, and the row / cell / paragraph a structural accept or
+ *  reject acts on. */
+type ReferenceScope = Pick<
+	TrackedChangeReference,
+	| "kind"
+	| "tableRow"
+	| "tableRowParent"
+	| "tableCell"
+	| "tableCellParent"
+	| "paragraph"
+	| "paragraphParent"
+>;
 
 function walkRunContainer(
 	context: WalkContext,
@@ -814,7 +890,7 @@ function walkRunContainer(
 function registerTrackedChange(
 	context: RevisionScope,
 	kind: TrackedChange["kind"],
-	marker: TrackedChangeMarker,
+	marker: TrackedChangeMarker & ReferenceScope,
 	outer: TrackedChange | undefined,
 	markers?: TrackedChangeMarker[],
 	equation?: TrackedEquation,
@@ -1456,21 +1532,16 @@ function readTable(
 	const styleCellMargins = resolveStyleCellMargins(document, style, state);
 	// Register table-level revisions first, in tree order (tblPr before tblGrid,
 	// both before the rows), so tcN ids land in document order.
-	readTablePropertyRevision(document, node, id, state);
-	readGridRevision(document, node, id, state);
+	const revisionScope: RevisionScope = { document, state, blockId: id };
+	readTablePropertyRevision(revisionScope, node);
+	readGridRevision(revisionScope, node);
 	const rows: TableRow[] = [];
 	let rowIndex = 0;
 	for (const child of node.children) {
 		if (child.tag !== "w:tr") continue;
 		// Register the row-level revision before its cells so tcN ids land in
 		// document order (row marker → per cell: cell marker → content).
-		const rowChange = readRowRevision(
-			document,
-			child,
-			node.children,
-			id,
-			state,
-		);
+		const rowChange = readRowRevision(revisionScope, child, node.children);
 		const cells: TableCell[] = [];
 		let columnIndex = 0;
 		for (const cellNode of child.children) {
@@ -1594,50 +1665,24 @@ const TABLE_BORDER_EDGES = [
 	"w:insideV",
 ] as const;
 
-function readTablePropertyRevision(
-	document: Document,
-	table: XmlNode,
-	tableId: string,
-	state: WalkState,
-): void {
+function readTablePropertyRevision(scope: RevisionScope, table: XmlNode): void {
 	const tblPr = table.findChild("w:tblPr");
 	const change = tblPr?.findChild("w:tblPrChange");
 	if (!tblPr || !change) return;
-	registerTableRevision(
-		document,
-		change,
-		tblPr.children,
-		"tblPrChange",
-		tableId,
-		state,
-	);
+	registerTableRevision(scope, change, tblPr.children, "tblPrChange");
 }
 
-function readGridRevision(
-	document: Document,
-	table: XmlNode,
-	tableId: string,
-	state: WalkState,
-): void {
+function readGridRevision(scope: RevisionScope, table: XmlNode): void {
 	const tblGrid = table.findChild("w:tblGrid");
 	const change = tblGrid?.findChild("w:tblGridChange");
 	if (!tblGrid || !change) return;
-	registerTableRevision(
-		document,
-		change,
-		tblGrid.children,
-		"tblGridChange",
-		tableId,
-		state,
-	);
+	registerTableRevision(scope, change, tblGrid.children, "tblGridChange");
 }
 
 function readRowRevision(
-	document: Document,
+	scope: RevisionScope,
 	row: XmlNode,
 	tableChildren: XmlNode[],
-	tableId: string,
-	state: WalkState,
 ): TrackedChange | undefined {
 	const trPr = row.findChild("w:trPr");
 	const marker = trPr?.children.find(
@@ -1645,22 +1690,18 @@ function readRowRevision(
 	);
 	if (!trPr || !marker) return undefined;
 	return registerTableRevision(
-		document,
+		scope,
 		marker,
 		trPr.children,
 		marker.tag === "w:ins" ? "rowIns" : "rowDel",
-		tableId,
-		state,
 		{ tableRow: row, tableRowParent: tableChildren },
 	);
 }
 
 function readCellRevision(
-	document: Document,
+	scope: RevisionScope,
 	cell: XmlNode,
 	rowChildren: XmlNode[],
-	tableId: string,
-	state: WalkState,
 ): TrackedChange | undefined {
 	const tcPr = cell.findChild("w:tcPr");
 	const marker = tcPr?.children.find(
@@ -1668,46 +1709,33 @@ function readCellRevision(
 	);
 	if (!tcPr || !marker) return undefined;
 	return registerTableRevision(
-		document,
+		scope,
 		marker,
 		tcPr.children,
 		marker.tag === "w:cellIns" ? "cellIns" : "cellDel",
-		tableId,
-		state,
 		{ tableCell: cell, tableCellParent: rowChildren },
 	);
 }
 
+/** A table revision's tag is ambiguous (a row marker is a `<w:ins>`/`<w:del>`
+ *  like a run-level one), so its reference carries an explicit `kind`, plus the
+ *  row/cell an accept or reject removes. */
 function registerTableRevision(
-	document: Document,
+	scope: RevisionScope,
 	marker: XmlNode,
 	parent: XmlNode[],
 	kind: TrackedChange["kind"],
-	tableId: string,
-	state: WalkState,
-	scope?: {
-		tableRow?: XmlNode;
-		tableRowParent?: XmlNode[];
-		tableCell?: XmlNode;
-		tableCellParent?: XmlNode[];
-	},
+	extent?: Pick<
+		ReferenceScope,
+		"tableRow" | "tableRowParent" | "tableCell" | "tableCellParent"
+	>,
 ): TrackedChange {
-	const trackedChangeId = `tc${state.trackedChangeIndex++}`;
-	const change: TrackedChange = {
-		id: trackedChangeId,
+	return registerTrackedChange(
+		scope,
 		kind,
-		author: marker.getAttribute("w:author") ?? "",
-		date: marker.getAttribute("w:date") ?? "",
-		revisionId: marker.getAttribute("w:id") ?? "",
-	};
-	document.trackedChangeReferences.set(trackedChangeId, {
-		node: marker,
-		parent,
-		blockId: tableId,
-		kind,
-		...scope,
-	});
-	return change;
+		{ node: marker, parent, kind, ...extent },
+		undefined,
+	);
 }
 
 function readTableGrid(table: XmlNode): number[] {
@@ -1752,19 +1780,9 @@ function readTableCell(
 ): TableCell {
 	// Register cell-level revisions before content so tcN ids land in document
 	// order: the cellIns/cellDel marker first, then the tcPrChange.
-	const cellChange = readCellRevision(
-		document,
-		cellNode,
-		rowChildren,
-		tableId,
-		state,
-	);
-	const cellPropertyChange = readCellPropertyRevision(
-		document,
-		cellNode,
-		tableId,
-		state,
-	);
+	const revisionScope: RevisionScope = { document, state, blockId: tableId };
+	const cellChange = readCellRevision(revisionScope, cellNode, rowChildren);
+	const cellPropertyChange = readCellPropertyRevision(revisionScope, cellNode);
 	const cell: TableCell = {
 		blocks: readCellBlocks(
 			document,
@@ -1855,22 +1873,13 @@ const CELL_BORDER_EDGES = [
 ] as const;
 
 function readCellPropertyRevision(
-	document: Document,
+	scope: RevisionScope,
 	cell: XmlNode,
-	tableId: string,
-	state: WalkState,
 ): TrackedChange | undefined {
 	const tcPr = cell.findChild("w:tcPr");
 	const change = tcPr?.findChild("w:tcPrChange");
 	if (!tcPr || !change) return undefined;
-	return registerTableRevision(
-		document,
-		change,
-		tcPr.children,
-		"tcPrChange",
-		tableId,
-		state,
-	);
+	return registerTableRevision(scope, change, tcPr.children, "tcPrChange");
 }
 
 function readCellBlocks(

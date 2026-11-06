@@ -289,13 +289,18 @@ export type TrackedChangeReference = {
 	 * run-level changes (kind derived from tag). */
 	kind?: TrackedChangeKind;
 	/** Set for rowIns/rowDel: the owning `<w:tr>` and the table's children, so
-	 * accept/reject can remove the whole row. (Paragraph-mark scope is NOT
-	 * stored — it's derivable from `blockId` via `Body.blockReferences`.) */
+	 * accept/reject can remove the whole row. */
 	tableRow?: XmlNode;
 	tableRowParent?: XmlNode[];
 	/** Set for cellIns/cellDel: the owning `<w:tc>` and the row's children. */
 	tableCell?: XmlNode;
 	tableCellParent?: XmlNode[];
+	/** Set for a paragraph-mark `<w:ins>`/`<w:del>` in a header/footer part:
+	 * the owning `<w:p>` and its parent list. A BODY paragraph mark doesn't
+	 * store it — its scope is derivable from `blockId` via
+	 * `Body.blockReferences`, which a header paragraph isn't in. */
+	paragraph?: XmlNode;
+	paragraphParent?: XmlNode[];
 	/** Every element of a revision Word spreads over several markers — an
 	 * equation edit puts a `<w:del>`/`<w:ins>` in each math run it touched.
 	 * `node`/`parent` are the first of them; accept/reject act on each. */

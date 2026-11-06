@@ -149,7 +149,9 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
 headers`/`docx footers`. A header/footer holding a reviewer's **pending tracked
   changes** names them in every view — `<!-- docx:header hdr0 pending="tc2 tc3"
   text="Acme Report (Draft)" -->` — so you can `track-changes accept/reject --at
-  tc2` without guessing; the `text` follows the view: accepted by default, the
+  tc2` without guessing (text, paragraph marks, paragraph formatting and a
+  header table's row/cell/property revisions all list and accept/reject, as in
+  the body); the `text` follows the view: accepted by default, the
   original under `--baseline`, and the body's CriticMarkup under `--current`
   (`text="Acme Report{++ (Draft)++}[^tc2]{-- v1--}[^tc3]"`; author/date are in
   `track-changes list`, not the appendix). The `--` of a deletion is safe inside
