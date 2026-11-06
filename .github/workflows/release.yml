@@ -67,10 +67,10 @@ jobs:
           path: ./artifacts
           merge-multiple: true
       - name: Stage attribution files for release
-        # Per LGPL §4 we ship LGPL-3.0.txt + NOTICES alongside every binary;
-        # NOTICES is the canonical attribution surface for PDFium (BSD-3),
-        # jpeg-js (BSD-3), highlight.js (BSD-3), and libheif (LGPL).
-        run: cp LICENSE LGPL-3.0.txt NOTICES ./artifacts/
+        # LICENSE + NOTICES ship alongside every binary; NOTICES is the
+        # canonical attribution surface the BSD-3 components require: PDFium,
+        # jpeg-js, and highlight.js.
+        run: cp LICENSE NOTICES ./artifacts/
       - name: Stage install.sh for release
         # Shipped as a release asset (not served from a branch) so the documented install
         # command pins to a tag and is covered by SHA256SUMS below. It lives in the skill

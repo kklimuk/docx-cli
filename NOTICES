@@ -4,13 +4,10 @@ This file lists the third-party software docx-cli redistributes (statically
 linked into the published binaries via `bun build --compile`, or bundled
 into `dist/index.js`), along with the attribution each license requires.
 
-docx-cli itself is licensed under the MIT License (see LICENSE). Linking
-permissively-licensed libraries (MIT / Apache-2.0 / BSD-3-Clause) leaves
-that license unchanged. Linking the LGPL-3.0 libheif-js library does NOT
-make docx-cli copyleft either — LGPL §4 permits use by works under other
-licenses provided the conditions in this NOTICES file (acknowledgement +
-LGPL-3.0 text + the right to swap in a modified libheif by rebuilding
-docx-cli from source) are met.
+docx-cli itself is licensed under the MIT License (see LICENSE). Every
+library it redistributes is permissively licensed (MIT / Apache-2.0 /
+BSD-3-Clause, or a dual license under which docx-cli elects one of those),
+which leaves that license unchanged.
 
 Whenever a runtime dependency is added or changed in package.json,
 re-audit whether the new entry needs an attribution here.
@@ -57,32 +54,6 @@ The required notice:
 file is itself the attribution surface. The upstream PDFium LICENSE is
 not included verbatim inside the @hyzyla/pdfium npm tarball; the wrapper's
 own LICENSE.md covers only the MIT-licensed wrapper code.)
-
-
-================================================================================
-libheif-js (HEIC/HEIF input transcoding for `docx insert --image`)
-================================================================================
-
-License: LGPL-3.0-only (see LGPL-3.0.txt at the root of this distribution).
-Copyright: libheif authors, https://github.com/strukturag/libheif.
-
-docx-cli links libheif-js statically into its compiled binaries (`dist/docx`
-and the GitHub Release artifacts). LGPL §4 imposes the following obligations
-that this notice satisfies:
-
-  (a) Acknowledged here: libheif-js is incorporated into docx-cli's binaries.
-  (b) The full LGPL-3.0 text is distributed as LGPL-3.0.txt alongside this
-      file.
-  (c) docx-cli's own source code is publicly available at
-      https://github.com/kklimuk/docx-cli — anyone may rebuild the
-      binaries with a modified libheif by replacing the `libheif-js` /
-      `heic-convert` dependency in package.json and running
-      `bun run build:binary`. libheif's source is at
-      https://github.com/strukturag/libheif.
-
-Linking LGPL-3.0 code does NOT make docx-cli a derivative work for the
-purpose of LGPL §3 — docx-cli remains under the MIT License declared in
-LICENSE.
 
 
 ================================================================================
@@ -174,7 +145,6 @@ Other dependencies (license elections + MIT components)
   remark-math           MIT
   unist-util-visit      MIT
   mdast-util-math       MIT
-  heic-convert          MIT (wrapper around LGPL libheif-js, attributed above)
 
 Each package's own LICENSE file is distributed alongside its source inside
 `node_modules/<pkg>/` for anyone consuming docx-cli via Bun's dependency

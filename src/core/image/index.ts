@@ -11,6 +11,7 @@ export {
 } from "./formats";
 export {
 	computeExtentEmu,
+	heicExtensionRefusal,
 	type ImageSource,
 	ImageSourceError,
 	loadImageSource,

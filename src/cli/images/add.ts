@@ -34,7 +34,8 @@ Placement (exactly one required):
 Content (required):
   --image SRC       The image source: a local file path, a data: URI, or an
                     http(s) URL (fetched with an SSRF guard; sized to fit the
-                    page width by default).
+                    page width by default). HEIC/HEIF is refused (Word
+                    can't display it): convert it to JPEG or PNG first.
   --alt TEXT        Alt text / description for the image
   --width LENGTH    Display width: bare inches (2) or a unit suffix — in, cm,
                     mm, pt, px (96dpi), tw (e.g. 2in, 5cm, 300px). Default:

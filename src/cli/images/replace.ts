@@ -1,5 +1,6 @@
 import { findContainingParagraph } from "@core/comments";
 import {
+	heicExtensionRefusal,
 	ImageSourceError,
 	Images,
 	imageFormatForExtension,
@@ -93,6 +94,10 @@ export async function run(args: string[]): Promise<number> {
 	// `image/x-emf`/`image/bmp`, so extension → canonical Word MIME is what lets
 	// emf/wmf/bmp/ico round-trip.
 	const sourceExtension = sourcePath.split(".").pop() ?? "";
+	const heicRefusal = heicExtensionRefusal(sourceExtension);
+	if (heicRefusal) {
+		return fail("IMAGE_SOURCE", heicRefusal.message, heicRefusal.hint);
+	}
 	const format = imageFormatForExtension(sourceExtension);
 	if (!format) {
 		return fail(
@@ -131,14 +136,15 @@ export async function run(args: string[]): Promise<number> {
 
 	// Route the replacement through the shared resolver (same as `docx images add`)
 	// so it gets the same safety: SVG sanitization (scripts/handlers/animation
-	// stripped), HEIC→JPEG transcode, and the SSRF guard on remote srcs. We keep
+	// stripped), the HEIC header sniff (a `.jpg` that's really HEIC is refused),
+	// and the SSRF guard on remote srcs. We keep
 	// the extension/MIME resolved above for part naming; only the bytes come back.
 	let bytes: Uint8Array;
 	try {
 		bytes = (await loadImageSource(sourcePath)).bytes;
 	} catch (error) {
 		if (error instanceof ImageSourceError) {
-			return fail("IMAGE_SOURCE", error.message);
+			return fail("IMAGE_SOURCE", error.message, error.hint);
 		}
 		throw error;
 	}

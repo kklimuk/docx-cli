@@ -402,7 +402,7 @@ async function buildImageParagraph(
 		source = await loadImageSource(spec.src);
 	} catch (error) {
 		if (error instanceof ImageSourceError) {
-			throw new InsertError("IMAGE_SOURCE", error.message);
+			throw new InsertError("IMAGE_SOURCE", error.message, error.hint);
 		}
 		throw error;
 	}

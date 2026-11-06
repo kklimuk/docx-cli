@@ -417,7 +417,7 @@ async function loadAndRegisterImage(
 		source = await loadImageSource(image.url);
 	} catch (error) {
 		if (error instanceof ImageSourceError) {
-			throw new MarkdownImportError("IMAGE_SOURCE", error.message);
+			throw new MarkdownImportError("IMAGE_SOURCE", error.message, error.hint);
 		}
 		throw error;
 	}

@@ -128,7 +128,7 @@ Earlier iterations supported `pdftoppm` (poppler) + `magick` (ImageMagick) as PD
 
 PDFium is dual-licensed BSD-3-Clause OR Apache-2.0 (we redistribute under BSD-3). The required notice lives in [`NOTICES`](../../../NOTICES) at the repo root, which the release workflow stages into each artifact bundle and the npm `files` list ships alongside `dist/index.js`. If the bundled WASM binary's source changes (we don't modify it — we consume @hyzyla/pdfium's published build), update NOTICES accordingly.
 
-The same NOTICES file carries the BSD-3 attributions for `jpeg-js` and `highlight.js`, the LGPL-3.0 acknowledgement for `libheif-js` (statically linked into the compiled binary via `heic-convert`), and the MIT election for `jszip` (which is dual MIT-or-GPL).
+The same NOTICES file carries the BSD-3 attributions for `jpeg-js` and `highlight.js`, and the MIT election for `jszip` (which is dual MIT-or-GPL).
 
 ## CI considerations
 

@@ -54,7 +54,7 @@ src/
     jsx/                      # Fragment, namespace() + tag namespaces (w, a, wp, pic, cp, dc, …), auto-runtime
     ast/                      # types + DocView + XML→AST reader; text.ts (paragraph helpers), sym.ts (<w:sym> decode)
     locators/                 # parse "p3:5-20" → Locator + resolve to refs
-    image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http + HEIC→JPEG), formats.ts (one mime↔ext table)
+    image/                    # drawing.tsx (<Image> + addImagePart + collectImageRuns), source.ts (load path/data:/http; refuses HEIC with a conversion hint), formats.ts (one mime↔ext table)
     equation/                 # latexToOmml / ommlToLatex bidirectional (temml + own MathML↔OMML adapter)
     markdown/                 # MarkdownImport lens: remark-parse + remark-gfm + remark-math + CriticMarkup plugin → walker → emitters
     raw/                      # Raw lens: fragment gate pipeline (element-order, namespaces+dcx:raw marker, reference audit) + libxml2-wasm XSD engine over bundled ECMA-376 schemas (schemas/)
@@ -90,7 +90,6 @@ See [CLAUDE.md](CLAUDE.md) and the nested `CLAUDE.md` files under `src/` for con
 - **Diff**: [`diff`](https://www.npmjs.com/package/diff) (jsdiff, BSD-3) backs `docx diff` — unified line hunks + HTML-aware word-level refinement of the read view
 - **Math**: [`temml`](https://www.npmjs.com/package/temml) (MIT) compiles LaTeX → MathML; an in-house MathML → OMML adapter handles the OOXML side bidirectionally
 - **Render**: [`@hyzyla/pdfium`](https://www.npmjs.com/package/@hyzyla/pdfium) (MIT wrapper; PDFium WASM redistributed under BSD-3-Clause) for the PDF → PNG/JPG step, plus [`pngjs`](https://www.npmjs.com/package/pngjs) / [`jpeg-js`](https://www.npmjs.com/package/jpeg-js) for image encoding
-- **Images**: [`heic-convert`](https://www.npmjs.com/package/heic-convert) (wasm libheif, LGPL-3.0) transcodes HEIC/HEIF input to JPEG on insert
 - **Validation**: [`libxml2-wasm`](https://www.npmjs.com/package/libxml2-wasm) (MIT, libxml2 compiled to WASM) + the bundled ECMA-376 5th-edition transitional XSDs power `docx validate` and the `docx raw` schema gate — in-process, ~55 ms one-time schema compile, single-digit ms per document
 - **Quality**: Biome + Knip + tsc; LibreOffice headless for round-trip integration tests
 - **Standard**: ECMA-376 Part 1 §17 (WordprocessingML), Transitional profile

@@ -1,9 +1,9 @@
 // The image formats docx-cli treats as first-class — the SAME set we extract,
 // insert, and replace, so a file pulled out by `images extract` drops straight
 // back in via `docx images add` or `images replace`. Extension spellings are
-// Word-canonical (jpeg/tiff, the names Word writes into word/media), and the
-// HEIC/HEIF transcode lives in image-source.ts (insert-only input, never an
-// embedded format).
+// Word-canonical (jpeg/tiff, the names Word writes into word/media). HEIC/HEIF
+// is deliberately absent: Word can't display it, so source.ts recognizes it
+// (by extension, MIME, or `ftyp` header) only to refuse it with a hint.
 
 // SVG is supported but sanitized on the insert path (see `sanitizeSvg` in
 // `source.ts`) — unlike every other format here, SVG carries arbitrary XML
