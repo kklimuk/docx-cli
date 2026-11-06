@@ -14,6 +14,12 @@ import {
 	priorPprChildren,
 	wrapPprChange,
 } from "../blocks";
+import {
+	type BookmarkMarkers,
+	collectBookmarkMarkers,
+	liftBookmarkMarkers,
+	restoreBookmarkMarkers,
+} from "../bookmarks/markers";
 import { buildCodeBlockParagraphs, ensureCodeBlockStyles } from "../code-block";
 import { Comments } from "../comments";
 import { clearFormatting as clearRunFormatting } from "./clear-formatting";
@@ -211,6 +217,10 @@ export class Edit {
 		const commentMarkers = extractCommentMarkers(blockRef.node);
 
 		if (textEdit !== null && equationPlan) {
+			// The word diff keeps bookmark markers at their offsets, except one
+			// inside a run container it rebuilds away (a `<w:hyperlink>`'s end
+			// marker) — put any such casualty back at the paragraph boundary.
+			const bookmarks = collectBookmarkMarkers(blockRef.node);
 			applyFormattingPreservingEdit(
 				this.document,
 				blockRef.node,
@@ -220,6 +230,7 @@ export class Edit {
 				tracked,
 				equationPlan.inserted,
 			);
+			restoreBookmarkMarkers(blockRef.node, bookmarks);
 			this.reanchorComments(blockRef.node, commentMarkers);
 			// Mutated in place — the same <w:p> node is the result.
 			return { node: blockRef.node, resolvedAuthors: listResolvedAuthors() };
@@ -241,6 +252,9 @@ export class Edit {
 			blockRef.node,
 			restatedPictures(newParagraphs),
 		);
+		// Bookmarks ride along the same way: the replacement never saw them, and
+		// a dropped bookmark silently breaks every cross-reference to it.
+		const bookmarks = liftBookmarkMarkers(blockRef.node);
 		// Run inheritance goes FIRST: its `bringsNewBlockStructure` guard must
 		// see only the structure the new content brought (a markdown `#` heading,
 		// a list item), not the old paragraph's `<w:pStyle>` that the pPr
@@ -310,7 +324,11 @@ export class Edit {
 			// (new content appended inside `<w:ins>`), so the untracked carriers go
 			// back onto it — after the replace, or they'd be swept into the `<w:del>`.
 			reattachObjectRuns(blockRef.node, objectRuns);
+			// Outside the `<w:del>`/`<w:ins>` pair, so the bookmark brackets
+			// whichever content survives accept or reject.
+			restoreBookmarkMarkers(blockRef.node, bookmarks);
 		} else {
+			restoreBookmarkCarrier(newParagraphs, bookmarks);
 			if (objectRuns.leading.length > 0 || objectRuns.trailing.length > 0) {
 				reattachObjectRuns(objectCarrierTarget(newParagraphs), objectRuns);
 			}
@@ -1035,6 +1053,17 @@ function inheritCommonRunFormatting(
 			for (const child of template.children) inheritRprChild(own, child);
 		}
 	}
+}
+
+/** Put an untracked rebuild's lifted bookmarks on the replacement's first
+ *  paragraph — the same carrier the lifted object runs use (minting an empty
+ *  one when the new content is all tables), so the bookmark never vanishes. */
+function restoreBookmarkCarrier(
+	newParagraphs: XmlNode[],
+	bookmarks: BookmarkMarkers,
+): void {
+	if (bookmarks.starts.length === 0 && bookmarks.ends.length === 0) return;
+	restoreBookmarkMarkers(objectCarrierTarget(newParagraphs), bookmarks);
 }
 
 /** The paragraph lifted object runs go back onto for an untracked replace: the

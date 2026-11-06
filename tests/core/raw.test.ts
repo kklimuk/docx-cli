@@ -294,6 +294,24 @@ describe("gate 5 — reference/id integrity", () => {
 		expect(end).toBe(start);
 	});
 
+	test("a fresh (non-colliding) bookmark pair keeps one shared id", async () => {
+		const document = await openFixture(
+			"minimal.docx",
+			"ref-bookmark-fresh.docx",
+		);
+		const prepared = new Raw(document).prepareFragment(
+			'<w:p><w:bookmarkStart w:id="100" w:name="_Ref100"/><w:r><w:t>Methods</w:t></w:r><w:bookmarkEnd w:id="100"/></w:p>',
+			"blocks",
+		);
+		const paragraph = prepared.nodes[0];
+		expect(
+			paragraph?.findDescendant("w:bookmarkStart")?.getAttribute("w:id"),
+		).toBe("100");
+		expect(
+			paragraph?.findDescendant("w:bookmarkEnd")?.getAttribute("w:id"),
+		).toBe("100");
+	});
+
 	test("unknown style and numId warn instead of rejecting", async () => {
 		const document = await openFixture("minimal.docx", "ref-warn.docx");
 		const prepared = new Raw(document).prepareFragment(

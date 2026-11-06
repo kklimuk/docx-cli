@@ -164,8 +164,9 @@ function remintDrawingIds(
 }
 
 /** Bookmark ids are document-unique; `w:bookmarkStart`/`w:bookmarkEnd` pair by
- *  id, so collisions re-map through one old→new table (scoped to the fragment,
- *  so its pairs stay linked). */
+ *  id, so every id the fragment uses maps through one old→new table (scoped to
+ *  the fragment, so its pairs stay linked) — identity for a free id, a fresh
+ *  mint for one the document already uses. */
 function remintBookmarkIds(
 	nodes: XmlNode[],
 	context: ReferenceAuditContext,
@@ -182,7 +183,11 @@ function remintBookmarkIds(
 				return;
 			}
 			if (!context.bookmarkIds.has(id)) {
+				// Record the first sight as an identity mapping, so the pair's
+				// other half reuses it instead of "colliding" with its own start
+				// (which split every fresh pair: start 100, end re-minted to 0).
 				context.bookmarkIds.add(id);
+				remapped.set(id, id);
 				return;
 			}
 			const minted = String(context.nextBookmarkId++);
