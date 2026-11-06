@@ -5,7 +5,6 @@
 
 import { lookup } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
-import convert from "heic-convert";
 import {
 	CANONICAL_IMAGE_EXTENSION,
 	EXTENSION_BY_IMAGE_MIME,
@@ -30,10 +29,13 @@ export type ImageSource = {
 };
 
 /** Thrown for any source-resolution failure (unreadable path, non-image
- * content-type, fetch timeout, oversize download). The CLI maps it to a
- * single error code. */
+ * content-type, fetch timeout, oversize download, HEIC input). The CLI maps it
+ * to a single error code; `hint`, when set, rides along as the error's hint. */
 export class ImageSourceError extends Error {
-	constructor(message: string) {
+	constructor(
+		message: string,
+		public hint?: string,
+	) {
 		super(message);
 		this.name = "ImageSourceError";
 	}
@@ -251,23 +253,23 @@ async function loadFile(path: string): Promise<ImageSource> {
 	return finalizeSource(bytes, extension);
 }
 
-/** Normalize the extension, transcode HEIC→JPEG if needed, and read dimensions
- * — the shared tail every loader funnels through. */
+/** Normalize the extension, refuse HEIC, sanitize SVG, and read dimensions —
+ * the shared tail every loader funnels through. */
 async function finalizeSource(
 	bytes: Uint8Array,
 	extension: string,
 ): Promise<ImageSource> {
 	const lower = extension.toLowerCase();
-	let normalized = CANONICAL_EXTENSION[lower] ?? lower;
+	const normalized = CANONICAL_EXTENSION[lower] ?? lower;
 	let finalBytes = bytes;
 
-	// Word can't render HEIC/HEIF, so transcode to JPEG before embedding. Detect
-	// by header too (not just the label) so a `.jpg` that's really HEIC, or an
-	// untyped fetch, is still caught.
-	if (HEIC_EXTENSIONS.has(normalized) || isHeic(bytes)) {
-		finalBytes = await transcodeHEICToJPEG(bytes);
-		normalized = "jpeg";
-	}
+	// Word can't render HEIC/HEIF and we bundle no HEVC decoder (every one is
+	// copyleft), so refuse rather than embed an image Word shows as broken.
+	// Detect by header too (not just the label) so a `.jpg` that's really HEIC,
+	// or an untyped fetch, is still caught.
+	const refusal = heicExtensionRefusal(normalized);
+	if (refusal) throw refusal;
+	if (isHeic(bytes)) throw heicRefusal("the file's header is HEIC/HEIF");
 
 	// SVG is the one format here that's executable in downstream renderers, so
 	// scrub it before embedding — fast-xml-parser already rejects XXE, this
@@ -296,29 +298,30 @@ async function finalizeSource(
 	};
 }
 
+/** The refusal for a HEIC/HEIF extension label, or undefined for any other
+ * extension. Exported so `images replace` — which vets the `--with` extension
+ * before loading it — refuses `.heic` with the same message and hint. */
+export function heicExtensionRefusal(
+	extension: string,
+): ImageSourceError | undefined {
+	const lower = extension.toLowerCase();
+	if (!HEIC_EXTENSIONS.has(lower)) return undefined;
+	return heicRefusal(`.${lower} input`);
+}
+
+function heicRefusal(detectedBy: string): ImageSourceError {
+	return new ImageSourceError(
+		`HEIC/HEIF images are not supported (${detectedBy}): Word can't display them. Convert to JPEG or PNG first.`,
+		HEIC_CONVERSION_HINT,
+	);
+}
+
 function isHeic(bytes: Uint8Array): boolean {
 	if (bytes.length < 12) return false;
 	const boxType = new TextDecoder().decode(bytes.slice(4, 8));
 	if (boxType !== "ftyp") return false;
 	const majorBrand = new TextDecoder().decode(bytes.slice(8, 12));
 	return HEIF_BRANDS.has(majorBrand);
-}
-
-async function transcodeHEICToJPEG(bytes: Uint8Array): Promise<Uint8Array> {
-	try {
-		// heic-decode reads the buffer as a typed array (slice + char spread), so
-		// pass the Uint8Array directly; @types says ArrayBufferLike but an actual
-		// ArrayBuffer throws inside the lib.
-		const jpeg = await convert({
-			buffer: bytes as unknown as ArrayBufferLike,
-			format: "JPEG",
-			quality: 0.92,
-		});
-		return new Uint8Array(jpeg);
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		throw new ImageSourceError(`Failed to transcode HEIC to JPEG: ${reason}`);
-	}
 }
 
 /** `file:///C:/x.png` is `C:\x.png` on Windows, not `/C:/x.png`, and a percent-encoded
@@ -472,9 +475,11 @@ function readJPEGDimensions(
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 25 * 1024 * 1024;
 
-// Accepted *input* = the shared embeddable formats (image-formats.ts) plus the
-// `jpg`/`tif` aliases and HEIC/HEIF, which finalizeSource normalizes/transcodes
-// before embedding. Everything we extract or replace is therefore insertable.
+// Recognized *input* = the shared embeddable formats (formats.ts) plus the
+// `jpg`/`tif` aliases, which finalizeSource normalizes, and HEIC/HEIF, which it
+// refuses — they're listed only so a `data:image/heic` URI or an `image/heic`
+// fetch reaches that refusal and its conversion hint instead of a generic
+// "unsupported MIME" error. Everything we extract or replace is insertable.
 const MIME_BY_EXTENSION: Record<string, string> = {
 	...IMAGE_MIME_BY_EXTENSION,
 	heic: "image/heic",
@@ -490,6 +495,9 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 const CANONICAL_EXTENSION = CANONICAL_IMAGE_EXTENSION;
 
 const HEIC_EXTENSIONS = new Set(["heic", "heif"]);
+
+const HEIC_CONVERSION_HINT =
+	"Convert it, then insert the converted file. macOS: `sips -s format jpeg IN.heic --out OUT.jpg`. Linux: `heif-convert IN.heic OUT.jpg` (libheif-examples) or ImageMagick `magick IN.heic OUT.jpg`. Otherwise, open it in an image editor and export as JPEG or PNG.";
 
 // HEIF-family `ftyp` brands (the major brand at bytes 8–12 of the ISO-BMFF box).
 const HEIF_BRANDS = new Set([

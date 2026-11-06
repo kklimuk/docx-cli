@@ -5,6 +5,7 @@ import {
 	adoptPositionalMarkdown,
 	batchExampleIntro,
 	decodeInlineEscapes,
+	decodeInlineMarkdownEscapes,
 	parseRunsArg,
 	parseSpacingIndentFlags,
 	pickContextualHelp,
@@ -505,7 +506,7 @@ async function resolveMarkdownSpec(
 	flag: "markdown" | "markdown-file",
 ): Promise<Extract<InsertSpec, { kind: "markdown" }> | number> {
 	if (flag === "markdown") {
-		const source = decodeInlineEscapes(values.markdown as string);
+		const source = decodeInlineMarkdownEscapes(values.markdown as string);
 		return { kind: "markdown", source };
 	}
 	const path = values["markdown-file"] as string;

@@ -200,7 +200,7 @@ describe("docx images", () => {
 const ASSETS = join(import.meta.dir, "..", "fixtures", "assets");
 const PNG_PATH = join(ASSETS, "sample.png"); // 96×64
 const JPG_PATH = join(ASSETS, "sample.jpg"); // 120×80
-const HEIC_PATH = join(ASSETS, "sample.heic"); // 96×64, transcoded to JPEG
+const HEIC_PATH = join(ASSETS, "sample.heic"); // 96×64; refused, never embedded
 const EMU_PER_PIXEL = 9525;
 const EMU_PER_INCH = 914400;
 
@@ -396,49 +396,6 @@ describe("docx images add", () => {
 			"word/media/image2.jpeg",
 		]);
 		expect((await imageRuns(docPath)).length).toBe(2);
-	});
-
-	test("transcodes a HEIC file to JPEG before embedding", async () => {
-		const docPath = await newDoc("img-heic");
-		const result = await runCli(
-			"images",
-			"add",
-			docPath,
-			"--after",
-			"p0",
-			"--image",
-			HEIC_PATH,
-			"--alt",
-			"Student photo",
-		);
-		expect(result.exitCode).toBe(0);
-
-		// The embedded part is a JPEG, not HEIC (Word can't render HEIC).
-		const pkg = await Pkg.open(docPath);
-		expect(pkg.listParts()).toContain("word/media/image1.jpeg");
-		expect(pkg.listParts().some((part) => part.endsWith(".heic"))).toBe(false);
-
-		const [image] = await imageRuns(docPath);
-		expect(image?.contentType).toBe("image/jpeg");
-		// Dimensions survive the transcode (source HEIC is 96×64).
-		expect(image?.widthEmu).toBe(96 * EMU_PER_PIXEL);
-		expect(image?.heightEmu).toBe(64 * EMU_PER_PIXEL);
-	});
-
-	test("transcodes HEIC supplied as a data: URI", async () => {
-		const docPath = await newDoc("img-heic-datauri");
-		await runCli(
-			"images",
-			"add",
-			docPath,
-			"--after",
-			"p0",
-			"--image",
-			await dataUri(HEIC_PATH, "image/heic"),
-		);
-		const pkg = await Pkg.open(docPath);
-		expect(pkg.listParts()).toContain("word/media/image1.jpeg");
-		expect((await imageRuns(docPath))[0]?.contentType).toBe("image/jpeg");
 	});
 
 	test("refuses to fetch from a loopback/private address (SSRF gate)", async () => {
@@ -1157,5 +1114,151 @@ describe("docx images add — size units", () => {
 		}
 		const height = await addSized("img-junk-h", "--height", "4ems");
 		expect(height.result.exitCode).toBe(2);
+	});
+});
+
+// HEIC/HEIF is refused, not transcoded: Word can't display it, and every HEVC
+// decoder is copyleft (docx-cli dropped the LGPL libheif-js to stay MIT). Each
+// image ingress funnels through the same refusal, exits nonzero with a hint
+// naming the conversion command, and leaves the file untouched.
+describe("HEIC/HEIF input is refused on every image ingress", () => {
+	async function expectHeicRefusal(
+		docPath: string,
+		before: Uint8Array<ArrayBuffer>,
+		result: { exitCode: number; parsed?: unknown },
+	): Promise<void> {
+		expect(result.exitCode).toBe(1);
+		const error = result.parsed as {
+			code: string;
+			error: string;
+			hint: string;
+		};
+		expect(error.code).toBe("IMAGE_SOURCE");
+		expect(error.error).toContain("HEIC/HEIF images are not supported");
+		expect(error.hint).toContain("sips -s format jpeg IN.heic --out OUT.jpg");
+		expect(error.hint).toContain("heif-convert IN.heic OUT.jpg");
+		expect(error.hint).toContain("magick IN.heic OUT.jpg");
+		expect(error.hint).toContain("export as JPEG or PNG");
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+	}
+
+	async function heicMislabeledAsJpeg(label: string): Promise<string> {
+		const path = join(tempWorkspace(label), "really-heic.jpg");
+		await Bun.write(path, Bun.file(HEIC_PATH));
+		return path;
+	}
+
+	test("images add refuses a .heic file and writes nothing", async () => {
+		const docPath = await newDoc("img-heic");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			HEIC_PATH,
+		);
+		await expectHeicRefusal(docPath, before, result);
+		expect(result.parsed).toMatchObject({
+			error: expect.stringContaining(".heic input"),
+		});
+	});
+
+	test("images add refuses a data:image/heic URI", async () => {
+		const docPath = await newDoc("img-heic-datauri");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			await dataUri(HEIC_PATH, "image/heic"),
+		);
+		await expectHeicRefusal(docPath, before, result);
+	});
+
+	test("images add sniffs HEIC bytes behind a .jpg label", async () => {
+		// Word can't render HEIC, so embedding a mislabeled file would ship a
+		// broken image; the ftyp header check catches it.
+		const docPath = await newDoc("img-heic-mislabeled");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			await heicMislabeledAsJpeg("img-heic-mislabeled-src"),
+		);
+		await expectHeicRefusal(docPath, before, result);
+		expect(result.parsed).toMatchObject({
+			error: expect.stringContaining("header"),
+		});
+	});
+
+	test("insert refuses a markdown image pointing at a .heic file", async () => {
+		const docPath = await newDoc("img-heic-md-insert");
+		const before = await Bun.file(docPath).bytes();
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			`![Photo](${HEIC_PATH})`,
+		);
+		await expectHeicRefusal(docPath, before, result);
+	});
+
+	test("create --from refuses a markdown image pointing at a .heic file", async () => {
+		const workspace = tempWorkspace("img-heic-md-create");
+		const source = join(workspace, "source.md");
+		await Bun.write(source, `# Report\n\n![Photo](${HEIC_PATH})\n`);
+		const docPath = join(workspace, "out.docx");
+		const result = await runCli("create", docPath, "--from", source);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({
+			code: "IMAGE_SOURCE",
+			hint: expect.stringContaining("sips -s format jpeg"),
+		});
+		// `create` stages the blank package before its markdown pass (a
+		// pre-existing trait of every --from failure), so assert no image landed.
+		const pkg = await Pkg.open(docPath);
+		expect(pkg.listParts().some((part) => part.startsWith("word/media/"))).toBe(
+			false,
+		);
+	});
+
+	test("images replace refuses a .heic file or HEIC behind a .jpg label", async () => {
+		const docPath = await newDoc("img-heic-replace");
+		await runCli(
+			"images",
+			"add",
+			docPath,
+			"--after",
+			"p0",
+			"--image",
+			PNG_PATH,
+		);
+		const before = await Bun.file(docPath).bytes();
+		for (const source of [
+			HEIC_PATH,
+			await heicMislabeledAsJpeg("img-heic-replace-src"),
+		]) {
+			const result = await runCli(
+				"images",
+				"replace",
+				docPath,
+				"--at",
+				"img0",
+				"--with",
+				source,
+			);
+			await expectHeicRefusal(docPath, before, result);
+		}
 	});
 });

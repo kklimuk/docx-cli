@@ -113,6 +113,40 @@ const OTHER_CONTENT_FLAGS = [
 	"column-break",
 ] as const;
 
+/** `decodeInlineEscapes` for an inline `--markdown` value (or the positional
+ *  content that `adoptPositionalMarkdown` folds into it). Link and image
+ *  DESTINATIONS — the `dest` in `[label](dest)` and `![alt](dest)` — are left
+ *  undecoded. A destination can't contain a tab or a newline, so decoding one
+ *  there only ever breaks the link, and a Windows path is exactly where `\t`,
+ *  `\n` and `\r` turn up: `![Logo](C:\Users\me\tests\logo.png)` decoded `\t`
+ *  into a TAB, so GFM no longer saw an image and the command inserted the
+ *  syntax as literal text with exit 0. The label and an optional `"title"`
+ *  decode as usual. */
+export function decodeInlineMarkdownEscapes(value: string): string;
+export function decodeInlineMarkdownEscapes(
+	value: string | undefined,
+): string | undefined;
+export function decodeInlineMarkdownEscapes(
+	value: string | undefined,
+): string | undefined {
+	if (value === undefined) return undefined;
+	let decoded = "";
+	let cursor = 0;
+	for (const match of value.matchAll(LINK_DESTINATION)) {
+		const destinationStart = match.index + "](".length;
+		const destinationEnd = destinationStart + (match[1] ?? "").length;
+		decoded += decodeInlineEscapes(value.slice(cursor, destinationStart));
+		decoded += value.slice(destinationStart, destinationEnd);
+		cursor = destinationEnd;
+	}
+	return decoded + decodeInlineEscapes(value.slice(cursor));
+}
+
+/** An inline link/image destination right after `](`: CommonMark's `<…>` form
+ *  or a bare run with no whitespace or parentheses (the raw argv still spells
+ *  an escape as two characters, so a path like `C:\new\x.png` matches whole). */
+const LINK_DESTINATION = /\]\((<[^<>\n]*>|[^\s()<]*)/g;
+
 /** Decode the whitespace escape sequences weak agents type LITERALLY into an
  *  inline `--text` / `--markdown` argv value. A model reaching for a line break
  *  writes `--text "a\nb"`, but bash double-quotes don't interpret `\n` — the CLI
@@ -123,8 +157,9 @@ const OTHER_CONTENT_FLAGS = [
  *  the markdown parser's block splitting). ONLY these: a `\` before anything else —
  *  markdown's own escaping (`\*`, `\[`, `\.`) and a literal `\\` — passes through
  *  UNTOUCHED, because `\` before a letter was never a valid markdown escape (so
- *  decoding `\n`/`\t`/`\r` can't corrupt markdown) while `\`-before-punctuation is
- *  (so we must not touch it). Applied at the INLINE argv ingress ONLY: `--text-file`
+ *  decoding `\n`/`\t`/`\r` can't corrupt markdown — except inside a link or image
+ *  destination, which markdown callers skip via `decodeInlineMarkdownEscapes`)
+ *  while `\`-before-punctuation is (so we must not touch it). Applied at the INLINE argv ingress ONLY: `--text-file`
  *  / `--markdown-file` / `--from` read real characters from a file, and `--batch`
  *  JSONL is already decoded by `JSON.parse` — none are re-decoded. The
  *  literal-fidelity channel where a bare `\n` really means backslash-n stays

@@ -168,4 +168,4 @@ Tested on every commit: about 1,900 unit tests, a LibreOffice round-trip of ever
 
 ## License
 
-MIT. The standalone binaries statically link libheif (LGPL-3.0) for HEIC image support; see [NOTICES](NOTICES) for the attributions and your rights under the LGPL.
+MIT. Every library docx-cli depends on is permissively licensed; [NOTICES](NOTICES) carries the attributions for the ones bundled into the npm package and the binaries.

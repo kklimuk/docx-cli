@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
@@ -1342,5 +1343,76 @@ describe("insert — the empty anchor's paragraph mark and spacing bags", () => 
 			line: 360,
 			lineRule: "auto",
 		});
+	});
+});
+
+describe("insert — inline markdown keeps backslash image paths intact", () => {
+	// Inline markdown decodes a typed `\n`/`\t`/`\r` into real whitespace, but a
+	// link or image DESTINATION can't hold whitespace: decoding the `\t` of a
+	// Windows path like `C:\Users\me\tests\logo.png` broke the image, and the
+	// command inserted the syntax as literal text with exit 0.
+	test("a backslash path with \\t/\\n/\\r segments reaches the image loader verbatim", async () => {
+		const docPath = join(tempWorkspace("ins-md-winpath"), "doc.docx");
+		await runCli("create", docPath, "--text", "Before");
+		const windowsPath = "C:\\a\\tests\\new\\reports\\logo.png";
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			`![Logo](${windowsPath} "Company\\tlogo")`,
+		);
+		// Not on disk anywhere, so the loader's not-found error proves the
+		// destination arrived undecoded (and that it WAS parsed as an image).
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({
+			code: "IMAGE_SOURCE",
+			error: `Image file not found: ${windowsPath}`,
+		});
+	});
+
+	test("a native path under tests/new/reports directories embeds the image", async () => {
+		// On Windows this path is backslash-separated, so it is the real-world
+		// case; on POSIX it is the same flow with forward slashes.
+		const workspace = tempWorkspace("ins-md-nativepath");
+		const imageDir = join(workspace, "tests", "new", "reports");
+		mkdirSync(imageDir, { recursive: true });
+		const imagePath = join(imageDir, "logo.png");
+		await Bun.write(
+			imagePath,
+			Bun.file(join(import.meta.dir, "..", "fixtures", "assets", "sample.png")),
+		);
+		const docPath = join(workspace, "doc.docx");
+		await runCli("create", docPath, "--text", "Before");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			`![Logo](${imagePath})`,
+		);
+		expect(result.exitCode).toBe(0);
+		const pkg = await Pkg.open(docPath);
+		expect(pkg.listParts()).toContain("word/media/image1.png");
+	});
+
+	test("\\n outside a destination still decodes into a new paragraph", async () => {
+		const docPath = join(tempWorkspace("ins-md-decode-outside"), "doc.docx");
+		await runCli("create", docPath, "--text", "Before");
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--at",
+			"p0",
+			"First [site](https://example.com/a\\tb)\\n\\nSecond",
+		);
+		expect(result.exitCode).toBe(0);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain(">Second<");
+		expect(xml).not.toContain("\\n");
+		// The link survived: its destination's `\t` was left alone, so no
+		// literal `[site](` syntax leaked into the text.
+		expect(xml).toContain("<w:hyperlink");
+		expect(xml).not.toContain("[site]");
 	});
 });

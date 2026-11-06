@@ -3837,6 +3837,26 @@ describe("docx edit — inline escape decoding (--text / --markdown)", () => {
 	// decodes `\n`/`\t` at the inline argv ingress so they flow through the same
 	// real-newline handling as `--text-file` / batch. See decodeInlineEscapes.
 
+	test("markdown leaves a link/image destination undecoded (Windows paths)", async () => {
+		// `\t` in `C:\a\tests\…` decoded to a TAB broke the image, and the syntax
+		// landed as literal text at exit 0. The not-found error proves the
+		// destination reached the loader verbatim.
+		const docPath = await freshCopy("esc-md-winpath");
+		const windowsPath = "C:\\a\\tests\\new\\logo.png";
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			`![Logo](${windowsPath})`,
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.parsed).toMatchObject({
+			code: "IMAGE_SOURCE",
+			error: `Image file not found: ${windowsPath}`,
+		});
+	});
+
 	test("--text decodes \\n to a line break within the paragraph", async () => {
 		const docPath = await freshCopy("esc-text-nl");
 		const result = await runCli(
