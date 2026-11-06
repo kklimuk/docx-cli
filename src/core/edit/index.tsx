@@ -38,6 +38,12 @@ import {
 	shellMangledEquationLoss,
 } from "../equation/shell-mangle";
 import {
+	fieldSpanRefusal,
+	holdsFieldMarkup,
+	paragraphFieldRefusal,
+	parseFields,
+} from "../fields";
+import {
 	equationOverlaps,
 	equationSpanRefusal,
 	replaceInParagraph,
@@ -176,6 +182,7 @@ export class Edit {
 				"Block reference is stale (parent does not contain it)",
 			);
 		}
+		this.refuseFieldRebuild([blockRef.node], this.blockIdOf(blockRef.node));
 		if (spec.kind === "runs") this.refuseRunsOverEquations(blockRef.node);
 		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
 		// Decided before anything mutates, so a refusal leaves the paragraph as
@@ -408,6 +415,11 @@ export class Edit {
 		if (refusal) {
 			throw new EditError(refusal.code, refusal.message, refusal.hint);
 		}
+		this.refuseFieldCut(
+			blockRef.node,
+			span,
+			`${blockId}:${span.start}-${span.end}`,
+		);
 		const tracked: TrackedReplaceOptions | undefined =
 			(opts.track ?? this.document.isTrackChangesEnabled())
 				? {
@@ -430,6 +442,40 @@ export class Edit {
 				throw unparsableLatexError(error);
 			}
 			throw error;
+		}
+	}
+
+	/** A whole-paragraph rebuild re-emits fresh runs from text, so a field in
+	 *  the rebuilt paragraphs would come back as frozen plain text — refuse
+	 *  before anything mutates (`paragraphFieldRefusal`, issue #42). */
+	private refuseFieldRebuild(blocks: XmlNode[], locator: string): void {
+		if (!holdsFieldMarkup(blocks)) return;
+		const refusal = paragraphFieldRefusal(
+			parseFields([this.document.body.body]),
+			blocks,
+			locator,
+		);
+		if (refusal) {
+			throw new EditError(refusal.code, refusal.message, refusal.hint);
+		}
+	}
+
+	/** Refuse a `pN:S-E` span that cuts a field (`fieldSpanRefusal`). */
+	private refuseFieldCut(
+		paragraph: XmlNode,
+		span: { start: number; end: number },
+		locator: string,
+	): void {
+		// A span can only cut a field whose marker sits in this paragraph.
+		if (!holdsFieldMarkup([paragraph])) return;
+		const refusal = fieldSpanRefusal(
+			parseFields([this.document.body.body]),
+			{ paragraph, offset: span.start },
+			{ paragraph, offset: span.end },
+			locator,
+		);
+		if (refusal) {
+			throw new EditError(refusal.code, refusal.message, refusal.hint);
 		}
 	}
 
@@ -671,6 +717,16 @@ export class Edit {
 		if (spec.kind === "code") {
 			ensureCodeBlockStyles(this.document, spec.language);
 		}
+		const [first, last] = [
+			rangeRef.parent[rangeRef.startIndex],
+			rangeRef.parent[rangeRef.endIndex],
+		];
+		this.refuseFieldRebuild(
+			rangeRef.parent.slice(rangeRef.startIndex, rangeRef.endIndex + 1),
+			first && last
+				? `${this.blockIdOf(first)}-${this.blockIdOf(last)}`
+				: "the range",
+		);
 
 		const tracked = opts.track ?? this.document.isTrackChangesEnabled();
 		if (tracked) {
@@ -780,6 +836,7 @@ export type EditErrorCode =
 	| "INVALID_LOCATOR"
 	| "BLOCK_NOT_FOUND"
 	| "TRACKED_CHANGE_CONFLICT"
+	| "FIELD_IN_PARAGRAPH"
 	| "UNSUPPORTED";
 
 export class EditError extends Error {

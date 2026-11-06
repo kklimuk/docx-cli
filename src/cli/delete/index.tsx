@@ -5,6 +5,7 @@ import {
 	removeInlineSectPr,
 } from "@core";
 import { findContainingParagraph } from "@core/comments";
+import { fieldRemovalRefusal } from "@core/fields";
 import { XmlNode } from "@core/parser";
 import {
 	applyTrackedRangeDelete,
@@ -154,6 +155,12 @@ async function commitRangeDelete(
 	const rangeRef = await resolveBlockRangeOrFail(document, opts.locator);
 	if (typeof rangeRef === "number") return rangeRef;
 
+	const refusal = fieldRemovalRefusal(
+		document.body,
+		rangeRef.parent.slice(rangeRef.startIndex, rangeRef.endIndex + 1),
+	);
+	if (refusal) return fail(refusal.code, refusal.message, refusal.hint);
+
 	const tracked = resolveTracked(document, opts.trackFlag);
 	if (tracked) {
 		try {
@@ -255,6 +262,8 @@ async function commitBlockDelete(
 			"Block reference is stale (parent does not contain it)",
 		);
 	}
+	const refusal = fieldRemovalRefusal(document.body, [blockRef.node]);
+	if (refusal) return fail(refusal.code, refusal.message, refusal.hint);
 
 	if (opts.dryRun) return respondDryRun(opts);
 

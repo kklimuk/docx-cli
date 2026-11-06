@@ -7,6 +7,13 @@ import type {
 } from "../ast/types";
 import { formatEquationToken } from "../equation/token";
 import {
+	type FieldRefusal,
+	fieldSpanRefusal,
+	parseFields,
+	removeCoveredFields,
+	type SpanEnd,
+} from "../fields";
+import {
 	isRevisionVisible,
 	type RevisionView,
 } from "../track-changes/revision-visibility";
@@ -299,7 +306,7 @@ export type AcrossReplaceResult = {
 	/** Set when a match can't be applied over the equations it touches (it
 	 *  cuts one, or would put a paragraph break inside one — see
 	 *  `equationSpanRefusal`). When set, NOTHING was applied. */
-	refusal?: EquationRefusal | undefined;
+	refusal?: EquationRefusal | FieldRefusal | undefined;
 	normalizedQuery?: string;
 	normalizationApplied?: NormalizationKind[];
 };
@@ -328,19 +335,32 @@ export function applyAcrossReplace(
 	);
 	const replaced = selectMatches(matches, spec);
 	const expand = replacementExpander(spec);
+	const fields = parseFields([doc.body], spec.view);
 	const refusal = replaced
-		.map((match) =>
-			equationSpanRefusal(
-				acrossLocator(match),
-				match.equations,
-				expand(match.text),
-				"replace",
-				{ multiline: true, pattern: match.text },
-			),
+		.map(
+			(match) =>
+				equationSpanRefusal(
+					acrossLocator(match),
+					match.equations,
+					expand(match.text),
+					"replace",
+					{ multiline: true, pattern: match.text },
+				) ??
+				fieldSpanRefusal(
+					fields,
+					...matchEnds(doc, match),
+					acrossLocator(match),
+				),
 		)
 		.find((found) => found !== null);
 	if (!dryRun && !refusal) {
 		for (const match of [...replaced].reverse()) {
+			// A field the match covers goes whole: its markers out first (the
+			// boundary paragraphs' edge markers would otherwise stay behind).
+			removeCoveredFields(
+				parseFields([doc.body], spec.view),
+				...matchEnds(doc, match),
+			);
 			replaceAcrossParagraphs(
 				doc,
 				match,
@@ -351,6 +371,20 @@ export function applyAcrossReplace(
 		}
 	}
 	return { totalMatches: matches.length, replaced, refusal, ...normalization };
+}
+
+/** A cross-paragraph match's two ends, as the fields module takes them. */
+function matchEnds(doc: Body, match: ParagraphSpanMatch): [SpanEnd, SpanEnd] {
+	return [
+		{
+			paragraph: doc.resolveBlock(match.startBlockId).node,
+			offset: match.startOffset,
+		},
+		{
+			paragraph: doc.resolveBlock(match.endBlockId).node,
+			offset: match.endOffset,
+		},
+	];
 }
 
 /** `pN:S-E`, or `pN:S-pM:E` across paragraphs — `spanLocator`'s spelling. */

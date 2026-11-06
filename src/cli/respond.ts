@@ -39,6 +39,7 @@ export type ErrorCode =
 	| "RENDER_FAILED"
 	| "UPGRADE_FAILED"
 	| "UNSUPPORTED"
+	| "FIELD_IN_PARAGRAPH"
 	| "UNHANDLED";
 
 // All CLI output goes through these sinks so in-process tests can capture it.
@@ -295,6 +296,7 @@ function exitCodeFor(code: ErrorCode): number {
 		case "RENDER_FAILED":
 		case "UPGRADE_FAILED":
 		case "UNSUPPORTED":
+		case "FIELD_IN_PARAGRAPH":
 		case "UNHANDLED":
 			return EXIT.GENERAL_ERROR;
 	}

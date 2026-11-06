@@ -19,6 +19,7 @@ import {
 	type XmlNode,
 } from "@core";
 import type { ParagraphOptions, TabStop } from "@core/blocks";
+import { fieldRemovalRefusal } from "@core/fields";
 import { ensureCellEndsWithParagraph } from "@core/table";
 import { removeParagraphLine } from "@core/track-changes/replace";
 import type { parseArgs } from "util";
@@ -482,6 +483,8 @@ async function commitBlockEdit(
 			// Empty `--text` on a whole paragraph removes the line (cell-safe — a
 			// table cell's last paragraph is blanked, not deleted). Same path as
 			// `docx delete --at pN`.
+			const refusal = fieldRemovalRefusal(document.body, [blockRef.node]);
+			if (refusal) return fail(refusal.code, refusal.message, refusal.hint);
 			removeParagraphLine(document, blockRef, {
 				track,
 				author: opts.authorFlag,

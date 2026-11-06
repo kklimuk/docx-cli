@@ -639,6 +639,7 @@ function renameDelTextToText(node: XmlNode): void {
 	// (see `mutateTextToDelText`), so it isn't renamed back either.
 	if (node.tag === "w:txbxContent") return;
 	if (node.tag === "w:delText") node.tag = "w:t";
+	if (node.tag === "w:delInstrText") node.tag = "w:instrText";
 	for (const child of node.children) renameDelTextToText(child);
 }
 

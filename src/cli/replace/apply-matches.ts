@@ -1,5 +1,6 @@
 import type { Body } from "@core";
 import { EquationParseError } from "@core/equation";
+import { fieldSpanRefusal, parseFields } from "@core/fields";
 import {
 	equationSpanRefusal,
 	type ReplacementFormatting,
@@ -12,7 +13,8 @@ import { fail } from "../respond";
 
 /** Refuse the selected matches when any meets an equation in a way replace
  *  can't carry out (`equationSpanRefusal`: a cut token, or a shell-mangled
- *  replacement that would delete one), else apply them — whole tokens
+ *  replacement that would delete one) or cuts a field (`fieldSpanRefusal`:
+ *  half a field would stay behind), else apply them — whole tokens
  *  deleted, inside-token spans recompiled — and return undefined. Shared by
  *  single-shot and `--batch` replace; `entry` prefixes a batch entry's error.
  *  Every refusal comes before any mutation, and the caller applies even on
@@ -38,14 +40,23 @@ export async function applyMatchesOrFail(
 		equations: match.equations,
 		matched: match.text,
 	}));
+	const fields = parseFields([body.body], options.view);
 	for (const replacement of replacements) {
-		const refusal = equationSpanRefusal(
-			spanLocator(replacement),
-			replacement.equations,
-			replacement.replacement,
-			"replace",
-			{ pattern: replacement.matched },
-		);
+		const paragraph = body.resolveBlock(replacement.blockId).node;
+		const refusal =
+			equationSpanRefusal(
+				spanLocator(replacement),
+				replacement.equations,
+				replacement.replacement,
+				"replace",
+				{ pattern: replacement.matched },
+			) ??
+			fieldSpanRefusal(
+				fields,
+				{ paragraph, offset: replacement.start },
+				{ paragraph, offset: replacement.end },
+				spanLocator(replacement),
+			);
 		if (refusal) {
 			return fail(refusal.code, `${prefix}${refusal.message}`, refusal.hint);
 		}

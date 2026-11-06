@@ -183,7 +183,10 @@ function splitChildrenAt(
 			before.push(child);
 			continue;
 		}
-		if (child.tag === "w:r") {
+		// A run with no width (a field's `<w:fldChar>`, a lone drawing or note
+		// reference) is a marker: it goes by `edge` below, like the others, so a
+		// field marker sitting exactly on a span edge stays outside the cut.
+		if (child.tag === "w:r" && runTextLength(child) > 0) {
 			const length = runTextLength(child);
 			if (cursor + length <= offset) {
 				before.push(child);
@@ -230,8 +233,8 @@ function splitChildrenAt(
 			cursor += length;
 			continue;
 		}
-		// Zero-width: comment/bookmark markers, view-invisible tracked wrappers,
-		// a hidden equation.
+		// Zero-width: comment/bookmark markers, empty runs, view-invisible
+		// tracked wrappers, a hidden equation.
 		const inBefore =
 			cursor < offset || (cursor === offset && edge === "before");
 		(inBefore ? before : after).push(child);

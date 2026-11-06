@@ -33,6 +33,8 @@ graded by what Word does on open:
   warning  a comment range with no commentReference (Word drops the comment)
   warning  a comment with no marker in the document at all (Word deletes it)
   warning  a reply whose thread parent names no comment (Word drops the link)
+  error    an unbalanced field — a fldChar begin/separate/end with no match
+           (half a field: an orphan end, or a field never closed)
 These list under the part they concern, tagged "(consistency)"; one Word
 handles them harmlessly (a stale commentsIds entry, a duplicate durableId) is
 not reported, but --fix and every save clean it up anyway.

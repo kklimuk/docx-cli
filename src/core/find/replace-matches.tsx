@@ -5,6 +5,7 @@ import {
 	shellMangledEquationLoss,
 } from "../equation/shell-mangle";
 import { formatEquationToken } from "../equation/token";
+import { removeFieldsCoveredInParagraph } from "../fields/remove-covered-fields";
 import type { XmlNode } from "../parser";
 import { Del, Ins } from "../track-changes/emit";
 import type { EquationOverlap, FindView } from "./index";
@@ -93,15 +94,25 @@ export function replaceInParagraph(
 		}
 		operations.push({
 			start: match.start,
-			apply: () =>
+			apply: () => {
+				const span = { start: match.start, end: match.end };
+				// A field the span covers goes whole — its markers first, then
+				// the walker takes its result with the rest of the text.
+				removeFieldsCoveredInParagraph(
+					paragraph,
+					span,
+					view,
+					tracked && (() => mintMeta(tracked)),
+				);
 				replaceSpanInParagraph(
 					paragraph,
-					{ start: match.start, end: match.end },
+					span,
 					match.replacement,
 					tracked,
 					view,
 					formatting,
-				),
+				);
+			},
 		});
 	}
 	for (const { overlap, changes } of rewrites.values()) {

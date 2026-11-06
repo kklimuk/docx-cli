@@ -433,25 +433,16 @@ describe("transparent wrappers — replace inside the wrapper", () => {
 		expect(p1Text).toBe("Hello Bob.");
 	});
 
-	test("replace span crossing INTO a wrapper splits it cleanly", async () => {
+	test("replace span cutting INTO a <w:fldSimple> is refused (half a field)", async () => {
 		const docPath = await freshCopy("transparent-replace-cross");
-		// "is 2026" crosses the fldSimple boundary; replacing it should leave
-		// the rest of the date inside a (now-shorter) fldSimple half.
+		const before = await Bun.file(docPath).arrayBuffer();
+		// "is 2026" covers part of the field's result and text outside it —
+		// splitting the fldSimple would duplicate its instruction (issue #42).
 		const result = await runCli("replace", docPath, "is 2026", "was 2025");
-		expect(result.exitCode).toBe(0);
-
-		const read = await runCli("read", docPath, "--ast");
-		const doc = read.parsed as {
-			blocks: Array<{
-				type: string;
-				runs?: Array<{ type: string; text?: string }>;
-			}>;
-		};
-		const p0Text = (doc.blocks[0]?.runs ?? [])
-			.filter((run) => run.type === "text")
-			.map((run) => run.text ?? "")
-			.join("");
-		expect(p0Text).toBe("Today was 2025-05-05.");
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toContain("cuts a field");
+		const after = await Bun.file(docPath).arrayBuffer();
+		expect(Buffer.from(after).equals(Buffer.from(before))).toBe(true);
 	});
 
 	test("the fldSimple wrapper survives a fully-internal replace", async () => {
