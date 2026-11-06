@@ -428,11 +428,7 @@ export function mintedLocatorsFor(
 	document: Document,
 	insertedNodes: Set<XmlNode>,
 ): string[] {
-	const locators: string[] = [];
-	for (const [blockId, reference] of document.body.blockReferences) {
-		if (insertedNodes.has(reference.node)) locators.push(blockId);
-	}
-	return locators;
+	return document.body.locatorsOf(insertedNodes);
 }
 
 /** Inserts whose result depends on page layout — multi-column sections, page/

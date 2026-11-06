@@ -24,6 +24,10 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *
  *   footnotes.xml: separator, continuationSeparator, fn1 (edited), fn2, fn3
  *   endnotes.xml:  separator, continuationSeparator, en1
+ *
+ * The endnote paragraph is authored right after p0 and then relocated with
+ * `docx move` (dogfooding it: the endnote reference rides the moved node),
+ * so LibreOffice round-trips a moved note reference too.
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -38,13 +42,16 @@ mkdirSync(dirname(out), { recursive: true });
 
 await cli("create", out, "--force", "--text", "Footnotes fixture");
 
-await cli("insert", out, "--after", "p0", "--text", "Anchored at end.");
+await cli("insert", out, "--after", "p0", "--text", "Endnote here.");
+await cli("endnotes", "add", out, "--at", "p1", "--text", "Body en1.");
+
+await cli("insert", out, "--after", "p1", "--text", "Anchored at end.");
 await cli(
 	"footnotes",
 	"add",
 	out,
 	"--at",
-	"p1",
+	"p2",
 	"--text",
 	"Original body fn1.",
 );
@@ -58,16 +65,16 @@ await cli(
 	"Edited body fn1.",
 );
 
-await cli("insert", out, "--after", "p1", "--text", "Anchored at start. Body.");
+await cli("insert", out, "--after", "p2", "--text", "Anchored at start. Body.");
 // Offset 0 = before "Anchored…" — first character.
-await cli("footnotes", "add", out, "--at", "p2:0", "--text", "Body fn2.");
+await cli("footnotes", "add", out, "--at", "p3:0", "--text", "Body fn2.");
 
-await cli("insert", out, "--after", "p2", "--text", "Anchored mid-run.");
+await cli("insert", out, "--after", "p3", "--text", "Anchored mid-run.");
 // 8 = right after "Anchored", mid-run.
-await cli("footnotes", "add", out, "--at", "p3:8", "--text", "Body fn3.");
+await cli("footnotes", "add", out, "--at", "p4:8", "--text", "Body fn3.");
 
-await cli("insert", out, "--after", "p3", "--text", "Endnote here.");
-await cli("endnotes", "add", out, "--at", "p4", "--text", "Body en1.");
+// Endnote paragraph p1 → after the footnote paragraphs (the final p4).
+await cli("move", out, "--at", "p1", "--after", "p4");
 
 // One tracked footnote so the integration suite covers the under-tracking
 // emit path too: <w:ins> wraps both the reference run AND the body content,
