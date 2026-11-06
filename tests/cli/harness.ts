@@ -40,7 +40,7 @@ const SUBVERB_MUTATORS: Record<string, Set<string>> = {
 	footers: new Set(["set", "clear"]),
 	footnotes: new Set(["add", "edit", "delete"]),
 	headers: new Set(["set", "clear"]),
-	images: new Set(["replace", "delete"]),
+	images: new Set(["replace", "delete", "set"]),
 	hyperlinks: new Set(["add", "replace", "delete"]),
 	lists: new Set(["set"]),
 	raw: new Set(["insert", "replace", "edit", "part"]),

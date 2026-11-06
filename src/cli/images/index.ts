@@ -8,6 +8,7 @@ const SUBCOMMANDS: Record<string, () => Promise<{ run: CommandFn }>> = {
 	extract: () => import("./extract"),
 	list: () => import("./list"),
 	replace: () => import("./replace"),
+	set: () => import("./set"),
 };
 
 const HELP = `docx images — manage embedded images
@@ -19,8 +20,12 @@ Verbs:
   add      Insert an image (--after/--before/--at-start/--at-end; --image SRC)
   list     Print image manifest as JSON
   extract  Dump image bytes to a directory
+  set      Resize (--width/--height keep the aspect, --fit cures overflow) or
+           change alt text (--alt) of an existing image; --batch for many
   replace  Swap an image's bytes
   delete   Remove an embedded image (prunes the part if unreferenced)
+
+To center an image, align its paragraph: docx edit FILE --at pN --alignment center.
 
 Run "docx images <verb> --help" for verb-specific help.
 `;

@@ -80,12 +80,7 @@ export async function run(args: string[]): Promise<number> {
 		return fail("IMAGE_NOT_FOUND", `Image not found: ${targetId}`);
 	}
 
-	// `imgN` is positional in document order; collectImageRuns yields hits in the
-	// same order `read` assigns ids, so hit[N] is imgN (two ids can share one
-	// media part / relationship, so we resolve the occurrence, not just the rId).
-	const occurrences = new Images(document).list();
-	const ordinal = imageOrdinal(targetId);
-	const occurrence = ordinal === null ? undefined : occurrences[ordinal];
+	const occurrence = new Images(document).find(targetId);
 	if (!occurrence) {
 		return fail(
 			"IMAGE_NOT_FOUND",
@@ -143,12 +138,6 @@ export async function run(args: string[]): Promise<number> {
 		pruned,
 	});
 	return EXIT.OK;
-}
-
-function imageOrdinal(id: string): number | null {
-	const match = id.match(/^img(\d+)$/);
-	if (!match) return null;
-	return Number(match[1]);
 }
 
 /** Drop the relationship and media part only when the rId is referenced NOWHERE

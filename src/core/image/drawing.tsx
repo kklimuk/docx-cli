@@ -3,6 +3,14 @@ import { iterateBlocks } from "../ast/document/body";
 import { IMAGE_RELATIONSHIP_TYPE } from "../ast/document/relationships";
 import { a, pic, w, wp } from "../jsx";
 import type { XmlNode } from "../parser";
+import { getPageContentWidthEmu } from "../sections";
+import {
+	DRAWINGML_PICTURE_URI,
+	type ImageFrameChange,
+	ImageFrameError,
+	type ImageFrameResult,
+	setImageFrame,
+} from "./frame";
 import type { ImageSource } from "./source";
 
 /** Cross-cutting lens over the document's inline images: walks the document
@@ -38,6 +46,39 @@ export class Images {
 		}
 		walk(this.document.documentTree);
 		return hits;
+	}
+
+	/** The occurrence `imgN` names — `list()[N]`. Two ids can share one media
+	 *  part / relationship, so this resolves the OCCURRENCE, not just the rId.
+	 *  Undefined for a malformed id or one past the last image. */
+	find(imageId: string): ImageRunHit | undefined {
+		const match = imageId.match(/^img(\d+)$/);
+		if (!match) return undefined;
+		return this.list()[Number(match[1])];
+	}
+
+	/** Resize and/or re-describe the picture `imageId` in place (`images set`).
+	 *  `fit: true` shrinks it to the page's text width (the same width `images
+	 *  add` fits new images to), never enlarging. Throws `ImageFrameError` for
+	 *  an unknown id or a drawing that isn't a lone picture. */
+	set(
+		imageId: string,
+		change: Omit<ImageFrameChange, "fitWidthEmu"> & { fit?: boolean },
+	): ImageFrameResult & { hit: ImageRunHit } {
+		const hit = this.find(imageId);
+		const drawing = hit?.run.findChild("w:drawing");
+		if (!hit || !drawing) {
+			throw new ImageFrameError(
+				"IMAGE_NOT_FOUND",
+				"Image not found",
+				"Image ids are img0, img1, … in document order — see `docx images list`.",
+			);
+		}
+		const { fit, ...rest } = change;
+		const frameChange: ImageFrameChange = fit
+			? { ...rest, fitWidthEmu: getPageContentWidthEmu(this.document) }
+			: rest;
+		return { ...setImageFrame(drawing, frameChange), hit };
 	}
 
 	/** Write image bytes into `word/media/imageN.ext`, mint an image
@@ -214,8 +255,6 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	return hex;
 }
 
-const DRAWINGML_PICTURE_URI =
-	"http://schemas.openxmlformats.org/drawingml/2006/picture";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PIC_NAMESPACE =
 	"http://schemas.openxmlformats.org/drawingml/2006/picture";

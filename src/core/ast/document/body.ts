@@ -159,6 +159,22 @@ export class Body {
 		return undefined;
 	}
 
+	/** The display size (`<wp:extent>`, EMU) of the first image run carrying
+	 * this content hash — what `read`'s `docx:image size` hint shows. The
+	 * markdown importer keeps it when an `![alt](<sha256>.<ext>)` is restated,
+	 * so a markdown `edit` doesn't undo a resize (`images set`, or Word's own)
+	 * by snapping the picture back to its native pixel size. */
+	findImageSizeByHash(
+		hash: string,
+	): { widthEmu: number; heightEmu: number } | undefined {
+		for (const run of flattenImageRuns(this.blocks)) {
+			if (run.hash !== hash) continue;
+			if (!run.widthEmu || !run.heightEmu) return undefined;
+			return { widthEmu: run.widthEmu, heightEmu: run.heightEmu };
+		}
+		return undefined;
+	}
+
 	listHyperlinkIds(): string[] {
 		return [...this.hyperlinkById.keys()];
 	}

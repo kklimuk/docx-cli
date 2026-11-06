@@ -472,10 +472,19 @@ async function tryReuseImageByHash(
 			"This URL looks like a docx-cli content-addressed image reference (the shape `<sha256>.<ext>` that `docx read --markdown` emits). Either reference a file path, a data: URI, or an https:// URL — or use a hash that already exists in the target doc.",
 		);
 	}
-	// Recompute extent from the stored media bytes — `<wp:extent>` is set
-	// per-drawing in OOXML, not per-media-part, so we can't crib the
-	// dimensions from the existing usage's drawing element (it may have
-	// been resized).
+	// Keep the size the image is SHOWN at (`<wp:extent>` is per-drawing, not
+	// per-media-part, so this is the first usage's) — a restated image must
+	// not snap a resized picture back to its native pixel size.
+	const shownSize = ctx.document.body.findImageSizeByHash(hash);
+	if (shownSize) {
+		return {
+			relationshipId: existing.relationshipId,
+			drawingId: nextDrawingId(ctx.document.documentTree),
+			...shownSize,
+			alt: image.alt ?? undefined,
+		};
+	}
+	// No usable extent on the existing drawing: size from the stored bytes.
 	const bytes = await ctx.document.pkg.readBytes(existing.partName);
 	if (!bytes) {
 		throw new MarkdownImportError(
