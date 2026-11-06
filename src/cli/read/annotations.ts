@@ -129,3 +129,9 @@ export function deviatingCellMargins(
 export function emuToInches(emu: number): string {
 	return `${Number.parseFloat((emu / 914400).toFixed(2))}`;
 }
+
+/** An image extent as the `docx:image size="WxHin"` hint prints it — the one
+ *  spelling `read` emits and `images set --size` / its ack echo back. */
+export function formatImageSize(widthEmu: number, heightEmu: number): string {
+	return `${emuToInches(widthEmu)}x${emuToInches(heightEmu)}in`;
+}

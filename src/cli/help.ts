@@ -43,7 +43,7 @@ Commands (each one-liner names capabilities you'd otherwise miss; see <command> 
   endnotes  …     Add (--at | --anchor PHRASE), edit, delete, list endnotes (--text/--runs/--markdown bodies)
   headers   …     Set/list/clear page headers — --text, page numbers, date, fields; --first-page/--even; default = whole document
   footers   …     Set/list/clear page footers — e.g. "footers set FILE --page-number --of-pages" for "Page X of Y"
-  images    …     Add (--caption "Figure 1: …" for a captioned figure), extract, replace, delete, list images
+  images    …     Add (--caption "Figure 1: …" for a captioned figure), set (resize / --fit / alt text), extract, replace, delete, list images
   hyperlinks …    Add, list, replace, delete hyperlinks (add uses --url; replace uses --with)
   tables    …     Create a table (create --after pN --rows N --cols M), then restructure — insert/delete rows & columns, merge/unmerge, set widths, borders, format
   lists     FILE  Renumber a numbered list — "lists set --at pN --start 5" / "--format upper-roman" / "--restart" / "--continue"

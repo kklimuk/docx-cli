@@ -38,7 +38,7 @@ docx info skill        # this skill, regenerated from the binary
 | `comments`                           | `add` (`--at` / `--anchor PHRASE` / `--batch`), `reply`, `resolve` (`--unset`), `delete`, `list`.                                 |
 | `footnotes` / `endnotes`             | `add` (`--at` / `--anchor`), `edit`, `delete`, `list`.                                                                            |
 | `headers` / `footers`                | `set` / `list` / `clear` — text, page numbers, dates, fields; e.g. `footers set FILE --page-number --of-pages`.                   |
-| `images`                             | `add` (`--caption` for a figure), `extract`, `replace`, `delete`, `list`.                                                         |
+| `images`                             | `add` (`--caption` for a figure), `set` (resize / `--fit` / `--alt`), `extract`, `replace`, `delete`, `list`.                   |
 | `hyperlinks`                         | `add` (`--url`), `list`, `replace` (`--with`), `delete`.                                                                          |
 | `tables`                             | Insert/delete rows & columns, merge/unmerge, set widths, borders, formatting.                                                     |
 | `lists`                              | Renumber a numbered list (`set --at pN --start 5` / `--format upper-roman` / `--restart` / `--continue`).                         |

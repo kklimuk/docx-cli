@@ -1,7 +1,6 @@
 import { parseParagraphOptions, type RawValues } from "../insert/index";
 import { parseTargetPlacement, placeSpec } from "../insert/place";
 import { decodeInlineEscapes } from "../parse-helpers";
-import { type LengthOptions, parseLength } from "../parse-length";
 import {
 	EXIT,
 	fail,
@@ -11,6 +10,7 @@ import {
 	tryParseArgs,
 	writeStdout,
 } from "../respond";
+import { parseImageInches } from "./length";
 
 const HELP = `docx images add — insert an image
 
@@ -165,24 +165,11 @@ async function parseImageFlags(values: RawValues): Promise<
 	for (const flag of ["width", "height"] as const) {
 		const raw = values[flag] as string | undefined;
 		if (raw === undefined) continue;
-		const twips = parseLength(raw, flag, IMAGE_LENGTH);
-		if (typeof twips !== "number")
-			return fail("USAGE", twips.error, twips.hint);
-		out[flag === "width" ? "widthInches" : "heightInches"] =
-			twips / TWIPS_PER_INCH;
+		const inches = parseImageInches(raw, flag);
+		if (typeof inches !== "number")
+			return fail("USAGE", inches.error, inches.hint);
+		out[flag === "width" ? "widthInches" : "heightInches"] = inches;
 	}
 
 	return out;
 }
-
-/** Image sizes: bare inches (the long-standing meaning), positive, and `px` at
- *  96 dpi — an image is the one thing with a natural pixel size (the default
- *  `--width` already IS its pixel size at 96 dpi), so `300px` is what an agent
- *  holding pixel dimensions reaches for. */
-const IMAGE_LENGTH: LengthOptions = {
-	bare: "in",
-	positive: true,
-	pixels: true,
-};
-
-const TWIPS_PER_INCH = 1440;

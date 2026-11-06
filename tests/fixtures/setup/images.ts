@@ -17,6 +17,8 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   4. PNG sized with unit suffixes (`--width 4cm`, then `--height 96px` on a
  *      fifth copy) — the shared length grammar, which used to read `4cm` as
  *      4 INCHES.
+ *   5. A 9in-wide PNG cured with `docx images set --fit --alt` (shrunk to the
+ *      text width, re-described), and img2 resized with `images set --height`.
  * The page itself is A4 with 2cm margins via `create --size 210x297mm
  * --margins 2cm` (WxH with a unit suffix — inches-only before).
  *
@@ -120,6 +122,31 @@ await cli(
 	"--height",
 	"96px",
 );
+
+// `images set` on existing images: an over-wide (9in) PNG cured with `--fit`
+// (shrinks to the 17cm A4 text width, aspect kept) and re-described with
+// `--alt`; then img2 resized by height alone (`--height 0.5in`, width follows).
+await cli(
+	"insert",
+	out,
+	"--after",
+	"p9",
+	"--text",
+	"PNG fitted and re-described",
+);
+await cli(
+	"images",
+	"add",
+	out,
+	"--after",
+	"p10",
+	"--image",
+	pngPath,
+	"--width",
+	"9",
+);
+await cli("images", "set", out, "--at", "img5", "--fit", "--alt", "Fitted PNG");
+await cli("images", "set", out, "--at", "img2", "--height", "0.5in");
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);

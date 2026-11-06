@@ -43,8 +43,8 @@ import {
 } from "@core/track-changes/revision-visibility";
 import {
 	deviatingCellMargins,
-	emuToInches,
 	formatCellMargins,
+	formatImageSize,
 	formatNote,
 	htmlAttr,
 	type NotePair,
@@ -780,10 +780,7 @@ function contentWidthEmu(geometry: SectionBreak | undefined): number {
 function formatImageNote(run: ImageRun, contentEmu: number): string {
 	const pairs: NotePair[] = [];
 	if (run.widthEmu && run.heightEmu) {
-		pairs.push([
-			"size",
-			`${emuToInches(run.widthEmu)}x${emuToInches(run.heightEmu)}in`,
-		]);
+		pairs.push(["size", formatImageSize(run.widthEmu, run.heightEmu)]);
 	}
 	if (run.floating) pairs.push(["float", "yes"]);
 	if (run.wrap) pairs.push(["wrap", run.wrap]);
