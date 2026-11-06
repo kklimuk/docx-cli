@@ -1,10 +1,67 @@
 import { describe, expect, test } from "bun:test";
+import {
+	buildThirdPartyLicenses,
+	collectProductionPackages,
+	THIRD_PARTY_LICENSES_FILE,
+} from "../../scripts/third-party-licenses";
 import { tempWorkspace } from "./harness";
 
 const SKILL_INSTALLER = "skills/docx-cli/scripts/install.sh";
 const ROOT_INSTALLER = "install.sh";
 const BOOTSTRAP = "skills/docx-cli/scripts/bootstrap.sh";
 const RELEASE_WORKFLOW = ".github/workflows/release.yml";
+const NOTICES = "NOTICES";
+
+describe("release attribution drift guards", () => {
+	// Every package in the production closure is redistributed inside dist/index.js
+	// and the binaries, and its license requires its notice to travel with it. The
+	// generator throws on a missing license text or a non-permissive license, so this
+	// also stops a copyleft dependency from landing unnoticed. Offline: it reads the
+	// installed node_modules, never the network.
+	test("THIRD-PARTY-LICENSES matches the installed production dependencies", async () => {
+		const committed = (
+			await Bun.file(THIRD_PARTY_LICENSES_FILE).text()
+		).replace(/\r\n/g, "\n");
+		// Stale? Run `bun run licenses` and commit the result.
+		expect(committed).toBe(buildThirdPartyLicenses("."));
+	});
+
+	// MIT/ISC terms are satisfied by the LICENSE text alone. Anything else (BSD
+	// notices, Zlib, a dual license we elect from) gets a named entry in NOTICES too.
+	test("NOTICES names every production package that isn't plain MIT or ISC", async () => {
+		const notices = await Bun.file(NOTICES).text();
+		// An entry OPENS a line: `----  name (…)` for a reproduced notice, or the
+		// two-space-indented elections table. A bare substring would let `diff`
+		// pass on the word "different".
+		const hasEntry = (name: string) =>
+			new RegExp(
+				`^(?:----\\s+|  )${name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\s`,
+				"m",
+			).test(notices);
+		const unnamed = [...collectProductionPackages(".").values()]
+			.filter((licensed) => !["MIT", "ISC"].includes(licensed.license))
+			.filter((licensed) => !hasEntry(licensed.name))
+			.map((licensed) => `${licensed.name} (${licensed.license})`);
+		expect(unnamed).toEqual([]);
+	});
+
+	// The attribution has to reach the people who get the bytes: the npm tarball
+	// (package.json `files`) and every release binary (the release staging step).
+	test("the npm package and the release artifacts both ship the attribution files", async () => {
+		const [manifest, workflow] = await Promise.all([
+			Bun.file("package.json").json() as Promise<{ files: string[] }>,
+			Bun.file(RELEASE_WORKFLOW).text(),
+		]);
+		const staging = workflow.match(
+			/run: cp LICENSE [^\n]*\.\/artifacts\//,
+		)?.[0];
+		expect(staging).toBeDefined();
+		for (const file of ["LICENSE", NOTICES, THIRD_PARTY_LICENSES_FILE]) {
+			expect(manifest.files).toContain(file);
+			expect(staging).toContain(file);
+		}
+	});
+});
 
 describe("installer drift guards", () => {
 	// The skill folder is the single source: bootstrap.sh delegates to its sibling, and

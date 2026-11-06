@@ -12,6 +12,7 @@ bun run test:integration            # LibreOffice round-trip (needs `soffice` on
 bun test                            # everything
 bun run build                       # produce dist/index.js (npm bundle)
 bun run build:binary                # produce dist/docx via bun build --compile
+bun run licenses                    # regenerate THIRD-PARTY-LICENSES after a dependency change
 ```
 
 ### LibreOffice (for integration tests)

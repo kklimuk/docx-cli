@@ -67,10 +67,11 @@ jobs:
           path: ./artifacts
           merge-multiple: true
       - name: Stage attribution files for release
-        # LICENSE + NOTICES ship alongside every binary; NOTICES is the
-        # canonical attribution surface the BSD-3 components require: PDFium,
-        # jpeg-js, and highlight.js.
-        run: cp LICENSE NOTICES ./artifacts/
+        # The attribution files ship alongside every binary: NOTICES (the
+        # notices no bundled LICENSE file carries, plus the BSD-3 ones) and
+        # THIRD-PARTY-LICENSES (every bundled package's LICENSE text). The
+        # installer drift guard checks this line and package.json `files`.
+        run: cp LICENSE NOTICES THIRD-PARTY-LICENSES ./artifacts/
       - name: Stage install.sh for release
         # Shipped as a release asset (not served from a branch) so the documented install
         # command pins to a tag and is covered by SHA256SUMS below. It lives in the skill

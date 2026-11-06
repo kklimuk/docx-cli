@@ -3,6 +3,7 @@
 - [move.ts](move.ts) — move a TS file and auto-update imports (TS LanguageService-driven).
 - [escape-check.ts](escape-check.ts), [fxp-smoke.ts](fxp-smoke.ts), [jsx-smoke.tsx](jsx-smoke.tsx) — ad-hoc probes for XML escaping, fast-xml-parser behavior, and the JSX runtime.
 - [word-redlines.sh](word-redlines.sh) — AppleScript oracle that drives Microsoft Word to produce ground-truth track-changes XML (referenced from [src/core/track-changes/replace.tsx](../src/core/track-changes/replace.tsx) and [src/core/notes/CLAUDE.md](../src/core/notes/CLAUDE.md)).
+- [third-party-licenses.ts](third-party-licenses.ts) — `bun run licenses`: regenerates the root THIRD-PARTY-LICENSES from the installed production dependency closure (every bundled package's LICENSE text); throws on a missing license text or a license outside its permissive allowlist. `tests/cli/installer.test.ts` fails while the committed file is stale.
 - [sign-macos-binary.sh](sign-macos-binary.sh) — final ad-hoc signing and strict verification for macOS CI/release executables; [macos-entitlements.plist](macos-entitlements.plist) carries Bun's documented JavaScriptCore permissions. Run only after all binary modifications.
 - `data/` — sample `.docx` files used for one-off inspection (not test fixtures; those live in [tests/fixtures/](../tests/fixtures/)).
 

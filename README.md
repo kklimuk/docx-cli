@@ -168,4 +168,4 @@ Tested on every commit: about 1,900 unit tests, a LibreOffice round-trip of ever
 
 ## License
 
-MIT. Every library docx-cli depends on is permissively licensed; [NOTICES](NOTICES) carries the attributions for the ones bundled into the npm package and the binaries.
+MIT. Every library docx-cli depends on is permissively licensed; [NOTICES](NOTICES) and [THIRD-PARTY-LICENSES](THIRD-PARTY-LICENSES) carry the attributions for the ones bundled into the npm package and the binaries.
