@@ -29,8 +29,10 @@ import { getPageContentWidthEmu } from "../sections";
 import { resolveAuthor, resolveDate, TrackChanges } from "../track-changes";
 import { promoteDisplayMath } from "./display-math";
 import { MarkdownImportError } from "./errors";
+import { reparseHintLedLines } from "./hint-led-lines";
 import { type ResolvedImage, type WalkContext, walkInline } from "./inline";
 import { remarkInlineSurgery } from "./inline-surgery";
+import { remarkNoteReferenceLabels } from "./note-reference-labels";
 import { remarkReadHintLabels } from "./read-hint-labels";
 import { walkRoot } from "./walker";
 
@@ -55,13 +57,23 @@ export class MarkdownImport {
 	 * `word/_rels/footnotes.xml.rels`, not the document's (a dangling rId
 	 * otherwise — Word reports "unreadable content"). `options.stripImages`
 	 * drops every `image`/`imageReference` before the walk so a note body
-	 * (text + links only) can't mint a media rel in the wrong part. */
+	 * (text + links only) can't mint a media rel in the wrong part.
+	 *
+	 * `options.replacing` names the blocks an UNTRACKED edit is about to replace
+	 * with this source. A `[^fnN]`/`[^enN]` copied from `read` whose reference
+	 * lives in one of them keeps that note (the old reference leaves with the old
+	 * block); every other copied reference — an insert, a tracked edit, a second
+	 * citation — clones the note, so no two references ever share one (Word
+	 * "repairs" that as corruption). Omit it under tracking: the old reference
+	 * stays behind in its `<w:del>`, and accept/reject must each end with
+	 * exactly one live reference. */
 	async blocks(
 		source: string,
 		options: {
 			authorFlag?: string;
 			relationships?: RelationshipsView;
 			stripImages?: boolean;
+			replacing?: readonly XmlNode[];
 		} = {},
 	): Promise<XmlNode[]> {
 		// The leading `<!-- docx:base … -->` note (emitted by `read`) is a
@@ -85,6 +97,7 @@ export class MarkdownImport {
 			imageCache: new Map(),
 			definitions: collectDefinitions(tree),
 			relationships: options.relationships ?? this.document.relationships,
+			reusableNoteIds: noteReferenceKeys(options.replacing ?? []),
 		};
 
 		if (tracked) {
@@ -118,6 +131,10 @@ function parseToMdast(source: string): Root {
 		// Before inline surgery: the `[^tcN]`/`[^cN]` read-annotation labels are
 		// dropped first, so CriticMarkup beside one tokenizes as if it weren't there.
 		.use(remarkReadHintLabels)
+		// After the hint labels (which own `[^tcN]`/`[^cN]`), before surgery:
+		// a `[^fnN]` copied from `read` without its definition addresses the
+		// document's existing note instead of landing as literal text.
+		.use(remarkNoteReferenceLabels)
 		.use(remarkInlineSurgery);
 	const tree = processor.parse(source);
 	// `runSync` applies the transformer plugins (remarkReadHintLabels's drop,
@@ -127,7 +144,27 @@ function parseToMdast(source: string): Root {
 	// it generic.
 	processor.runSync(tree);
 	promoteDisplayMath(tree as Root, source);
+	reparseHintLedLines(tree as Root, parseToMdast);
 	return tree as Root;
+}
+
+/** `footnote:N` / `endnote:N` for every note reference inside `blocks` — the
+ *  notes an untracked edit replacing those blocks may keep rather than clone. */
+function noteReferenceKeys(blocks: readonly XmlNode[]): Set<string> {
+	const keys = new Set<string>();
+	const visit = (node: XmlNode): void => {
+		const kind =
+			node.tag === "w:footnoteReference"
+				? "footnote"
+				: node.tag === "w:endnoteReference"
+					? "endnote"
+					: null;
+		const id = node.getAttribute("w:id");
+		if (kind && id) keys.add(`${kind}:${id}`);
+		for (const child of node.children) visit(child);
+	};
+	for (const block of blocks) visit(block);
+	return keys;
 }
 
 /** Walk the mdast tree once and pull out every `footnoteDefinition`. We

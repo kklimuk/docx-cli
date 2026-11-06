@@ -466,7 +466,11 @@ async function commitBlockEdit(
 				},
 			));
 		} else if (opts.spec.kind === "markdown") {
-			const resolved = await resolveMarkdownBlocks(document, opts.spec);
+			const resolved = await resolveMarkdownBlocks(
+				document,
+				opts.spec,
+				track ? [] : [blockRef.node],
+			);
 			if (typeof resolved === "number") return resolved;
 			({ node: resultNode, resolvedAuthors } = edit.paragraph(
 				blockRef,
@@ -575,9 +579,18 @@ async function commitRangeEdit(
 
 	if (opts.dryRun) return respondDryRun(opts);
 
+	const track = resolveTracked(document, opts.trackFlag);
 	let spec: ParagraphContentSpec;
 	if (opts.spec.kind === "markdown") {
-		const resolved = await resolveMarkdownBlocks(document, opts.spec);
+		const replacing = rangeRef.parent.slice(
+			rangeRef.startIndex,
+			rangeRef.endIndex + 1,
+		);
+		const resolved = await resolveMarkdownBlocks(
+			document,
+			opts.spec,
+			track ? [] : replacing,
+		);
 		if (typeof resolved === "number") return resolved;
 		spec = resolved;
 	} else if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
@@ -586,7 +599,6 @@ async function commitRangeEdit(
 		return fail("USAGE", "Unsupported edit spec for range locator");
 	}
 
-	const track = resolveTracked(document, opts.trackFlag);
 	let resolvedAuthors: string[];
 	try {
 		resolvedAuthors = new Edit(document).range(rangeRef, spec, {
@@ -1183,15 +1195,20 @@ async function loadMarkdownFile(path: string): Promise<string | number> {
 /** Resolve a `markdown` spec into a `markdown-blocks` spec by parsing the
  * source against the now-open document. The lens registers footnote bodies,
  * mints image rels, and provisions any styles the source references — all on
- * `document` — before returning the splice-ready blocks. */
+ * `document` — before returning the splice-ready blocks. `replacing` is the
+ * block(s) an UNTRACKED edit replaces (empty under tracking), so a `[^fnN]`
+ * copied from `read` keeps its note instead of cloning it. */
 async function resolveMarkdownBlocks(
 	document: Document,
 	spec: Extract<EditSpec, { kind: "markdown" }>,
+	replacing: readonly XmlNode[],
 ): Promise<
 	Extract<ParagraphContentSpec, { kind: "markdown-blocks" }> | number
 > {
 	try {
-		const blocks = await new MarkdownImport(document).blocks(spec.source);
+		const blocks = await new MarkdownImport(document).blocks(spec.source, {
+			replacing,
+		});
 		return {
 			kind: "markdown-blocks",
 			blocks,

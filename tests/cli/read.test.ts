@@ -272,9 +272,9 @@ describe("docx read (markdown)", () => {
 
 	test("strict-profile: chart/smartart/drawing placeholders render", async () => {
 		const out = await render(fixture("strict-profile.docx"));
-		expect(out).toContain("`[chart]`");
-		expect(out).toContain("`[smartart]`");
-		expect(out).toContain("`[drawing]`");
+		expect(out).toContain("<!-- docx:chart -->");
+		expect(out).toContain("<!-- docx:smartart -->");
+		expect(out).toContain("<!-- docx:drawing -->");
 	});
 
 	test("locator pins use HTML comments, not <sup>", async () => {
@@ -603,15 +603,52 @@ describe("docx read (markdown) color and highlight", () => {
 });
 
 describe("docx read (markdown) chart / drawing placeholders", () => {
-	test("chart drawing renders as `[chart]`", async () => {
+	// A zero-width `docx:` hint, not content: the old inline-code `[chart]`
+	// placeholder was written back as literal text when a read line was copied
+	// into `edit`, and its 9 characters skewed every span read off the line.
+	test("chart drawing renders as a docx:chart hint", async () => {
 		const out = await render(fixture("strict-profile.docx"));
-		expect(out).toContain("`[chart]`");
+		expect(out).toContain("<!-- docx:chart -->");
+		expect(out).not.toContain("`[chart]`");
 	});
 
 	test("smartart and generic drawing placeholders render too", async () => {
 		const out = await render(fixture("strict-profile.docx"));
-		expect(out).toContain("`[smartart]`");
-		expect(out).toContain("`[drawing]`");
+		expect(out).toContain("<!-- docx:smartart -->");
+		expect(out).toContain("<!-- docx:drawing -->");
+	});
+
+	test("a copied chart line edits back without literal text or a lost chart", async () => {
+		const docPath = join(tempWorkspace("chart-copy-back"), "chart.docx");
+		await Bun.write(docPath, Bun.file(fixture("strict-profile.docx")));
+		const before = await render(docPath);
+		const line = before
+			.split("\n")
+			.find((candidate) => candidate.includes("<!-- p1 -->"));
+		expect(line).toBe("<!-- docx:chart --> <!-- p1 -->");
+
+		// The hint leads the line: CommonMark would swallow the whole line as an
+		// HTML block, so the importer re-parses the text after it.
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"<!-- docx:chart -->Figure 2: sales by region",
+		);
+		expect(result.exitCode).toBe(0);
+		const after = await render(docPath);
+		expect(after).toContain(
+			"<!-- docx:chart -->Figure 2: sales by region <!-- p1 -->",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("[chart]");
+		expect(xml.match(/<c:chart /g)).toHaveLength(1);
+
+		// The chart is zero-width: a span found after it starts at the text.
+		const found = await runCli("find", docPath, "sales");
+		const { matches } = found.parsed as { matches: { locator: string }[] };
+		expect(matches.map((match) => match.locator)).toEqual(["p1:10-15"]);
 	});
 
 	test("chart placeholders survive in JSON AST", async () => {

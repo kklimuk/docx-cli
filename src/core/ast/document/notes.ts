@@ -161,6 +161,30 @@ export class NotesView {
 		return undefined;
 	}
 
+	/** A real note (not Word's `w:type` separator boilerplate) by numeric id. */
+	findUserNote(numericId: string): XmlNode | undefined {
+		const found = this.findByNumericId(numericId);
+		if (!found || found.node.getAttribute("w:type")) return undefined;
+		return found.node;
+	}
+
+	/** Copy note `numericId` under a fresh id (placed right after the original)
+	 *  and return the new id — what Word does when text holding a note reference
+	 *  is pasted. Markers whose ids must stay document-unique (bookmarks, comment
+	 *  ranges + references, `w14` paragraph ids) are dropped from the copy, so the
+	 *  clone can't collide with the original. The caller has already checked the
+	 *  note exists (`findUserNote`). */
+	cloneNote(numericId: string): string {
+		const found = this.findByNumericId(numericId);
+		if (!found) throw new Error(`Internal: no note ${numericId} to clone`);
+		const copy = found.node.clone();
+		const id = this.nextId();
+		copy.setAttribute("w:id", id);
+		stripUniqueMarkers(copy);
+		found.parent.splice(found.parent.indexOf(found.node) + 1, 0, copy);
+		return id;
+	}
+
 	/** Lazily provision the two character/paragraph styles a note relies on.
 	 *  The baseline catalog defines both — these calls just register the style
 	 *  nodes in `styles.xml` if not already present, which avoids Word's
@@ -178,3 +202,26 @@ export class NotesView {
 		return XmlNode.findRoot(this.tree, config.rootTag);
 	}
 }
+
+/** Drop, in place, every marker under `node` whose id must be unique across the
+ *  document — so a cloned note body can't duplicate one. */
+function stripUniqueMarkers(node: XmlNode): void {
+	delete node.attributes["w14:paraId"];
+	delete node.attributes["w14:textId"];
+	node.children = node.children.filter((child) => !isUniqueMarker(child));
+	for (const child of node.children) stripUniqueMarkers(child);
+}
+
+function isUniqueMarker(node: XmlNode): boolean {
+	if (UNIQUE_MARKER_TAGS.has(node.tag)) return true;
+	return (
+		node.tag === "w:r" && node.findChild("w:commentReference") !== undefined
+	);
+}
+
+const UNIQUE_MARKER_TAGS: ReadonlySet<string> = new Set([
+	"w:bookmarkStart",
+	"w:bookmarkEnd",
+	"w:commentRangeStart",
+	"w:commentRangeEnd",
+]);

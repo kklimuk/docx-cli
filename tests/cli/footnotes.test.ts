@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "../../src/core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { trackedKinds } from "./helpers";
+import { readDocumentXml, trackedKinds } from "./helpers";
 
 type FootnoteRefRun = {
 	type: string;
@@ -1001,5 +1001,129 @@ describe("docx footnotes/endnotes — inline escape decoding (--text)", () => {
 		const xml = await partXml(docPath, "word/footnotes.xml");
 		// The break lands inside the tracked insertion, not as a swallowed raw \n.
 		expect(xml).toMatch(/<w:ins[\s\S]*<w:br\/>[\s\S]*<\/w:ins>/);
+	});
+});
+
+// A `[^fnN]` copied from `read` WITHOUT its `[^fnN]: …` definition (one line
+// handed back to edit/insert) used to land as the literal characters "[^fn1]" —
+// GFM only parses a reference that has a definition — and the note was lost on
+// the next accept. It now addresses the document's existing note.
+describe("a read-copied [^fnN] addresses the existing note", () => {
+	async function docWithFootnote(label: string): Promise<string> {
+		const docPath = await freshDoc(label, [
+			"Governing law is Delaware.",
+			"Notices go to the address above.",
+		]);
+		await runCli(
+			"footnotes",
+			"add",
+			docPath,
+			"--anchor",
+			"Delaware",
+			"--text",
+			"See Del. Code.",
+		);
+		return docPath;
+	}
+
+	async function readLine(docPath: string, id: string): Promise<string> {
+		const result = await runCli("read", docPath, "--from", id, "--to", id);
+		const line = result.stdout
+			.split("\n")
+			.find((candidate) => candidate.includes(`<!-- ${id} -->`));
+		return (line ?? "").replace(` <!-- ${id} -->`, "");
+	}
+
+	test("an untracked edit of the referencing paragraph keeps the note", async () => {
+		const docPath = await docWithFootnote("ref-edit-keep");
+		const line = await readLine(docPath, "p0");
+		expect(line).toBe("Governing law is Delaware[^fn1].");
+
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			line.replace("Delaware", "New York"),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(await readLine(docPath, "p0")).toBe(
+			"Governing law is New York[^fn1].",
+		);
+		expect(await listFootnotes(docPath)).toEqual([
+			{ id: "fn1", text: "See Del. Code." },
+		]);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).not.toContain("[^fn1]");
+	});
+
+	test("inserting a copy elsewhere clones the note (one reference per note)", async () => {
+		const docPath = await docWithFootnote("ref-insert-clone");
+		const line = await readLine(docPath, "p0");
+		await runCli("insert", docPath, "--after", "p1", line);
+		await runCli("delete", docPath, "--at", "p0");
+
+		const refs = await refRuns(docPath);
+		expect(refs.map((run) => run.id)).toEqual(["fn2"]);
+		const notes = await listFootnotes(docPath);
+		expect(notes.find((note) => note.id === "fn2")?.text).toBe(
+			"See Del. Code.",
+		);
+	});
+
+	test("under tracking the copy clones, so accept and reject each keep one note", async () => {
+		const docPath = await docWithFootnote("ref-tracked");
+		const line = await readLine(docPath, "p0");
+		await runCli("track-changes", "on", docPath);
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			line.replace("Delaware", "New York"),
+		);
+
+		const accepted = `${docPath}.accepted.docx`;
+		await runCli("track-changes", "accept", docPath, "--all", "-o", accepted);
+		expect(await readLine(accepted, "p0")).toBe(
+			"Governing law is New York[^fn2].",
+		);
+		expect((await refRuns(accepted)).map((run) => run.id)).toEqual(["fn2"]);
+
+		const rejected = `${docPath}.rejected.docx`;
+		await runCli("track-changes", "reject", docPath, "--all", "-o", rejected);
+		expect(await readLine(rejected, "p0")).toBe(
+			"Governing law is Delaware[^fn1].",
+		);
+		expect((await refRuns(rejected)).map((run) => run.id)).toEqual(["fn1"]);
+	});
+
+	test("a label naming no note is refused, not written literally", async () => {
+		const docPath = await docWithFootnote("ref-unknown");
+		const result = await runCli("edit", docPath, "--at", "p1", "Text[^fn9].");
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("[^fn9] names no footnote");
+		expect(await readLine(docPath, "p1")).toBe(
+			"Notices go to the address above.",
+		);
+	});
+
+	test("literal [^fn1] text is escaped by read and round-trips as text", async () => {
+		const docPath = await docWithFootnote("ref-literal");
+		await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p1",
+			"--text",
+			"Literal [^fn1] here",
+		);
+		const line = await readLine(docPath, "p1");
+		expect(line).toBe("Literal \\[\\^fn1\\] here");
+
+		await runCli("edit", docPath, "--at", "p1", line);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toContain("Literal [^fn1] here");
+		expect(await refRuns(docPath)).toHaveLength(1);
 	});
 });

@@ -734,7 +734,11 @@ async function buildWholeParagraphContent(
 	const source = requireString(raw.markdown, index, "markdown");
 	let blocks: XmlNode[];
 	try {
-		blocks = await new MarkdownImport(document).blocks(source);
+		blocks = await new MarkdownImport(document).blocks(source, {
+			// Untracked: a `[^fnN]` copied from `read` keeps the note this entry's
+			// paragraph references instead of cloning it.
+			replacing: opts.track ? [] : [blockRef.node],
+		});
 	} catch (error) {
 		if (error instanceof MarkdownImportError) {
 			throw new EntryError(

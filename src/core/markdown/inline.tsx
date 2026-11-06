@@ -12,12 +12,14 @@ import type { RelationshipsView } from "../ast/document/relationships";
 import { latexToOmml } from "../equation";
 import { Image } from "../image";
 import { w } from "../jsx";
+import { NoteReferenceRun, noteConfig } from "../notes";
 import type { NullableXmlNode, XmlNode } from "../parser";
 import { firstInvalidRunFormat, type RunFormatEnums } from "../run-formatting";
 import type { TrackedMeta } from "../track-changes";
 import { Del, Ins } from "../track-changes/emit";
 import { MarkdownImportError } from "./errors";
 import type { CriticDelete, CriticInsert } from "./inline-surgery";
+import type { ExistingNoteReference } from "./note-reference-labels";
 
 /** Pre-resolved image entry the lens populates by walking the mdast tree
  * once before the synchronous OOXML emit. Inline image runs read from this
@@ -66,6 +68,11 @@ export type WalkContext = {
 	 *  The lens preallocates an author/date pair so all tracked nodes from
 	 *  one import share metadata. */
 	mintTrackedMeta?: () => TrackedMeta;
+	/** `footnote:N` / `endnote:N` keys of the notes this import may REUSE: the
+	 *  ones referenced from the blocks an untracked edit replaces. Each is
+	 *  consumed by the first `existingNoteReference` to it; any later reference
+	 *  to the same note (or one with no key) clones the note instead. */
+	reusableNoteIds: Set<string>;
 };
 
 /** Walk a sequence of phrasing nodes into `<w:p>`-child siblings: `<w:r>`,
@@ -165,6 +172,8 @@ function walkPhrasing(
 			return [];
 		case "footnoteReference":
 			return [footnoteReferenceRun(node.identifier, ctx)];
+		case "existingNoteReference":
+			return [existingNoteReferenceRun(node, ctx)];
 		case "inlineMath":
 			return [inlineMathElement(node)];
 		case "criticInsert":
@@ -430,6 +439,34 @@ function footnoteReferenceRun(identifier: string, ctx: WalkContext): XmlNode {
 			<w.footnoteReference w-id={numericId} />
 		</w.r>
 	);
+}
+
+/** A `[^fnN]`/`[^enN]` copied from `read` without its definition: a reference to
+ * the document's EXISTING note N. It keeps that note when the edit is replacing
+ * the very block that references it (`ctx.reusableNoteIds`); otherwise it gets
+ * a clone of the note — Word's own copy/paste behavior, and the only valid one,
+ * since OOXML allows exactly one reference per note. A label naming no note in
+ * this document is refused rather than written as literal `[^fn9]` text. */
+function existingNoteReferenceRun(
+	node: ExistingNoteReference,
+	ctx: WalkContext,
+): XmlNode {
+	const config = noteConfig(node.kind);
+	const notes =
+		node.kind === "footnote" ? ctx.document.footnotes : ctx.document.endnotes;
+	if (!notes?.findUserNote(node.numericId)) {
+		throw new MarkdownImportError(
+			"USAGE",
+			`[^${node.label}] names no ${node.kind} in this document`,
+			`Copy the reference from this document's read view, or write a new ${node.kind} with a definition (\`[^${node.label}]: text\`) or \`docx ${node.kind}s add\`. To keep the characters literally, escape them: \\[^${node.label}].`,
+		);
+	}
+	const key = `${node.kind}:${node.numericId}`;
+	const id = ctx.reusableNoteIds.delete(key)
+		? node.numericId
+		: notes.cloneNote(node.numericId);
+	notes.ensureNoteStyles(ctx.document.ensureStyles());
+	return <NoteReferenceRun config={config} id={id} />;
 }
 
 function inlineMathElement(node: InlineMath): XmlNode {
