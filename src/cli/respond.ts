@@ -202,7 +202,10 @@ function ackTarget(ack: Record<string, unknown>): string | null {
 		const to = str(ack.to);
 		return `${ack.hyperlinkId}${to ? ` → ${to}` : ""}`;
 	}
-	if (str(ack.imageId)) return str(ack.imageId);
+	if (str(ack.imageId)) {
+		const size = str(ack.size);
+		return size ? `${ack.imageId} (${size})` : str(ack.imageId);
+	}
 	if (str(ack.table)) {
 		const position = num(ack.position);
 		return position !== null ? `${ack.table} (${position})` : str(ack.table);

@@ -36,6 +36,7 @@ The agent never sees this file. It is the ground-truth definition of "correct" f
 ### Logo replaced
 - The top-left image is the new mark sourced from `assets/logo.svg`.
 - The document still contains **exactly two** embedded images (new logo + footer payment mark).
+- The new logo is **not distorted**: its displayed box (`size=` in the `docx:image` read hint) has the same aspect ratio as `assets/logo.svg` (square, 256×256), give or take rounding.
 - Verify via `docx images list FILE`: two entries, and the logo entry's dimensions / source match `assets/logo.svg`.
 - Footer payment mark is preserved: the footer image relationship is still present and unreferenced relationships were not dropped.
 

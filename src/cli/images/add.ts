@@ -162,17 +162,27 @@ async function parseImageFlags(values: RawValues): Promise<
 	const caption = decodeInlineEscapes(values.caption as string | undefined);
 	if (caption !== undefined) out.caption = caption;
 
+	const size = await parseImageSize(values);
+	if (typeof size === "number") return size;
+	return { ...out, ...size };
+}
+
+/** `--width`/`--height` through the shared length grammar (`IMAGE_LENGTH`),
+ *  as inches. Shared with `images replace`, so both verbs size identically. */
+export async function parseImageSize(
+	values: RawValues,
+): Promise<{ widthInches?: number; heightInches?: number } | number> {
+	const size: { widthInches?: number; heightInches?: number } = {};
 	for (const flag of ["width", "height"] as const) {
 		const raw = values[flag] as string | undefined;
 		if (raw === undefined) continue;
 		const twips = parseLength(raw, flag, IMAGE_LENGTH);
 		if (typeof twips !== "number")
 			return fail("USAGE", twips.error, twips.hint);
-		out[flag === "width" ? "widthInches" : "heightInches"] =
+		size[flag === "width" ? "widthInches" : "heightInches"] =
 			twips / TWIPS_PER_INCH;
 	}
-
-	return out;
+	return size;
 }
 
 /** Image sizes: bare inches (the long-standing meaning), positive, and `px` at

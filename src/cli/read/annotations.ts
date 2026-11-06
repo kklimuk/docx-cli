@@ -126,6 +126,12 @@ export function deviatingCellMargins(
 
 /** Format an EMU count (914400 per inch) as inches, trimming trailing zeros.
  * Image extents (`<wp:extent>`) are in EMU; `read --ast` carries the raw EMU. */
+/** `WxHin` — the display-size form the `docx:image` hint and the
+ *  `images replace` ack share, so an agent sees the same string in both. */
+export function formatImageSize(widthEmu: number, heightEmu: number): string {
+	return `${emuToInches(widthEmu)}x${emuToInches(heightEmu)}in`;
+}
+
 export function emuToInches(emu: number): string {
 	return `${Number.parseFloat((emu / 914400).toFixed(2))}`;
 }

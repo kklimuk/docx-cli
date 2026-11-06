@@ -17,6 +17,9 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *   4. PNG sized with unit suffixes (`--width 4cm`, then `--height 96px` on a
  *      fifth copy) — the shared length grammar, which used to read `4cm` as
  *      4 INCHES.
+ *   5. A wide PNG swapped for a TALL one via `docx images replace` — the frame
+ *      keeps its displayed width and the height follows the new aspect ratio
+ *      (it used to keep the old box, squashing the new picture: issue #46).
  * The page itself is A4 with 2cm margins via `create --size 210x297mm
  * --margins 2cm` (WxH with a unit suffix — inches-only before).
  *
@@ -37,6 +40,7 @@ async function cli(...args: string[]): Promise<void> {
 mkdirSync(dirname(out), { recursive: true });
 
 const pngPath = resolve(assets, "sample.png");
+const tallPngPath = resolve(assets, "tall.png"); // 48×144, a 1:3 portrait
 const jpgBytes = await Bun.file(resolve(assets, "sample.jpg")).bytes();
 const jpgDataUri = `data:image/jpeg;base64,${Buffer.from(jpgBytes).toString("base64")}`;
 
@@ -120,6 +124,29 @@ await cli(
 	"--height",
 	"96px",
 );
+
+await cli(
+	"insert",
+	out,
+	"--after",
+	"p9",
+	"--text",
+	"Wide PNG replaced by a tall PNG (width kept, height follows)",
+);
+await cli(
+	"images",
+	"add",
+	out,
+	"--after",
+	"p10",
+	"--image",
+	pngPath,
+	"--alt",
+	"Replaced PNG",
+	"--width",
+	"1in",
+);
+await cli("images", "replace", out, "--at", "img5", "--with", tallPngPath);
 
 const bytes = (await Bun.file(out).bytes()).length;
 console.log(`Wrote ${out} (${bytes} bytes)`);
