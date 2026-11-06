@@ -19,6 +19,7 @@ jobs:
   check:
     name: Lint + Types + Dead Code
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -33,6 +34,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -48,6 +50,7 @@ jobs:
   macos-output:
     name: macOS output contract (Bun ${{ matrix.bun-version }})
     runs-on: macos-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +65,12 @@ jobs:
 
   integration-tests:
     name: Integration Tests (LibreOffice)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the OS release decides which LibreOffice apt
+    # installs, so a silent ubuntu-latest bump would change the renderer under
+    # test. 26.04 ships LibreOffice 26.2, matching current desktop installs and
+    # the Windows job's libreoffice-fresh; 24.04 would test against 24.2.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -72,9 +80,12 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - name: Install LibreOffice
+        # Normally ~15s. A stalled Azure apt mirror once trickled this for 15+
+        # minutes (2026-11-06); fail fast and re-run instead of waiting it out.
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer fontconfig
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libreoffice-core libreoffice-writer fontconfig
       - name: Pre-warm fontconfig cache
         # Parallel soffice workers race to populate ~/.cache/fontconfig and the
         # losers print "Fontconfig error: No writable cache directories" to
@@ -89,6 +100,7 @@ jobs:
   windows-render:
     name: Render through LibreOffice (Windows)
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
@@ -114,6 +126,8 @@ jobs:
   build-binary:
     name: Smoke-build compiled binary (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Covers the Windows leg's informational unit-test step (its own 15-minute cap).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
