@@ -26,6 +26,7 @@ import {
 	adoptPositionalMarkdown,
 	batchExampleIntro,
 	decodeInlineEscapes,
+	decodeInlineMarkdownEscapes,
 	hasRunFormatFlags,
 	parseClearTags,
 	parseRunFormat,
@@ -1041,7 +1042,7 @@ async function validateParagraphEdit(
 	const text = decodeInlineEscapes(values.text as string | undefined);
 	const runsJson = values.runs as string | undefined;
 
-	const markdownInline = decodeInlineEscapes(
+	const markdownInline = decodeInlineMarkdownEscapes(
 		values.markdown as string | undefined,
 	);
 	const markdownFile = values["markdown-file"] as string | undefined;

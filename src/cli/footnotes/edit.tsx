@@ -10,7 +10,11 @@ import {
 	TrackChanges,
 	type TrackedMeta,
 } from "@core/track-changes";
-import { decodeInlineEscapes, parseRunsArg } from "../parse-helpers";
+import {
+	decodeInlineEscapes,
+	decodeInlineMarkdownEscapes,
+	parseRunsArg,
+} from "../parse-helpers";
 import {
 	EXIT,
 	fail,
@@ -111,7 +115,7 @@ export async function runEditNote(
 
 	const text = decodeInlineEscapes(parsed.values.text as string | undefined);
 	const runsJson = parsed.values.runs as string | undefined;
-	const markdown = decodeInlineEscapes(
+	const markdown = decodeInlineMarkdownEscapes(
 		parsed.values.markdown as string | undefined,
 	);
 	const markdownFile = parsed.values["markdown-file"] as string | undefined;
