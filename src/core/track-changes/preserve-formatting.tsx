@@ -234,9 +234,11 @@ export function tokenize(text: string): string[] {
 }
 
 /** An equation sentinel (always its own token, even glued to punctuation as
- *  in `($x$)`), a word, a run of tabs, or a run of other whitespace. */
+ *  in `($x$)`), a word, a lone sentinel-opener code point that opens no
+ *  sentinel (its own token, so it is kept rather than skipped by the match),
+ *  a run of tabs, or a run of other whitespace. */
 const TOKEN_PATTERN = new RegExp(
-	`${SENTINEL_TOKEN}|[^\\s\uE000\uE002]+|\\t+|[^\\S\\t]+`,
+	`${SENTINEL_TOKEN}|[^\\s\uE000\uE002]+|[\uE000\uE002]|\\t+|[^\\S\\t]+`,
 	"g",
 );
 

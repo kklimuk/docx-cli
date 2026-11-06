@@ -1,5 +1,5 @@
 import type { Body } from "../ast/document/body";
-import { latexToOmml } from "../equation/emit";
+import { recompileLatex } from "../equation/emit";
 import {
 	batchFileHint,
 	shellMangledEquationLoss,
@@ -22,7 +22,7 @@ import {
  *    ordinary span replace (`replaceSpanInParagraph`), which deletes each
  *    covered equation with the text around it (`<w:del>` when tracked);
  *  - a span strictly INSIDE one token rewrites that equation's LaTeX — every
- *    such span in one equation folds into ONE recompile (`latexToOmml`), as
+ *    such span in one equation folds into ONE recompile (`recompileLatex`), as
  *    `equations edit` does it: in place untracked, a `<w:del>OLD</w:del>
  *    <w:ins>NEW</w:ins>` pair tracked. A rewrite that leaves no LaTeX deletes
  *    the equation.
@@ -106,17 +106,22 @@ export function replaceInParagraph(
 	}
 	for (const { overlap, changes } of rewrites.values()) {
 		const node = equationNode(overlap.id);
-		if (!node) throw new Error(`replaceInParagraph: ${overlap.id} not found`);
+		// Checked before any operation applies, so a refusal changes nothing.
+		if (!node || !isLiveEquation(paragraph, node)) {
+			throw new StaleEquationError(overlap.id);
+		}
+		// Compiled here, before any operation applies, so LaTeX the rewrite
+		// breaks refuses with nothing changed — `recompileLatex` also refuses a
+		// command the rewrite invented (`\sin` → `\swithin`), which temml would
+		// otherwise render as error text.
+		const latex = rewrittenLatex(overlap, changes);
+		const replacement =
+			latex.trim().length > 0
+				? recompileLatex(latex, overlap.display, overlap.latex)
+				: null;
 		operations.push({
 			start: overlap.start,
-			apply: () =>
-				rewriteEquation(
-					paragraph,
-					node,
-					rewrittenLatex(overlap, changes),
-					overlap.display,
-					tracked,
-				),
+			apply: () => rewriteEquation(paragraph, node, replacement, tracked),
 		});
 	}
 	operations.sort((left, right) => right.start - left.start);
@@ -130,7 +135,9 @@ function rewrittenLatex(
 ): string {
 	const contentStart = overlap.start + (overlap.display ? 2 : 1);
 	let latex = overlap.latex;
-	for (const change of [...changes].sort((a, b) => b.start - a.start)) {
+	for (const change of [...changes].sort(
+		(left, right) => right.start - left.start,
+	)) {
 		const from = change.start - contentStart;
 		const to = change.end - contentStart;
 		latex = latex.slice(0, from) + change.replacement + latex.slice(to);
@@ -138,22 +145,19 @@ function rewrittenLatex(
 	return latex;
 }
 
-/** Recompile `node` from `latex` where it stands in the live paragraph —
+/** Swap `node` for its recompiled `replacement` (null: the rewrite left no
+ *  LaTeX, so the equation goes) where it stands in the live paragraph —
  *  located by identity, never through a cached parent array, which an earlier
- *  span replace in the same paragraph may have swapped out. Throws
- *  `EquationParseError` for LaTeX temml rejects. */
+ *  span replace in the same paragraph may have swapped out. */
 function rewriteEquation(
 	paragraph: XmlNode,
 	node: XmlNode,
-	latex: string,
-	display: boolean,
+	replacement: XmlNode | null,
 	tracked: TrackedReplaceOptions | undefined,
 ): void {
 	const siblings = liveSiblings(paragraph, node);
 	if (!siblings) throw new Error("rewriteEquation: equation not in paragraph");
 	const index = siblings.indexOf(node);
-	const replacement =
-		latex.trim().length > 0 ? latexToOmml(latex, display) : null;
 	if (!tracked) {
 		siblings.splice(index, 1, ...(replacement ? [replacement] : []));
 		return;
@@ -167,6 +171,34 @@ function rewriteEquation(
 			? [<Ins meta={mintMeta(tracked)}>{[replacement]}</Ins>]
 			: []),
 	);
+}
+
+/** Whether `node` still stands in `paragraph` outside any deletion. The `eqN`
+ *  map and the AST describe the paragraph AS READ, so an earlier rewrite of
+ *  the same equation in one pass (two `edit --batch` spans inside one token)
+ *  has swapped the node out (untracked) or moved it into its `<w:del>`
+ *  (tracked); rewriting it again would drop the first change or nest a second
+ *  `<w:del>`. An equation in a pending deletion isn't an edit target either. */
+function isLiveEquation(container: XmlNode, node: XmlNode): boolean {
+	for (const child of container.children) {
+		if (child === node) return true;
+		if (child.isText || child.tag === "w:del" || child.tag === "w:moveFrom") {
+			continue;
+		}
+		if (isLiveEquation(child, node)) return true;
+	}
+	return false;
+}
+
+/** A span inside an equation that is no longer live where it was read (see
+ *  `isLiveEquation`). Thrown before anything mutates. */
+export class StaleEquationError extends Error {
+	constructor(public equationId: string) {
+		super(
+			`${equationId} can't be rewritten here: an earlier change in this call already rewrote it, or it sits in a pending deletion. Nothing was changed.`,
+		);
+		this.name = "StaleEquationError";
+	}
 }
 
 function liveSiblings(container: XmlNode, node: XmlNode): XmlNode[] | null {

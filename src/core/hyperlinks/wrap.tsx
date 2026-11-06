@@ -47,6 +47,15 @@ export function wrapSpanInHyperlink(
 
 	const placeWrapper = (): void => {
 		if (placed || wrappedRuns.length === 0) return;
+		// A link around nothing but an equation is invisible to `read` (only a
+		// text run carries the link into markdown) and to `hyperlinks list`, so
+		// it couldn't be seen or addressed after the add. Thrown before the
+		// paragraph's children are swapped, so nothing has changed.
+		if (!wrappedRuns.some((run) => run.tag === "w:r")) {
+			throw new HyperlinkWrapError(
+				`Span ${span.start}-${span.end} covers only an equation; a link needs text — widen the span to include a word beside the equation`,
+			);
+		}
 		if (applyStyle) for (const run of wrappedRuns) applyHyperlinkRunStyle(run);
 		newChildren.push(hyperlinkWrapper(relationshipId, wrappedRuns));
 		wrappedRuns.length = 0;

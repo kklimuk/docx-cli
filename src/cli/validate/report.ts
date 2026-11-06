@@ -54,10 +54,10 @@ async function collectXmlParts(pkg: Pkg): Promise<PackagePart[]> {
 	const names = pkg
 		.listParts()
 		.filter((name) => name.endsWith(".xml"))
-		.sort((a, b) => {
-			if (a === "word/document.xml") return -1;
-			if (b === "word/document.xml") return 1;
-			return a.localeCompare(b);
+		.sort((left, right) => {
+			if (left === "word/document.xml") return -1;
+			if (right === "word/document.xml") return 1;
+			return left.localeCompare(right);
 		});
 	const parts: PackagePart[] = [];
 	for (const name of names) {

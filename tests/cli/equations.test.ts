@@ -1105,6 +1105,9 @@ describe("tracked equations — Word's per-run markers", () => {
 		);
 		await runCli("track-changes", "accept", acceptPath, "--at", "tc0");
 		expect(await equationsOf(acceptPath)).toEqual([]);
+		// The equation itself goes — not just its runs, which left an empty
+		// `<m:oMath>` of bare `<m:r/>`s that `read` can't see.
+		expect(await readDocumentXml(acceptPath)).not.toContain("<m:oMath");
 
 		const rejectPath = await buildRawDoc(
 			wordEquation([true, true, true, true]),

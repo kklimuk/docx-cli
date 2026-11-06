@@ -20,6 +20,7 @@ export {
 	replaceInParagraph,
 	replaceMatches,
 	type SpanReplacement,
+	StaleEquationError,
 } from "./replace-matches";
 export {
 	type ReplacementFormatting,

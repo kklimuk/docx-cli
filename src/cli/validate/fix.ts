@@ -19,16 +19,24 @@ export async function runFix(
 ): Promise<number> {
 	const document = await Document.fromPackage(pkg);
 	const repairs = new Comments(document).repair();
-	const shouldSave =
+	// Stage (in memory) whenever a re-save might help — schema errors a save
+	// heals included — but WRITE only when something actually changed or `-o`
+	// asked for a file: an unfixable file must not be rewritten under a
+	// "nothing to fix" report.
+	const shouldStage =
 		repairs.length > 0 || before.errors > 0 || options.output !== undefined;
-	if (shouldSave) document.stage();
-	const after = shouldSave ? await validatePackage(document.pkg) : before;
-	if (shouldSave && !options.dryRun) await document.pkg.save(options.output);
+	if (shouldStage) document.stage();
+	const after = shouldStage ? await validatePackage(document.pkg) : before;
 
 	const healedSchemaErrors = Math.max(
 		0,
 		schemaErrors(before) - schemaErrors(after),
 	);
+	const shouldWrite =
+		repairs.length > 0 ||
+		healedSchemaErrors > 0 ||
+		options.output !== undefined;
+	if (shouldWrite && !options.dryRun) await document.pkg.save(options.output);
 	const reportPath = options.output ?? filePath;
 	if (options.json) {
 		await respond({

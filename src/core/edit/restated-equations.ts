@@ -1,5 +1,5 @@
 import { latexToOmml } from "../equation/emit";
-import { equationToken } from "../equation/token";
+import { equationToken, tokenLatex } from "../equation/token";
 import { isEquation, type XmlNode } from "../parser";
 import {
 	type OldEquation,
@@ -69,7 +69,7 @@ function equationSlots(
 /** The token as `read` shows it, and as the writer would compile it back. */
 function tokenSpellings(equation: OldEquation): Set<string> {
 	const spellings = new Set([equation.token]);
-	const latex = equation.token.replace(/^\$+|\$+$/g, "");
+	const latex = tokenLatex(equation.token, equation.display);
 	try {
 		const recompiled = equationToken(latexToOmml(latex, equation.display));
 		if (recompiled) spellings.add(recompiled);

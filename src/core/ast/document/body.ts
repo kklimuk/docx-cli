@@ -313,5 +313,12 @@ export type TrackedChangeReference = {
 /** One revision marker element and the child list that holds it. */
 export type TrackedChangeMarker = { node: XmlNode; parent: XmlNode[] };
 
-/** The equation a revision lives inside (see `TrackedChangeReference.equation`). */
-export type TrackedEquation = { node: XmlNode; id?: string; whole: boolean };
+/** The equation a revision lives inside (see `TrackedChangeReference.equation`),
+ *  and the child list holding it — so a revision that covers the WHOLE equation
+ *  can remove the equation itself when it resolves to "gone". */
+export type TrackedEquation = {
+	node: XmlNode;
+	parent: XmlNode[];
+	id?: string;
+	whole: boolean;
+};

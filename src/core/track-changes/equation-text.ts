@@ -37,12 +37,14 @@ export function planEquationText(
 	newText: string,
 ): EquationTextPlan {
 	const equations = visibleEquations(paragraph);
+	// With no equation there is no sentinel to alias: `--text` is the literal
+	// channel, so its characters (a private-use icon glyph included) stay.
+	if (equations.length === 0) {
+		return { equations, text: newText, edited: [], deleted: [] };
+	}
 	// Private-use code points are the sentinel alphabet; nothing a human or an
 	// agent types contains them, but strip any so a stray one can't alias.
 	const text = newText.replace(SENTINEL_CHARS, "");
-	if (equations.length === 0) {
-		return { equations, text, edited: [], deleted: [] };
-	}
 
 	const anchors = keptAnchors(equations, text);
 	const edited: EquationTextPlan["edited"] = [];

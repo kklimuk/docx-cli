@@ -44,6 +44,14 @@ export function formatEquationToken(
 	return display ? `$$${body}$$` : `$${body}$`;
 }
 
+/** The text between a token's `$` / `$$` delimiters — `formatEquationToken`
+ *  undone. Sliced by the delimiter width rather than stripping every edge
+ *  `$`, so LaTeX ending in an escaped dollar (`5\$`, token `$5\$$`) keeps it. */
+export function tokenLatex(token: string, display: boolean): string {
+	const delimiter = display ? 2 : 1;
+	return token.slice(delimiter, token.length - delimiter);
+}
+
 /** The LaTeX `read` shows for an equation. A PARTLY revised equation (Word's
  *  per-math-run markers covering only some of it) reads as its accepted view —
  *  what `accept --all` leaves — not the deleted symbols beside the kept ones. */

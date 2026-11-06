@@ -815,4 +815,23 @@ describe("hyperlinks over an inline equation", () => {
 		expect((result.parsed as { error: string }).error).toContain("10-22");
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
+
+	test("a span covering only the equation is refused — read couldn't show the link", async () => {
+		const docPath = await equationDoc();
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"hyperlinks",
+			"add",
+			docPath,
+			"--at",
+			"p0:10-18",
+			"--url",
+			"https://example.com",
+		);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain(
+			"only an equation",
+		);
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
 });

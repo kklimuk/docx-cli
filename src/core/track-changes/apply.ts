@@ -103,6 +103,10 @@ function applyResolvedTargets(
 	// Reverse pre-order so a nested ins/del is processed before its parent —
 	// keeps stored parent refs valid for the outer node when we get to it.
 	for (const { found, verb } of [...sorted].reverse()) {
+		if (removesWholeEquation(found, verb) && found.equation) {
+			deleteNode(found.equation.node, found.equation.parent);
+			continue;
+		}
 		for (const part of markerParts(found)) {
 			if (verb === "accept") applyAccept(part);
 			else applyReject(part);
@@ -123,6 +127,16 @@ function applyResolvedTargets(
 	applyNotePairing(document, affectedNotes);
 
 	return records;
+}
+
+/** Whether resolving `found` removes an equation its markers cover WHOLE
+ * (accept a deletion, reject an insertion). Removing each marker alone would
+ * leave an empty `<m:oMath>` shell of contentless `<m:r/>`s — invisible to
+ * `read` (the reader skips a textless equation) but still in the document —
+ * so the equation itself goes, as an enclosing `<w:del>`'s accept removes it. */
+function removesWholeEquation(found: ChangeFound, verb: ApplyVerb): boolean {
+	if (!found.markers || !found.equation?.whole) return false;
+	return verb === "accept" ? found.kind === "del" : found.kind === "ins";
 }
 
 /** A revision spread over several markers resolves as each marker would on its

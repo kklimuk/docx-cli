@@ -54,12 +54,7 @@ export const COMMENTS_EXTENSIBLE_PART_NAME = "word/commentsExtensible.xml";
  *  reconcile never alters an existing `paraIdParent`, so this is report-only. */
 export function auditThreadLinks(roots: SidecarRoots): CommentFinding[] {
 	if (!roots.extended) return [];
-	const commentIdByKey = new Map<string, string>();
-	for (const comment of roots.comments.findChildren("w:comment")) {
-		const id = comment.getAttribute("w:id");
-		const paraId = lastParagraph(comment)?.getAttribute("w14:paraId");
-		if (id !== undefined && paraId) commentIdByKey.set(key(paraId), id);
-	}
+	const commentIdByKey = commentIdsByParaKey(roots.comments);
 	const findings: CommentFinding[] = [];
 	for (const entry of roots.extended.findChildren("w15:commentEx")) {
 		const commentId = commentIdByKey.get(key(entry.getAttribute("w15:paraId")));
@@ -86,12 +81,7 @@ export function threadRootsOf(roots: {
 }): Map<string, string> {
 	const out = new Map<string, string>();
 	if (!roots.extended) return out;
-	const commentIdByKey = new Map<string, string>();
-	for (const comment of roots.comments.findChildren("w:comment")) {
-		const id = comment.getAttribute("w:id");
-		const paraId = lastParagraph(comment)?.getAttribute("w14:paraId");
-		if (id !== undefined && paraId) commentIdByKey.set(key(paraId), id);
-	}
+	const commentIdByKey = commentIdsByParaKey(roots.comments);
 	const parentByKey = new Map<string, string>();
 	for (const entry of roots.extended.findChildren("w15:commentEx")) {
 		const parent = entry.getAttribute("w15:paraIdParent");
@@ -111,6 +101,19 @@ export function threadRootsOf(roots: {
 		if (rootId !== undefined && current !== paraKey) out.set(id, rootId);
 	}
 	return out;
+}
+
+/** Comment id by its threading key (last paragraph's paraId, uppercased) —
+ * the lookup both thread walks above resolve `w15:paraIdParent` through. A
+ * comment without a paraId has no key and is absent. */
+function commentIdsByParaKey(comments: XmlNode): Map<string, string> {
+	const byKey = new Map<string, string>();
+	for (const comment of comments.findChildren("w:comment")) {
+		const id = comment.getAttribute("w:id");
+		const paraId = lastParagraph(comment)?.getAttribute("w14:paraId");
+		if (id !== undefined && paraId) byKey.set(key(paraId), id);
+	}
+	return byKey;
 }
 
 /** Every `<w:comment>` with its threading key (its last paragraph's paraId),
@@ -395,10 +398,14 @@ export function lastParagraph(
 }
 
 /** Word's `w16cex:dateUtc` is a whole-second UTC `xsd:dateTime`. Undefined
- * (attribute omitted — it's optional) when `date` doesn't parse. */
+ * (attribute omitted — it's optional) when `date` doesn't parse. A `w:date`
+ * with a time but no zone designator reads as UTC — `Date` would take it as
+ * the HOST's local time, so the same file would reconcile to a different
+ * `dateUtc` on every machine's timezone. */
 export function toDateUtc(date: string): string | undefined {
 	if (!date) return undefined;
-	const parsed = new Date(date);
+	const zoneless = /T[\d:.]+$/.test(date);
+	const parsed = new Date(zoneless ? `${date}Z` : date);
 	if (Number.isNaN(parsed.getTime())) return undefined;
 	return parsed.toISOString().replace(/\.\d{3}Z$/, "Z");
 }

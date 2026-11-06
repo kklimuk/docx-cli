@@ -198,6 +198,49 @@ function lineToOmml(latex: string, display: boolean): XmlNode[] {
 	return mathmlToOmml(mathRoot);
 }
 
+/** `latexToOmml` for LaTeX made by REWRITING an existing equation's — a
+ *  `replace`/span match inside its token, an edited `$…$` in `--text`. temml
+ *  renders a command it doesn't know (`\swithin`, what `replace "in" "within"
+ *  --all` makes of `\sin`) as red error text instead of throwing, so the
+ *  lenient compile alone landed a corrupt equation at exit 0. A rewrite that
+ *  INTRODUCES such an error throws `EquationParseError`; one the previous
+ *  LaTeX already had (a reader-degraded construct) doesn't block an edit
+ *  elsewhere in the equation. */
+export function recompileLatex(
+	latex: string,
+	display: boolean,
+	previousLatex: string,
+): XmlNode {
+	const problem = strictLatexProblem(latex, display);
+	if (
+		problem !== undefined &&
+		strictLatexProblem(previousLatex, display) === undefined
+	) {
+		throw new EquationParseError(problem, latex);
+	}
+	return latexToOmml(latex, display);
+}
+
+/** temml's complaint about `latex` when every unsupported command is an
+ *  error (its first line — the rest is an underlined echo of the input), or
+ *  undefined when it compiles cleanly. */
+function strictLatexProblem(
+	latex: string,
+	displayMode: boolean,
+): string | undefined {
+	try {
+		temml.renderToString(latex, {
+			displayMode,
+			strict: false,
+			throwOnError: true,
+		});
+		return undefined;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return message.split("\n")[0]?.trim() || message;
+	}
+}
+
 /** JSX component form for callers building paragraphs via the emitter
  *  pipeline.
  *

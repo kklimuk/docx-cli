@@ -10,12 +10,7 @@ import { isRunBearingWrapper, wrapperContent, XmlNode } from "../parser";
  *  back as fresh runs carrying only their `<w:rPr>` + `<w:commentReference>`. */
 export function straddlingCommentMarkers(children: XmlNode[]): XmlNode[] {
 	const markers = commentMarkersWithin(children);
-	const kindsById = new Map<string, Set<string>>();
-	for (const marker of markers) {
-		const kinds = kindsById.get(marker.id) ?? new Set<string>();
-		kinds.add(marker.kind);
-		kindsById.set(marker.id, kinds);
-	}
+	const kindsById = markerKindsById(markers);
 	return markers
 		.filter((marker) => (kindsById.get(marker.id)?.size ?? 0) < 3)
 		.map((marker) => marker.node);
@@ -28,15 +23,21 @@ export function straddlingCommentMarkers(children: XmlNode[]): XmlNode[] {
  *  marker anywhere is what `validate` reports as "no anchor" and Word
  *  silently deletes on open. */
 export function containedCommentIds(children: XmlNode[]): string[] {
+	return [...markerKindsById(commentMarkersWithin(children))]
+		.filter(([, kinds]) => kinds.size === 3)
+		.map(([id]) => id);
+}
+
+/** Which marker kinds (start, end, reference) each comment id has among
+ *  `markers` — 3 means the comment lies wholly inside them. */
+function markerKindsById(markers: CommentMarker[]): Map<string, Set<string>> {
 	const kindsById = new Map<string, Set<string>>();
-	for (const marker of commentMarkersWithin(children)) {
+	for (const marker of markers) {
 		const kinds = kindsById.get(marker.id) ?? new Set<string>();
 		kinds.add(marker.kind);
 		kindsById.set(marker.id, kinds);
 	}
-	return [...kindsById]
-		.filter(([, kinds]) => kinds.size === 3)
-		.map(([id]) => id);
+	return kindsById;
 }
 
 function commentMarkersWithin(children: XmlNode[]): CommentMarker[] {

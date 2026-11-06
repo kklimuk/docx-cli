@@ -5748,4 +5748,48 @@ describe("edit over an inline equation", () => {
 		);
 		expect(await readDocumentXml(docPath)).not.toContain("Cambria Math");
 	});
+
+	// Batch spans address the document AS READ, so a second span inside an
+	// equation the first one already recompiled used to crash (untracked: the
+	// read-time node was gone) or nest a second `<w:del>` (tracked).
+	for (const tracked of [false, true]) {
+		test(`--batch: two spans inside one equation are refused${tracked ? " (tracked)" : ""}`, async () => {
+			const docPath = await equationDoc();
+			const before = await readDocumentXml(docPath);
+			const batchPath = join(tempWorkspace("edit-equation-batch"), "e.jsonl");
+			// `$E=mc^2$` sits at 10-18: E at 11, the exponent 2 at 16.
+			await Bun.write(
+				batchPath,
+				'{"at":"p0:11-12","text":"F"}\n{"at":"p0:16-17","text":"3"}\n',
+			);
+			const result = await runCli(
+				"edit",
+				docPath,
+				"--batch",
+				batchPath,
+				...(tracked ? ["--track"] : []),
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect(JSON.stringify(result.parsed)).toContain("UNSUPPORTED");
+			expect(await readDocumentXml(docPath)).toBe(before);
+		});
+	}
+
+	test("a --text range replace over an equation is refused", async () => {
+		const docPath = await equationDoc(
+			"Energy is $E=mc^2$ in physics.\n\nSecond line.\n",
+		);
+		const before = await readDocumentXml(docPath);
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0-p1",
+			"--text",
+			"Energy is $E=mc^2$ everywhere.",
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(JSON.stringify(result.parsed)).toContain("UNSUPPORTED");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
 });

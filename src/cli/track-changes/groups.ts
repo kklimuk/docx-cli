@@ -13,6 +13,7 @@
  *  its member `tcN`s, computed the SAME way in `list` and `apply` (sorted by tcN
  *  index, then chained) so the two can't disagree. */
 
+import { isMarginalLocator } from "@core";
 import type { XmlNode } from "@core/parser";
 
 type Groupable = {
@@ -105,7 +106,7 @@ function isPlainTextChange(change: Groupable): boolean {
 }
 
 function isPartWide(blockId: string): boolean {
-	return blockId === "" || /^(hdr|ftr)\d+$/.test(blockId);
+	return blockId === "" || isMarginalLocator(blockId);
 }
 
 /** Markers that sit between runs without contributing text — a bookmark or comment

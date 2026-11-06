@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Pkg } from "@core/ast/document/package";
 import { runCli, tempWorkspace } from "./harness";
-import { freshFixture, readDocumentXml } from "./helpers";
+import { buildRawDoc, freshFixture, readDocumentXml } from "./helpers";
 
 let workspace: string;
 let docPath: string;
@@ -352,6 +352,18 @@ describe("cross-part comment consistency — severity per Word's behavior", () =
 			/^nothing to fix\nvalid — \d+ parts checked\n$/,
 		);
 		expect(await Bun.file(commented).bytes()).toEqual(before);
+	});
+
+	test("--fix on an unfixable schema error says 'nothing to fix' and doesn't rewrite FILE", async () => {
+		const unfixable = await buildRawDoc(
+			"<w:p><w:bogus/></w:p>",
+			"fix-unfixable",
+		);
+		const before = await Bun.file(unfixable).bytes();
+		const result = await runCli("validate", unfixable, "--fix");
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toMatch(/^nothing to fix\ninvalid — 1 error/);
+		expect(await Bun.file(unfixable).bytes()).toEqual(before);
 	});
 
 	test("--fix -o writes the cure elsewhere and leaves FILE as it was", async () => {

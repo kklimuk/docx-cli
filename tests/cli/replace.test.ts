@@ -2090,6 +2090,26 @@ describe("docx replace over an inline equation", () => {
 		expect(await readDocumentXml(docPath)).toBe(before);
 	});
 
+	test("a match inside a LaTeX command name is refused, not written as error text", async () => {
+		// temml renders an unknown command as red text instead of throwing, so a
+		// prose `replace "in" "within" --all` turned `\sin` into `\swithin` and
+		// exited 0 with a corrupt equation.
+		await runCli(
+			"equations",
+			"edit",
+			docPath,
+			"--at",
+			"eq1",
+			"--equation",
+			"\\sin x",
+		);
+		const before = await readDocumentXml(docPath);
+		const result = await runCli("replace", docPath, "in", "within", "--all");
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain("\\swithin");
+		expect(await readDocumentXml(docPath)).toBe(before);
+	});
+
 	test("the replacement is literal: a $5 next to a deleted equation stays text", async () => {
 		const result = await runCli("replace", docPath, "$E=mc^2$", "costs $5");
 		expect(result.exitCode).toBe(0);

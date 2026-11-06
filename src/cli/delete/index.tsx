@@ -178,6 +178,7 @@ async function commitRangeDelete(
 		);
 	} else {
 		applyUntrackedRangeDelete(
+			document,
 			rangeRef.parent,
 			rangeRef.startIndex,
 			rangeRef.endIndex,

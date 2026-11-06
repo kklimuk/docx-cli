@@ -1848,6 +1848,15 @@ describe("comments wholly on a removed paragraph go with it", () => {
 		await expectValidClean(docPath);
 	});
 
+	test("delete --at pN-pM settles the range's comments the same way", async () => {
+		const docPath = await commentedEquationDoc("comments-contained-range");
+		expect((await runCli("delete", docPath, "--at", "p1-p2")).exitCode).toBe(0);
+		expect(await remainingTexts(docPath)).toEqual([
+			"Straddles into the equation",
+		]);
+		await expectValidClean(docPath);
+	});
+
 	test("edit --text '' on the line does the same", async () => {
 		const docPath = await commentedEquationDoc("comments-contained-blank");
 		expect(

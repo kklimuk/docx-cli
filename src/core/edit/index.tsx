@@ -32,15 +32,17 @@ import {
 	reanchorCommentMarkers,
 } from "../comments/markers";
 import { matchDocumentLook } from "../dominant-formatting";
-import { EquationParseError, latexToOmml } from "../equation/emit";
+import { EquationParseError, recompileLatex } from "../equation/emit";
 import {
 	batchFileHint,
 	shellMangledEquationLoss,
 } from "../equation/shell-mangle";
+import { tokenLatex } from "../equation/token";
 import {
 	equationOverlaps,
 	equationSpanRefusal,
 	replaceInParagraph,
+	StaleEquationError,
 	type TrackedReplaceOptions,
 } from "../find";
 import { continueList } from "../lists/continue-list";
@@ -429,6 +431,13 @@ export class Edit {
 			if (error instanceof EquationParseError) {
 				throw unparsableLatexError(error);
 			}
+			if (error instanceof StaleEquationError) {
+				throw new EditError(
+					"UNSUPPORTED",
+					`${blockId}:${span.start}-${span.end}: ${error.message}`,
+					`Put every change inside one equation in ONE span edit, or set it whole with \`docx equations edit FILE --at ${error.equationId} --equation '…'\`.`,
+				);
+			}
 			throw error;
 		}
 	}
@@ -462,6 +471,30 @@ export class Edit {
 			`${blockId} holds ${equations.map((equation) => equation.token).join(", ")}, and this --text edit rebuilds the paragraph from literal text (because of --bold/--italic/--color, --no-formatting, or tracked revisions already pending in it), which would turn each equation into plain characters. Nothing was changed.`,
 			`Drop the formatting flags (apply them after with a span edit), or accept/reject ${blockId}'s pending revisions first (\`docx track-changes list FILE\`), or rewrite it as markdown, keeping each equation's token. ${batchFileHint("edit", "edits.jsonl", { at: blockId, markdown: `… ${equations[0]?.token ?? "$x$"} …` })}`,
 		);
+	}
+
+	/** A range replace rebuilds every paragraph from the new content, and
+	 *  `--text`/`--runs` content can't carry an equation (a `$…$` in `--text`
+	 *  lands as literal characters) — the single-paragraph refusals
+	 *  (`refuseRunsOverEquations`/`refuseTextRebuildOverEquations`), applied to
+	 *  every paragraph of the range before anything mutates. Markdown keeps each
+	 *  equation it re-states (`keepEquations`). */
+	private refuseRangeRebuildOverEquations(
+		paragraphs: XmlNode[],
+		spec: ParagraphContentSpec,
+	): void {
+		if (spec.kind !== "text" && spec.kind !== "runs") return;
+		for (const paragraph of paragraphs) {
+			const equations = visibleEquations(paragraph);
+			if (equations.length === 0) continue;
+			const blockId = this.blockIdOf(paragraph);
+			const flag = spec.kind === "text" ? "--text" : "--runs";
+			throw new EditError(
+				"UNSUPPORTED",
+				`${blockId} holds ${equations.map((equation) => equation.token).join(", ")}, and a ${flag} range replace rebuilds it from content that can't hold an equation, which would ${spec.kind === "text" ? "turn each one into plain characters" : "drop it"}. Nothing was changed.`,
+				`Replace the range with markdown instead, keeping each equation's token (${equations[0]?.token ?? "$x$"}) where it belongs — leave it out to delete it. Single-quote the markdown: bash expands $ inside double quotes.`,
+			);
+		}
 	}
 
 	/** Plan how the word diff treats the paragraph's equations
@@ -507,7 +540,11 @@ export class Edit {
 			try {
 				inserted.set(
 					editSentinel(equation.index),
-					latexToOmml(latex, equation.display),
+					recompileLatex(
+						latex,
+						equation.display,
+						tokenLatex(equation.token, equation.display),
+					),
 				);
 			} catch (error) {
 				if (error instanceof EquationParseError) {
@@ -662,6 +699,10 @@ export class Edit {
 		spec: ParagraphContentSpec,
 		opts: { authorFlag?: string; track?: boolean; noFormatting?: boolean } = {},
 	): string[] {
+		const replaced = rangeRef.parent
+			.slice(rangeRef.startIndex, rangeRef.endIndex + 1)
+			.filter((block) => block.tag === "w:p");
+		this.refuseRangeRebuildOverEquations(replaced, spec);
 		this.document
 			.ensureStyles()
 			.ensureReferencedStyle(spec.paragraphOptions.style);
@@ -696,14 +737,7 @@ export class Edit {
 		);
 		const newParagraphs = buildNewParagraphs(spec);
 		if (spec.kind === "markdown-blocks") {
-			this.keepEquations(
-				rangeRef.parent
-					.slice(rangeRef.startIndex, rangeRef.endIndex + 1)
-					.filter((block) => block.tag === "w:p"),
-				newParagraphs,
-				spec,
-				tracked,
-			);
+			this.keepEquations(replaced, newParagraphs, spec, tracked);
 		}
 		applyMarkdownRideAlong(spec, newParagraphs);
 		const firstReplaced = rangeRef.parent[rangeRef.startIndex];
@@ -845,7 +879,7 @@ function refuseShellMangledLoss(
 	const mangled = shellMangledEquationLoss(
 		source,
 		dropped.map((equation) => ({
-			latex: equation.token.replace(/^\$+|\$+$/g, ""),
+			latex: tokenLatex(equation.token, equation.display),
 			display: equation.display,
 		})),
 	);

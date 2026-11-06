@@ -531,7 +531,7 @@ function registerStandaloneRunChanges(
 			continue;
 		}
 		if (child.tag === "m:oMath" || child.tag === "m:oMathPara") {
-			registerMathRevisions(scope, child, undefined);
+			registerMathRevisions(scope, child, container.children, undefined);
 			continue;
 		}
 		if (isAlternateContent(child)) {
@@ -715,6 +715,7 @@ function walkRunContainer(
 				const revisions = registerMathRevisions(
 					context,
 					child,
+					container.children,
 					trackedChange,
 					id,
 				);
@@ -856,6 +857,7 @@ function registerTrackedChange(
 function registerMathRevisions(
 	context: RevisionScope,
 	equation: XmlNode,
+	parent: XmlNode[],
 	outer: TrackedChange | undefined,
 	equationId?: string,
 ): { whole?: TrackedChange; partial: boolean } {
@@ -874,6 +876,7 @@ function registerMathRevisions(
 			markers,
 			{
 				node: equation,
+				parent,
 				whole: coversEquation,
 				...(equationId && { id: equationId }),
 			},

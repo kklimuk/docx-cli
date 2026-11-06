@@ -284,7 +284,7 @@ lines up everywhere. How an edit meets the token decides what happens:
 | Span vs token                  | Effect                                                    |
 | ------------------------------ | --------------------------------------------------------- |
 | covers it whole                | the equation is deleted (inside the span's `<w:del>` tracked) |
-| strictly inside (not a `$`)    | its LaTeX is rewritten — `replaceInParagraph` folds every such span of one equation into ONE `latexToOmml` recompile; untracked in place, tracked `<w:del>OLD</w:del><w:ins>NEW</w:ins>` minted from the operation's shared allocator; empty LaTeX deletes |
+| strictly inside (not a `$`)    | its LaTeX is rewritten — `replaceInParagraph` folds every such span of one equation into ONE `recompileLatex` recompile (compiled before anything mutates; it refuses a command the rewrite INVENTS — temml renders an unknown `\swithin` as error text instead of throwing, so `replace "in" "within" --all` over `\sin` exited 0 with a corrupt equation); untracked in place, tracked `<w:del>OLD</w:del><w:ins>NEW</w:ins>` minted from the operation's shared allocator; empty LaTeX deletes |
 | cuts a `$` delimiter           | refused, `UNSUPPORTED`, nothing written (`equationSpanRefusal`) |
 
 The replacement is literal — a `$5` in it is text, never math. Whole-paragraph

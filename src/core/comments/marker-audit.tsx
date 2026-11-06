@@ -141,15 +141,17 @@ const BODY_PART_NAME = "word/document.xml";
 function collectMarkers(stories: StoryPart[]): Map<string, IdMarkers> {
 	const markers = new Map<string, IdMarkers>();
 	for (const story of stories) {
-		walk(story.root, story.name, [], false, markers);
+		walk(story.root, story.name, undefined, false, markers);
 	}
 	return markers;
 }
 
+/** `parent` is `node`'s own parent — a marker's grandparent, which is all
+ *  `referenceRunSlot` needs (the child list a reference RUN sits in). */
 function walk(
 	node: XmlNode,
 	part: string,
-	ancestors: XmlNode[],
+	parent: XmlNode | undefined,
 	inParagraph: boolean,
 	markers: Map<string, IdMarkers>,
 ): void {
@@ -167,7 +169,7 @@ function walk(
 			entry[kind].push({
 				node: child,
 				parent: node,
-				grandparent: ancestors.at(-1),
+				grandparent: parent,
 				part,
 				inline: inParagraph && !node.tag.startsWith("m:"),
 			});
@@ -179,7 +181,7 @@ function walk(
 				: BLOCK_CONTAINERS.has(child.tag)
 					? false
 					: inParagraph;
-		walk(child, part, [...ancestors, node], childInParagraph, markers);
+		walk(child, part, node, childInParagraph, markers);
 	}
 }
 

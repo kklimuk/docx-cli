@@ -4,6 +4,7 @@ import {
 	equationSpanRefusal,
 	type ReplacementFormatting,
 	replaceMatches,
+	StaleEquationError,
 	type TextMatch,
 	type TrackedReplaceOptions,
 } from "@core/find";
@@ -58,6 +59,13 @@ export async function applyMatchesOrFail(
 				"USAGE",
 				`${prefix}the replacement leaves LaTeX that doesn't parse (${JSON.stringify(error.latex)}): ${error.message}. Nothing was changed.`,
 				"A match inside an equation rewrites its LaTeX, so the result must still be valid LaTeX. Check the replacement, or set the whole equation with `docx equations edit FILE --at eqN --equation '…'`.",
+			);
+		}
+		if (error instanceof StaleEquationError) {
+			return fail(
+				"UNSUPPORTED",
+				`${prefix}${error.message}`,
+				`Match text outside it, or set the whole equation with \`docx equations edit FILE --at ${error.equationId} --equation '…'\`.`,
 			);
 		}
 		throw error;

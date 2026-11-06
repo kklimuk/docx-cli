@@ -450,15 +450,35 @@ export function assertParagraphOnlyTrackedRange(
 	}
 }
 
-/** Delete a contiguous span of paragraphs without tracking — a plain splice
- *  removing `[startIndex, endIndex]` inclusive. Companion of
- *  `applyTrackedRangeDelete`. */
+/** Delete a contiguous span of paragraphs without tracking — a splice
+ *  removing `[startIndex, endIndex]` inclusive, after the range's comments
+ *  are settled the way `removeParagraphLine` settles one paragraph's.
+ *  Companion of `applyTrackedRangeDelete`. */
 export function applyUntrackedRangeDelete(
+	document: Document,
 	parent: XmlNode[],
 	startIndex: number,
 	endIndex: number,
 ): void {
+	// A comment wholly inside the range goes with it (its `<w:comment>` too,
+	// or it lingers anchorless); one straddling the range edge keeps its
+	// outside half balanced.
+	const content = parent
+		.slice(startIndex, endIndex + 1)
+		.flatMap((block) => paragraphContentWithin(block));
+	relocateStraddlingCommentMarkers(content, parent, startIndex, endIndex);
+	new Comments(document).deleteContainedIn(content);
 	parent.splice(startIndex, endIndex - startIndex + 1);
+}
+
+/** The run-level content of every paragraph in `block` — the block itself
+ *  when it is one, else each paragraph nested in it (a table's cells, a
+ *  content control's blocks) — where a comment's markers can sit. */
+function paragraphContentWithin(block: XmlNode): XmlNode[] {
+	if (block.tag === "w:p") return block.children;
+	return block.children.flatMap((child) =>
+		child.isText ? [] : paragraphContentWithin(child),
+	);
 }
 
 /** Remove a single paragraph "line" — the honest verb behind `delete --at pN`
@@ -507,7 +527,7 @@ export function removeParagraphLine(
 	const index = parent.indexOf(node);
 	if (index < 0) return;
 	relocateTextBoxes(node, parent, index);
-	relocateStraddlingCommentMarkers(node, parent, index);
+	relocateStraddlingCommentMarkers(node.children, parent, index, index);
 	// A comment wholly on the line goes with it — the `<w:comment>` too, or it
 	// lingers anchorless (validate's "no anchor"; Word deletes it on open).
 	new Comments(document).deleteContainedIn(node.children);
@@ -559,27 +579,29 @@ function relocateTextBoxes(
 	}
 }
 
-/** Before an untracked paragraph removal, move the comment markers that
- *  STRADDLE it — one half of a comment whose other half lives in another
- *  paragraph — onto the neighboring paragraph, previous (appended) else next
- *  (leading), the same rule as `relocateTextBoxes`. `delete --at pN` on the
- *  paragraph where a cross-paragraph comment started left its end and
- *  reference pointing back at nothing (and the mirror). A comment wholly
- *  inside the paragraph goes with it. */
+/** Before an untracked removal of `parent[startIndex..endIndex]` (one
+ *  paragraph, or a `delete --at pN-pM` range) whose run-level content is
+ *  `content`, move the comment markers that STRADDLE it — one half of a
+ *  comment whose other half lives outside — onto the neighboring paragraph,
+ *  previous (appended) else next (leading), the same rule as
+ *  `relocateTextBoxes`. `delete --at pN` on the paragraph where a
+ *  cross-paragraph comment started left its end and reference pointing back
+ *  at nothing (and the mirror). A comment wholly inside goes with it. */
 function relocateStraddlingCommentMarkers(
-	node: XmlNode,
+	content: XmlNode[],
 	parent: XmlNode[],
-	index: number,
+	startIndex: number,
+	endIndex: number,
 ): void {
-	const markers = straddlingCommentMarkers(node.children);
+	const markers = straddlingCommentMarkers(content);
 	if (markers.length === 0) return;
-	for (let cursor = index - 1; cursor >= 0; cursor--) {
+	for (let cursor = startIndex - 1; cursor >= 0; cursor--) {
 		const previous = parent[cursor];
 		if (previous?.tag !== "w:p") continue;
 		previous.children.push(...markers);
 		return;
 	}
-	for (let cursor = index + 1; cursor < parent.length; cursor++) {
+	for (let cursor = endIndex + 1; cursor < parent.length; cursor++) {
 		const next = parent[cursor];
 		if (next?.tag !== "w:p") continue;
 		const pPrIndex = next.children.findIndex((child) => child.tag === "w:pPr");
