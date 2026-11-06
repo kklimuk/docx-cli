@@ -68,10 +68,12 @@ jobs:
           merge-multiple: true
       - name: Stage attribution files for release
         # The attribution files ship alongside every binary: NOTICES (the
-        # notices no bundled LICENSE file carries, plus the BSD-3 ones) and
-        # THIRD-PARTY-LICENSES (every bundled package's LICENSE text). The
+        # notices no bundled LICENSE file carries, plus the BSD-3 ones),
+        # THIRD-PARTY-LICENSES (every bundled package's LICENSE text), and the
+        # LGPL-2.0/2.1 texts covering the embedded Bun runtime's JavaScriptCore
+        # and tinycc (binaries only: the npm package doesn't embed Bun). The
         # installer drift guard checks this line and package.json `files`.
-        run: cp LICENSE NOTICES THIRD-PARTY-LICENSES ./artifacts/
+        run: cp LICENSE NOTICES THIRD-PARTY-LICENSES LGPL-2.0.txt LGPL-2.1.txt ./artifacts/
       - name: Stage install.sh for release
         # Shipped as a release asset (not served from a branch) so the documented install
         # command pins to a tag and is covered by SHA256SUMS below. It lives in the skill

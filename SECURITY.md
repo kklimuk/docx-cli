@@ -98,7 +98,7 @@ Offline, bootstrap keeps the working binary and exits 0.
 **Air-gapped or mirrored installs.**
 
 1. On a connected machine, download `docx-<platform>` and `SHA256SUMS` from a tagged release and verify them with `shasum -a 256 -c SHA256SUMS --ignore-missing`.
-2. Copy the binary, plus `LICENSE`, `NOTICES` and `THIRD-PARTY-LICENSES` from the same release, to each machine (or your software-distribution tool), mark the binary executable, and put it on `PATH`.
+2. Copy the binary, plus `LICENSE`, `NOTICES`, `THIRD-PARTY-LICENSES`, `LGPL-2.0.txt` and `LGPL-2.1.txt` from the same release, to each machine (or your software-distribution tool), mark the binary executable, and put it on `PATH`.
 
 Nothing in docx-cli phones home after that.
 
@@ -115,4 +115,4 @@ Nothing in docx-cli phones home after that.
 
 **What the checksum does and doesn't prove.** `SHA256SUMS` is published in the same release as the binaries. It protects against a corrupted or swapped download, not against a compromised release. For higher assurance, build from source (`bun run build:binary`) at a reviewed tag.
 
-**License.** MIT. Every library docx-cli depends on is permissively licensed; [NOTICES](NOTICES) lists the attributions for the ones bundled into the binary, and redistributing the binary internally is fine with `LICENSE`, `NOTICES` and `THIRD-PARTY-LICENSES` alongside it.
+**License.** MIT. Every library docx-cli depends on is permissively licensed; [NOTICES](NOTICES) and [THIRD-PARTY-LICENSES](THIRD-PARTY-LICENSES) carry the attributions for the ones bundled into the binary. The binary also embeds the Bun runtime, which includes LGPL-licensed JavaScriptCore (and tinycc); NOTICES says where its source is and how to rebuild the binary on a modified runtime. Keep `LICENSE`, `NOTICES`, `THIRD-PARTY-LICENSES`, `LGPL-2.0.txt` and `LGPL-2.1.txt` with the binary when you redistribute it.

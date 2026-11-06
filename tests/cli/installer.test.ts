@@ -60,6 +60,15 @@ describe("release attribution drift guards", () => {
 			expect(manifest.files).toContain(file);
 			expect(staging).toContain(file);
 		}
+		// The binaries embed the Bun runtime (LGPL JavaScriptCore + tinycc), so the
+		// LGPL texts NOTICES points at travel with them; the npm package embeds no
+		// Bun, so they aren't required there.
+		const notices = await Bun.file(NOTICES).text();
+		for (const file of ["LGPL-2.0.txt", "LGPL-2.1.txt"]) {
+			expect(await Bun.file(file).exists()).toBe(true);
+			expect(notices).toContain(file);
+			expect(staging).toContain(file);
+		}
 	});
 });
 
