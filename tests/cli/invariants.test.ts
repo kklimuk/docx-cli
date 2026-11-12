@@ -8,6 +8,7 @@ import JSZip from "jszip";
 import { runCli, tempWorkspace } from "./harness";
 import {
 	buildRawDoc,
+	expectValidClean,
 	freshFixture,
 	readDocumentXml,
 	readMarkdown,
@@ -172,58 +173,55 @@ describe("preserve unknown elements — invariant tests", () => {
 		expect(xml).toContain("<w:hyperlink");
 	});
 
-	test("non-checkbox SDT bodies are preserved AND their internal tracked changes aren't enumerated", async () => {
+	test("a tracked change inside an inline content control lists, accepts, and leaves the control intact", async () => {
 		// Word emits `<w:sdt>` for non-checkbox content controls too — Plain
-		// Text, Rich Text, Dropdown, etc. — and a tracked edit inside one
-		// shows up as `<w:ins>`/`<w:del>` inside `<w:sdtContent>`. The AST
-		// reader and the apply walker MUST agree on whether to descend; if
-		// they disagree, `tcN` ids drift between `track-changes list` and
-		// `accept --at tcN`. Today neither walker descends, so the inner
-		// revision is invisible to track-changes commands AND survives the
-		// underlying XmlNode tree untouched.
-		const docPath = await buildFixture(
+		// Text, Rich Text, Dropdown, etc. — and a tracked edit inside one shows
+		// up as `<w:ins>`/`<w:del>` inside `<w:sdtContent>`. The reader descends
+		// the control (#58: its text is paragraph text), so the inner revision
+		// gets a `tcN` whose parent is `<w:sdtContent>` — accept/reject splice
+		// there, and the control (with its `<w:id>`) survives.
+		const control = (inner: string) =>
 			`<w:p>` +
-				`<w:sdt>` +
-				`<w:sdtPr>` +
-				`<w:id w:val="42"/>` +
-				`<w:placeholder><w:docPart w:val="DefaultPlaceholder_-1854013440"/></w:placeholder>` +
-				`</w:sdtPr>` +
-				`<w:sdtContent>` +
+			`<w:sdt>` +
+			`<w:sdtPr>` +
+			`<w:id w:val="42"/>` +
+			`<w:placeholder><w:docPart w:val="DefaultPlaceholder_-1854013440"/></w:placeholder>` +
+			`</w:sdtPr>` +
+			`<w:sdtContent>${inner}</w:sdtContent>` +
+			`</w:sdt>` +
+			`</w:p>`;
+		const docPath = await buildFixture(
+			control(
 				`<w:ins w:id="7" w:author="Tester" w:date="2026-05-25T00:00:00Z">` +
-				`<w:r><w:t>secret inside content control</w:t></w:r>` +
-				`</w:ins>` +
-				`</w:sdtContent>` +
-				`</w:sdt>` +
-				`</w:p>`,
+					`<w:r><w:t>secret inside content control</w:t></w:r>` +
+					`</w:ins>`,
+			),
 			"sdt-tracked",
 		);
 
-		const list = await runCli("track-changes", "list", docPath);
-		const changes = list.parsed as Array<{ id: string }>;
-		// The inner `<w:ins>` MUST NOT surface — neither walker descends into
-		// non-checkbox SDTs, so `track-changes list` shows zero entries.
-		expect(changes).toEqual([]);
+		const changes = (await runCli("track-changes", "list", docPath))
+			.parsed as Array<{ id: string; kind: string; text: string }>;
+		expect(changes).toMatchObject([
+			{ id: "tc0", kind: "ins", text: "secret inside content control" },
+		]);
+		expect(await readMarkdown(docPath)).toContain(
+			"secret inside content control <!-- p0 -->",
+		);
 
-		// Round-trip through a save (via `replace` on text in a sibling, but
-		// there is none here — use `insert` after p0 instead, which is enough
-		// to force `Document.save`).
-		await runCli(
-			"insert",
+		const accepted = await runCli(
+			"track-changes",
+			"accept",
 			docPath,
-			"--after",
-			"p0",
-			"--text",
-			"unrelated paragraph",
+			"--at",
+			"tc0",
 		);
-
+		expect(accepted.exitCode).toBe(0);
 		const xml = await readDocumentXml(docPath);
-		// The whole SDT (including the inner ins) survives intact.
-		expect(xml).toContain("<w:sdt>");
 		expect(xml).toContain('<w:id w:val="42"/>');
-		expect(xml).toContain(
-			'<w:ins w:id="7" w:author="Tester" w:date="2026-05-25T00:00:00Z">',
+		expect(xml).toMatch(
+			/<w:sdtContent><w:r><w:t>secret inside content control<\/w:t><\/w:r><\/w:sdtContent>/,
 		);
-		expect(xml).toContain("secret inside content control");
+		expect(xml).not.toContain("<w:ins");
 	});
 
 	test("find returns offsets that ignore unknown markers (markers don't shift indexing)", async () => {
@@ -1253,5 +1251,123 @@ describe("numeric character references (#12)", () => {
 		const saved = await JSZip.loadAsync(await Bun.file(docPath).arrayBuffer());
 		const numbering = await saved.file("word/numbering.xml")?.async("string");
 		expect(numbering).toContain('<w:lvlText w:val="•"/>');
+	});
+});
+
+describe("inline content controls (<w:sdt>) are transparent run-bearing wrappers (#58)", () => {
+	// A Word form's checkbox: the glyph lives in `<w:sdtContent>`, the label
+	// follows as an ordinary run. Before #58 the reader skipped every run-level
+	// `<w:sdt>`, so the box (and any Plain Text control's value) vanished from
+	// `read`/`find` while the XML offset walkers stayed in lockstep with it.
+	const W14 = `xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"`;
+	const checkbox = (checked: "0" | "1", glyph: string) =>
+		`<w:sdt><w:sdtPr><w:id w:val="7"/><w14:checkbox ${W14}><w14:checked w14:val="${checked}"/>` +
+		`<w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/>` +
+		`</w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>${glyph}</w:t></w:r></w:sdtContent></w:sdt>`;
+	const form =
+		`<w:p>${checkbox("0", "☐")}<w:r><w:t xml:space="preserve"> Approved</w:t></w:r></w:p>` +
+		`<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r>` +
+		`<w:sdt><w:sdtPr><w:alias w:val="Name"/></w:sdtPr><w:sdtContent><w:r><w:t>Jane Doe</w:t></w:r></w:sdtContent></w:sdt>` +
+		`<w:r><w:t>, Manager</w:t></w:r></w:p>`;
+
+	test("read shows the checkbox glyph and a plain-text control's value", async () => {
+		const docPath = await buildFixture(form, "sdt-inline-read");
+		const markdown = await readMarkdown(docPath);
+		expect(markdown).toContain("☐ Approved <!-- p0 -->");
+		expect(markdown).toContain("Name: Jane Doe, Manager <!-- p1 -->");
+	});
+
+	test("find locates the glyph and text after the control at matching offsets", async () => {
+		const docPath = await buildFixture(form, "sdt-inline-find");
+		const glyph = JSON.parse((await runCli("find", docPath, "☐")).stdout) as {
+			matches: { locator: string }[];
+		};
+		expect(glyph.matches.map((match) => match.locator)).toEqual(["p0:0-1"]);
+		const after = JSON.parse(
+			(await runCli("find", docPath, "Manager")).stdout,
+		) as { matches: { locator: string }[] };
+		expect(after.matches.map((match) => match.locator)).toEqual(["p1:16-23"]);
+	});
+
+	test("replace inside a control lands in <w:sdtContent>; the control survives", async () => {
+		const docPath = await buildFixture(form, "sdt-inline-replace");
+		expect((await runCli("replace", docPath, "Doe", "Roe")).exitCode).toBe(0);
+		expect(
+			(await runCli("replace", docPath, "Manager", "Director")).exitCode,
+		).toBe(0);
+		expect(await readMarkdown(docPath)).toContain(
+			"Name: Jane Roe, Director <!-- p1 -->",
+		);
+		expect(await readDocumentXml(docPath)).toMatch(
+			/<w:sdtContent>(?:(?!<\/w:sdtContent>).)*Roe(?:(?!<\/w:sdtContent>).)*<\/w:sdtContent>/,
+		);
+	});
+
+	test("a replace straddling the control boundary keeps the control around its remaining text", async () => {
+		const docPath = await buildFixture(form, "sdt-inline-straddle");
+		expect(
+			(await runCli("replace", docPath, "Name: Jane", "Who: Joan")).exitCode,
+		).toBe(0);
+		expect(await readMarkdown(docPath)).toContain(
+			"Who: Joan Doe, Manager <!-- p1 -->",
+		);
+		const xml = await readDocumentXml(docPath);
+		expect(xml).toMatch(
+			/<w:sdt><w:sdtPr><w:alias w:val="Name"\/><\/w:sdtPr><w:sdtContent><w:r><w:t[^>]*> Doe<\/w:t><\/w:r><\/w:sdtContent><\/w:sdt>/,
+		);
+	});
+
+	test("comments add after the control anchors at the find offsets", async () => {
+		const docPath = await buildFixture(form, "sdt-inline-comment");
+		const result = await runCli(
+			"comments",
+			"add",
+			docPath,
+			"--at",
+			"p1:16-23",
+			"--text",
+			"title?",
+		);
+		expect(result.exitCode).toBe(0);
+		const listed = JSON.parse(
+			(await runCli("comments", "list", docPath)).stdout,
+		) as {
+			anchor: { text?: string; startOffset: number; endOffset: number };
+		}[];
+		expect(listed[0]?.anchor).toMatchObject({ startOffset: 16, endOffset: 23 });
+	});
+
+	test("fixture: the form's checkbox and text field read, and a replace in the field stays valid", async () => {
+		const docPath = await freshCopy("sdt-inline-fixture");
+		expect(await readMarkdown(docPath)).toContain(
+			"☐</span> Approved by Jane Doe <!-- p2 -->",
+		);
+		expect(
+			(await runCli("replace", docPath, "Jane Doe", "John Roe")).exitCode,
+		).toBe(0);
+		expect(await readDocumentXml(docPath)).toMatch(
+			/<w:alias w:val="Approver"\/>.*<w:sdtContent>.*John Roe.*<\/w:sdtContent>/,
+		);
+		await expectValidClean(docPath);
+	});
+
+	test("a checkbox Word toggled under tracking is ONE checkboxToggle revision, shown in the accepted view", async () => {
+		const toggled =
+			`<w:p><w:sdt><w:sdtPr><w14:checkbox ${W14}><w14:checked w14:val="1"/></w14:checkbox></w:sdtPr><w:sdtContent>` +
+			`<w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>☒</w:t></w:r></w:ins>` +
+			`<w:del w:id="2" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>☐</w:delText></w:r></w:del>` +
+			`</w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved</w:t></w:r></w:p>`;
+		const docPath = await buildFixture(toggled, "sdt-inline-toggle");
+		expect(await readMarkdown(docPath)).toContain("☒ Approved <!-- p0 -->");
+		const listed = JSON.parse(
+			(await runCli("track-changes", "list", docPath, "--json")).stdout,
+		) as { id: string; kind: string }[];
+		expect(listed.map((change) => change.kind)).toEqual(["checkboxToggle"]);
+		expect(
+			(await runCli("track-changes", "reject", docPath, "--at", "tc0"))
+				.exitCode,
+		).toBe(0);
+		expect(await readMarkdown(docPath)).toContain("☐ Approved <!-- p0 -->");
+		expect(await readDocumentXml(docPath)).toContain('w14:checked w14:val="0"');
 	});
 });

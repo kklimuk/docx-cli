@@ -58,9 +58,13 @@ export function collectTrackedChangeRecords(
 			// Explicit fields, not a spread: `TrackedChange.within` (the enclosing
 			// wrapper chain of a nested revision) is an AST/view concern and stays
 			// off the `list` record so its shape is the same for every change.
+			// A checkbox toggle's glyph runs ride its id in the ins/del ROLES (so
+			// every view shows the right glyph); the revision's own kind is the
+			// reader's `checkboxToggle` entry.
 			byId.set(change.id, {
 				id: change.id,
-				kind: change.kind,
+				kind:
+					document.trackedChangeReferences.get(change.id)?.kind ?? change.kind,
 				author: change.author,
 				date: change.date,
 				revisionId: change.revisionId,

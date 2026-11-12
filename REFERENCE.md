@@ -127,7 +127,12 @@ size="…in" margins="…in" text-width="…in" -->` note when the page deviates
   data-bound regions) are transparent: the paragraphs and tables inside one read
   as ordinary `pN`/`tN` blocks and edits land inside the control, with a
   `content-control="Governing Law"` pair on the block's note so you know Word may
-  have locked it.
+  have locked it. An INLINE control (a form's checkbox, a Plain Text or Dropdown
+  field inside a paragraph) reads as its text in that paragraph — a checkbox as its
+  `☐`/`☒` glyph — so `find`/`replace`/`comments add` reach it, and a `--text`
+  rewrite that restates the text keeps it inside the control. `docx tasks
+  check`/`uncheck` toggle a task-list item's box; a checkbox elsewhere has no
+  toggle verb yet, and replacing its glyph changes only what is displayed.
 - **Images** trail a `<!-- docx:image img0 size="6.2x4.1in" float="yes" wrap="square" align="center" overflow="yes" -->`
   note: `size` always (the `![](hash)` alone doesn't say "6in wide"), and
   `float`/`wrap`/`align`/`overflow` only when they deviate (an inline, in-bounds

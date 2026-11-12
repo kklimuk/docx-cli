@@ -77,9 +77,10 @@ export type OldToken = {
  *
  *  Caller (`applyFormattingPreservingEdit`) must strip all run-bearing
  *  wrappers from the rebuild — their content was just flattened into the
- *  diff. The ONE wrapper that comes back is `<w:hyperlink>`: each token
- *  remembers the link it sat in, and the run builders re-wrap contiguous
- *  link-bearing tokens in a clone of it (see `segmentByLink`). */
+ *  diff. The wrappers that come back are `<w:hyperlink>` and an inline
+ *  content control (`keptWrapper`): each token remembers the one it sat in,
+ *  and the run builders re-wrap contiguous tokens in a clone of it (see
+ *  `segmentByLink`). */
 export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 	let fullText = "";
 	const charToRpr: Array<XmlNode | null> = [];
@@ -118,7 +119,7 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 			// rebuild then dropped that text with no `<w:del>`, so a tracked
 			// `--text` edit lost it for good on reject.
 			if (isAcceptedViewVisibleWrapper(child.tag)) {
-				walk(wrapperContent(child), child.tag === "w:hyperlink" ? child : link);
+				walk(wrapperContent(child), keptWrapper(child, link));
 			}
 			// else: <w:pPr>, bookmarks, comment markers, <w:del>/<w:moveFrom>
 			// — skipped. Tracked-deleted text is invisible in accepted view.
@@ -151,6 +152,16 @@ export function extractOldTokens(paragraph: XmlNode): OldToken[] {
 		offset += text.length;
 	}
 	return tokens;
+}
+
+/** The wrapper a token rebuilds INSIDE: a `<w:hyperlink>`, or an inline
+ *  content control (`<w:sdt>` — a form's checkbox or text field) not already
+ *  inside a link. Kept text stays in the control, so retyping a checkbox's
+ *  label keeps the box clickable instead of flattening it to a literal glyph. */
+function keptWrapper(child: XmlNode, outer: XmlNode | null): XmlNode | null {
+	if (child.tag === "w:hyperlink") return child;
+	if (child.tag === "w:sdt" && outer === null) return child;
+	return outer;
 }
 
 /** The value covering the MOST characters of `values[start, start+length)`,

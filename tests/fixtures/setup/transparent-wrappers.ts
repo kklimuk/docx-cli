@@ -25,9 +25,14 @@ import {
  * historically invisible to the XML-side offset arithmetic in
  * comments/helpers.tsx, replace/replace-span.tsx, and hyperlinks/wrap.tsx.
  *
+ * Also an inline <w:sdt> content-control pair (#58): a Word form's checkbox
+ * (`<w14:checkbox>`, glyph in `<w:sdtContent>`) and a Plain Text field — a
+ * read-only shape we don't author, so it stays hand-rolled.
+ *
  * Layout:
  *   p0: "Today is " + <w:fldSimple w:instr="DATE">"2026-05-05"</w:fldSimple> + "."
  *   p1: "Hello " + <w:smartTag w:element="PersonName">"Alice"</w:smartTag> + "."
+ *   p2: <w:sdt checkbox>"☐"</w:sdt> + " Approved by " + <w:sdt alias="Approver">"Jane Doe"</w:sdt>
  */
 
 const root = resolve(import.meta.dir, "../../..");
@@ -47,6 +52,32 @@ const body = `
 			<w:r><w:t>Alice</w:t></w:r>
 		</w:smartTag>
 		<w:r><w:t>.</w:t></w:r>
+	</w:p>
+	<w:p>
+		<w:sdt>
+			<w:sdtPr>
+				<w:id w:val="1001"/>
+				<w14:checkbox>
+					<w14:checked w14:val="0"/>
+					<w14:checkedState w14:val="2612" w14:font="MS Gothic"/>
+					<w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/>
+				</w14:checkbox>
+			</w:sdtPr>
+			<w:sdtContent>
+				<w:r><w:rPr><w:rFonts w:ascii="MS Gothic" w:eastAsia="MS Gothic" w:hAnsi="MS Gothic"/></w:rPr><w:t>☐</w:t></w:r>
+			</w:sdtContent>
+		</w:sdt>
+		<w:r><w:t xml:space="preserve"> Approved by </w:t></w:r>
+		<w:sdt>
+			<w:sdtPr>
+				<w:alias w:val="Approver"/>
+				<w:id w:val="1002"/>
+				<w:text/>
+			</w:sdtPr>
+			<w:sdtContent>
+				<w:r><w:t>Jane Doe</w:t></w:r>
+			</w:sdtContent>
+		</w:sdt>
 	</w:p>
 	<w:sectPr/>`;
 
