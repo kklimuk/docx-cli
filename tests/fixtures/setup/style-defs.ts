@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { Pkg } from "@core/ast/document/package";
 import { $ } from "bun";
 
 // Pin core.xml timestamps so rebuilds are byte-deterministic.
@@ -15,6 +16,11 @@ process.env.DOCX_CLI_NOW ??= "2026-05-22T00:00:00Z";
  *     spacing) and `docx styles create KbdKey --type character` a character style
  *     (monospace + shaded background);
  *   - `docx edit --style` applies a created style to a body paragraph;
+ *   - the doc carries GERMAN Word's built-in default ids (`Standard` /
+ *     `Absatz-Standardschriftart` — the one hand-rolled step, since the CLI
+ *     never authors a localized template), so every provisioned baseline
+ *     (Heading1, Hyperlink, the created styles) must base itself on those and
+ *     never mint a second `w:default="1"` `Normal` (issue #59);
  *   - `docx styles set-default-font` sets the document font (Garamond) — writing
  *     <w:docDefaults> AND repointing word/theme/theme1.xml's font scheme. The
  *     theme-following headings (Heading1/Title/Subtitle reference the theme
@@ -61,6 +67,7 @@ async function appendText(
 mkdirSync(dirname(out), { recursive: true });
 
 await cli("create", out, "--title", "Style Definitions Demo", "--force");
+await localizeDefaultStyles();
 
 // A heading (materializes Heading1) + body paragraphs that will adopt the styles.
 await cli(
@@ -79,6 +86,16 @@ await appendText(
 await appendText("Key takeaway: editing a style updates everywhere at once.");
 await appendText("Press Enter to continue.");
 await appendText("Findings", { style: "Heading1" });
+// A bare URL autolinks: provisions the Hyperlink character style, which must
+// base itself on the German default character style (issue #59).
+await cli(
+	"insert",
+	out,
+	"--after",
+	`p${lastP}`,
+	"Reference: https://example.com",
+);
+lastP += 1;
 await appendText("A second section heading, sharing the Heading 1 style.");
 
 // Restyle the built-in Heading 1 definition — both headings update together.
@@ -158,6 +175,21 @@ await cli(
 	"--font-complex-script",
 	"Amiri",
 );
+
+/** Re-id the template's default paragraph style the way German Word writes it
+ *  (`Standard`, display name still `Normal`) and add its default character
+ *  style `Absatz-Standardschriftart`. */
+async function localizeDefaultStyles(): Promise<void> {
+	const pkg = await Pkg.open(out);
+	const styles = (await pkg.readText("word/styles.xml"))
+		.replace('w:styleId="Normal"', 'w:styleId="Standard"')
+		.replace(
+			"</w:styles>",
+			'<w:style w:type="character" w:default="1" w:styleId="Absatz-Standardschriftart"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>',
+		);
+	pkg.writeText("word/styles.xml", styles);
+	await pkg.save();
+}
 
 // Verify and report.
 const used = await cli("styles", out, "--used");

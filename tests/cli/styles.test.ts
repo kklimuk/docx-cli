@@ -1016,3 +1016,84 @@ test("styles create/set independently expose complex-script font in JSON and tex
 		"font-complex-script:",
 	);
 });
+
+// Issue #59: a localized Word names its built-in defaults in its own language
+// (German `Standard` / `Absatz-Standardschriftart`). Provisioning must find
+// them by `w:default="1"`, never mint a second default `Normal`.
+describe("localized default styles", () => {
+	test("a hyperlink edit reuses the German defaults instead of adding Normal", async () => {
+		const docPath = await germanStylesDoc("localized-link");
+		const result = await runCli(
+			"edit",
+			docPath,
+			"--at",
+			"p0",
+			"See https://example.com",
+		);
+		expect(result.exitCode).toBe(0);
+		const styles = await readStyles(docPath);
+		expect(styles).not.toContain('w:styleId="Normal"');
+		expect(styles.match(/w:default="1"/g)).toHaveLength(2);
+		expect(styles).toContain('w:styleId="Hyperlink"');
+		expect(styles).toContain('<w:basedOn w:val="Absatz-Standardschriftart"/>');
+		expect(styles).not.toContain("DefaultParagraphFont");
+	});
+
+	test("a heading's basedOn/next point at the localized default paragraph style", async () => {
+		const docPath = await germanStylesDoc("localized-heading");
+		await runCli("edit", docPath, "--at", "p0", "# Title");
+		const styles = await readStyles(docPath);
+		expect(styles).not.toContain('w:styleId="Normal"');
+		expect(styles).toContain('<w:basedOn w:val="Standard"/>');
+		expect(styles).toContain('<w:next w:val="Standard"/>');
+	});
+
+	test("styles set --at Normal edits the localized default paragraph style", async () => {
+		const docPath = await germanStylesDoc("localized-set");
+		const result = await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Normal",
+			"--size",
+			"12",
+			"--verbose",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((result.parsed as { id: string }).id).toBe("Standard");
+		const styles = await readStyles(docPath);
+		expect(styles).not.toContain('w:styleId="Normal"');
+		expect(styles).toMatch(/w:styleId="Standard">.*<w:sz w:val="24"\/>/);
+	});
+
+	test("styles set --at Normal --based-on <its local id> is refused as a self-reference", async () => {
+		const docPath = await germanStylesDoc("localized-cycle");
+		const result = await runCli(
+			"styles",
+			"set",
+			docPath,
+			"--at",
+			"Normal",
+			"--based-on",
+			"Standard",
+		);
+		expect(result.exitCode).toBe(2);
+		expect(await readStyles(docPath)).not.toContain(
+			'<w:basedOn w:val="Standard"/>',
+		);
+	});
+});
+
+const GERMAN_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Standard"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:default="1" w:styleId="Absatz-Standardschriftart"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`;
+
+/** A one-paragraph doc whose styles.xml holds only German Word's two defaults. */
+async function germanStylesDoc(label: string): Promise<string> {
+	const docPath = join(tempWorkspace(label), "de.docx");
+	await runCli("create", docPath, "--text", "Hallo");
+	const pkg = await Pkg.open(docPath);
+	pkg.writeText("word/styles.xml", GERMAN_STYLES);
+	await pkg.save();
+	return docPath;
+}
