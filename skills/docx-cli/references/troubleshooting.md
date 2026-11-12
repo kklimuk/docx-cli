@@ -50,6 +50,13 @@ The updated release workflow ad-hoc signs and verifies macOS binaries before
 generating `SHA256SUMS`; existing release assets are unchanged. Ad-hoc signing
 does not provide Developer ID identity or Apple notarization.
 
+## `docx upgrade` refuses with `DOCX_CLI_NO_UPDATE` or `DOCX_CLI_VERSION`
+
+An administrator has pinned the version. `upgrade` honors the same variables as
+`bootstrap.sh`: `DOCX_CLI_NO_UPDATE=1` refuses every upgrade, and
+`DOCX_CLI_VERSION=vX.Y.Z` allows only `docx upgrade --to vX.Y.Z`. Keep using the
+installed binary; don't unset the variable or install around it with npm.
+
 ## `docx upgrade` on Windows says `sh` is not on PATH
 
 Upgrade runs its embedded installer with `sh`, so on Windows run it from Git

@@ -32,7 +32,7 @@ docx styles  --catalog [--json]                      # built-in styles you can a
 docx styles  set    FILE --at STYLEID [--bold --color HEX --size PT --font NAME --font-east-asia NAME --font-complex-script NAME --space-before PT --indent-left IN …]   # restyle every paragraph/run that uses the style
 docx styles  create FILE STYLEID [--type paragraph|character] [--name "…"] [--based-on STYLEID] [--next STYLEID] [formatting]   # define a new custom style
 docx render  FILE [--out DIR] [--engine word|libreoffice|auto] [--dpi N] [--pages 1-N] [--format png|jpg]
-docx upgrade [--to TAG] [--dry-run]                                        # update the installed binary in place (no FILE)
+docx upgrade [--to TAG] [--dry-run]                                        # update the installed binary in place (no FILE); refused under DOCX_CLI_NO_UPDATE=1, or for any target but DOCX_CLI_VERSION
 
 docx comments      list FILE [--open] [--thread cN]
 docx footnotes     list FILE
