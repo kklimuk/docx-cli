@@ -85,7 +85,7 @@ Block all of them and every command except remote image insertion still works.
 - `DOCX_CLI_VERSION=v0.27.0`: bootstrap installs exactly that release when `docx` is missing and never updates a binary that's already present.
 - `DOCX_CLI_NO_UPDATE=1`: bootstrap never updates a binary that's already present. (A missing one still installs, from the latest release; set `DOCX_CLI_VERSION` too to control which.)
 
-These variables govern `bootstrap.sh`, the path the skill sends agents down when either one is set. They don't stop someone from running `docx upgrade` or `npm install -g bun-docx` directly; restrict those through your normal software policy if you need to.
+`docx upgrade` honors them too: with `DOCX_CLI_NO_UPDATE=1` it refuses every upgrade, and with `DOCX_CLI_VERSION` it refuses any target except that tag (so `docx upgrade --to v0.27.0` installs the pin and nothing else does). Both refusals exit nonzero, name the variable, and apply to `--dry-run`. The variables don't stop `npm install -g bun-docx` or a hand-run `install.sh`; restrict those through your normal software policy if you need to.
 
 Offline, bootstrap keeps the working binary and exits 0.
 

@@ -91,7 +91,9 @@ embedded text equals the file on disk.
 Install-method detection is `import.meta.path.startsWith("/$bunfs/")` (Bun's virtual FS
 for a compiled single-file executable; `~BUN` on Windows). Standalone → self-replace via
 install.sh's rename, which works over a running binary on POSIX. Package-manager install
-→ print `bun add -g bun-docx` and change nothing. Windows locks a running `.exe`
+→ print `bun add -g bun-docx` (`bun-docx@X.Y.Z` when the target is a tag, so the
+advisory can't install latest around a `--to` or a `DOCX_CLI_VERSION` pin) and change
+nothing. Windows locks a running `.exe`
 against overwrite but not rename, so there install.sh gets `PREFIX=<dir>/.docx-upgrade`
 and, only once it exits 0 (downloaded AND checksum-verified), `swapIn`
 ([upgrade/swap-in.ts](upgrade/swap-in.ts)) renames the running binary to `docx.exe.old`
@@ -121,6 +123,14 @@ interpolated into the release URL and curl NORMALIZES `..`, so an unconstrained 
 would redirect both the binary and the `SHA256SUMS` it is checked against to another
 repo — the checksum gate would then bless the attacker's own manifest. A bare `0.23.0`
 (what `docx --version` prints) is normalized to `v0.23.0` rather than 404ing.
+
+Admin pins ([upgrade/admin-pin.ts](upgrade/admin-pin.ts)) mirror bootstrap.sh:
+`DOCX_CLI_NO_UPDATE=1` refuses every upgrade, `DOCX_CLI_VERSION` refuses any target but
+the pinned tag (`--to` that tag is how the pin gets installed), and a malformed pin is a
+USAGE error. The check runs BEFORE the install-method and `--dry-run` branches — a dry
+run previews the refusal, and an npm install under a pin must not be told to
+`bun add -g` around it. SKILL.md tells agents these variables mean "an admin pinned the
+version", so `upgrade` ignoring them (issue #57) was a hole in that promise.
 
 [install-script.d.ts](upgrade/install-script.d.ts) declares the `*.sh` module shape for
 tsc (Bun itself needs nothing), colocated with its only consumer the way

@@ -16,6 +16,8 @@ import {
 	writeStderr,
 	writeStdout,
 } from "../respond";
+import { adminPinRefusal } from "./admin-pin";
+import { toReleaseTag } from "./release-tag";
 import { withoutStagingPathHint } from "./staging-path-hint";
 import { swapIn } from "./swap-in";
 
@@ -37,6 +39,11 @@ where a running .exe can be renamed but not overwritten, the verified new
 binary is swapped in and the old one is left as docx.exe.old; the next upgrade
 deletes it.
 
+Admin pins are honored, as the skill's bootstrap.sh honors them:
+DOCX_CLI_NO_UPDATE=1 refuses every upgrade, and DOCX_CLI_VERSION=vX.Y.Z refuses
+any target but that tag (so only "docx upgrade --to vX.Y.Z" proceeds). Both
+apply to --dry-run too.
+
 It runs the same installer published as a release asset — embedded in this
 binary, not downloaded — so the new binary is pinned to a release tag and its
 SHA-256 is verified against that release's SHA256SUMS before it replaces
@@ -45,18 +52,10 @@ anything.
 Output:
   Success       one-line ack (--verbose → {ok, operation, from, to, path})
   --dry-run     {operation, dryRun, from, to, path}
-  Not upgraded  {code, error, hint} + nonzero exit (npm install, a renamed
-                binary, or a failed install) — the binary is left untouched
+  Not upgraded  {code, error, hint} + nonzero exit (an admin pin, an npm
+                install, a renamed binary, or a failed install) — the binary
+                is left untouched
 `;
-
-/** A release tag, and nothing that can steer the URL somewhere else. `--to` is
- *  interpolated into install.sh's release URL, and curl NORMALIZES `..` — so an
- *  unvalidated value ("../../../../other/repo/releases/download/v1") redirects both
- *  the binary AND the SHA256SUMS it is checked against to an attacker's repo, making
- *  the checksum gate verify the attacker's own manifest. Agents drive this CLI over
- *  untrusted document content, so the value must be constrained here, at the CLI
- *  ingress, per "the CLI surface is concerned with parsing user input". */
-const RELEASE_TAG = /^v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?$/;
 
 export async function run(args: string[]): Promise<number> {
 	const parsed = await tryParseArgs(
@@ -85,30 +84,30 @@ export async function run(args: string[]): Promise<number> {
 	}
 
 	const requested = parsed.values.to as string | undefined;
-	if (requested !== undefined && !RELEASE_TAG.test(requested)) {
+	const target = requested === undefined ? "latest" : toReleaseTag(requested);
+	if (target === null) {
 		return fail(
 			"USAGE",
 			`--to must be a release tag like v0.23.0 (got ${JSON.stringify(requested)})`,
 			"Tags are listed at https://github.com/kklimuk/docx-cli/releases",
 		);
 	}
-	// `docx --version` prints "0.23.0" but the release is tagged "v0.23.0"; accept what
-	// the tool itself printed rather than 404ing on the most likely typo.
-	const target =
-		requested === undefined
-			? "latest"
-			: requested.startsWith("v")
-				? requested
-				: `v${requested}`;
+
+	const refusal = adminPinRefusal(Bun.env, target, VERSION);
+	if (refusal) return fail(refusal.code, refusal.error, refusal.hint);
 
 	if (!isStandaloneBinary()) {
 		// Self-replacing a package-manager-owned install would strand the manager's
 		// metadata on bytes it never wrote and put a second `docx` on PATH. Nonzero:
 		// nothing was upgraded, and weak agents read the exit code, not the prose.
+		// Name the target in the advisory: a bare `bun add -g bun-docx` installs latest,
+		// which would route around the DOCX_CLI_VERSION pin (or the --to) just accepted.
+		const packageSpec =
+			target === "latest" ? "bun-docx" : `bun-docx@${target.slice(1)}`;
 		return fail(
 			"UPGRADE_FAILED",
 			`docx ${VERSION} was installed from the npm registry, which owns updates`,
-			"bun add -g bun-docx      # or: npm install -g bun-docx",
+			`bun add -g ${packageSpec}      # or: npm install -g ${packageSpec}`,
 		);
 	}
 

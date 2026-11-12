@@ -1,11 +1,34 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import installScript from "../../skills/docx-cli/scripts/install.sh" with {
 	type: "text",
 };
+import { adminPinRefusal } from "../../src/cli/upgrade/admin-pin";
 import { withoutStagingPathHint } from "../../src/cli/upgrade/staging-path-hint";
 import { swapIn } from "../../src/cli/upgrade/swap-in";
 import { runCli, tempWorkspace } from "./harness";
+
+// The admin pins change what EVERY `upgrade` run does — in-process and the compiled
+// binary spawned below (handed Bun.env explicitly) — and a managed machine, the very
+// population they exist for, may set them in the environment the suite runs in. Clear
+// them before each test so only a test that sets one sees one; restore them after.
+const PIN_VARS = ["DOCX_CLI_NO_UPDATE", "DOCX_CLI_VERSION"];
+const ambientPins = snapshotEnv(PIN_VARS);
+beforeEach(() => {
+	for (const name of PIN_VARS) delete Bun.env[name];
+});
+afterAll(() => restoreEnv(ambientPins));
+
+function snapshotEnv(names: string[]): Record<string, string | undefined> {
+	return Object.fromEntries(names.map((name) => [name, Bun.env[name]]));
+}
+
+function restoreEnv(values: Record<string, string | undefined>): void {
+	for (const [name, value] of Object.entries(values)) {
+		if (value === undefined) delete Bun.env[name];
+		else Bun.env[name] = value;
+	}
+}
 
 describe("upgrade", () => {
 	// The whole point of the design: `upgrade` reuses the installer rather than
@@ -82,6 +105,104 @@ describe("upgrade", () => {
 		const result = await runCli("upgrade", "v0.23.0");
 		expect(result.exitCode).toBe(2);
 		expect(result.stdout).toContain("--to");
+	});
+});
+
+// DOCX_CLI_NO_UPDATE / DOCX_CLI_VERSION are the fleet controls SECURITY.md documents
+// and bootstrap.sh honors; the skill tells agents they mean "an admin pinned the
+// version". `upgrade` ignoring them (issue #57) let the pin hold only until something
+// reached for the other door. The check precedes the install-method branch, so the
+// in-process (npm-shaped) run reaches it exactly as a standalone binary would.
+describe("upgrade (admin pins)", () => {
+	// The file-level beforeEach has already cleared both pins; this sets only `vars`,
+	// and restores exactly the names it set, whatever they are.
+	async function withEnv(
+		vars: Record<string, string>,
+		...argv: string[]
+	): Promise<Awaited<ReturnType<typeof runCli>>> {
+		const saved = snapshotEnv(Object.keys(vars));
+		restoreEnv(vars);
+		try {
+			return await runCli("upgrade", ...argv);
+		} finally {
+			restoreEnv(saved);
+		}
+	}
+
+	test.each([
+		[[]],
+		[["--dry-run"]],
+		[["--to", "v0.27.0"]],
+	])("DOCX_CLI_NO_UPDATE=1 refuses every upgrade (%p)", async (argv) => {
+		const result = await withEnv(
+			{ DOCX_CLI_NO_UPDATE: "1" },
+			...(argv as string[]),
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("DOCX_CLI_NO_UPDATE=1");
+		expect(result.stdout).not.toContain('"dryRun"');
+		// Not the npm advisory: installing via npm would also defeat the pin.
+		expect(result.stdout).not.toContain("bun add -g");
+	});
+
+	test.each([
+		[[]],
+		[["--dry-run"]],
+		[["--to", "v0.28.0"]],
+	])("DOCX_CLI_VERSION refuses a target other than the pin (%p)", async (argv) => {
+		const result = await withEnv(
+			{ DOCX_CLI_VERSION: "0.27.0" },
+			...(argv as string[]),
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain(
+			"DOCX_CLI_VERSION=0.27.0 pins docx to v0.27.0",
+		);
+		expect(result.stdout).toContain("docx upgrade --to v0.27.0");
+	});
+
+	test("DOCX_CLI_VERSION lets --to the pinned tag through", async () => {
+		const result = await withEnv(
+			{ DOCX_CLI_VERSION: "v0.27.0" },
+			"--to",
+			"0.27.0",
+		);
+		// Past the pin check: the in-process run then hits the npm advisory — which must
+		// name the pinned version, since a bare `bun add -g bun-docx` installs latest.
+		expect(result.stdout).not.toContain("DOCX_CLI_VERSION");
+		expect(result.stdout).toContain("bun add -g bun-docx@0.27.0");
+	});
+
+	test("a malformed DOCX_CLI_VERSION is a usage error, as in bootstrap", async () => {
+		const result = await withEnv({ DOCX_CLI_VERSION: "../evil" });
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("not a release tag");
+	});
+
+	// bootstrap.sh validates the pin before it looks at DOCX_CLI_NO_UPDATE.
+	test("a malformed DOCX_CLI_VERSION is a usage error even under DOCX_CLI_NO_UPDATE=1", async () => {
+		const result = await withEnv({
+			DOCX_CLI_NO_UPDATE: "1",
+			DOCX_CLI_VERSION: "../evil",
+		});
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toContain("not a release tag");
+	});
+
+	test("an install already on the pin is told there is nothing to upgrade", () => {
+		const refusal = adminPinRefusal(
+			{ DOCX_CLI_VERSION: "0.27.0" },
+			"latest",
+			"0.27.0",
+		);
+		expect(refusal?.code).toBe("UPGRADE_FAILED");
+		expect(refusal?.hint).toContain("already matches the pin");
+	});
+
+	test("an unset or non-1 DOCX_CLI_NO_UPDATE changes nothing", async () => {
+		const result = await withEnv({ DOCX_CLI_NO_UPDATE: "0" });
+		expect(result.stdout).not.toContain("DOCX_CLI_NO_UPDATE");
+		expect(result.stdout).toContain("bun add -g bun-docx");
 	});
 });
 
@@ -172,7 +293,10 @@ describe("upgrade (compiled binary)", () => {
 		expect(build.exitCode).toBe(0);
 
 		// --dry-run so it reports intent without touching the network or the binary.
-		const result = Bun.spawnSync([binary, "upgrade", "--dry-run"]);
+		// An explicit env: spawnSync's default doesn't see the beforeEach's deletions.
+		const result = Bun.spawnSync([binary, "upgrade", "--dry-run"], {
+			env: { ...Bun.env },
+		});
 		expect(result.exitCode).toBe(0);
 		const stdout = result.stdout.toString();
 		expect(stdout).toContain('"dryRun":true');
@@ -188,7 +312,9 @@ describe("upgrade (compiled binary)", () => {
 		// command the user runs stale, while upgrade reported success on the old path.
 		const renamed = `${dir}/mydocx${exe}`;
 		expect(Bun.spawnSync(["cp", `${binary}${exe}`, renamed]).exitCode).toBe(0);
-		const refusal = Bun.spawnSync([renamed, "upgrade", "--dry-run"]);
+		const refusal = Bun.spawnSync([renamed, "upgrade", "--dry-run"], {
+			env: { ...Bun.env },
+		});
 		expect(refusal.exitCode).not.toBe(0);
 		expect(refusal.stdout.toString()).toContain("mydocx");
 	}, 120_000);
