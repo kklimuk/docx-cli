@@ -222,7 +222,7 @@ export class Edit {
 			);
 			this.reanchorComments(blockRef.node, commentMarkers);
 			// Mutated in place — the same <w:p> node is the result.
-			return { node: blockRef.node, resolvedAuthors: listResolvedAuthors() };
+			return { nodes: [blockRef.node], resolvedAuthors: listResolvedAuthors() };
 		}
 
 		if (spec.kind === "code") {
@@ -321,13 +321,15 @@ export class Edit {
 				newParagraphs,
 			);
 		}
-		// The first NEW paragraph is the result: untracked it's the spliced-in
-		// node; tracked, its runs are the very nodes now inside the transition's
-		// `<w:ins>`. A following clear/format in a combined content+clear edit
-		// must target only those — never the transition itself, whose `<w:del>`
-		// holds the original runs reject restores.
+		// The NEW blocks are the result: untracked they're the spliced-in nodes;
+		// tracked, the first one's runs are the very nodes now inside the
+		// transition's `<w:ins>` and the rest are spliced in after it. A following
+		// clear/format in a combined content+clear edit must target only those —
+		// never the transition itself, whose `<w:del>` holds the original runs
+		// reject restores — and must reach EVERY new block (issue #60), since the
+		// run inheritance above stamped the old look on all of them.
 		return {
-			node: anchorTarget ?? blockRef.node,
+			nodes: newParagraphs.length > 0 ? newParagraphs : [blockRef.node],
 			resolvedAuthors: listResolvedAuthors(),
 		};
 	}
@@ -586,25 +588,30 @@ export class Edit {
 		clearRunFormatting(blockRef.node, span, tags);
 	}
 
-	/** Like `clearFormatting` but targets a paragraph node directly. Used by the
-	 *  combined content+clear edit, where the content step may have spliced in a
-	 *  fresh paragraph node (so the original blockRef is stale): `paragraph()`
-	 *  returns the resulting node and we clear THAT. The message differs from the
-	 *  locator path's: here the locator WAS a paragraph; it's the new content
-	 *  (e.g. `--markdown` that produced a table) that isn't clearable. */
-	clearFormattingNode(
-		node: XmlNode,
-		span: { start: number; end: number } | null,
-		tags: Set<string>,
+	/** Ride-along restyle of a whole-paragraph content edit's result: strip
+	 *  `clearTags`, then set `format` (so an explicit set wins on a shared
+	 *  property), on EVERY paragraph the edit produced — a markdown value that
+	 *  split into several blocks inherited the old look on each (issue #60).
+	 *  Non-paragraph blocks (a markdown table) have no top-level runs and are
+	 *  skipped; content with no paragraph at all is refused. */
+	restyleBlocks(
+		nodes: XmlNode[],
+		restyle: { clearTags?: Set<string> | null; format?: RunFormat | null },
 	): void {
-		if (node.tag !== "w:p") {
+		const paragraphs = nodes.filter((node) => node.tag === "w:p");
+		if (paragraphs.length === 0) {
 			throw new EditError(
 				"USAGE",
-				"--clear can't apply: the new content isn't a single paragraph",
-				"Drop --clear (a table/structural block has no run formatting to strip), or clear separately with `edit --at <pN> --clear …` after the content edit.",
+				"Run formatting can't apply: the new content has no paragraph",
+				"Drop --clear / the formatting flags (a table/structural block has no runs to format), or apply them to its cells with `edit --at tN:rRcC:pK …` after the content edit.",
 			);
 		}
-		clearRunFormatting(node, span, tags);
+		for (const paragraph of paragraphs) {
+			if (restyle.clearTags) {
+				clearRunFormatting(paragraph, null, restyle.clearTags);
+			}
+			if (restyle.format) setRunFormatting(paragraph, null, restyle.format);
+		}
 	}
 
 	/** Set run-level formatting (bold/italic/underline/color/highlight/font/size/
@@ -629,25 +636,6 @@ export class Edit {
 			);
 		}
 		setRunFormatting(blockRef.node, span, format);
-	}
-
-	/** Like `setFormatting` but targets a paragraph node directly — used by the
-	 *  combined content+format edit, where the content step may have spliced in a
-	 *  fresh paragraph node (so the original blockRef is stale): `paragraph()` /
-	 *  `span()` returns the resulting node and we format THAT. */
-	setFormattingNode(
-		node: XmlNode,
-		span: { start: number; end: number } | null,
-		format: RunFormat,
-	): void {
-		if (node.tag !== "w:p") {
-			throw new EditError(
-				"USAGE",
-				"Run formatting can't apply: the new content isn't a single paragraph",
-				"Drop the formatting flags (a table/structural block has no runs to format), or set them separately with `edit --at <pN> …` after the content edit.",
-			);
-		}
-		setRunFormatting(node, span, format);
 	}
 
 	/** Range replace: `pN-pM`. No formatting preservation (Word's empirical
@@ -733,9 +721,13 @@ export class Edit {
 	}
 }
 
-/** `Edit.paragraph`'s result: the paragraph node the content edit produced,
- *  and the other authors whose pending revisions the rebuild resolved. */
-export type ParagraphEditResult = { node: XmlNode; resolvedAuthors: string[] };
+/** `Edit.paragraph`'s result: the blocks the content edit produced (one
+ *  paragraph, or several when markdown split it), and the other authors whose
+ *  pending revisions the rebuild resolved. */
+export type ParagraphEditResult = {
+	nodes: XmlNode[];
+	resolvedAuthors: string[];
+};
 
 /** The paragraph-content specs that produce one or more new paragraphs.
  * Shared between `Edit.paragraph` (single block) and `Edit.range` (block
