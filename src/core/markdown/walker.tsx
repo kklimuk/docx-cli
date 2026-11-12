@@ -65,7 +65,9 @@ function walkBlock(node: RootContent, ctx: WalkContext): XmlNode[] {
 			// `read` emits) — drop. These are read-time hints, not parse-back: the
 			// importer never reconstructs structure from them (`--ast` is the
 			// lossless view; edit-in-place + `docx sections`
-			// manage layout). Agents author through markdown features.
+			// manage layout). Agents author through markdown features. A block
+			// that would take TEXT with it is refused instead (issue #61).
+			rejectTextBearingHtml(node.value, node.position?.start.line);
 			return [];
 		case "footnoteDefinition":
 			// The lens pre-collects footnote definitions and registers their
@@ -86,6 +88,30 @@ function walkBlock(node: RootContent, ctx: WalkContext): XmlNode[] {
 				`Unsupported markdown block: ${(node as { type: string }).type}`,
 			);
 	}
+}
+
+/** Refuse a raw block-HTML node whose markup carries visible text. CommonMark
+ * swallows a line that opens with a block tag (`<h1>`, `<p>`, `<div>`,
+ * `<table>`, …) — and everything up to the next blank line — into ONE opaque
+ * `html` node, so dropping it drops the prose inside: an HTML file passed to
+ * `create --from` used to become an empty document at exit 0. Tag-only blocks
+ * (a README's `<div align="center">` wrapper around real markdown) and comments
+ * (every `read` hint) carry no text and still drop silently. */
+function rejectTextBearingHtml(html: string, line: number | undefined): void {
+	const text = html
+		.replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
+		.replace(/<[^>]*>/g, " ")
+		.replace(/&(?:nbsp|#160|#x0*a0);/gi, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (text === "") return;
+	const where = line === undefined ? "" : ` at line ${line}`;
+	const preview = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+	throw new MarkdownImportError(
+		"USAGE",
+		`Block-level HTML${where} would be dropped along with its text ("${preview}") — markdown input doesn't convert HTML blocks`,
+		"Rewrite it as markdown: `# Heading`, plain paragraphs, `| a | b |` tables, `**bold**`. Inline <u>/<sup>/<sub>/<mark>/<span> inside a paragraph are fine. To keep the text verbatim instead, strip the tags (or use --text-file where available).",
+	);
 }
 
 function paragraphBlock(

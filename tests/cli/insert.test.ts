@@ -1416,3 +1416,27 @@ describe("insert — inline markdown keeps backslash image paths intact", () => 
 		expect(xml).not.toContain("[site]");
 	});
 });
+
+describe("insert --markdown — block HTML (issue #61)", () => {
+	test("refuses block HTML that would drop its text, leaving the doc untouched", async () => {
+		const workspace = tempWorkspace("insert-html");
+		const docPath = join(workspace, "doc.docx");
+		expect((await runCli("create", docPath, "--text", "Seed")).exitCode).toBe(
+			0,
+		);
+		const before = await Bun.file(docPath).bytes();
+
+		const result = await runCli(
+			"insert",
+			docPath,
+			"--after",
+			"p0",
+			"<div>Lost paragraph</div>",
+		);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain(
+			"Lost paragraph",
+		);
+		expect(await Bun.file(docPath).bytes()).toEqual(before);
+	});
+});

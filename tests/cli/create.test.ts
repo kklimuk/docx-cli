@@ -467,3 +467,65 @@ describe("docx create — inline escape decoding (--text)", () => {
 		expect(paragraph?.runs).toEqual([{ type: "text", text: "Hello world" }]);
 	});
 });
+
+describe("docx create --from — block HTML (issue #61)", () => {
+	test("refuses an HTML file instead of writing an empty document", async () => {
+		const workspace = tempWorkspace("create-html");
+		const source = join(workspace, "page.html");
+		await Bun.write(source, "<h1>Title</h1><p>Body</p>");
+		const docPath = join(workspace, "out.docx");
+
+		const result = await runCli("create", docPath, "--from", source);
+		expect(result.exitCode).toBe(2);
+		const error = result.parsed as { code: string; error: string };
+		expect(error.code).toBe("USAGE");
+		expect(error.error).toContain("Title");
+		// Nothing is written when the content is refused.
+		expect(await Bun.file(docPath).exists()).toBe(false);
+	});
+
+	test("refuses block HTML with text inside otherwise-valid markdown", async () => {
+		const workspace = tempWorkspace("create-html-block");
+		const source = join(workspace, "draft.md");
+		await Bun.write(
+			source,
+			"Intro\n\n<table><tr><td>Cell text</td></tr></table>\n\nAfter\n",
+		);
+		const docPath = join(workspace, "out.docx");
+
+		const result = await runCli("create", docPath, "--from", source);
+		expect(result.exitCode).toBe(2);
+		expect((result.parsed as { error: string }).error).toContain("line 3");
+		expect(await Bun.file(docPath).exists()).toBe(false);
+	});
+
+	test("--force over an existing file leaves it untouched on refusal", async () => {
+		const workspace = tempWorkspace("create-html-force");
+		const docPath = join(workspace, "out.docx");
+		expect(
+			(await runCli("create", docPath, "--text", "Keep me")).exitCode,
+		).toBe(0);
+		const source = join(workspace, "page.html");
+		await Bun.write(source, "<div>Lost</div>");
+
+		const result = await runCli("create", docPath, "--from", source, "--force");
+		expect(result.exitCode).toBe(2);
+		expect((await runCli("read", docPath)).stdout).toContain("Keep me");
+	});
+
+	test("tag-only HTML and comments still pass (their content is markdown)", async () => {
+		const workspace = tempWorkspace("create-html-wrapper");
+		const source = join(workspace, "readme.md");
+		await Bun.write(
+			source,
+			'<div align="center">\n\n# Title\n\nBody text\n\n</div>\n\n<!-- p9 -->\n\n<p>&nbsp;</p>\n',
+		);
+		const docPath = join(workspace, "out.docx");
+
+		const result = await runCli("create", docPath, "--from", source);
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", docPath)).stdout;
+		expect(markdown).toContain("# Title");
+		expect(markdown).toContain("Body text");
+	});
+});
