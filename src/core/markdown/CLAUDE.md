@@ -90,7 +90,10 @@ itself round-trips through the ordinal).
 
 **These are read-time VISIBILITY hints, not round-trip carriers — ONE contract.**
 The importer DROPS every one: `walkBlock`'s `case "html"` returns `[]`, and the
-inline walker drops inline comments. The structure survives normal edits via
+inline walker drops inline comments. (One guard rides that drop: a block-HTML node whose
+markup carries visible TEXT — `<p>Body</p>`, an `.html` page — is refused with
+`USAGE` by `rejectTextBearingHtml` rather than dropped with its prose, issue #61;
+comments and tag-only wrappers carry no text, so every `read` hint still drops.) The structure survives normal edits via
 in-place XML mutation; `read --ast` is the lossless view; and the authoring verbs
 (`docx sections`, `docx tables …`) manage it. So a from-scratch
 `create` is deliberately lossy for non-Markdown structure (a section break read →

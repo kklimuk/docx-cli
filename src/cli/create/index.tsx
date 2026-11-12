@@ -48,6 +48,9 @@ Options:
                      stdin). One content source only. Uses the same markdown
                      dialect as 'docx insert --markdown'. This is the canonical
                      way to build a whole .docx from a markdown file.
+                     HTML is not converted: block HTML that carries text
+                     (an .html page, <div>/<table>/<h1> blocks) is refused
+                     and nothing is written — rewrite it as markdown.
                      Footnote/endnote bodies keep bold/italic + hyperlinks;
                      footnote labels renumber to [^fnN] on import. (Under
                      track-changes, note bodies flatten to plain text.)
@@ -193,43 +196,45 @@ export async function run(args: string[]): Promise<number> {
 		(parsed.values.author as string | undefined) ?? Bun.env.DOCX_AUTHOR ?? "";
 	const title = (parsed.values.title as string | undefined) ?? "";
 
-	// Seed with --text (or empty) first. If --from was passed, we re-open the
-	// just-written package, replace the placeholder paragraph with parsed
-	// markdown blocks, and save again. We don't try to do the markdown parse
-	// inline against the raw template tree because MarkdownImport needs a
-	// full Document (relationships, content-types, lazy-provisioned views) to
-	// register footnote bodies / hyperlinks / images — all of which only come
-	// alive once the package is on disk and re-opened. We write the blank
-	// package straight to `destination` (the --output target if given, else
-	// FILE), then re-open and re-save that same file for the markdown pass.
+	// Build the blank package (seeded with --text, or empty) and run every
+	// content/geometry/marginals step against ONE in-memory Document over it,
+	// saving once at the end. `Document.fromPackage` gives MarkdownImport the
+	// full view set it needs (relationships, content-types, lazy-provisioned
+	// views) without a disk round-trip — and a refused source (bad image, block
+	// HTML that would drop text) writes NOTHING, so an existing FILE under
+	// --force survives a failed create.
 	const pkg = buildBlankPackage({ path: destination, title, author, text });
-	await pkg.save();
+	const document = await Document.fromPackage(pkg);
 
 	let blockCount = 1; // the seed paragraph buildBlankPackage emitted
 	if (fromPath !== undefined) {
-		const applied = await applyMarkdownToBody(destination, fromPath);
+		const applied = await applyMarkdownToBody(document, fromPath);
 		if (typeof applied === "number") return applied;
 		blockCount = applied.blockCount;
 	} else if (textFilePath !== undefined) {
-		const applied = await applyLiteralToBody(destination, textFilePath);
+		const applied = await applyLiteralToBody(document, textFilePath);
 		if (typeof applied === "number") return applied;
 		blockCount = applied.blockCount;
 	}
 
-	// Apply page geometry to the fresh doc's trailing <w:sectPr> by re-opening
-	// (same build → re-open → mutate → save pattern --from/--text-file use). No
-	// tracking: a brand-new document has no prior state to snapshot.
-	if (hasGeometry) {
-		const applied = await applyGeometryToBody(destination, geometry);
-		if (typeof applied === "number") return applied;
+	// No tracking for geometry: a brand-new document has no prior state to
+	// snapshot. Headers/footers follow geometry so the part lands on the final
+	// trailing sectPr.
+	if (hasGeometry || hasMarginals) {
+		const sectPr = document.body.body.children
+			.filter((child) => child.tag === "w:sectPr")
+			.pop();
+		if (!sectPr) {
+			return fail(
+				"USAGE",
+				"Internal: trailing <w:sectPr> not found in blank-package body",
+			);
+		}
+		if (hasGeometry) applyPageGeometry(sectPr, geometry);
+		if (hasMarginals) applyMarginals(document, sectPr, marginals);
 	}
 
-	// Headers/footers, applied after geometry so the part lands on the final
-	// trailing sectPr (same re-open-and-mutate pattern as the geometry step).
-	if (hasMarginals) {
-		const applied = await applyMarginalsToBody(destination, marginals);
-		if (typeof applied === "number") return applied;
-	}
+	await document.save();
 
 	await respondAck({
 		ok: true,
@@ -246,7 +251,7 @@ export async function run(args: string[]): Promise<number> {
  * empty placeholder paragraph. Returns an exit code on failure, or the
  * applied block count on success so the caller can report it in the ack. */
 async function applyMarkdownToBody(
-	docxPath: string,
+	document: Document,
 	markdownPath: string,
 ): Promise<number | { blockCount: number }> {
 	let source: string;
@@ -263,7 +268,6 @@ async function applyMarkdownToBody(
 		);
 	}
 
-	const document = await Document.open(docxPath);
 	let blocks: XmlNode[];
 	try {
 		blocks = await new MarkdownImport(document).blocks(source);
@@ -274,7 +278,7 @@ async function applyMarkdownToBody(
 		throw error;
 	}
 
-	return replacePlaceholderAndSave(document, blocks);
+	return replacePlaceholder(document, blocks);
 }
 
 /** Read literal text from PATH (or stdin), split it into one paragraph per line
@@ -282,7 +286,7 @@ async function applyMarkdownToBody(
  *  over the seed paragraph. The `create` counterpart of `insert --text-file`,
  *  for building a doc from prose that GFM would corrupt. */
 async function applyLiteralToBody(
-	docxPath: string,
+	document: Document,
 	textFilePath: string,
 ): Promise<number | { blockCount: number }> {
 	let source: string;
@@ -299,48 +303,16 @@ async function applyLiteralToBody(
 		);
 	}
 
-	const document = await Document.open(docxPath);
-	return replacePlaceholderAndSave(document, literalParagraphs(source));
+	return replacePlaceholder(document, literalParagraphs(source));
 }
 
-/** Re-open the freshly-written doc and apply page geometry to its trailing
- *  `<w:sectPr>` (the document-wide one buildBlankPackage emits). Returns an exit
- *  code on failure, or void on success. */
-async function applyGeometryToBody(
-	docxPath: string,
-	geometry: PageGeometry,
-): Promise<number | undefined> {
-	const document = await Document.open(docxPath);
-	const sectPr = document.body.body.children
-		.filter((child) => child.tag === "w:sectPr")
-		.pop();
-	if (!sectPr) {
-		return fail(
-			"USAGE",
-			"Internal: trailing <w:sectPr> not found in blank-package body",
-		);
-	}
-	applyPageGeometry(sectPr, geometry);
-	await document.save();
-	return undefined;
-}
-
-/** Re-open the freshly-written doc and apply create-time headers/footers to its
- *  trailing `<w:sectPr>` (document-wide) via the `Marginals` lens. */
-async function applyMarginalsToBody(
-	docxPath: string,
+/** Apply create-time headers/footers to the trailing (document-wide)
+ *  `<w:sectPr>` via the `Marginals` lens. */
+function applyMarginals(
+	document: Document,
+	sectPr: XmlNode,
 	marginals: { header?: string; footer?: string; pageNumbers: boolean },
-): Promise<number | undefined> {
-	const document = await Document.open(docxPath);
-	const sectPr = document.body.body.children
-		.filter((child) => child.tag === "w:sectPr")
-		.pop();
-	if (!sectPr) {
-		return fail(
-			"USAGE",
-			"Internal: trailing <w:sectPr> not found in blank-package body",
-		);
-	}
+): void {
 	const lens = new Marginals(document);
 	if (marginals.header !== undefined) {
 		lens.set([sectPr], "header", "default", { text: marginals.header });
@@ -354,24 +326,22 @@ async function applyMarginalsToBody(
 			align: "center",
 		});
 	}
-	await document.save();
-	return undefined;
 }
 
-/** Replace the blank package's single seed `<w:p>` with `blocks` and save.
- *  `buildBlankPackage` always emits exactly one placeholder `<w:p>` plus the
+/** Replace the blank package's single seed `<w:p>` with `blocks` (the caller
+ *  saves). `buildBlankPackage` always emits exactly one placeholder `<w:p>` plus the
  *  trailing `<w:sectPr>`; we swap the placeholder for the real content and leave
  *  the sectPr at the tail. An empty `blocks` (markdown source that walked to
  *  nothing) keeps the seed paragraph — splicing zero blocks would leave a bare
  *  `<w:sectPr>` as a direct `<w:body>` child, which ECMA-376 §17.2.2 frowns on
  *  and Word for Mac flags on save. */
-async function replacePlaceholderAndSave(
+async function replacePlaceholder(
 	document: Document,
 	blocks: XmlNode[],
 ): Promise<number | { blockCount: number }> {
 	if (blocks.length === 0) return { blockCount: 1 };
 
-	// `Document.open()` populated the embedded views; `document.body.body` is
+	// `Document.fromPackage()` populated the embedded views; `document.body.body` is
 	// the parsed `<w:body>` XmlNode. No need to re-walk the tree.
 	const body = document.body.body;
 	const placeholderIndex = body.children.findIndex(
@@ -384,6 +354,5 @@ async function replacePlaceholderAndSave(
 		);
 	}
 	body.children.splice(placeholderIndex, 1, ...blocks);
-	await document.save();
 	return { blockCount: blocks.length };
 }
