@@ -1758,6 +1758,75 @@ describe("edit content + --clear combined (fill then strip)", () => {
 	});
 });
 
+// Issue #60: a markdown edit that splits one paragraph into several inherits
+// the replaced paragraph's run formatting onto EVERY new block, so a ride-along
+// clear/set must reach every block too — not just the first.
+describe("edit markdown → several paragraphs: ride-along formatting hits every block", () => {
+	const RED = '<span style="color:#FF0000">Red placeholder</span>\n';
+
+	test("batch {markdown, clear} strips the inherited color from every block", async () => {
+		const path = await docFrom("multi-clear-batch", RED);
+		const batch = join(tempWorkspace("multi-clear-batch-src"), "b.jsonl");
+		await Bun.write(
+			batch,
+			`${JSON.stringify({ at: "p0", markdown: "First\n\nSecond", clear: "color" })}\n`,
+		);
+		expect((await runCli("edit", path, "--batch", batch)).exitCode).toBe(0);
+		const markdown = (await runCli("read", path)).stdout;
+		expect(markdown).toContain("Second");
+		expect(markdown).not.toContain("FF0000");
+	});
+
+	test("single op: markdown + --clear color strips every block", async () => {
+		const path = await docFrom("multi-clear-single", RED);
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0",
+			"First\n\nSecond",
+			"--clear",
+			"color",
+		);
+		expect(result.exitCode).toBe(0);
+		expect((await runCli("read", path)).stdout).not.toContain("FF0000");
+	});
+
+	test("single op: markdown + --bold bolds every block", async () => {
+		const path = await docFrom("multi-bold", "placeholder\n");
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0",
+			"First\n\nSecond",
+			"--bold",
+		);
+		expect(result.exitCode).toBe(0);
+		const markdown = (await runCli("read", path)).stdout;
+		expect(markdown).toContain("**First**");
+		expect(markdown).toContain("**Second**");
+	});
+
+	test("tracked: markdown + --clear color strips every inserted block", async () => {
+		const path = await docFrom("multi-clear-tracked", RED);
+		const result = await runCli(
+			"edit",
+			path,
+			"--at",
+			"p0",
+			"First\n\nSecond",
+			"--clear",
+			"color",
+			"--track",
+		);
+		expect(result.exitCode).toBe(0);
+		const accepted = (await runCli("read", path)).stdout;
+		expect(accepted).toContain("Second");
+		expect(accepted).not.toContain("FF0000");
+	});
+});
+
 describe("clear-formatting preserves unmodeled rPr children (in-place invariant)", () => {
 	test("--clear all strips formatting tags but keeps an unmodeled <w:lang>", () => {
 		// The feature mutates rPr in place precisely so props we don't model

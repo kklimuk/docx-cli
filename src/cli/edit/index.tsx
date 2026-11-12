@@ -418,10 +418,10 @@ async function commitSpanEdit(
 				end: spanTarget.span.start + spec.text.length,
 			};
 			if (opts.clearTags) {
-				edit.clearFormattingNode(blockRef.node, replaced, opts.clearTags);
+				edit.clearFormatting(blockRef, replaced, opts.clearTags);
 			}
 			if (opts.setFormat) {
-				edit.setFormattingNode(blockRef.node, replaced, opts.setFormat);
+				edit.setFormatting(blockRef, replaced, opts.setFormat);
 			}
 		}
 	} catch (error) {
@@ -452,12 +452,12 @@ async function commitBlockEdit(
 	let resolvedAuthors: string[] = [];
 	try {
 		const edit = new Edit(document);
-		// The paragraph node the content edit produced — a combined `--clear`
-		// strips formatting from THIS node afterward (it may be a freshly spliced
-		// node, not the original blockRef).
-		let resultNode: XmlNode | null = null;
+		// The blocks the content edit produced — a combined `--clear`/run-format
+		// restyles THESE afterward (freshly spliced nodes, not the original
+		// blockRef; several when markdown split the paragraph).
+		let resultNodes: XmlNode[] | null = null;
 		if (opts.spec.kind === "text" || opts.spec.kind === "runs") {
-			({ node: resultNode, resolvedAuthors } = edit.paragraph(
+			({ nodes: resultNodes, resolvedAuthors } = edit.paragraph(
 				blockRef,
 				opts.spec,
 				{
@@ -469,7 +469,7 @@ async function commitBlockEdit(
 		} else if (opts.spec.kind === "markdown") {
 			const resolved = await resolveMarkdownBlocks(document, opts.spec);
 			if (typeof resolved === "number") return resolved;
-			({ node: resultNode, resolvedAuthors } = edit.paragraph(
+			({ nodes: resultNodes, resolvedAuthors } = edit.paragraph(
 				blockRef,
 				resolved,
 				{
@@ -492,26 +492,23 @@ async function commitBlockEdit(
 		} else if (opts.spec.kind === "setFormat") {
 			edit.setFormatting(blockRef, null, opts.spec.format);
 		} else if (opts.spec.kind === "paragraphProps") {
-			resultNode = edit.paragraphProperties(
-				blockRef,
-				opts.spec.paragraphOptions,
-				{
+			resultNodes = [
+				edit.paragraphProperties(blockRef, opts.spec.paragraphOptions, {
 					authorFlag: opts.authorFlag,
 					track,
-				},
-			);
+				}),
+			];
 		} else {
 			return fail("USAGE", "Unsupported edit spec for single-block locator");
 		}
 		// Combined content + `--clear`/run-formatting: strip then set the named
-		// formatting on the post-edit paragraph (e.g. `--text "June 8, 2026"
-		// --clear highlight` or `--text "Title" --bold`). Clear runs first so an
-		// explicit set wins on any shared property.
-		if (opts.clearTags && resultNode) {
-			edit.clearFormattingNode(resultNode, null, opts.clearTags);
-		}
-		if (opts.setFormat && resultNode) {
-			edit.setFormattingNode(resultNode, null, opts.setFormat);
+		// formatting on every post-edit paragraph (e.g. `--text "June 8, 2026"
+		// --clear highlight` or `--text "Title" --bold`).
+		if (resultNodes && (opts.clearTags || opts.setFormat)) {
+			edit.restyleBlocks(resultNodes, {
+				clearTags: opts.clearTags,
+				format: opts.setFormat,
+			});
 		}
 	} catch (error) {
 		if (error instanceof EditError) {

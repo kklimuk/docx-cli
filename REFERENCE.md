@@ -245,8 +245,9 @@ docx delete  FILE --batch drop.jsonl        # { at } per line — whole blocks (
 #   --clear bold,italic,highlight,color,size,font,…|all   (edit; strip run formatting, keep text)
 #   --bold --italic --underline --strike --color HEX --highlight NAME --shade HEX --font NAME --size PT
 #       --caps --smallcaps --superscript --subscript   (edit; SET run formatting on EXISTING text —
-#       the inverse of --clear. Alone they format a span/paragraph/range in place; with --text they
-#       fill AND format. Like --clear, applied directly — not recorded as a tracked change.)
+#       the inverse of --clear. Alone they format a span/paragraph/range in place; with content they
+#       fill AND format — every paragraph the content writes, when markdown splits one paragraph into
+#       several. Like --clear, applied directly — not recorded as a tracked change.)
 #   --font-east-asia NAME   sets the East-Asian-script font (<w:rFonts w:eastAsia>) — separate from
 #       --font because Word resolves w:eastAsia independently of w:ascii/w:hAnsi; --font alone has no
 #       visible effect on Chinese/Japanese/Korean text. Supported by edit, edit --batch,

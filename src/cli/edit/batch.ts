@@ -639,9 +639,9 @@ async function buildApply(
 					});
 					const replaced = { start: span.start, end: span.start + text.length };
 					if (clearTags) {
-						edit.clearFormattingNode(blockRef.node, replaced, clearTags);
+						edit.clearFormatting(blockRef, replaced, clearTags);
 					}
-					if (ride) edit.setFormattingNode(blockRef.node, replaced, ride);
+					if (ride) edit.setFormatting(blockRef, replaced, ride);
 				};
 			}
 			return () =>
@@ -676,9 +676,10 @@ async function buildApply(
 		const result = contentNode();
 		resolvedAuthors.push(...result.resolvedAuthors);
 		if (!restyleFollows) return;
-		const edit = new Edit(document);
-		if (clearTags) edit.clearFormattingNode(result.node, null, clearTags);
-		if (ride) edit.setFormattingNode(result.node, null, ride);
+		new Edit(document).restyleBlocks(result.nodes, {
+			clearTags,
+			format: ride,
+		});
 	};
 }
 
