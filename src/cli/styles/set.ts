@@ -92,8 +92,8 @@ export async function runStylesSet(args: string[]): Promise<number> {
 	const { values } = parsed;
 	const filePath = parsed.positionals[0];
 	if (!filePath) return fail("USAGE", "Missing FILE argument", SET_HELP);
-	const styleId = values.at as string | undefined;
-	if (!styleId) {
+	const requestedStyleId = values.at as string | undefined;
+	if (!requestedStyleId) {
 		return fail(
 			"USAGE",
 			"Missing --at STYLEID (the style to edit)",
@@ -116,18 +116,20 @@ export async function runStylesSet(args: string[]): Promise<number> {
 			SET_HELP,
 		);
 	}
-	if (basedOn === styleId) {
+	const document = await openOrFail(filePath);
+	if (typeof document === "number") return document;
+
+	const styles = document.ensureStyles();
+	// A localized Word names its default paragraph style `Standard`/`Normale`/…,
+	// so `--at Normal` targets whatever `w:default="1"` style plays that role.
+	const styleId = styles.localStyleId(requestedStyleId);
+	if (basedOn && styles.localStyleId(basedOn) === styleId) {
 		return fail(
 			"USAGE",
 			`A style can't be based on itself ("${styleId}")`,
 			"Point --based-on at a different (parent) style, or drop it.",
 		);
 	}
-
-	const document = await openOrFail(filePath);
-	if (typeof document === "number") return document;
-
-	const styles = document.ensureStyles();
 	// Auto-provision an un-materialized baseline (e.g. `set --at Heading1` on a doc
 	// that never used Heading1) so the agent's intent — "make Heading1 look like X"
 	// — works regardless of whether the def already exists. A non-baseline unknown

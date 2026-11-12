@@ -182,7 +182,7 @@ export class StylesView {
 			?.findChild("w:sz")
 			?.getAttribute("w:val");
 		if (docDefault) return Number(docDefault);
-		const normal = this.getStyle("Normal")
+		const normal = this.getStyle(this.localStyleId("Normal"))
 			?.findChild("w:rPr")
 			?.findChild("w:sz")
 			?.getAttribute("w:val");
@@ -206,7 +206,7 @@ export class StylesView {
 			?.findChild("w:rFonts")
 			?.getAttribute("w:ascii");
 		if (docDefault) return docDefault;
-		return this.getStyle("Normal")
+		return this.getStyle(this.localStyleId("Normal"))
 			?.findChild("w:rPr")
 			?.findChild("w:rFonts")
 			?.getAttribute("w:ascii");
@@ -293,6 +293,18 @@ export class StylesView {
 		this.#ensureStyleNode(root, styleId);
 	}
 
+	/** The id this document uses for one of Word's built-in DEFAULT styles. A
+	 * localized Word writes them under translated ids — German `Standard` /
+	 * `Absatz-Standardschriftart` for `Normal` / `DefaultParagraphFont` — and
+	 * only the `w:default="1"` flag identifies them (issue #59). Returns
+	 * `styleId` unchanged when it's defined as-is, isn't one of those two, or
+	 * the document declares no default of that type. */
+	localStyleId(styleId: string): string {
+		if (this.hasStyle(styleId)) return styleId;
+		const type = BUILT_IN_DEFAULT_TYPE.get(styleId);
+		return (type && this.defaultStyleId(type)) || styleId;
+	}
+
 	/** Define a referenced paragraph/character style if it's a baseline we know
 	 * how to provision; no-op for undefined or custom styles. Convenience for
 	 * `insert --style` / `edit --style` so a `--style Heading2` reference also
@@ -327,7 +339,7 @@ export class StylesView {
 		const root = this.ensureStylesRoot();
 		this.#ensureStyleNode(root, "Normal");
 		if (this.hasStyle(styleId)) return;
-		root.children.push(build());
+		root.children.push(this.#localizeDefaultReferences(build()));
 	}
 
 	/** Set the document default run font: `<w:docDefaults>/<w:rPrDefault>/<w:rPr>/
@@ -415,7 +427,11 @@ export class StylesView {
 	setStyleFormatting(styleId: string, spec: StyleSpec): void {
 		const style = this.getStyle(styleId);
 		if (!style) return;
-		applyStyleSpec(style, spec);
+		applyStyleSpec(style, {
+			...spec,
+			basedOn: spec.basedOn && this.localStyleId(spec.basedOn),
+			next: spec.next && this.localStyleId(spec.next),
+		});
 	}
 
 	/** Provision a NEW custom `<w:style>` with the given metadata + formatting (the
@@ -479,11 +495,34 @@ export class StylesView {
 	}
 
 	#ensureStyleNode(stylesRoot: XmlNode, styleId: BaselineStyleId): void {
-		const exists = stylesRoot
-			.findChildren("w:style")
-			.some((child) => child.getAttribute("w:styleId") === styleId);
-		if (exists) return;
-		stylesRoot.children.push(BASELINE[styleId]());
+		// `localStyleId` finds a localized default under its translated id, so a
+		// German doc's `Standard` satisfies `Normal` instead of gaining a SECOND
+		// `w:default="1"` paragraph style.
+		if (this.hasStyle(this.localStyleId(styleId))) return;
+		stylesRoot.children.push(
+			this.#localizeDefaultReferences(BASELINE[styleId]()),
+		);
+	}
+
+	/** Point a style's `basedOn`/`next` at the document's own default ids (see
+	 * `localStyleId`) — the catalog names the English ones. A `basedOn` naming
+	 * a built-in default the document doesn't define at all is dropped rather
+	 * than left dangling: a style with no parent inherits the same defaults. */
+	#localizeDefaultReferences(style: XmlNode): XmlNode {
+		for (const tag of ["w:basedOn", "w:next"]) {
+			const reference = style.findChild(tag);
+			const styleId = reference?.getAttribute("w:val");
+			if (!reference || !styleId) continue;
+			const local = this.localStyleId(styleId);
+			const dangling =
+				BUILT_IN_DEFAULT_TYPE.has(styleId) && !this.hasStyle(local);
+			if (tag === "w:basedOn" && dangling) {
+				style.children.splice(style.children.indexOf(reference), 1);
+				continue;
+			}
+			reference.setAttribute("w:val", local);
+		}
+		return style;
 	}
 }
 
@@ -654,6 +693,13 @@ function insertStyleChildInOrder(style: XmlNode, child: XmlNode): void {
 	if (at < 0) style.children.push(child);
 	else style.children.splice(at, 0, child);
 }
+
+/** Word's built-in default styles by their English id → the `w:type` whose
+ *  `w:default="1"` style plays that role in a localized document. */
+const BUILT_IN_DEFAULT_TYPE: ReadonlyMap<string, string> = new Map([
+	["Normal", "paragraph"],
+	["DefaultParagraphFont", "character"],
+]);
 
 /** The baseline style catalog: id → a builder that emits the `<w:style>`
  * definition. Each builder renders one of the style components below. */
