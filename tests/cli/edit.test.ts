@@ -9,6 +9,7 @@ import {
 	expectValidClean,
 	freshFixture,
 	readDocumentXml,
+	readMarkdown,
 	trackedKinds,
 	wordTextBoxParagraphXml,
 } from "./helpers";
@@ -4327,25 +4328,35 @@ describe("whole-paragraph edit over other authors' pending changes (#17)", () =>
 		expect(result.stderr).toContain("--at pN:START-END");
 	});
 
-	test("revisions the edit keeps don't warn: a content control's toggle, a tracked replace's surviving deletion", async () => {
+	test("a content control's pending toggle is paragraph text: an untracked rewrite resolves it, warns, and keeps the box", async () => {
+		// Since #58 the box reads as its glyph, so a whole-paragraph rewrite
+		// covers it like any other pending text (the #17 contract) — and the
+		// control itself rides the --text diff instead of flattening to a glyph.
 		const checkbox = await buildRawDoc(
 			`<w:p><w:sdt><w:sdtPr><w14:checkbox xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w14:checked w14:val="1"/></w14:checkbox></w:sdtPr><w:sdtContent><w:del w:id="3" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>☐</w:delText></w:r></w:del><w:ins w:id="4" w:author="Reviewer A" w:date="2026-09-01T00:00:00Z"><w:r><w:t>☒</w:t></w:r></w:ins></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Buy milk</w:t></w:r></w:p>`,
 			"pending-sdt",
 		);
+		expect(await readMarkdown(checkbox)).toContain("☒ Buy milk <!-- p0 -->");
 		const toggled = await runCli(
 			"edit",
 			checkbox,
 			"--at",
 			"p0",
 			"--text",
-			"Buy bread",
+			"☒ Buy bread",
 			"--author",
 			"Editor",
 		);
 		expect(toggled.exitCode).toBe(0);
-		expect(await readDocumentXml(checkbox)).toContain('w:author="Reviewer A"');
-		expect(toggled.stderr).not.toContain("warning");
+		expect(toggled.stderr).toContain(
+			"warning: p0 had pending tracked changes by Reviewer A",
+		);
+		expect(await readDocumentXml(checkbox)).toMatch(
+			/<w14:checked w14:val="1"\/><\/w14:checkbox><\/w:sdtPr><w:sdtContent><w:r><w:t[^>]*>☒<\/w:t><\/w:r><\/w:sdtContent><\/w:sdt><w:r><w:t[^>]*> Buy bread<\/w:t>/,
+		);
+	});
 
+	test("revisions the edit keeps don't warn: a tracked replace's surviving deletion", async () => {
 		const deletion = await buildRawDoc(
 			`<w:p><w:r><w:t xml:space="preserve">Fees </w:t></w:r><w:del w:id="2" w:author="Reviewer B" w:date="2026-09-02T00:00:00Z"><w:r><w:delText xml:space="preserve">any </w:delText></w:r></w:del><w:r><w:t>due.</w:t></w:r></w:p>`,
 			"pending-kept-del",

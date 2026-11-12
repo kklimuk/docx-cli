@@ -38,9 +38,13 @@ When the user toggles a `<w14:checkbox>` under track-changes, Word emits an `<w:
 (a content control wrapping whole paragraphs/tables — template placeholder, form
 field, data-bound region) is unwrapped by the AST reader's `collectBlocks`
 instead, which reads its contents as ordinary blocks and stamps them with
-`Paragraph.contentControl`. The run-level skip documented below stays: it's what
-keeps nested `<w:ins>`/`<w:del>` inside an inline control from minting phantom
-`tcN` ids.
+`Paragraph.contentControl`. A run-level checkbox that is NOT a task item's
+leading box (a form's Yes/No box, a box mid-paragraph or in a cell) is read by
+`walkRunContainer` as a transparent wrapper: its glyph is paragraph text, and a
+tracked click on it still registers one `checkboxToggle` via
+`findCheckboxToggle` (see [core/ast](../ast/CLAUDE.md)). No verb toggles one yet
+— `flipCheckbox*` target the paragraph's FIRST `<w:sdt>`, which only a task item
+guarantees is the box.
 
 ## Structural inserts/deletes — known gap
 

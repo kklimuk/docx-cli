@@ -167,6 +167,10 @@ export const TRACKED_CHANGE_WRAPPER_TAGS: ReadonlySet<string> = new Set([
  *    `<mc:Fallback>` — never the union, so every walker reaches a wrapper's
  *    runs through `wrapperContent(node)` rather than `node.children`; that is
  *    what keeps a multi-Choice wrapper counted exactly as the reader reads it.
+ *  - `w:sdt`: an INLINE content control (a form's checkbox, a Plain Text /
+ *    Dropdown / Date field). Its runs live in `<w:sdtContent>`, which is what
+ *    `wrapperContent` returns — `<w:sdtPr>` is the control's identity, never
+ *    text.
  */
 export const RUN_BEARING_WRAPPER_TAGS: ReadonlySet<string> = new Set([
 	...TRACKED_CHANGE_WRAPPER_TAGS,
@@ -174,6 +178,7 @@ export const RUN_BEARING_WRAPPER_TAGS: ReadonlySet<string> = new Set([
 	"w:fldSimple",
 	"w:smartTag",
 	"mc:AlternateContent",
+	"w:sdt",
 ]);
 
 export function isRunBearingWrapper(tag: string): boolean {
@@ -181,10 +186,13 @@ export function isRunBearingWrapper(tag: string): boolean {
 }
 
 /** The node whose child list holds a run-bearing wrapper's runs: the wrapper
- *  itself, or for `<mc:AlternateContent>` its chosen branch (the SAME
- *  `XmlNode` the reader walked, so an in-place splice lands where the AST
- *  looked). Every offset walker descends through this, never `node.children`. */
+ *  itself, for `<mc:AlternateContent>` its chosen branch, for an inline
+ *  `<w:sdt>` its `<w:sdtContent>` (the SAME `XmlNode` the reader walked, so an
+ *  in-place splice lands where the AST looked). Every offset walker descends
+ *  through this, never `node.children`. */
 export function wrapperContentNode(wrapper: XmlNode): XmlNode {
+	if (wrapper.tag === "w:sdt")
+		return wrapper.findChild("w:sdtContent") ?? wrapper;
 	if (!isAlternateContent(wrapper)) return wrapper;
 	return alternateContentBranch(wrapper) ?? wrapper;
 }
@@ -197,13 +205,36 @@ export function wrapperContent(wrapper: XmlNode): XmlNode[] {
  *  and attributes on both halves. An `<mc:AlternateContent>` can't be halved
  *  (each half would need its own Choice/Fallback pair, and only the chosen
  *  branch was ever read) — its runs come back BARE, which is the content Word
- *  rendered anyway. Empty input yields nothing. */
+ *  rendered anyway. An inline `<w:sdt>` half keeps the control: its properties
+ *  (minus the `<w:id>`, which must stay unique — Word re-mints a missing one)
+ *  around a fresh `<w:sdtContent>`. Empty input yields nothing. */
 export function rewrapSplitHalf(wrapper: XmlNode, inner: XmlNode[]): XmlNode[] {
 	if (inner.length === 0) return [];
 	if (isAlternateContent(wrapper)) return inner;
+	if (wrapper.tag === "w:sdt") return [contentControlHalf(wrapper, inner)];
 	const half = new XmlNode(wrapper.tag, { ...wrapper.attributes });
 	half.children = inner;
 	return [half];
+}
+
+function contentControlHalf(control: XmlNode, inner: XmlNode[]): XmlNode {
+	const half = new XmlNode(control.tag, { ...control.attributes });
+	for (const child of control.children) {
+		if (child.tag === "w:sdtContent") {
+			const content = new XmlNode(child.tag, { ...child.attributes });
+			content.children = inner;
+			half.children.push(content);
+			continue;
+		}
+		const copy = child.clone();
+		if (copy.tag === "w:sdtPr") {
+			copy.children = copy.children.filter(
+				(property) => property.tag !== "w:id",
+			);
+		}
+		half.children.push(copy);
+	}
+	return half;
 }
 
 /** Sum the offset widths of everything reachable from `children` — each

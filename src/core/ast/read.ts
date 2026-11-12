@@ -19,7 +19,7 @@ import { type NoteKind, noteConfig } from "../notes";
 import { XmlNode } from "../parser";
 import { RAW_MARKER_ATTRIBUTE } from "../raw/namespaces";
 import { readSectionProperties } from "../sections";
-import { detectTaskListState } from "../task-list";
+import { detectTaskListState, findCheckboxToggle } from "../task-list";
 import { readCellMargins } from "./cell-margins";
 import type { Document } from "./document";
 import {
@@ -501,7 +501,8 @@ const MARGINAL_BLOCK_CONTAINERS = new Set([
  * inside a standalone note or header/footer paragraph. blockId is "" for a
  * note (note bodies have no pN) and the `hdrN`/`ftrN` for a marginal. Skips `<w:pPr>` (paragraph-mark trackings on a
  * standalone note don't occur — those only arise on paired deletes, which are
- * hidden) and `<w:sdt>`, mirroring the body's `walkRunContainer`. An
+ * hidden). An inline `<w:sdt>` is descended like any container — its
+ * `<w:sdtContent>` runs are the text `read` shows, as in the body. An
  * `<mc:AlternateContent>` (a text box's shape) descends into its chosen branch
  * only: Choice and Fallback carry the same story, so walking both listed every
  * revision in it twice, and the save-time Choice→Fallback mirror would undo a
@@ -514,7 +515,6 @@ function registerStandaloneRunChanges(
 ): void {
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
-		if (child.tag === "w:sdt") continue;
 		if (
 			child.tag === "w:ins" ||
 			child.tag === "w:del" ||
@@ -588,16 +588,7 @@ function readParagraph(
 		paragraph,
 		node,
 		(sdt, parent) => {
-			// Register a checkboxToggle reference at the current walk position.
-			// This is the only walk: `apply`/`list` read it back from
-			// `document.trackedChangeReferences`, so a toggle's tcN is fixed here.
-			const tcId = `tc${state.trackedChangeIndex++}`;
-			document.trackedChangeReferences.set(tcId, {
-				node: sdt,
-				parent,
-				blockId: id,
-				kind: "checkboxToggle",
-			});
+			registerCheckboxToggle({ document, state, blockId: id }, sdt, parent);
 		},
 	);
 
@@ -649,15 +640,21 @@ function walkRunContainer(
 	for (const child of container.children) {
 		if (child.tag === "w:pPr") continue;
 		if (context.skipNodes.has(child)) continue;
-		// Skip ALL `<w:sdt>` content control bodies, not just leading checkbox
-		// SDTs (which `detectTaskListState` already pushed into `skipNodes`).
-		// Recursing into a Plain Text / Dropdown / Rich Text content control
-		// here would surface its nested `<w:ins>`/`<w:del>` as run-level tcNs
-		// — and since this walk is the sole source of tcN ids, those phantom
-		// ids would then be addressable by `accept`/`reject` with no sensible
-		// scope. The structural-ins/del gap for SDTs is documented in
-		// `core/task-list/CLAUDE.md`.
-		if (child.tag === "w:sdt") continue;
+		// An INLINE content control (a form's checkbox, a Plain Text / Dropdown
+		// field) is a transparent wrapper: its `<w:sdtContent>` runs are the
+		// paragraph's text, exactly as Word shows them. A task-list item's
+		// leading checkbox never gets here — `detectTaskListState` put it in
+		// `skipNodes` and `read` shows it as `- [ ]`/`- [x]`.
+		if (child.tag === "w:sdt") {
+			walkInlineContentControl(
+				context,
+				child,
+				container,
+				trackedChange,
+				hyperlink,
+			);
+			continue;
+		}
 
 		if (child.tag === "w:commentRangeStart") {
 			const commentId = child.getAttribute("w:id");
@@ -801,6 +798,59 @@ function walkRunContainer(
 			walkRunContainer(context, child, trackedChange, hyperlink);
 		}
 	}
+}
+
+/** Descend an inline `<w:sdt>`'s `<w:sdtContent>` (the node `wrapperContent`
+ *  hands every XML offset walker, so the two sides count the same runs). A
+ *  checkbox Word clicked under tracking holds an `<w:ins>`(new glyph) +
+ *  `<w:del>`(old glyph) pair AND a flipped `w14:checked`: that is ONE
+ *  `checkboxToggle` revision (accept/reject keep glyph and attribute in step),
+ *  so it registers once and its two glyph runs ride that id in the ins/del
+ *  view roles instead of minting a stray `tcN` per half. */
+function walkInlineContentControl(
+	context: WalkContext,
+	control: XmlNode,
+	container: XmlNode,
+	trackedChange: TrackedChange | undefined,
+	hyperlink: Hyperlink | undefined,
+): void {
+	const content = control.findChild("w:sdtContent");
+	if (!content) return;
+	const toggle = findCheckboxToggle(control);
+	if (!toggle) {
+		walkRunContainer(context, content, trackedChange, hyperlink);
+		return;
+	}
+	const id = registerCheckboxToggle(context, control, container.children);
+	// Word stamps the toggle's author/date on the glyph pair, not the control.
+	const change: TrackedChange = {
+		id,
+		kind: "checkboxToggle",
+		author: toggle.ins.getAttribute("w:author") ?? "",
+		date: toggle.ins.getAttribute("w:date") ?? "",
+		revisionId: toggle.ins.getAttribute("w:id") ?? "",
+	};
+	walkRunContainer(context, toggle.ins, { ...change, kind: "ins" }, hyperlink);
+	walkRunContainer(context, toggle.del, { ...change, kind: "del" }, hyperlink);
+}
+
+/** Register a `checkboxToggle` revision for a checkbox `<w:sdt>` at the
+ *  current walk position — from a task item's leading box or any other inline
+ *  one. This is the only walk: `apply`/`list` read it back from
+ *  `document.trackedChangeReferences`, so a toggle's tcN is fixed here. */
+function registerCheckboxToggle(
+	scope: RevisionScope,
+	sdt: XmlNode,
+	parent: XmlNode[],
+): string {
+	const id = `tc${scope.state.trackedChangeIndex++}`;
+	scope.document.trackedChangeReferences.set(id, {
+		node: sdt,
+		parent,
+		blockId: scope.blockId,
+		kind: "checkboxToggle",
+	});
+	return id;
 }
 
 /** Mint the next `tcN` for a revision marker and record where it lives in
